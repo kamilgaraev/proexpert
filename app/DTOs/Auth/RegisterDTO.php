@@ -55,6 +55,50 @@ class RegisterDTO
         $this->organizationPostalCode = $organizationPostalCode;
         $this->organizationCountry = $organizationCountry ?? 'Россия';
     }
+    
+    /**
+     * Получение email пользователя.
+     *
+     * @return string
+     */
+    public function getEmail(): string
+    {
+        return $this->email;
+    }
+    
+    /**
+     * Получение названия организации.
+     *
+     * @return string
+     */
+    public function getOrganizationName(): string
+    {
+        return $this->organizationName;
+    }
+    
+    /**
+     * Магический метод для доступа к приватным свойствам.
+     *
+     * @param string $name
+     * @return mixed
+     * @throws \Exception
+     */
+    public function __get(string $name)
+    {
+        $method = 'get' . ucfirst($name);
+        
+        if (method_exists($this, $method)) {
+            return $this->$method();
+        }
+        
+        $property = lcfirst(preg_replace('/^get/', '', $method));
+        
+        if (property_exists($this, $property)) {
+            return $this->$property;
+        }
+        
+        throw new \Exception("Свойство {$name} не существует в " . get_class($this));
+    }
 
     public function getUserData(): array
     {

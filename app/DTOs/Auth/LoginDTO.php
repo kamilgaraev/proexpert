@@ -22,6 +22,30 @@ class LoginDTO
     {
         return $this->password;
     }
+    
+    /**
+     * Магический метод для доступа к приватным свойствам.
+     *
+     * @param string $name
+     * @return mixed
+     * @throws \Exception
+     */
+    public function __get(string $name)
+    {
+        $method = 'get' . ucfirst($name);
+        
+        if (method_exists($this, $method)) {
+            return $this->$method();
+        }
+        
+        $property = lcfirst(preg_replace('/^get/', '', $method));
+        
+        if (property_exists($this, $property)) {
+            return $this->$property;
+        }
+        
+        throw new \Exception("Свойство {$name} не существует в " . get_class($this));
+    }
 
     public function toArray(): array
     {

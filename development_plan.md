@@ -3,7 +3,7 @@
 ## Базовая настройка
 
 - [x] Установка Laravel 11
-- [ ] Настройка окружения (.env, база данных)
+- [x] Настройка окружения (.env, база данных)
 - [x] Установка и настройка пакета JWT (tymon/jwt-auth)
 - [x] Настройка маршрутизации для трех отдельных API
 
@@ -26,91 +26,95 @@
 
 ## Миграции и модели данных
 
-- [ ] Создание миграций для основных сущностей:
-  - [ ] Проекты (projects)
-  - [ ] Материалы (materials)
-  - [ ] Единицы измерения (measurement_units)
-  - [ ] Виды работ (work_types)
-  - [ ] Поставщики (suppliers)
-  - [ ] Приемка материалов (material_receipts)
-  - [ ] Списание материалов (material_write_offs)
-  - [ ] Выполненные работы (completed_works)
-  - [ ] Остатки материалов (material_balances)
-  - [ ] Файлы/Изображения (files)
+- [x] Создание миграций для основных сущностей:
+  - [x] Проекты (projects)
+  - [x] Материалы (materials)
+  - [x] Единицы измерения (measurement_units)
+  - [x] Виды работ (work_types)
+  - [x] Поставщики (suppliers)
+  - [x] Приемка материалов (material_receipts)
+  - [x] Списание материалов (material_write_offs)
+  - [x] Выполненные работы (completed_works)
+  - [x] Остатки материалов (material_balances)
+  - [x] Файлы/Изображения (files)
 
-- [ ] Создание Eloquent моделей с отношениями:
-  - [ ] Project
-  - [ ] Material
-  - [ ] MeasurementUnit
-  - [ ] WorkType
-  - [ ] Supplier
-  - [ ] MaterialReceipt
-  - [ ] MaterialWriteOff
-  - [ ] CompletedWork
-  - [ ] MaterialBalance
-  - [ ] File
+- [x] Создание Eloquent моделей с отношениями:
+  - [x] Project
+  - [x] Material
+  - [x] MeasurementUnit
+  - [x] WorkType
+  - [x] Supplier
+  - [x] MaterialReceipt
+  - [x] MaterialWriteOff
+  - [x] CompletedWork
+  - [x] MaterialBalance
+  - [x] File
 
 ## Авторизация и RBAC
 
-- [ ] Настройка JWT авторизации:
-  - [ ] Настройка JWT для передачи организации в токене
-  - [ ] Создание JwtAuthService
-  - [ ] Разработка middleware для проверки токена и ролей
+- [x] Настройка JWT авторизации:
+  - [x] Настройка JWT для передачи организации в токене
+  - [x] Создание JwtAuthService
+  - [x] Разработка middleware для проверки токена и ролей
 
-- [ ] Реализация RBAC:
-  - [ ] Создание базовых ролей для каждого типа пользователей:
-    - [ ] Лендинг/личный кабинет: organization_owner, support
-    - [ ] Веб-админка: admin, accountant, manager
-    - [ ] Мобильное приложение: foreman
-  - [ ] Определение разрешений для каждой роли
-  - [ ] Интеграция проверок разрешений в middleware
+- [x] Реализация RBAC:
+  - [x] Создание базовых ролей для каждого типа пользователей:
+    - [x] Лендинг/личный кабинет: organization_owner, support
+    - [x] Веб-админка: admin, accountant, manager
+    - [x] Мобильное приложение: foreman
+  - [x] Определение разрешений для каждой роли
+  - [x] Интеграция проверок разрешений в middleware
 
 ## Репозитории и сервисы
 
-- [ ] Разработка базового интерфейса репозитория с учетом мультитенантности (разделение по организациям)
-- [ ] Реализация базового репозитория для Eloquent
-- [ ] Создание сервисных классов:
-  - [ ] OrganizationService
+- [x] Разработка базового интерфейса репозитория с учетом мультитенантности (разделение по организациям)
+- [x] Реализация базового репозитория для Eloquent
+- [x] Создание репозиториев для основных сущностей (Organization, User, Project, Material, WorkType, Supplier, Role)
+- [-] Создание сервисных классов:
+  - [x] OrganizationService (частично реализован через репозиторий)
   - [ ] SubscriptionService
-  - [ ] UserService
-  - [ ] AuthService
-  - [ ] ProjectService
-  - [ ] MaterialService
-  - [ ] WorkTypeService
-  - [ ] SupplierService
+  - [x] UserService (реализованы методы для управления прорабами)
+    - [x] `UserService` methods (`getForemenForCurrentOrg`, `createForeman`, etc.)
+  - [x] AuthService (реализован JwtAuthService)
+  - [x] ProjectService (реализованы базовые CRUD)
+  - [x] MaterialService (реализованы базовые CRUD)
+  - [x] WorkTypeService (реализованы базовые CRUD)
+  - [x] SupplierService (реализованы базовые CRUD)
   - [ ] MaterialOperationService
   - [ ] WorkOperationService
-  - [ ] ReportService
-  - [ ] SyncService
-  - [ ] FileService
+  - [ ] ReportService (есть заготовка)
+  - [ ] SyncService (есть заготовка)
+  - [x] FileService (частично реализован через модель File, есть заготовка)
+  - [x] LogService (реализован)
+  - [x] PerformanceMonitor (реализован)
 
 ## API #1: Лендинг/Личный кабинет
 
-- [ ] Контроллеры для лендинга/личного кабинета:
-  - [ ] AuthController (регистрация/вход/восстановление пароля)
-  - [ ] OrganizationController (управление организацией)
+- [-] Контроллеры для лендинга/личного кабинета:
+  - [x] AuthController (регистрация/вход/восстановление пароля)
+  - [x] OrganizationController (управление организацией - реализованы show/update)
   - [ ] SubscriptionController (управление подпиской)
   - [ ] PlanController (информация о тарифах)
-  - [ ] UserController (управление пользователями организации)
-  - [ ] SupportController (техподдержка)
+  - [x] UserController (управление пользователями-**администраторами** организации - реализован CRUD с Responsable)
+  - [x] SupportController (техподдержка - реализован store с Responsable)
 
 ## API #2: Веб-админка
 
-- [ ] Контроллеры для веб-админки:
-  - [ ] AuthController (вход)
-  - [ ] ProjectController
-  - [ ] MaterialController
-  - [ ] WorkTypeController
-  - [ ] SupplierController
-  - [ ] UserManagementController (управление прорабами)
+- [-] Контроллеры для веб-админки:
+  - [x] AuthController (вход)
+  - [x] ProjectController (реализован CRUD)
+  - [x] MaterialController (реализован CRUD)
+  - [x] WorkTypeController (реализован CRUD)
+  - [x] SupplierController (реализован CRUD)
+  - [ ] UserManagementController (реализован CRUD для прорабов)
   - [ ] ReportController (генерация отчетов)
   - [ ] LogsController (просмотр активности)
   - [ ] SettingsController
 
 ## API #3: Мобильное приложение
 
-- [ ] Контроллеры для мобильного приложения:
-  - [ ] AuthController (вход)
+- [-] Контроллеры для мобильного приложения:
+  - [x] AuthController (вход)
   - [ ] ProjectController (просмотр доступных объектов)
   - [ ] MaterialReceiptController
   - [ ] MaterialWriteOffController
@@ -118,18 +122,21 @@
   - [ ] SyncController (синхронизация оффлайн-данных)
   - [ ] FileUploadController (загрузка фотографий)
 
-- [ ] API Resources для каждой сущности
+- [-] API Resources для каждой сущности (реализованы для админки: Project, Material, WorkType, Supplier, ForemanUser, MeasurementUnit; для ЛК: OrganizationResource, AdminUserResource)
   
 ## Валидация и обработка данных
 
-- [ ] Создание форм-запросов для валидации (для каждого API)
-  - [ ] OrganizationRequest
+- [-] Создание форм-запросов для валидации (для каждого API)
+  - [x] UpdateOrganizationRequest (для API #1)
   - [ ] SubscriptionRequest
-  - [ ] UserRequest
-  - [ ] ProjectRequest
-  - [ ] MaterialRequest
-  - [ ] WorkTypeRequest
-  - [ ] SupplierRequest
+  - [x] UserRequest (реализованы RegisterRequest, LoginRequest для лендинга)
+  - [x] AdminUserRequest (реализованы Store/Update для API #1)
+  - [x] ForemanUserRequest (реализованы Store/Update для API #2)
+  - [x] ProjectRequest (реализованы Store/Update для админки)
+  - [x] MaterialRequest (реализованы Store/Update для админки)
+  - [x] WorkTypeRequest (реализованы Store/Update для админки)
+  - [x] SupplierRequest (реализованы Store/Update для админки)
+  - [x] SupportRequest (реализован StoreSupportRequest для API #1)
   - [ ] MaterialReceiptRequest
   - [ ] MaterialWriteOffRequest
   - [ ] CompletedWorkRequest
@@ -155,7 +162,8 @@
 
 - [ ] Создание кастомных исключений
 - [ ] Настройка обработчика исключений для каждого API
-- [ ] Система логирования ошибок
+- [x] Система логирования ошибок
+- [x] Внедрение кастомных Responsable классов для API ответов
 
 ## Тестирование
 
@@ -170,8 +178,9 @@
 
 ## Документация API
 
-- [ ] Настройка Swagger/OpenAPI
-- [ ] Документирование всех API эндпоинтов
+- [-] Настройка Swagger/OpenAPI (файл создан, описана часть API админки и API ЛК)
+- [-] Документирование всех API эндпоинтов (описана часть API админки и API ЛК)
+- [x] Генерация HTML документации (Redocly)
 - [ ] Инструкции по интеграции для фронтенд-разработчиков
 
 ## Оптимизация и безопасность

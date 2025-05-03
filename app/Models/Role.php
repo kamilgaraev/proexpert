@@ -11,6 +11,18 @@ class Role extends Model
 {
     use HasFactory;
 
+    // Slugs ролей
+    const ROLE_OWNER = 'organization_owner';
+    const ROLE_ADMIN = 'organization_admin'; // Используем 'organization_admin' как было в User::isOrganizationAdmin
+    const ROLE_FOREMAN = 'foreman';
+    const ROLE_WEB_ADMIN = 'web_admin';
+    const ROLE_ACCOUNTANT = 'accountant';
+    const ROLE_SYSTEM_ADMIN = 'system_admin'; // Добавим для полноты
+
+    // Типы ролей
+    const TYPE_SYSTEM = 'system';
+    const TYPE_ORGANIZATION = 'organization';
+
     /**
      * Атрибуты, которые можно массово назначать.
      *

@@ -8,9 +8,18 @@ abstract class BaseRepository implements RepositoryInterface
 {
     protected Model $model;
 
-    public function __construct(Model $model)
+    /**
+     * BaseRepository constructor.
+     *
+     * @param string $modelClass The Eloquent model class name.
+     * @throws \Illuminate\Contracts\Container\BindingResolutionException
+     */
+    public function __construct(string $modelClass)
     {
-        $this->model = $model;
+        $this->model = app()->make($modelClass); // Используем DI контейнер для создания модели
+        if (!$this->model instanceof Model) { // Доп. проверка
+             throw new \InvalidArgumentException("Class {$modelClass} must be an instance of Illuminate\Database\Eloquent\Model");
+        }
     }
 
     public function all(array $columns = ['*'])

@@ -1,0 +1,36 @@
+<?php
+
+namespace App\Http\Resources\Api\V1\Landing;
+
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\JsonResource;
+
+/**
+ * @mixin \App\Models\User
+ */
+class AdminUserResource extends JsonResource
+{
+    /**
+     * Transform the resource into an array.
+     *
+     * @return array<string, mixed>
+     */
+    public function toArray(Request $request): array
+    {
+        // Соответствует схеме AdminUser в openapi.yaml
+        return [
+            'id' => $this->id,
+            'name' => $this->name,
+            'email' => $this->email,
+            // Добавляем слаг первой роли (если она есть)
+            'role_slug' => $this->whenLoaded('roles', fn() => $this->roles->first()?->slug),
+            // Поле isActiveInOrg нужно вычислить или получить из pivot-таблицы
+            // Пример: 'isActiveInOrg' => $this->relationLoaded('organizations') ? $this->organizations->first()?->pivot?->is_active : false,
+            // Или если есть атрибут в модели User:
+            // 'isActiveInOrg' => $this->is_active_in_current_org, 
+            'isActiveInOrg' => true, // ЗАГЛУШКА! Замените реальной логикой
+            'created_at' => $this->created_at?->toISOString(), // Добавляем ? для null safety
+            'updated_at' => $this->updated_at?->toISOString(), // Добавляем ? для null safety
+        ];
+    }
+} 

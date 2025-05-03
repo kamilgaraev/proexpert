@@ -12,7 +12,12 @@ use App\Http\Responses\Auth\ProfileResponse;
 use App\Http\Responses\Auth\RegisterResponse;
 use App\Http\Responses\Auth\TokenResponse;
 use App\Services\Auth\JwtAuthService;
+use App\Services\PerformanceMonitor;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
+use App\Services\LogService;
+use Illuminate\Support\Facades\Auth;
 
 class AuthController extends Controller
 {
@@ -37,21 +42,23 @@ class AuthController extends Controller
      */
     public function register(RegisterRequest $request)
     {
-        // Создаем DTO из запроса
-        $registerDTO = RegisterDTO::fromRequest($request->all());
-        
-        // Выполняем регистрацию через сервис
-        $result = $this->authService->register($registerDTO);
+        return PerformanceMonitor::measure('landing.register', function() use ($request) {
+            // Создаем DTO из запроса
+            $registerDTO = RegisterDTO::fromRequest($request->all());
+            
+            // Выполняем регистрацию через сервис
+            $result = $this->authService->register($registerDTO);
 
-        if (!$result['success']) {
-            return RegisterResponse::error($result['message'], $result['status_code']);
-        }
+            if (!$result['success']) {
+                return RegisterResponse::error($result['message'], $result['status_code']);
+            }
 
-        return RegisterResponse::registerSuccess(
-            $result['user'],
-            $result['organization'],
-            $result['token']
-        );
+            return RegisterResponse::registerSuccess(
+                $result['user'],
+                $result['organization'],
+                $result['token']
+            );
+        });
     }
 
     /**
@@ -62,17 +69,39 @@ class AuthController extends Controller
      */
     public function login(LoginRequest $request)
     {
-        // Создаем DTO из запроса
-        $loginDTO = LoginDTO::fromRequest($request->only('email', 'password'));
-        
-        // Аутентифицируем пользователя через сервис
-        $result = $this->authService->authenticate($loginDTO, $this->guard);
+        Log::info('[LandingAuthController] Login attempt', [/*...*/]);
+        try {
+            $loginDTO = LoginDTO::fromRequest($request->only('email', 'password'));
+            $result = $this->authService->authenticate($loginDTO, $this->guard);
+            Log::info('[LandingAuthController] Authentication result', ['success' => $result['success'] ?? 'N/A']);
 
-        if (!$result['success']) {
-            return LoginResponse::unauthorized($result['message']);
+            if ($result['success']) {
+                /** @var \App\Models\User $user */
+                $user = $result['user'];
+                $organizationId = $user->current_organization_id;
+
+                Log::info('[LandingAuthController] Auth successful, checking Landing access via Gate...');
+                // Используем Gate для проверки прав доступа к ЛК
+                if (Gate::denies('access-landing', [$organizationId])) { // Исправлено: Передаем $organizationId в массиве
+                    LogService::authLog('landing_login_forbidden', [/*...*/]);
+                    Log::warning('[LandingAuthController] Gate \'access-landing\' denied access.', [/*...*/]);
+                    // Используем наш сервис для инвалидации JWT токена без логирования стандартного logout
+                    $this->authService->logout($this->guard, false); 
+                    return LoginResponse::forbidden('У вас нет доступа к личному кабинету этой организации');
+                }
+
+                Log::info('[LandingAuthController] Gate \'access-landing\' allowed access.');
+                LogService::authLog('landing_login_success', [/*...*/]);
+                return LoginResponse::loginSuccess($result['user'], $result['token']);
+            } else {
+                Log::warning('[LandingAuthController] Authentication failed.');
+                LogService::authLog('landing_login_failed', [/*...*/]);
+                return LoginResponse::unauthorized($result['message']);
+            }
+        } catch (\Throwable $e) {
+            Log::error('[LandingAuthController] Unexpected exception', [/*...*/]);
+            return response()->json([/*...*/], 500);
         }
-
-        return LoginResponse::loginSuccess($result['user'], $result['token']);
     }
 
     /**
@@ -82,13 +111,15 @@ class AuthController extends Controller
      */
     public function me()
     {
-        $result = $this->authService->me($this->guard);
+        return PerformanceMonitor::measure('landing.me', function() {
+            $result = $this->authService->me($this->guard);
 
-        if (!$result['success']) {
-            return ProfileResponse::notFound($result['message']);
-        }
+            if (!$result['success']) {
+                return ProfileResponse::notFound($result['message']);
+            }
 
-        return ProfileResponse::userProfile($result['user']);
+            return ProfileResponse::userProfile($result['user']);
+        });
     }
 
     /**
@@ -98,13 +129,15 @@ class AuthController extends Controller
      */
     public function refresh()
     {
-        $result = $this->authService->refresh($this->guard);
+        return PerformanceMonitor::measure('landing.refresh_token', function() {
+            $result = $this->authService->refresh($this->guard);
 
-        if (!$result['success']) {
-            return TokenResponse::tokenError($result['message'], $result['status_code']);
-        }
+            if (!$result['success']) {
+                return TokenResponse::tokenError($result['message'], $result['status_code']);
+            }
 
-        return TokenResponse::refreshed($result['token']);
+            return TokenResponse::refreshed($result['token']);
+        });
     }
 
     /**
@@ -114,12 +147,14 @@ class AuthController extends Controller
      */
     public function logout()
     {
-        $result = $this->authService->logout($this->guard);
+        return PerformanceMonitor::measure('landing.logout', function() {
+            $result = $this->authService->logout($this->guard);
 
-        if (!$result['success']) {
-            return TokenResponse::tokenError($result['message'], $result['status_code']);
-        }
+            if (!$result['success']) {
+                return TokenResponse::tokenError($result['message'], $result['status_code']);
+            }
 
-        return TokenResponse::invalidated();
+            return TokenResponse::invalidated();
+        });
     }
 }

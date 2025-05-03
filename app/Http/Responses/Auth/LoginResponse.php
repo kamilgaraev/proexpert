@@ -4,24 +4,58 @@ namespace App\Http\Responses\Auth;
 
 use App\Http\Responses\ApiResponse;
 use App\Models\User;
+use Symfony\Component\HttpFoundation\Response;
 
 class LoginResponse extends ApiResponse
 {
-    public static function loginSuccess(User $user, string $token, string $message = 'Вход выполнен успешно'): self
+    /**
+     * Метод для создания успешного ответа при входе.
+     * 
+     * @param User $user Аутентифицированный пользователь
+     * @param string $token JWT-токен
+     * @param string $message Сообщение
+     * @return static
+     */
+    public static function loginSuccess(User $user, string $token, string $message = 'Вход выполнен успешно'): static
     {
-        return new self(true, $message, 200, [
+        $data = [
             'token' => $token,
             'user' => $user,
-        ]);
+        ];
+        return new static(
+            data: $data,
+            statusCode: Response::HTTP_OK,
+            message: $message
+        );
+    }
+    
+    /**
+     * Метод для создания ответа при неудачной авторизации.
+     * 
+     * @param string $message Сообщение об ошибке
+     * @return static
+     */
+    public static function unauthorized(string $message = 'Неверный email или пароль'): static
+    {
+        return new static(
+            data: null,
+            statusCode: Response::HTTP_UNAUTHORIZED,
+            message: $message
+        );
     }
 
-    public static function unauthorized(string $message = 'Неверный email или пароль'): self
+    /**
+     * Метод для создания ответа при отсутствии прав доступа.
+     * 
+     * @param string $message Сообщение об ошибке
+     * @return static
+     */
+    public static function forbidden(string $message = 'У вас нет доступа к данному ресурсу'): static
     {
-        return new self(false, $message, 401);
-    }
-
-    public static function forbidden(string $message = 'У вас нет доступа к данному ресурсу'): self
-    {
-        return new self(false, $message, 403);
+        return new static(
+            data: null,
+            statusCode: Response::HTTP_FORBIDDEN,
+            message: $message
+        );
     }
 } 

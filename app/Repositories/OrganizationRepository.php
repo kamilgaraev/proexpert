@@ -6,9 +6,12 @@ use App\Models\Organization;
 
 class OrganizationRepository extends BaseRepository implements OrganizationRepositoryInterface
 {
-    public function __construct(Organization $model)
+    /**
+     * OrganizationRepository constructor.
+     */
+    public function __construct()
     {
-        parent::__construct($model);
+        parent::__construct(Organization::class); // Передаем имя класса
     }
 
     public function findWithUsers(int $id)

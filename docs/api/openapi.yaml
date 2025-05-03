@@ -9,6 +9,9 @@ info:
   contact:
     name: Служба поддержки
     email: support@prohelper.ru
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
 servers:
   - url: '{protocol}://{host}/api/v1'
     description: API сервер
@@ -26,12 +29,28 @@ tags:
     description: Методы авторизации через API лендинга (для владельцев организаций)
   - name: Авторизация (Админка)
     description: Методы авторизации через API админки (для администраторов)
-  - name: Организации
-    description: Управление организациями
-  - name: Пользователи
-    description: Управление пользователями
-  - name: Роли и разрешения
-    description: Управление ролями и разрешениями
+  - name: Авторизация (Мобильное)
+    description: Методы авторизации через API мобильного приложения (для прорабов)
+  # Теги для Админки (API #2)
+  - name: Проекты (Админка)
+    description: Управление проектами (CRUD)
+  - name: Материалы (Админка)
+    description: Управление справочником материалов (CRUD)
+  - name: Виды Работ (Админка)
+    description: Управление справочником видов работ (CRUD)
+  - name: Поставщики (Админка)
+    description: Управление справочником поставщиков (CRUD)
+  - name: Управление Прорабами (Админка)
+    description: Управление пользователями с ролью 'foreman' (CRUD)
+  - name: Организация (ЛК)
+    description: Управление организацией в Личном Кабинете
+  - name: Управление Администраторами (ЛК)
+    description: Управление пользователями с ролью 'admin' в Личном Кабинете
+  - name: Управление Пользователями Админ-Панели (ЛК)
+    description: Управление пользователями с ролями для админ-панели ('web_admin', 'accountant' и т.д.) из ЛК
+  - name: Поддержка (ЛК)
+    description: Отправка запросов в службу поддержки из Личного Кабинета
+  # Добавить теги для ЛК (Подписки, Планы, Поддержка) и Мобильного API
 
 paths:
   /landing/auth/register:
@@ -41,6 +60,7 @@ paths:
       summary: Регистрация нового пользователя и организации
       description: Регистрирует нового владельца организации и создает организацию.
       operationId: registerLanding
+      security: []
       requestBody:
         required: true
         content:
@@ -57,7 +77,6 @@ paths:
                 name:
                   type: string
                   example: Иван Иванов
-                  description: Имя пользователя
                 email:
                   type: string
                   format: email
@@ -163,6 +182,7 @@ paths:
       summary: Вход пользователя
       description: Аутентифицирует пользователя в API лендинга.
       operationId: loginLanding
+      security: []
       requestBody:
         required: true
         content:
@@ -312,6 +332,7 @@ paths:
       summary: Вход пользователя (админка)
       description: Аутентифицирует пользователя в API админки.
       operationId: loginAdmin
+      security: []
       requestBody:
         required: true
         content:
@@ -374,6 +395,865 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ValidationError'
+
+  # --- API Личного Кабинета (ЛК) --- 
+  
+  /landing/users:
+    get:
+      tags: [Управление Администраторами (ЛК)]
+      summary: Список администраторов организации
+      description: Возвращает список пользователей с ролью 'admin' в текущей организации владельца.
+      operationId: getLandingAdmins
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Успешный ответ со списком администраторов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserListResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' } # Если не владелец
+    post:
+      tags: [Управление Администраторами (ЛК)]
+      summary: Создание нового администратора
+      description: Владелец организации создает нового пользователя с ролью 'admin'.
+      operationId: createLandingAdmin
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreAdminRequest'
+      responses:
+        '201':
+          description: Администратор успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessCreationAdminUserResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' } # Если не владелец
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/ServerError' } # Роль 'admin' не найдена?
+
+  /landing/users/{user}:
+    get:
+      tags: [Управление Администраторами (ЛК)]
+      summary: Получение информации об администраторе
+      operationId: getLandingAdmin
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID пользователя-администратора
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+    put:
+      tags: [Управление Администраторами (ЛК)]
+      summary: Обновление информации об администраторе
+      operationId: updateLandingAdmin
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID пользователя-администратора
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAdminRequest'
+      responses:
+        '200':
+          description: Администратор успешно обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUserResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Управление Администраторами (ЛК)]
+      summary: Удаление администратора
+      operationId: deleteLandingAdmin
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID пользователя-администратора
+          schema: { type: integer }
+      responses:
+        '204':
+          description: Администратор успешно удален
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' } # Не владелец или пытается удалить себя
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        
+  # --- API Админки --- 
+  
+  /admin/projects:
+    get:
+      tags: [Проекты (Админка)]
+      summary: Список проектов организации
+      operationId: getAdminProjects
+      security: [{ bearerAuth: [] }]
+      parameters:
+        # TODO: Добавить параметры пагинации, фильтрации, сортировки
+        - name: per_page
+          in: query
+          schema: { type: integer, default: 15 }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Успешный ответ со списком проектов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectListResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+    post:
+      tags: [Проекты (Админка)]
+      summary: Создание нового проекта
+      operationId: createAdminProject
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreProjectRequest'
+      responses:
+        '201':
+          description: Проект успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' } # Если используется Gate/Policy
+        '422': { $ref: '#/components/responses/ValidationError' }
+        
+  /admin/projects/{project}:
+    get:
+      tags: [Проекты (Админка)]
+      summary: Получение информации о проекте
+      operationId: getAdminProject
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: project
+          in: path
+          required: true
+          description: ID проекта
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+    put:
+      tags: [Проекты (Админка)]
+      summary: Обновление информации о проекте
+      operationId: updateAdminProject
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: project
+          in: path
+          required: true
+          description: ID проекта
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
+      responses:
+        '200':
+          description: Проект успешно обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Проекты (Админка)]
+      summary: Удаление проекта
+      operationId: deleteAdminProject
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: project
+          in: path
+          required: true
+          description: ID проекта
+          schema: { type: integer }
+      responses:
+        '204':
+          description: Проект успешно удален (No Content)
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+
+  # --- Материалы --- 
+  /admin/materials:
+    get:
+      tags: [Материалы (Админка)]
+      summary: Список материалов организации
+      operationId: getAdminMaterials
+      security: [{ bearerAuth: [] }]
+      parameters: [] # Добавить пагинацию/фильтры
+      responses:
+        '200':
+          description: Успешный ответ со списком материалов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaterialListResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+    post:
+      tags: [Материалы (Админка)]
+      summary: Создание нового материала
+      operationId: createAdminMaterial
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreMaterialRequest'
+      responses:
+        '201':
+          description: Материал успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaterialResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        
+  /admin/materials/{material}:
+    get:
+      tags: [Материалы (Админка)]
+      summary: Получение информации о материале
+      operationId: getAdminMaterial
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: material
+          in: path
+          required: true
+          description: ID материала
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaterialResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+    put:
+      tags: [Материалы (Админка)]
+      summary: Обновление информации о материале
+      operationId: updateAdminMaterial
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: material
+          in: path
+          required: true
+          description: ID материала
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMaterialRequest'
+      responses:
+        '200':
+          description: Материал успешно обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaterialResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Материалы (Админка)]
+      summary: Удаление материала
+      operationId: deleteAdminMaterial
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: material
+          in: path
+          required: true
+          description: ID материала
+          schema: { type: integer }
+      responses:
+        '204':
+          description: Материал успешно удален
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+
+  # --- Виды Работ --- 
+  /admin/work-types:
+    get:
+      tags: [Виды Работ (Админка)]
+      summary: Список видов работ организации
+      operationId: getAdminWorkTypes
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Успешный ответ со списком видов работ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkTypeListResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+    post:
+      tags: [Виды Работ (Админка)]
+      summary: Создание нового вида работ
+      operationId: createAdminWorkType
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreWorkTypeRequest'
+      responses:
+        '201':
+          description: Вид работ успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkTypeResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        
+  /admin/work-types/{work_type}:
+    get:
+      tags: [Виды Работ (Админка)]
+      summary: Получение информации о виде работ
+      operationId: getAdminWorkType
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: work_type
+          in: path
+          required: true
+          description: ID вида работ
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkTypeResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+    put:
+      tags: [Виды Работ (Админка)]
+      summary: Обновление информации о виде работ
+      operationId: updateAdminWorkType
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: work_type
+          in: path
+          required: true
+          description: ID вида работ
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkTypeRequest'
+      responses:
+        '200':
+          description: Вид работ успешно обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkTypeResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Виды Работ (Админка)]
+      summary: Удаление вида работ
+      operationId: deleteAdminWorkType
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: work_type
+          in: path
+          required: true
+          description: ID вида работ
+          schema: { type: integer }
+      responses:
+        '204':
+          description: Вид работ успешно удален
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+
+  # --- Поставщики --- 
+  /admin/suppliers:
+    get:
+      tags: [Поставщики (Админка)]
+      summary: Список поставщиков организации
+      operationId: getAdminSuppliers
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Успешный ответ со списком поставщиков
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierListResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+    post:
+      tags: [Поставщики (Админка)]
+      summary: Создание нового поставщика
+      operationId: createAdminSupplier
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreSupplierRequest'
+      responses:
+        '201':
+          description: Поставщик успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        
+  /admin/suppliers/{supplier}:
+    get:
+      tags: [Поставщики (Админка)]
+      summary: Получение информации о поставщике
+      operationId: getAdminSupplier
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: supplier
+          in: path
+          required: true
+          description: ID поставщика
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+    put:
+      tags: [Поставщики (Админка)]
+      summary: Обновление информации о поставщике
+      operationId: updateAdminSupplier
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: supplier
+          in: path
+          required: true
+          description: ID поставщика
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSupplierRequest'
+      responses:
+        '200':
+          description: Поставщик успешно обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupplierResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Поставщики (Админка)]
+      summary: Удаление поставщика
+      operationId: deleteAdminSupplier
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: supplier
+          in: path
+          required: true
+          description: ID поставщика
+          schema: { type: integer }
+      responses:
+        '204':
+          description: Поставщик успешно удален
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+
+  # --- Управление Прорабами --- 
+  /admin/users:
+    get:
+      tags: [Управление Прорабами (Админка)]
+      summary: Список прорабов организации
+      operationId: getAdminForemen
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Успешный ответ со списком прорабов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForemanUserListResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+    post:
+      tags: [Управление Прорабами (Админка)]
+      summary: Создание нового прораба
+      operationId: createAdminForeman
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreForemanRequest'
+      responses:
+        '201':
+          description: Прораб успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForemanUserResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/ServerError' } # Ошибка создания (например, роль не найдена)
+        
+  /admin/users/{user}:
+    get:
+      tags: [Управление Прорабами (Админка)]
+      summary: Получение информации о прорабе
+      operationId: getAdminForeman
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: user # ID пользователя
+          in: path
+          required: true
+          description: ID прораба
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForemanUserResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+    put:
+      tags: [Управление Прорабами (Админка)]
+      summary: Обновление информации о прорабе
+      operationId: updateAdminForeman
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: user # ID пользователя
+          in: path
+          required: true
+          description: ID прораба
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateForemanRequest'
+      responses:
+        '200':
+          description: Прораб успешно обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForemanUserResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Управление Прорабами (Админка)]
+      summary: Удаление прораба
+      operationId: deleteAdminForeman
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: user # ID пользователя
+          in: path
+          required: true
+          description: ID прораба
+          schema: { type: integer }
+      responses:
+        '204':
+          description: Прораб успешно удален
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+
+  # --- Новые пути для ЛК (API #1) ---
+
+  /landing/organization:
+    get:
+      tags: [Организация (ЛК)]
+      summary: Получение данных текущей организации
+      description: Возвращает информацию о текущей организации авторизованного владельца.
+      operationId: getLandingOrganization
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Успешный ответ с данными организации
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/Organization' # Используем существующую схему
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' } # Если не владелец
+        '404':
+          description: Организация не найдена для пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorNotFound' # Используем общую схему 404
+    put:
+      tags: [Организация (ЛК)]
+      summary: Обновление данных текущей организации
+      description: Обновляет информацию о текущей организации авторизованного владельца.
+      operationId: updateLandingOrganization
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrganizationRequest' # Новая схема запроса
+      responses:
+        '200':
+          description: Организация успешно обновлена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Organization updated successfully
+                  data:
+                    $ref: '#/components/schemas/Organization'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' } # Если не владелец
+        '404':
+          description: Организация не найдена или обновление не удалось
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorNotFound' # Используем общую схему 404
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /landing/support:
+    post:
+      tags: [Поддержка (ЛК)]
+      summary: Отправка запроса в поддержку
+      description: Создает новый запрос в службу поддержки от авторизованного пользователя.
+      operationId: createLandingSupportRequest
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreSupportRequest' # Новая схема запроса
+      responses:
+        '201':
+          description: Запрос успешно отправлен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Support request sent successfully
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500':
+           description: Ошибка при создании запроса
+           content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerError' # Общая ошибка сервера
+
+  /landing/admin-panel-users:
+    get:
+      tags: [Управление Пользователями Админ-Панели (ЛК)]
+      summary: Список пользователей админ-панели
+      description: Возвращает список пользователей с ролями админ-панели (напр., 'web_admin', 'accountant') в текущей организации. Доступно владельцам и администраторам организации.
+      operationId: getLandingAdminPanelUsers
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Успешный ответ со списком пользователей
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPanelUserListResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+
+    post:
+      tags: [Управление Пользователями Админ-Панели (ЛК)]
+      summary: Создание пользователя админ-панели
+      description: Владелец/администратор организации создает нового пользователя с ролью для админ-панели (например, web_admin, accountant).
+      operationId: createLandingAdminPanelUser
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreAdminPanelUserRequest'
+      responses:
+        '201':
+          description: Пользователь админ-панели успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessCreationAdminPanelUserResponse'
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/ServerError' }
+
+  /landing/admin-panel-users/{user}:
+    get:
+      tags: [Управление Пользователями Админ-Панели (ЛК)]
+      summary: Получение информации о пользователе админ-панели
+      operationId: getLandingAdminPanelUser
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID пользователя админ-панели
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPanelUserResponse' # Нужна эта схема ответа
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+    put:
+      tags: [Управление Пользователями Админ-Панели (ЛК)]
+      summary: Обновление информации о пользователе админ-панели
+      operationId: updateLandingAdminPanelUser
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID пользователя админ-панели
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAdminPanelUserRequest' # Нужна эта схема запроса
+      responses:
+        '200':
+          description: Пользователь успешно обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPanelUserResponse' # Возвращаем обновленный ресурс
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' }
+        '404': { $ref: '#/components/responses/NotFoundError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Управление Пользователями Админ-Панели (ЛК)]
+      summary: Удаление пользователя админ-панели
+      operationId: deleteLandingAdminPanelUser
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID пользователя админ-панели
+          schema: { type: integer }
+      responses:
+        '204':
+          description: Пользователь успешно удален (No Content)
+        '401': { $ref: '#/components/responses/UnauthorizedError' }
+        '403': { $ref: '#/components/responses/ForbiddenError' } # Не админ/владелец или пытается удалить себя/владельца
+        '404': { $ref: '#/components/responses/NotFoundError' }
 
 components:
   securitySchemes:
@@ -603,4 +1483,912 @@ components:
           example: false
         message:
           type: string
-          example: Ошибка сервера 
+          example: Ошибка сервера
+
+    # --- Схемы для Админки (API #2) --- 
+
+    # Проекты
+    Project:
+      description: Ресурс проекта
+      allOf:
+        - $ref: '#/components/schemas/ProjectBase'
+        - type: object
+          properties:
+            id:
+              type: integer
+              example: 101
+            organizationId:
+              type: integer
+              example: 1
+            createdAt:
+              type: string
+              format: date-time
+              readOnly: true
+            updatedAt:
+              type: string
+              format: date-time
+              readOnly: true
+              
+    ProjectBase:
+      description: Базовые поля проекта для создания/обновления
+      type: object
+      required:
+         - name
+         - status
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          example: "ЖК Солнечный"
+        address:
+          type: string
+          maxLength: 1000
+          nullable: true
+          example: "г. Москва, ул. Лучистая, д. 5"
+        status:
+          type: string
+          enum: [active, completed, planned, on_hold]
+          example: active
+        startDate:
+          type: string
+          format: date
+          nullable: true
+          example: "2024-01-15"
+        endDate:
+          type: string
+          format: date
+          nullable: true
+          example: "2025-12-31"
+        isArchived:
+          type: boolean
+          default: false
+          example: false
+          
+    ProjectListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
+        # Добавить links и meta для пагинации
+        
+    ProjectResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Project'
+          
+    StoreProjectRequest:
+      description: Данные для создания проекта
+      type: object
+      required:
+         - name
+         - status
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          example: "ЖК Солнечный"
+        address:
+          type: string
+          maxLength: 1000
+          nullable: true
+          example: "г. Москва, ул. Лучистая, д. 5"
+        status:
+          type: string
+          enum: [active, completed, planned, on_hold]
+          example: active
+        startDate:
+          type: string
+          format: date
+          nullable: true
+          example: "2024-01-15"
+        endDate:
+          type: string
+          format: date
+          nullable: true
+          example: "2025-12-31"
+        isArchived:
+          type: boolean
+          default: false
+          example: false
+        
+    UpdateProjectRequest:
+      description: Данные для обновления проекта
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          example: "ЖК Солнечный (корпус 2)"
+        address:
+          type: string
+          maxLength: 1000
+          nullable: true
+          example: "г. Москва, ул. Лучистая, д. 5, к. 2"
+        status:
+          type: string
+          enum: [active, completed, planned, on_hold]
+          example: active
+        startDate:
+          type: string
+          format: date
+          nullable: true
+          example: "2024-01-15"
+        endDate:
+          type: string
+          format: date
+          nullable: true
+          example: "2025-12-31"
+        isArchived:
+          type: boolean
+          default: false
+          example: false
+
+    # Материалы
+    Material:
+      description: Ресурс материала
+      allOf:
+        - $ref: '#/components/schemas/MaterialBase'
+        - type: object
+          properties:
+            id:
+              type: integer
+              example: 205
+            measurementUnit:
+              $ref: '#/components/schemas/MeasurementUnit'
+            organizationId:
+              type: integer
+              example: 1
+            createdAt:
+              type: string
+              format: date-time
+              readOnly: true
+            updatedAt:
+              type: string
+              format: date-time
+              readOnly: true
+              
+    MaterialBase:
+      description: Базовые поля материала
+      type: object
+      required:
+        - name
+        - measurement_unit_id
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          example: "Кирпич облицовочный M150"
+        category:
+          type: string
+          maxLength: 100
+          nullable: true
+          example: "Стеновые материалы"
+        measurement_unit_id:
+          type: integer
+          example: 5
+          description: ID единицы измерения
+        isActive:
+          type: boolean
+          default: true
+          example: true
+          
+    MaterialListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Material'
+            
+    MaterialResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Material'
+          
+    StoreMaterialRequest:
+       type: object
+       required:
+        - name
+        - measurement_unit_id
+       properties:
+         name:
+           type: string
+           maxLength: 255
+           example: "Кирпич облицовочный M150"
+         category:
+           type: string
+           maxLength: 100
+           nullable: true
+           example: "Стеновые материалы"
+         measurement_unit_id:
+           type: integer
+           example: 5
+           description: ID единицы измерения
+         isActive:
+           type: boolean
+           default: true
+           example: true
+       
+    UpdateMaterialRequest:
+       type: object
+       properties:
+         name:
+           type: string
+           maxLength: 255
+           example: "Кирпич облицовочный M150"
+         category:
+           type: string
+           maxLength: 100
+           nullable: true
+           example: "Стеновые материалы"
+         measurement_unit_id:
+           type: integer
+           example: 5
+           description: ID единицы измерения
+         isActive:
+           type: boolean
+           default: true
+           example: true
+
+    # Виды работ
+    WorkType:
+      description: Ресурс вида работ
+      allOf:
+        - $ref: '#/components/schemas/WorkTypeBase'
+        - type: object
+          properties:
+            id:
+              type: integer
+              example: 310
+            measurementUnit:
+              $ref: '#/components/schemas/MeasurementUnit'
+            organizationId:
+              type: integer
+              example: 1
+            createdAt:
+              type: string
+              format: date-time
+              readOnly: true
+            updatedAt:
+              type: string
+              format: date-time
+              readOnly: true
+              
+    WorkTypeBase:
+      description: Базовые поля вида работ
+      type: object
+      required:
+        - name
+        - measurement_unit_id
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          example: "Кладка наружных стен"
+        category:
+          type: string
+          maxLength: 100
+          nullable: true
+          example: "Общестроительные работы"
+        measurement_unit_id:
+          type: integer
+          example: 10 # м3
+          description: ID единицы измерения
+        isActive:
+          type: boolean
+          default: true
+          example: true
+          
+    WorkTypeListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkType'
+            
+    WorkTypeResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/WorkType'
+          
+    StoreWorkTypeRequest:
+       type: object
+       required:
+         - name
+         - measurement_unit_id
+       properties:
+         name:
+           type: string
+           maxLength: 255
+           example: "Кладка наружных стен"
+         category:
+           type: string
+           maxLength: 100
+           nullable: true
+           example: "Общестроительные работы"
+         measurement_unit_id:
+           type: integer
+           example: 10 # м3
+           description: ID единицы измерения
+         isActive:
+           type: boolean
+           default: true
+           example: true
+       
+    UpdateWorkTypeRequest:
+       type: object
+       properties:
+         name:
+           type: string
+           maxLength: 255
+           example: "Кладка наружных стен"
+         category:
+           type: string
+           maxLength: 100
+           nullable: true
+           example: "Общестроительные работы"
+         measurement_unit_id:
+           type: integer
+           example: 10 # м3
+           description: ID единицы измерения
+         isActive:
+           type: boolean
+           default: true
+           example: true
+
+    # Поставщики
+    Supplier:
+      description: Ресурс поставщика
+      allOf:
+        - $ref: '#/components/schemas/SupplierBase'
+        - type: object
+          properties:
+            id:
+              type: integer
+              example: 45
+            organizationId:
+              type: integer
+              example: 1
+            createdAt:
+              type: string
+              format: date-time
+              readOnly: true
+            updatedAt:
+              type: string
+              format: date-time
+              readOnly: true
+              
+    SupplierBase:
+      description: Базовые поля поставщика
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          example: "ООО КирпичСтройСнаб"
+        contactPerson:
+          type: string
+          maxLength: 255
+          nullable: true
+          example: "Петр Сидоров"
+        phone:
+          type: string
+          maxLength: 50
+          nullable: true
+          example: "+7 (495) 987-65-43"
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          nullable: true
+          example: "sidorov@kirpichstroi.ru"
+        address:
+          type: string
+          maxLength: 1000
+          nullable: true
+          example: "г. Подольск, ул. Заводская, 1"
+        isActive:
+          type: boolean
+          default: true
+          example: true
+          
+    SupplierListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Supplier'
+            
+    SupplierResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Supplier'
+          
+    StoreSupplierRequest:
+       type: object
+       required:
+        - name
+       properties:
+         name:
+           type: string
+           maxLength: 255
+           example: "ООО КирпичСтройСнаб"
+         contactPerson:
+           type: string
+           maxLength: 255
+           nullable: true
+           example: "Петр Сидоров"
+         phone:
+           type: string
+           maxLength: 50
+           nullable: true
+           example: "+7 (495) 987-65-43"
+         email:
+           type: string
+           format: email
+           maxLength: 255
+           nullable: true
+           example: "sidorov@kirpichstroi.ru"
+         address:
+           type: string
+           maxLength: 1000
+           nullable: true
+           example: "г. Подольск, ул. Заводская, 1"
+         isActive:
+           type: boolean
+           default: true
+           example: true
+       
+    UpdateSupplierRequest:
+       type: object
+       properties:
+         name:
+           type: string
+           maxLength: 255
+           example: "ООО КирпичСтройСнаб"
+         contactPerson:
+           type: string
+           maxLength: 255
+           nullable: true
+           example: "Петр Сидоров"
+         phone:
+           type: string
+           maxLength: 50
+           nullable: true
+           example: "+7 (495) 987-65-43"
+         email:
+           type: string
+           format: email
+           maxLength: 255
+           nullable: true
+           example: "sidorov@kirpichstroi.ru"
+         address:
+           type: string
+           maxLength: 1000
+           nullable: true
+           example: "г. Подольск, ул. Заводская, 1"
+         isActive:
+           type: boolean
+           default: true
+           example: true
+
+    # Управление прорабами
+    ForemanUser:
+      description: Ресурс пользователя-прораба
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 15
+        name:
+          type: string
+          example: "Сергей Петров"
+        email:
+          type: string
+          format: email
+          example: "sergey.petrov@example.com"
+        isActiveInOrg:
+          type: boolean
+          description: Активен ли пользователь в текущей организации
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          
+    ForemanUserListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ForemanUser'
+            
+    ForemanUserResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/ForemanUser'
+          
+    StoreForemanRequest:
+      type: object
+      required:
+        - name
+        - email
+        - password
+        - password_confirmation
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          format: password
+          description: Пароль (мин. 8 символов, по умолчанию)
+        password_confirmation:
+          type: string
+          format: password
+          description: Подтверждение пароля
+          
+    UpdateForemanRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        password:
+          type: string
+          format: password
+          description: Новый пароль (опционально)
+          nullable: true
+        password_confirmation:
+          type: string
+          format: password
+          description: Подтверждение нового пароля
+        # isActiveInOrg: 
+        #  type: boolean
+        #  description: Активировать/Деактивировать пользователя в организации
+          
+    MeasurementUnit:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 5
+        name:
+          type: string
+          example: "Квадратный метр"
+        symbol:
+          type: string
+          example: "м²"
+        type:
+          type: string
+          enum: [length, area, volume, weight, pieces, time, other]
+          example: area
+          description: Тип единицы измерения 
+
+    # --- Схемы для ЛК (API #1) ---
+    AdminUser:
+      description: Ресурс пользователя-администратора в ЛК
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 12
+        name:
+          type: string
+          example: "Мария Сидорова"
+        email:
+          type: string
+          format: email
+          example: "maria.sidorova@example.com"
+        isActiveInOrg:
+          type: boolean
+          description: Активен ли пользователь в текущей организации
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          
+    AdminUserListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminUser'
+            
+    AdminUserResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/AdminUser'
+          
+    StoreAdminRequest:
+      type: object
+      required:
+        - name
+        - email
+        - password
+        - password_confirmation
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          format: password
+          description: Пароль (мин. 8 символов, по умолчанию)
+        password_confirmation:
+          type: string
+          format: password
+          description: Подтверждение пароля
+          
+    UpdateAdminRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          description: Новый email (опционально)
+        password:
+          type: string
+          format: password
+          description: Новый пароль (опционально)
+          nullable: true
+        password_confirmation:
+          type: string
+          format: password
+          description: Подтверждение нового пароля
+    # Восстанавливаем схему ответа для POST /landing/users
+    SuccessCreationAdminUserResponse:
+        description: Успешный ответ при создании администратора организации
+        type: object
+        properties:
+          success:
+            type: boolean
+            example: true
+          message:
+            type: string
+            example: Administrator created successfully
+          data:
+            $ref: '#/components/schemas/AdminUser' # Ссылка на существующую схему AdminUser
+
+    # --- Новые схемы для ЛК (API #1) --- 
+    
+    UpdateOrganizationRequest:
+      description: Данные для обновления организации в ЛК
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Новое название организации (если передано)
+        address:
+          type: string
+          maxLength: 1000
+          nullable: true
+          description: Новый адрес
+        phone:
+          type: string
+          maxLength: 50
+          nullable: true
+          description: Новый телефон
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          nullable: true
+          description: Новый email
+        # Добавьте сюда другие поля из UpdateOrganizationRequest.php
+
+    StoreSupportRequest:
+      description: Данные для создания запроса в поддержку
+      type: object
+      required:
+        - subject
+        - message
+      properties:
+        subject:
+          type: string
+          maxLength: 255
+          example: "Вопрос по тарифу"
+        message:
+          type: string
+          maxLength: 5000
+          example: "Не могу найти информацию о лимитах..."
+
+    # --- Общие схемы ошибок --- (Если еще не определены)
+    ErrorNotFound:
+       description: Ошибка - Ресурс не найден
+       type: object
+       properties:
+          success:
+             type: boolean
+             example: false
+          message:
+             type: string
+             example: Resource not found
+
+    # --- Схемы для Управления Пользователями Админ-Панели (ЛК) ---
+    StoreAdminPanelUserRequest:
+      type: object
+      required:
+        - name
+        - email
+        - password
+        - password_confirmation
+        - role_slug
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          example: "Алексей Бухгалтер"
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          example: "a.buh@example.com"
+        password:
+          type: string
+          format: password
+          description: Пароль (мин. 8 символов)
+        password_confirmation:
+          type: string
+          format: password
+          description: Подтверждение пароля
+        role_slug:
+          type: string
+          description: "Слаг роли пользователя (например, 'web_admin' или 'accountant')"
+          enum: [web_admin, accountant] # Перечислите разрешенные роли
+          example: "accountant"
+          
+    AdminPanelUserResource:
+      description: Ресурс пользователя админ-панели
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 25
+        name:
+          type: string
+          example: "Алексей Бухгалтер"
+        email:
+          type: string
+          format: email
+          example: "a.buh@example.com"
+        role_slug:
+          type: string
+          example: "accountant"
+          description: Слаг роли пользователя
+        is_active:
+          type: boolean
+          description: Активен ли пользователь в системе
+          example: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+
+    SuccessCreationAdminPanelUserResponse:
+      description: Успешный ответ при создании пользователя админ-панели
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Admin panel user created successfully
+        data:
+          $ref: '#/components/schemas/AdminPanelUserResource'
+    
+    UpdateAdminPanelUserRequest:
+      description: Данные для обновления пользователя админ-панели (только имя и пароль)
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          example: "Алексей Бухгалтер (Обновлено)"
+        password:
+          type: string
+          format: password
+          description: Новый пароль (опционально, мин. 8 символов)
+          nullable: true
+        password_confirmation:
+          type: string
+          format: password
+          description: Подтверждение нового пароля (требуется, если передан password)
+
+    AdminPanelUserListResponse:
+      description: Ответ со списком пользователей админ-панели
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AdminPanelUserResource'
+        # Можно добавить пагинацию (links, meta), если она реализована в контроллере
+
+    AdminPanelUserResponse:
+      description: Ответ с одним пользователем админ-панели
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/AdminPanelUserResource'
+
+  responses:
+    UnauthorizedError:
+      description: Ошибка авторизации (невалидный токен или его отсутствие)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/AuthError'
+    ForbiddenError:
+      description: Доступ запрещен (нет прав)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message: { type: string, example: "Forbidden" }
+    NotFoundError:
+      description: Ресурс не найден
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorNotFound'
+    ValidationError:
+      description: Ошибка валидации данных
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ValidationError'
+    ServerError:
+      description: Внутренняя ошибка сервера
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ServerError' 

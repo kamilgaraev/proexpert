@@ -10,6 +10,11 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Tymon\JWTAuth\Contracts\JWTSubject;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\Log;
+
+// Импортируем константы роли
+use App\Models\Role;
 
 class User extends Authenticatable implements JWTSubject
 {
@@ -63,7 +68,20 @@ class User extends Authenticatable implements JWTSubject
     }
 
     /**
-     * Получить идентификатор, который будет сохранен в JWT.
+     * Roles allowed to access the main Admin Panel.
+     *
+     * @var array
+     */
+    public const ADMIN_PANEL_ACCESS_ROLES = [
+        Role::ROLE_SYSTEM_ADMIN,    // system_admin
+        Role::ROLE_OWNER,           // organization_owner
+        Role::ROLE_ADMIN,           // organization_admin
+        Role::ROLE_WEB_ADMIN,       // web_admin
+        Role::ROLE_ACCOUNTANT,      // accountant
+    ];
+
+    /**
+     * Get the identifier that will be stored in the subject claim of the JWT.
      *
      * @return mixed
      */
@@ -73,17 +91,17 @@ class User extends Authenticatable implements JWTSubject
     }
 
     /**
-     * Возвращает массив пользовательских данных для добавления в JWT.
+     * Return a key value array, containing any custom claims to be added to the JWT.
      *
      * @return array
      */
     public function getJWTCustomClaims()
     {
+        // Добавляем ID текущей организации пользователя в токен
         return [
-            'name' => $this->name,
-            'email' => $this->email,
-            'user_type' => $this->user_type,
             'organization_id' => $this->current_organization_id,
+            // Можно добавить другие нужные claim'ы
+            // 'user_type' => $this->user_type,
         ];
     }
 
@@ -153,11 +171,20 @@ class User extends Authenticatable implements JWTSubject
     {
         $query = $this->roles()->where('slug', $roleSlug);
 
-        if ($organizationId) {
-            $query->wherePivot('organization_id', $organizationId);
-        }
+        // Важно: проверяем наличие роли именно в контексте УКАЗАННОЙ организации
+        $query->wherePivot('organization_id', $organizationId);
 
-        return $query->exists();
+        $exists = $query->exists();
+
+        // Добавим лог для отладки hasRole
+        Log::debug('[User::hasRole check]', [
+            'user_id' => $this->id,
+            'role_slug' => $roleSlug,
+            'organization_id' => $organizationId,
+            'exists' => $exists
+        ]);
+
+        return $exists;
     }
 
     /**
@@ -193,7 +220,9 @@ class User extends Authenticatable implements JWTSubject
      */
     public function isSystemAdmin(): bool
     {
-        return $this->user_type === 'system_admin';
+        // TODO: Проверить, нужно ли сверяться с таблицей ролей или достаточно user_type
+        // Пока оставляем user_type для системного админа
+        return $this->user_type === Role::ROLE_SYSTEM_ADMIN;
     }
 
     /**
@@ -214,6 +243,28 @@ class User extends Authenticatable implements JWTSubject
             return false;
         }
 
-        return $this->hasRole('organization_admin', $organizationId);
+        // Проверяем наличие роли админа ИЛИ роли владельца
+        return $this->hasRole(Role::ROLE_ADMIN, $organizationId) || $this->hasRole(Role::ROLE_OWNER, $organizationId);
+    }
+
+    /**
+     * Является ли пользователь владельцем указанной организации.
+     *
+     * @param int $organizationId
+     * @return bool
+     */
+    public function isOwnerOfOrganization(int $organizationId): bool
+    {
+        return $this->ownedOrganizations()->where('organization_id', $organizationId)->exists();
+    }
+
+    /**
+     * Получить проекты, на которые назначен пользователь.
+     */
+    public function assignedProjects(): BelongsToMany
+    {
+        return $this->belongsToMany(Project::class, 'project_user')
+            ->withPivot('role')
+            ->withTimestamps();
     }
 }
