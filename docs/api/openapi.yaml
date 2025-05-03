@@ -1,0 +1,606 @@
+openapi: 3.0.3
+info:
+  title: Прораб-Финанс Мост API
+  description: |
+    API для взаимодействия с платформой "Прораб-Финанс Мост".
+    
+    Платформа предназначена для устранения разрыва между полевыми данными строительства и бухгалтерским учётом.
+  version: 1.0.0
+  contact:
+    name: Служба поддержки
+    email: support@prohelper.ru
+servers:
+  - url: '{protocol}://{host}/api/v1'
+    description: API сервер
+    variables:
+      protocol:
+        enum:
+          - http
+          - https
+        default: https
+      host:
+        default: prohelper.ru
+        description: API хост
+tags:
+  - name: Авторизация (Лендинг)
+    description: Методы авторизации через API лендинга (для владельцев организаций)
+  - name: Авторизация (Админка)
+    description: Методы авторизации через API админки (для администраторов)
+  - name: Организации
+    description: Управление организациями
+  - name: Пользователи
+    description: Управление пользователями
+  - name: Роли и разрешения
+    description: Управление ролями и разрешениями
+
+paths:
+  /landing/auth/register:
+    post:
+      tags:
+        - Авторизация (Лендинг)
+      summary: Регистрация нового пользователя и организации
+      description: Регистрирует нового владельца организации и создает организацию.
+      operationId: registerLanding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+                - email
+                - password
+                - password_confirmation
+                - organization_name
+              properties:
+                name:
+                  type: string
+                  example: Иван Иванов
+                  description: Имя пользователя
+                email:
+                  type: string
+                  format: email
+                  example: ivan@example.com
+                  description: Email пользователя (используется для входа)
+                password:
+                  type: string
+                  format: password
+                  example: strongPassword123
+                  description: Пароль пользователя (мин. 8 символов)
+                password_confirmation:
+                  type: string
+                  format: password
+                  example: strongPassword123
+                  description: Подтверждение пароля
+                phone:
+                  type: string
+                  example: "+7 (901) 123-45-67"
+                  description: Телефон пользователя
+                position:
+                  type: string
+                  example: "Директор"
+                  description: Должность пользователя
+                organization_name:
+                  type: string
+                  example: ООО "СтройХолдинг"
+                  description: Название организации
+                organization_legal_name:
+                  type: string
+                  example: Общество с ограниченной ответственностью "СтройХолдинг"
+                  description: Юридическое название организации
+                organization_tax_number:
+                  type: string
+                  example: "7712345678"
+                  description: ИНН организации
+                organization_registration_number:
+                  type: string
+                  example: "1234567890123"
+                  description: ОГРН организации
+                organization_phone:
+                  type: string
+                  example: "+7 (495) 123-45-67"
+                  description: Телефон организации
+                organization_email:
+                  type: string
+                  format: email
+                  example: info@stroiholding.ru
+                  description: Email организации
+                organization_address:
+                  type: string
+                  example: "Москва, ул. Строителей, д. 10"
+                  description: Юридический адрес организации
+                organization_city:
+                  type: string
+                  example: "Москва"
+                  description: Город организации
+                organization_postal_code:
+                  type: string
+                  example: "123456"
+                  description: Почтовый индекс организации
+                organization_country:
+                  type: string
+                  example: "Россия"
+                  description: Страна организации
+      responses:
+        '201':
+          description: Пользователь и организация успешно созданы
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Регистрация успешна
+                  token:
+                    type: string
+                    example: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
+                  user:
+                    $ref: '#/components/schemas/User'
+                  organization:
+                    $ref: '#/components/schemas/Organization'
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+        '500':
+          description: Ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerError'
+
+  /landing/auth/login:
+    post:
+      tags:
+        - Авторизация (Лендинг)
+      summary: Вход пользователя
+      description: Аутентифицирует пользователя в API лендинга.
+      operationId: loginLanding
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: ivan@example.com
+                password:
+                  type: string
+                  format: password
+                  example: strongPassword123
+      responses:
+        '200':
+          description: Успешная авторизация
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Вход выполнен успешно
+                  token:
+                    type: string
+                    example: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          description: Ошибка авторизации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthError'
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+
+  /landing/auth/me:
+    get:
+      tags:
+        - Авторизация (Лендинг)
+      summary: Информация о текущем пользователе
+      description: Возвращает информацию о текущем авторизованном пользователе.
+      operationId: meAuthLanding
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          description: Пользователь не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthError'
+
+  /landing/auth/refresh:
+    post:
+      tags:
+        - Авторизация (Лендинг)
+      summary: Обновление токена
+      description: Обновляет JWT токен.
+      operationId: refreshLanding
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Токен успешно обновлен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Токен успешно обновлен
+                  token:
+                    type: string
+                    example: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
+        '401':
+          description: Ошибка обновления токена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthError'
+
+  /landing/auth/logout:
+    post:
+      tags:
+        - Авторизация (Лендинг)
+      summary: Выход пользователя
+      description: Инвалидирует JWT токен текущего пользователя.
+      operationId: logoutLanding
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Успешный выход
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Выход выполнен успешно
+        '401':
+          description: Пользователь не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthError'
+
+  /admin/auth/login:
+    post:
+      tags:
+        - Авторизация (Админка)
+      summary: Вход пользователя (админка)
+      description: Аутентифицирует пользователя в API админки.
+      operationId: loginAdmin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: admin@example.com
+                password:
+                  type: string
+                  format: password
+                  example: adminPassword123
+      responses:
+        '200':
+          description: Успешная авторизация
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Вход выполнен успешно
+                  token:
+                    type: string
+                    example: eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401':
+          description: Ошибка авторизации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthError'
+        '403':
+          description: Доступ запрещен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: У вас нет доступа к панели администратора
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Иван Иванов
+        email:
+          type: string
+          format: email
+          example: ivan@example.com
+        phone:
+          type: string
+          nullable: true
+          example: "+7 (901) 123-45-67"
+        position:
+          type: string
+          nullable: true
+          example: "Директор"
+        user_type:
+          type: string
+          example: "organization_admin"
+        current_organization_id:
+          type: integer
+          example: 1
+        last_login_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2024-05-01T12:00:00Z"
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-04-25T10:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2024-04-25T10:00:00Z"
+        organizations:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrganizationPivot'
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RolePivot'
+
+    Organization:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: ООО "СтройХолдинг"
+        legal_name:
+          type: string
+          nullable: true
+          example: Общество с ограниченной ответственностью "СтройХолдинг"
+        tax_number:
+          type: string
+          nullable: true
+          example: "7712345678"
+        registration_number:
+          type: string
+          nullable: true
+          example: "1234567890123"
+        phone:
+          type: string
+          nullable: true
+          example: "+7 (495) 123-45-67"
+        email:
+          type: string
+          format: email
+          nullable: true
+          example: info@stroiholding.ru
+        address:
+          type: string
+          nullable: true
+          example: "Москва, ул. Строителей, д. 10"
+        city:
+          type: string
+          nullable: true
+          example: "Москва"
+        postal_code:
+          type: string
+          nullable: true
+          example: "123456"
+        country:
+          type: string
+          nullable: true
+          example: "Россия"
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-04-25T10:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2024-04-25T10:00:00Z"
+
+    OrganizationPivot:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: ООО "СтройХолдинг"
+        pivot:
+          type: object
+          properties:
+            is_owner:
+              type: boolean
+              example: true
+            is_active:
+              type: boolean
+              example: true
+
+    Role:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Администратор организации
+        slug:
+          type: string
+          example: organization_admin
+        type:
+          type: string
+          example: system
+        organization_id:
+          type: integer
+          nullable: true
+          example: null
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Permission'
+
+    RolePivot:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Администратор организации
+        slug:
+          type: string
+          example: organization_admin
+        type:
+          type: string
+          example: system
+        pivot:
+          type: object
+          properties:
+            organization_id:
+              type: integer
+              nullable: true
+              example: 1
+
+    Permission:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: Просмотр пользователей
+        slug:
+          type: string
+          example: users.view
+        description:
+          type: string
+          nullable: true
+          example: Просмотр списка пользователей организации
+
+    AuthError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Неверный email или пароль
+
+    ValidationError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Ошибка валидации
+        errors:
+          type: object
+          example:
+            email: [Поле email обязательно для заполнения]
+            password: [Пароль должен содержать не менее 8 символов]
+
+    ServerError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Ошибка сервера 
