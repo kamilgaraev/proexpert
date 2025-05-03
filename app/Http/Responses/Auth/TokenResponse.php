@@ -18,7 +18,7 @@ class TokenResponse extends ApiResponse
         return new self(true, $message, 200);
     }
 
-    public static function error(string $message = 'Ошибка при обработке токена', int $statusCode = 401): self
+    public static function tokenError(string $message = 'Ошибка при обработке токена', int $statusCode = 401): self
     {
         return new self(false, $message, $statusCode);
     }

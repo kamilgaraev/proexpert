@@ -8,7 +8,7 @@ use App\Models\User;
 
 class RegisterResponse extends ApiResponse
 {
-    public static function success(User $user, Organization $organization, string $token, string $message = 'Регистрация успешна'): self
+    public static function registerSuccess(User $user, Organization $organization, string $token, string $message = 'Регистрация успешна'): self
     {
         return new self(true, $message, 201, [
             'token' => $token,

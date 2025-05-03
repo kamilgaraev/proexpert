@@ -7,7 +7,7 @@ use App\Models\User;
 
 class LoginResponse extends ApiResponse
 {
-    public static function success(User $user, string $token, string $message = 'Вход выполнен успешно'): self
+    public static function loginSuccess(User $user, string $token, string $message = 'Вход выполнен успешно'): self
     {
         return new self(true, $message, 200, [
             'token' => $token,

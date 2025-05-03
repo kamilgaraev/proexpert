@@ -7,7 +7,7 @@ use App\Models\User;
 
 class ProfileResponse extends ApiResponse
 {
-    public static function success(User $user, string $message = ''): self
+    public static function userProfile(User $user, string $message = ''): self
     {
         return new self(true, $message, 200, [
             'user' => $user,

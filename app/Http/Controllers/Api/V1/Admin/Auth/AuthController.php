@@ -24,7 +24,6 @@ class AuthController extends Controller
     public function __construct(JwtAuthService $authService)
     {
         $this->authService = $authService;
-        $this->middleware('auth:' . $this->guard, ['except' => ['login']]);
     }
 
     /**
@@ -54,7 +53,7 @@ class AuthController extends Controller
             return LoginResponse::unauthorized($result['message']);
         }
 
-        return LoginResponse::success($result['user'], $result['token']);
+        return LoginResponse::loginSuccess($result['user'], $result['token']);
     }
 
     /**
@@ -70,7 +69,7 @@ class AuthController extends Controller
             return ProfileResponse::notFound($result['message']);
         }
 
-        return ProfileResponse::success($result['user']);
+        return ProfileResponse::userProfile($result['user']);
     }
 
     /**
@@ -83,7 +82,7 @@ class AuthController extends Controller
         $result = $this->authService->refresh($this->guard);
 
         if (!$result['success']) {
-            return TokenResponse::error($result['message'], $result['status_code']);
+            return TokenResponse::tokenError($result['message'], $result['status_code']);
         }
 
         return TokenResponse::refreshed($result['token']);
@@ -99,7 +98,7 @@ class AuthController extends Controller
         $result = $this->authService->logout($this->guard);
 
         if (!$result['success']) {
-            return TokenResponse::error($result['message'], $result['status_code']);
+            return TokenResponse::tokenError($result['message'], $result['status_code']);
         }
 
         return TokenResponse::invalidated();
