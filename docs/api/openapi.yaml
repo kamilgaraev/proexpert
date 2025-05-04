@@ -1285,8 +1285,8 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
+      type: object
+      properties:
                   message: { type: string }
         '401':
           $ref: '#/components/responses/UnauthorizedError'
@@ -1295,16 +1295,16 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
+      type: object
+      properties:
                   message: { type: string, example: "У вас нет доступа к этому проекту." }
         '404':
           description: Ресурс не найден (проект или материал)
           content:
             application/json:
               schema:
-                type: object
-                properties:
+      type: object
+      properties:
                   message: { type: string, example: "Проект не найден." }
         '422':
           $ref: '#/components/responses/ValidationError'
@@ -1326,36 +1326,36 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/StoreWorkCompletionLogRequest'
-      responses:
+  responses:
         '201':
           description: Запись о выполнении работы успешно создана
-          content:
-            application/json:
-              schema:
+      content:
+        application/json:
+          schema:
                 $ref: '#/components/schemas/WorkCompletionLogResponse'
         '400':
           description: Неверный запрос
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
                   message: { type: string }
         '401':
           $ref: '#/components/responses/UnauthorizedError'
         '403':
           description: Доступ запрещен
-          content:
-            application/json:
-              schema:
+      content:
+        application/json:
+          schema:
                 type: object
                 properties:
                   message: { type: string, example: "У вас нет доступа к этому проекту." }
         '404':
           description: Ресурс не найден (проект или вид работы)
-          content:
-            application/json:
-              schema:
+      content:
+        application/json:
+          schema:
                 type: object
                 properties:
             $ref: '#/components/schemas/ValidationError'
