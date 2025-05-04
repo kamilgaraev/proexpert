@@ -14,6 +14,10 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
+/*
+// ВНИМАНИЕ: Этот файл закомментирован, так как маршруты API уже определены в RouteServiceProvider.php.
+// Использование обоих определений приводило к дублированию маршрутов (api/v1/v1/...)
+
 // Применяем общие middleware для всех API v1, если нужно (например, throttle)
 // Route::middleware('throttle:api')->group(function() { // Раскомментировать, если нужно
 
@@ -90,3 +94,9 @@ use Illuminate\Support\Facades\Route;
     });
 
 // }); // Конец группы throttle:api
+*/
+
+// Если вам нужно добавить новый маршрут API, добавьте его в соответствующий файл:
+// - Для админки: routes/api/v1/admin/...
+// - Для мобильного приложения: routes/api/v1/mobile/...
+// - Для лендинга/ЛК: routes/api/v1/landing/...
