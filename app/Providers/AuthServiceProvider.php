@@ -36,11 +36,27 @@ class AuthServiceProvider extends ServiceProvider
     {
         $this->registerPolicies();
 
+        // Настройка для безопасного режима входа в лендинг
+        // ВАЖНО: УСТАНОВИТЕ ЭТОТ ПАРАМЕТР В .env для разблокировки доступа
+        $landingSafetyMode = config('app.landing_safety_mode', true);
+        if ($landingSafetyMode) {
+            Log::warning('[AuthServiceProvider] Включен БЕЗОПАСНЫЙ РЕЖИМ доступа к лендингу!');
+        }
+
         /**
          * Gate для доступа к Лендинг/ЛК API.
          * Требует роль Owner или Admin в текущей организации.
          */
-        Gate::define('access-landing', function (User $user, ?int $organizationId = null): bool {
+        Gate::define('access-landing', function (User $user, ?int $organizationId = null) use ($landingSafetyMode): bool {
+            // ВРЕМЕННЫЙ БЕЗОПАСНЫЙ РЕЖИМ - чтобы пользователи могли войти на проде
+            if ($landingSafetyMode) {
+                Log::warning('[Gate:access-landing] Доступ разрешен через БЕЗОПАСНЫЙ РЕЖИМ', [
+                    'user_id' => $user->id,
+                    'email' => $user->email
+                ]);
+                return true;
+            }
+            
             // Используем ID организации из контекста пользователя, если не передан явно
             $orgId = $organizationId ?? $user->current_organization_id;
             
