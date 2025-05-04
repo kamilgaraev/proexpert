@@ -396,6 +396,7 @@ class JwtAuthService
 
             // Создаем пользователя
             $user = $this->userRepository->create($userData);
+            $organization = null;
 
             // Создаем организацию, если имя передано
             $orgName = $registerDTO->organizationName; // Используем магический __get
@@ -403,18 +404,52 @@ class JwtAuthService
                 $organization = $this->organizationRepository->create([
                     'name' => $orgName,
                     'owner_id' => $user->id,
-                    // Можно добавить больше полей из $registerDTO->getOrganizationData(), если нужно
+                    // Дополнительные поля из $registerDTO->getOrganizationData()
+                    'legal_name' => $registerDTO->organizationLegalName,
+                    'tax_number' => $registerDTO->organizationTaxNumber,
+                    'registration_number' => $registerDTO->organizationRegistrationNumber,
+                    'phone' => $registerDTO->organizationPhone,
+                    'email' => $registerDTO->organizationEmail,
+                    'address' => $registerDTO->organizationAddress,
+                    'city' => $registerDTO->organizationCity,
+                    'postal_code' => $registerDTO->organizationPostalCode,
+                    'country' => $registerDTO->organizationCountry,
                 ]);
+                
                 // Привязываем пользователя к организации с ролью владельца
                 $this->userRepository->attachToOrganization($user->id, $organization->id);
+                
+                // Устанавливаем организацию как текущую для пользователя
+                $user->current_organization_id = $organization->id;
+                $user->save();
+            }
+
+            // Генерируем JWT токен для пользователя
+            $token = null;
+            if ($organization) {
+                $customClaims = ['organization_id' => $organization->id];
+                $token = JWTAuth::claims($customClaims)->fromUser($user);
+            } else {
+                $token = JWTAuth::fromUser($user);
             }
 
             DB::commit(); // Фиксируем транзакцию
 
             // TODO: Отправка письма для верификации email?
 
-            LogService::authLog('register_success', ['user_id' => $user->id, 'email' => $user->email]);
-            return ['success' => true, 'user' => $user, 'status_code' => 201];
+            LogService::authLog('register_success', [
+                'user_id' => $user->id, 
+                'email' => $user->email,
+                'organization_id' => $organization ? $organization->id : null
+            ]);
+            
+            return [
+                'success' => true, 
+                'user' => $user, 
+                'organization' => $organization,
+                'token' => $token,
+                'status_code' => 201
+            ];
 
         } catch (\Exception $e) {
             DB::rollBack(); // Откатываем транзакцию

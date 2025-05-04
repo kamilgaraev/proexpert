@@ -53,6 +53,16 @@ class AuthController extends Controller
                 return RegisterResponse::error($result['message'], $result['status_code']);
             }
 
+            // Проверяем, что все необходимые данные присутствуют
+            if (!isset($result['user']) || !isset($result['organization']) || !isset($result['token'])) {
+                Log::error('[LandingAuthController] Missing data in registration result', [
+                    'has_user' => isset($result['user']),
+                    'has_organization' => isset($result['organization']),
+                    'has_token' => isset($result['token'])
+                ]);
+                return RegisterResponse::error('Ошибка регистрации: неполные данные', 500);
+            }
+
             return RegisterResponse::registerSuccess(
                 $result['user'],
                 $result['organization'],
