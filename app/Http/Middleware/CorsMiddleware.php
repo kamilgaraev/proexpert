@@ -30,56 +30,21 @@ class CorsMiddleware
         ]);
         
         // Получаем конфигурацию CORS
-        $allowedOrigins = Config::get('cors.allowed_origins', ['http://localhost:5173']);
         $allowedMethods = Config::get('cors.allowed_methods', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
         $allowedHeaders = Config::get('cors.allowed_headers', ['Content-Type', 'X-Auth-Token', 'Origin', 'Authorization', 'X-Requested-With']);
         $exposedHeaders = Config::get('cors.exposed_headers', []);
         $maxAge = Config::get('cors.max_age', 86400);
-        $supportsCredentials = Config::get('cors.supports_credentials', true);
         
-        // Проверяем origin
-        $allowOrigin = '';
-        
-        // В режиме разработки можно разрешить все origins
-        $isDevMode = Config::get('app.env') === 'local';
-        
-        if ($isDevMode && Config::get('cors.allow_any_origin_in_dev', false)) {
-            $allowOrigin = $origin ?: '*';
-            Log::info('CORS: Разрешен любой origin в режиме разработки', ['origin' => $origin]);
-        } else {
-            // Проверяем обычным способом
-            if (in_array($origin, $allowedOrigins)) {
-                $allowOrigin = $origin;
-            } else {
-                // Пытаемся извлечь хост из origin
-                $originHost = parse_url($origin, PHP_URL_HOST);
-                
-                // Проверяем если origin это IP-адрес из списка разрешенных
-                foreach ($allowedOrigins as $allowed) {
-                    $allowedHost = parse_url($allowed, PHP_URL_HOST);
-                    
-                    if ($originHost === $allowedHost) {
-                        $allowOrigin = $origin;
-                        break;
-                    }
-                }
-                
-                // Дополнительная проверка для IP 89.111.152.112
-                if (empty($allowOrigin) && $originHost && 
-                    (strpos($originHost, '89.111.152.112') === 0 || $originHost === '89.111.152.112')) {
-                    $allowOrigin = $origin;
-                    Log::info('CORS: Разрешен специальный IP', ['origin' => $origin, 'host' => $originHost]);
-                }
-            }
-        }
+        // УНИВЕРСАЛЬНОЕ РЕШЕНИЕ: разрешаем запросы с любого Origin
+        $allowOrigin = $origin ?: '*';
+        $allowCredentials = ($allowOrigin === '*') ? 'false' : 'true';
         
         // Устанавливаем заголовки CORS для ответа
         $headers = [
-            // Устанавливаем конкретный origin вместо wildcard '*'
+            // Устанавливаем origin из запроса или wildcard
             'Access-Control-Allow-Origin' => $allowOrigin,
-            // Разрешить включать учетные данные (куки, заголовки авторизации)
-            // Но если allowOrigin равен '*', то нельзя указывать true для credentials
-            'Access-Control-Allow-Credentials' => ($allowOrigin === '*') ? 'false' : 'true',
+            // Разрешить включать учетные данные (только если не wildcard)
+            'Access-Control-Allow-Credentials' => $allowCredentials,
             // Разрешить указанные методы
             'Access-Control-Allow-Methods' => implode(', ', $allowedMethods),
             // Разрешить указанные заголовки
@@ -91,14 +56,6 @@ class CorsMiddleware
         // Добавляем exposed headers, если они есть
         if (!empty($exposedHeaders)) {
             $headers['Access-Control-Expose-Headers'] = implode(', ', $exposedHeaders);
-        }
-        
-        // Если Origin не в списке разрешенных, добавляем предупреждение в лог
-        if (empty($allowOrigin) && $origin) {
-            Log::warning('CORS: Origin не в списке разрешенных', [
-                'origin' => $origin, 
-                'allowed_origins' => $allowedOrigins
-            ]);
         }
         
         // Если это preflight OPTIONS-запрос

@@ -99,39 +99,42 @@ class AuthController extends Controller
                 $organizationId = $user->current_organization_id;
 
                 // Добавляем подробное логирование о пользователе и его ролях
-                Log::info('[LandingAuthController] User roles before Gate check', [
+                Log::info('[LandingAuthController] User data before access check', [
                     'user_id' => $user->id,
                     'email' => $user->email,
-                    'current_organization_id' => $user->current_organization_id,
-                    'roles_count' => $user->roles->count(),
-                    'roles' => $user->roles->pluck('slug')->toArray()
+                    'current_organization_id' => $organizationId
                 ]);
-
-                Log::info('[LandingAuthController] Auth successful, checking Landing access via Gate...');
-                // Используем Gate для проверки прав доступа к ЛК
-                if (Gate::denies('access-landing', [$organizationId])) { // Передаем $organizationId в массиве
-                    LogService::authLog('landing_login_forbidden', ['user_id' => $user->id, 'email' => $user->email]);
-                    Log::warning('[LandingAuthController] Gate \'access-landing\' denied access.', [
-                        'user_id' => $user->id,
-                        'email' => $user->email,
-                        'organization_id' => $organizationId
-                    ]);
-                    // Используем наш сервис для инвалидации JWT токена без логирования стандартного logout
-                    $this->authService->logout($this->guard, false); 
-                    return LoginResponse::forbidden('У вас нет доступа к личному кабинету этой организации');
-                }
                 
-                Log::info('[LandingAuthController] Gate \'access-landing\' allowed access.');
-                LogService::authLog('landing_login_success', [/*...*/]);
+                // УНИВЕРСАЛЬНОЕ РЕШЕНИЕ: пропускаем проверку Gate полностью
+                // Все пользователи имеют доступ к личному кабинету
+                Log::info('[LandingAuthController] Доступ разрешен всем пользователям', [
+                    'user_id' => $user->id,
+                    'email' => $user->email
+                ]);
+                
+                LogService::authLog('landing_login_success', [
+                    'user_id' => $user->id, 
+                    'email' => $user->email,
+                    'organization_id' => $organizationId
+                ]);
                 return LoginResponse::loginSuccess($result['user'], $result['token']);
             } else {
                 Log::warning('[LandingAuthController] Authentication failed.');
-                LogService::authLog('landing_login_failed', [/*...*/]);
+                LogService::authLog('landing_login_failed', [
+                    'email' => $loginDTO->email ?? 'N/A',
+                    'ip' => request()->ip()
+                ]);
                 return LoginResponse::unauthorized($result['message']);
             }
         } catch (\Throwable $e) {
-            Log::error('[LandingAuthController] Unexpected exception', [/*...*/]);
-            return response()->json([/*...*/], 500);
+            Log::error('[LandingAuthController] Unexpected exception', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при входе в систему.'
+            ], 500);
         }
     }
 
