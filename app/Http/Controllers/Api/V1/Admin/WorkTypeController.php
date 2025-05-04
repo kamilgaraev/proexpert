@@ -8,6 +8,8 @@ use App\Http\Requests\Api\V1\Admin\WorkType\StoreWorkTypeRequest;
 use App\Http\Requests\Api\V1\Admin\WorkType\UpdateWorkTypeRequest;
 use App\Http\Resources\Api\V1\Admin\WorkTypeResource;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 class WorkTypeController extends Controller
 {
@@ -16,48 +18,45 @@ class WorkTypeController extends Controller
     public function __construct(WorkTypeService $workTypeService)
     {
         $this->workTypeService = $workTypeService;
-        // TODO: Добавить middleware для проверки прав ('can:manage_work_types')
+        $this->middleware('can:manage-catalogs');
     }
 
-    public function index(): JsonResponse
+    public function index(Request $request): AnonymousResourceCollection
     {
-        // TODO: Пагинация, фильтрация, API Resource
-        $workTypes = $this->workTypeService->getActiveWorkTypesForCurrentOrg();
-        return WorkTypeResource::collection($workTypes)->response();
+        $perPage = $request->query('per_page', 15);
+        $workTypes = $this->workTypeService->getWorkTypesPaginated($request, (int)$perPage);
+        return WorkTypeResource::collection($workTypes);
     }
 
     public function store(StoreWorkTypeRequest $request): WorkTypeResource
     {
-        $workType = $this->workTypeService->createWorkType($request->validated());
+        $workType = $this->workTypeService->createWorkType($request->validated(), $request);
         return new WorkTypeResource($workType->load('measurementUnit'));
     }
 
-    public function show(string $id): WorkTypeResource | JsonResponse
+    public function show(Request $request, string $id): WorkTypeResource | JsonResponse
     {
-        $workType = $this->workTypeService->findWorkTypeById((int)$id);
+        $workType = $this->workTypeService->findWorkTypeById((int)$id, $request);
         if (!$workType) {
             return response()->json(['message' => 'Work type not found'], 404);
         }
-        // TODO: Проверка принадлежности (в сервисе)
-        // TODO: API Resource
         return new WorkTypeResource($workType->load('measurementUnit'));
     }
 
     public function update(UpdateWorkTypeRequest $request, string $id): WorkTypeResource | JsonResponse
     {
-        $success = $this->workTypeService->updateWorkType((int)$id, $request->validated());
+        $success = $this->workTypeService->updateWorkType((int)$id, $request->validated(), $request);
         if (!$success) {
             return response()->json(['message' => 'Work type not found or update failed'], 404);
         }
-        $workType = $this->workTypeService->findWorkTypeById((int)$id);
+        $workType = $this->workTypeService->findWorkTypeById((int)$id, $request);
         return new WorkTypeResource($workType->load('measurementUnit'));
     }
 
-    public function destroy(string $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
-        $success = $this->workTypeService->deleteWorkType((int)$id);
+        $success = $this->workTypeService->deleteWorkType((int)$id, $request);
         if (!$success) {
-            // TODO: Уточнить обработку ошибки (может нельзя удалить из-за связей)
             return response()->json(['message' => 'Work type not found or delete failed'], 404);
         }
         return response()->json(null, 204);

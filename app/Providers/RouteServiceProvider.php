@@ -25,9 +25,46 @@ class RouteServiceProvider extends ServiceProvider
         $this->configureRateLimiting();
 
         $this->routes(function () {
-            Route::prefix('api')
-                ->group(base_path('routes/api.php'));
+            // Admin Auth Routes (loaded separately, login accessible without auth middleware)
+            Route::middleware('api') // Базовый middleware для API
+                ->prefix('api/v1/admin')
+                ->as('api.v1.admin.') // Можно использовать то же имя группы для удобства
+                ->group(base_path('routes/api/v1/admin/auth.php'));
 
+            // Other Admin API Routes (protected by auth and access gates)
+            Route::middleware(['api', 'auth:api_admin', 'organization_context', 'can:access-admin-panel'])
+                ->prefix('api/v1/admin')
+                ->as('api.v1.admin.')
+                ->group(function () {
+                    // Подключаем остальные файлы админки
+                    require base_path('routes/api/v1/admin/users.php');
+                    require base_path('routes/api/v1/admin/projects.php');
+                    require base_path('routes/api/v1/admin/catalogs.php');
+                    require base_path('routes/api/v1/admin/reports.php');
+                    require base_path('routes/api/v1/admin/logs.php');
+                    // TODO: Добавить файл для логов аудита, когда он будет
+                });
+
+            // Mobile API Routes
+            Route::middleware('api')
+                ->prefix('api/v1/mobile')
+                ->as('api.v1.mobile.')
+                ->group(function() {
+                     require base_path('routes/api/v1/mobile/auth.php');
+                     require base_path('routes/api/v1/mobile/log.php');
+                     require base_path('routes/api/v1/mobile/projects.php');
+                });
+
+            // Landing API Routes
+            Route::middleware('api')
+                ->prefix('api/v1/landing')
+                ->as('api.v1.landing.')
+                 ->group(function() {
+                     require base_path('routes/api/v1/landing/auth.php');
+                     // Добавить другие файлы лендинга...
+                 });
+
+            // Web Routes
             Route::middleware('web')
                 ->group(base_path('routes/web.php'));
         });

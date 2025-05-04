@@ -155,6 +155,76 @@ class AuthServiceProvider extends ServiceProvider
             // Log::debug('[Gate:manage-project-assignments] Check result.', [/*...*/]);
         });
 
+        /**
+         * Gate для управления справочниками (материалы, виды работ, поставщики).
+         * Требует роль System Admin ИЛИ Owner/Admin в текущей организации.
+         */
+        Gate::define('manage-catalogs', function(User $user, ?int $organizationId = null): bool {
+            if ($user->isSystemAdmin()) {
+                return true;
+            }
+            $orgId = $organizationId ?? $user->current_organization_id;
+            if (!$orgId) {
+                return false; // Нет контекста организации
+            }
+            // Используем ту же логику, что и для manage-foremen
+            return $user->hasRole(Role::ROLE_OWNER, $orgId) || $user->hasRole(Role::ROLE_ADMIN, $orgId);
+        });
+
+        /**
+         * Gate для просмотра отчетов в админке.
+         * Требует роль System Admin ИЛИ одну из ролей (Owner, Admin, Web Admin, Accountant)
+         * в текущей организации.
+         */
+        Gate::define('view-reports', function(User $user, ?int $organizationId = null): bool {
+            if ($user->isSystemAdmin()) {
+                return true;
+            }
+            $orgId = $organizationId ?? $user->current_organization_id;
+            if (!$orgId) {
+                return false;
+            }
+            $allowedRoles = [
+                Role::ROLE_OWNER,
+                Role::ROLE_ADMIN,
+                Role::ROLE_WEB_ADMIN,
+                Role::ROLE_ACCOUNTANT,
+            ];
+            foreach ($allowedRoles as $roleSlug) {
+                if ($user->hasRole($roleSlug, $orgId)) {
+                    return true;
+                }
+            }
+            return false;
+        });
+
+        /**
+         * Gate для просмотра логов операций прорабов в админке.
+         * Требует роль System Admin ИЛИ одну из ролей (Owner, Admin, Web Admin)
+         * в текущей организации. Бухгалтеру (Accountant) не даем доступ к сырым логам.
+         */
+        Gate::define('view-operation-logs', function(User $user, ?int $organizationId = null): bool {
+            if ($user->isSystemAdmin()) {
+                return true;
+            }
+            $orgId = $organizationId ?? $user->current_organization_id;
+            if (!$orgId) {
+                return false;
+            }
+            $allowedRoles = [
+                Role::ROLE_OWNER,
+                Role::ROLE_ADMIN,
+                Role::ROLE_WEB_ADMIN,
+                // Role::ROLE_ACCOUNTANT, // Исключаем бухгалтера
+            ];
+            foreach ($allowedRoles as $roleSlug) {
+                if ($user->hasRole($roleSlug, $orgId)) {
+                    return true;
+                }
+            }
+            return false;
+        });
+
         // TODO: Добавить другие Gates по мере необходимости
     }
 }

@@ -72,4 +72,42 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
             ->orderBy('name')
             ->get();
     }
+
+    /**
+     * Получить материалы для организации с фильтрацией и пагинацией.
+     *
+     * @param int $organizationId
+     * @param int $perPage
+     * @param array $filters ['name' => string, 'category' => string, 'is_active' => bool]
+     * @param string $sortBy
+     * @param string $sortDirection
+     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator
+     */
+    public function getMaterialsForOrganizationPaginated(
+        int $organizationId,
+        int $perPage = 15,
+        array $filters = [],
+        string $sortBy = 'name',
+        string $sortDirection = 'asc'
+    ): \Illuminate\Contracts\Pagination\LengthAwarePaginator
+    {
+        $query = $this->model->where('organization_id', $organizationId);
+
+        // Применяем фильтры
+        if (!empty($filters['name'])) {
+            $query->where('name', 'ilike', '%' . $filters['name'] . '%');
+        }
+        if (!empty($filters['category'])) {
+            $query->where('category', 'ilike', '%' . $filters['category'] . '%');
+        }
+        if (isset($filters['is_active'])) {
+            $query->where('is_active', (bool)$filters['is_active']);
+        }
+
+        // Применяем сортировку
+        $query->orderBy($sortBy, $sortDirection);
+
+        // Пагинация
+        return $query->paginate($perPage);
+    }
 } 

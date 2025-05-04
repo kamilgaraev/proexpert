@@ -11,6 +11,7 @@ use App\Http\Resources\Api\V1\Admin\MeasurementUnitResource;
 use App\Services\Material\MaterialService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 class MaterialController extends Controller
 {
@@ -19,51 +20,48 @@ class MaterialController extends Controller
     public function __construct(MaterialService $materialService)
     {
         $this->materialService = $materialService;
-        // TODO: Добавить middleware для проверки прав ('can:manage_materials')
+        $this->middleware('can:manage-catalogs')->except('getMeasurementUnits');
     }
 
-    public function index(Request $request): MaterialCollection
+    /**
+     * Display a paginated list of materials with filtering and sorting.
+     */
+    public function index(Request $request): AnonymousResourceCollection
     {
-        // TODO: Пагинация, фильтрация, API Resource
-        $materials = $this->materialService->getActiveMaterialsForCurrentOrg();
-        // return new MaterialCollection($materials); 
-        // Временный обход, пока сервис не возвращает пагинацию
-        return new MaterialCollection(MaterialResource::collection($materials));
+        $perPage = $request->query('per_page', 15);
+        $materials = $this->materialService->getMaterialsPaginated($request, (int)$perPage);
+        return MaterialResource::collection($materials);
     }
 
     public function store(StoreMaterialRequest $request): MaterialResource
     {
-        $material = $this->materialService->createMaterial($request->validated());
+        $material = $this->materialService->createMaterial($request->validated(), $request);
         return new MaterialResource($material->load('measurementUnit'));
     }
 
-    public function show(string $id): MaterialResource | JsonResponse
+    public function show(Request $request, string $id): MaterialResource | JsonResponse
     {
-        $material = $this->materialService->findMaterialById((int)$id);
+        $material = $this->materialService->findMaterialById((int)$id, $request);
         if (!$material) {
             return response()->json(['message' => 'Material not found'], 404);
         }
-        // TODO: Проверка принадлежности организации (в сервисе)
-        // TODO: API Resource
         return new MaterialResource($material->load('measurementUnit'));
     }
 
     public function update(UpdateMaterialRequest $request, string $id): MaterialResource | JsonResponse
     {
-        $success = $this->materialService->updateMaterial((int)$id, $request->validated());
+        $success = $this->materialService->updateMaterial((int)$id, $request->validated(), $request);
         if (!$success) {
             return response()->json(['message' => 'Material not found or update failed'], 404);
         }
-        // TODO: API Resource
-        $material = $this->materialService->findMaterialById((int)$id);
+        $material = $this->materialService->findMaterialById((int)$id, $request);
         return new MaterialResource($material->load('measurementUnit'));
     }
 
-    public function destroy(string $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
-        $success = $this->materialService->deleteMaterial((int)$id);
+        $success = $this->materialService->deleteMaterial((int)$id, $request);
         if (!$success) {
-            // TODO: Уточнить обработку ошибки (может нельзя удалить из-за связей)
             return response()->json(['message' => 'Material not found or delete failed'], 404);
         }
         return response()->json(null, 204);

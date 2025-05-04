@@ -1,6 +1,12 @@
-use Illuminate\Support\Collection;
+<?php
 
-interface UserRepositoryInterface extends BaseRepositoryInterface
+namespace App\Repositories\Interfaces;
+
+use App\Repositories\RepositoryInterface;
+use Illuminate\Support\Collection;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+
+interface UserRepositoryInterface extends RepositoryInterface
 {
     // ... другие методы ...
 
@@ -21,4 +27,25 @@ interface UserRepositoryInterface extends BaseRepositoryInterface
      * @return bool
      */
     public function hasRoleInOrganization(int $userId, int $roleId, int $organizationId): bool;
-} 
+
+    /**
+     * Получить пагинированный список пользователей по роли в организации.
+     */
+    public function paginateByRoleInOrganization(
+        string $roleSlug,
+        int $organizationId,
+        int $perPage = 15,
+        array $filters = [],
+        string $sortBy = 'name',
+        string $sortDirection = 'asc'
+    ): LengthAwarePaginator;
+
+    /**
+     * Получить данные по активности прорабов (из логов).
+     *
+     * @param int $organizationId
+     * @param array $filters (project_id, user_id, date_from, date_to)
+     * @return Collection
+     */
+    public function getForemanActivity(int $organizationId, array $filters = []): Collection;
+}

@@ -8,6 +8,8 @@ use App\Http\Requests\Api\V1\Admin\Supplier\StoreSupplierRequest;
 use App\Http\Requests\Api\V1\Admin\Supplier\UpdateSupplierRequest;
 use App\Http\Resources\Api\V1\Admin\SupplierResource;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 
 class SupplierController extends Controller
 {
@@ -16,48 +18,45 @@ class SupplierController extends Controller
     public function __construct(SupplierService $supplierService)
     {
         $this->supplierService = $supplierService;
-        // TODO: Добавить middleware для проверки прав ('can:manage_suppliers')
+        $this->middleware('can:manage-catalogs');
     }
 
-    public function index(): JsonResponse
+    public function index(Request $request): AnonymousResourceCollection
     {
-        // TODO: Пагинация, фильтрация, API Resource
-        $suppliers = $this->supplierService->getActiveSuppliersForCurrentOrg();
-        return SupplierResource::collection($suppliers)->response();
+        $perPage = $request->query('per_page', 15);
+        $suppliers = $this->supplierService->getSuppliersPaginated($request, (int)$perPage);
+        return SupplierResource::collection($suppliers);
     }
 
     public function store(StoreSupplierRequest $request): SupplierResource
     {
-        $supplier = $this->supplierService->createSupplier($request->validated());
+        $supplier = $this->supplierService->createSupplier($request->validated(), $request);
         return new SupplierResource($supplier);
     }
 
-    public function show(string $id): SupplierResource | JsonResponse
+    public function show(Request $request, string $id): SupplierResource | JsonResponse
     {
-        $supplier = $this->supplierService->findSupplierById((int)$id);
+        $supplier = $this->supplierService->findSupplierById((int)$id, $request);
         if (!$supplier) {
             return response()->json(['message' => 'Supplier not found'], 404);
         }
-        // TODO: Проверка принадлежности (в сервисе)
-        // TODO: API Resource
         return new SupplierResource($supplier);
     }
 
     public function update(UpdateSupplierRequest $request, string $id): SupplierResource | JsonResponse
     {
-        $success = $this->supplierService->updateSupplier((int)$id, $request->validated());
+        $success = $this->supplierService->updateSupplier((int)$id, $request->validated(), $request);
         if (!$success) {
             return response()->json(['message' => 'Supplier not found or update failed'], 404);
         }
-        $supplier = $this->supplierService->findSupplierById((int)$id);
+        $supplier = $this->supplierService->findSupplierById((int)$id, $request);
         return new SupplierResource($supplier);
     }
 
-    public function destroy(string $id): JsonResponse
+    public function destroy(Request $request, string $id): JsonResponse
     {
-        $success = $this->supplierService->deleteSupplier((int)$id);
+        $success = $this->supplierService->deleteSupplier((int)$id, $request);
         if (!$success) {
-             // TODO: Уточнить обработку ошибки (может нельзя удалить из-за связей)
             return response()->json(['message' => 'Supplier not found or delete failed'], 404);
         }
         return response()->json(null, 204);

@@ -51,6 +51,8 @@ tags:
   - name: Поддержка (ЛК)
     description: Отправка запросов в службу поддержки из Личного Кабинета
   # Добавить теги для ЛК (Подписки, Планы, Поддержка) и Мобильного API
+  - name: Логирование (Мобильное)
+    description: Методы для фиксации данных прорабом (расход материалов, выполнение работ)
 
 paths:
   /landing/auth/register:
@@ -1255,1140 +1257,123 @@ paths:
         '403': { $ref: '#/components/responses/ForbiddenError' } # Не админ/владелец или пытается удалить себя/владельца
         '404': { $ref: '#/components/responses/NotFoundError' }
 
-components:
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+  # --- Mobile API - Logging ---
+  /mobile/logs/material-usage:
+    post:
+      tags:
+        - Логирование (Мобильное)
+      summary: Зафиксировать расход материала
+      description: Прораб фиксирует расход определенного материала на проекте.
+      operationId: storeMobileMaterialUsageLog
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreMaterialUsageLogRequest'
+      responses:
+        '201':
+          description: Запись о расходе материала успешно создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaterialUsageLogResponse'
+        '400':
+          description: Неверный запрос (например, ошибка в данных, не прошедшая валидацию на уровне бизнес-логики)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          description: Доступ запрещен (пользователь не прораб или не назначен на проект)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: "У вас нет доступа к этому проекту." }
+        '404':
+          description: Ресурс не найден (проект или материал)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: "Проект не найден." }
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/ServerError'
 
-  schemas:
-    User:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 1
-        name:
-          type: string
-          example: Иван Иванов
-        email:
-          type: string
-          format: email
-          example: ivan@example.com
-        phone:
-          type: string
-          nullable: true
-          example: "+7 (901) 123-45-67"
-        position:
-          type: string
-          nullable: true
-          example: "Директор"
-        user_type:
-          type: string
-          example: "organization_admin"
-        current_organization_id:
-          type: integer
-          example: 1
-        last_login_at:
-          type: string
-          format: date-time
-          nullable: true
-          example: "2024-05-01T12:00:00Z"
-        created_at:
-          type: string
-          format: date-time
-          example: "2024-04-25T10:00:00Z"
-        updated_at:
-          type: string
-          format: date-time
-          example: "2024-04-25T10:00:00Z"
-        organizations:
-          type: array
-          items:
-            $ref: '#/components/schemas/OrganizationPivot'
-        roles:
-          type: array
-          items:
-            $ref: '#/components/schemas/RolePivot'
-
-    Organization:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 1
-        name:
-          type: string
-          example: ООО "СтройХолдинг"
-        legal_name:
-          type: string
-          nullable: true
-          example: Общество с ограниченной ответственностью "СтройХолдинг"
-        tax_number:
-          type: string
-          nullable: true
-          example: "7712345678"
-        registration_number:
-          type: string
-          nullable: true
-          example: "1234567890123"
-        phone:
-          type: string
-          nullable: true
-          example: "+7 (495) 123-45-67"
-        email:
-          type: string
-          format: email
-          nullable: true
-          example: info@stroiholding.ru
-        address:
-          type: string
-          nullable: true
-          example: "Москва, ул. Строителей, д. 10"
-        city:
-          type: string
-          nullable: true
-          example: "Москва"
-        postal_code:
-          type: string
-          nullable: true
-          example: "123456"
-        country:
-          type: string
-          nullable: true
-          example: "Россия"
-        created_at:
-          type: string
-          format: date-time
-          example: "2024-04-25T10:00:00Z"
-        updated_at:
-          type: string
-          format: date-time
-          example: "2024-04-25T10:00:00Z"
-
-    OrganizationPivot:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 1
-        name:
-          type: string
-          example: ООО "СтройХолдинг"
-        pivot:
-          type: object
-          properties:
-            is_owner:
-              type: boolean
-              example: true
-            is_active:
-              type: boolean
-              example: true
-
-    Role:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 1
-        name:
-          type: string
-          example: Администратор организации
-        slug:
-          type: string
-          example: organization_admin
-        type:
-          type: string
-          example: system
-        organization_id:
-          type: integer
-          nullable: true
-          example: null
-        permissions:
-          type: array
-          items:
-            $ref: '#/components/schemas/Permission'
-
-    RolePivot:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 1
-        name:
-          type: string
-          example: Администратор организации
-        slug:
-          type: string
-          example: organization_admin
-        type:
-          type: string
-          example: system
-        pivot:
-          type: object
-          properties:
-            organization_id:
-              type: integer
-              nullable: true
-              example: 1
-
-    Permission:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 1
-        name:
-          type: string
-          example: Просмотр пользователей
-        slug:
-          type: string
-          example: users.view
-        description:
-          type: string
-          nullable: true
-          example: Просмотр списка пользователей организации
-
-    AuthError:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: false
-        message:
-          type: string
-          example: Неверный email или пароль
-
-    ValidationError:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: false
-        message:
-          type: string
-          example: Ошибка валидации
-        errors:
-          type: object
-          example:
-            email: [Поле email обязательно для заполнения]
-            password: [Пароль должен содержать не менее 8 символов]
-
-    ServerError:
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: false
-        message:
-          type: string
-          example: Ошибка сервера
-
-    # --- Схемы для Админки (API #2) --- 
-
-    # Проекты
-    Project:
-      description: Ресурс проекта
-      allOf:
-        - $ref: '#/components/schemas/ProjectBase'
-        - type: object
-          properties:
-            id:
-              type: integer
-              example: 101
-            organizationId:
-              type: integer
-              example: 1
-            createdAt:
-              type: string
-              format: date-time
-              readOnly: true
-            updatedAt:
-              type: string
-              format: date-time
-              readOnly: true
-              
-    ProjectBase:
-      description: Базовые поля проекта для создания/обновления
-      type: object
-      required:
-         - name
-         - status
-      properties:
-        name:
-          type: string
-          maxLength: 255
-          example: "ЖК Солнечный"
-        address:
-          type: string
-          maxLength: 1000
-          nullable: true
-          example: "г. Москва, ул. Лучистая, д. 5"
-        status:
-          type: string
-          enum: [active, completed, planned, on_hold]
-          example: active
-        startDate:
-          type: string
-          format: date
-          nullable: true
-          example: "2024-01-15"
-        endDate:
-          type: string
-          format: date
-          nullable: true
-          example: "2025-12-31"
-        isArchived:
-          type: boolean
-          default: false
-          example: false
-          
-    ProjectListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: '#/components/schemas/Project'
-        # Добавить links и meta для пагинации
-        
-    ProjectResponse:
-      type: object
-      properties:
-        data:
-          $ref: '#/components/schemas/Project'
-          
-    StoreProjectRequest:
-      description: Данные для создания проекта
-      type: object
-      required:
-         - name
-         - status
-      properties:
-        name:
-          type: string
-          maxLength: 255
-          example: "ЖК Солнечный"
-        address:
-          type: string
-          maxLength: 1000
-          nullable: true
-          example: "г. Москва, ул. Лучистая, д. 5"
-        status:
-          type: string
-          enum: [active, completed, planned, on_hold]
-          example: active
-        startDate:
-          type: string
-          format: date
-          nullable: true
-          example: "2024-01-15"
-        endDate:
-          type: string
-          format: date
-          nullable: true
-          example: "2025-12-31"
-        isArchived:
-          type: boolean
-          default: false
-          example: false
-        
-    UpdateProjectRequest:
-      description: Данные для обновления проекта
-      type: object
-      properties:
-        name:
-          type: string
-          maxLength: 255
-          example: "ЖК Солнечный (корпус 2)"
-        address:
-          type: string
-          maxLength: 1000
-          nullable: true
-          example: "г. Москва, ул. Лучистая, д. 5, к. 2"
-        status:
-          type: string
-          enum: [active, completed, planned, on_hold]
-          example: active
-        startDate:
-          type: string
-          format: date
-          nullable: true
-          example: "2024-01-15"
-        endDate:
-          type: string
-          format: date
-          nullable: true
-          example: "2025-12-31"
-        isArchived:
-          type: boolean
-          default: false
-          example: false
-
-    # Материалы
-    Material:
-      description: Ресурс материала
-      allOf:
-        - $ref: '#/components/schemas/MaterialBase'
-        - type: object
-          properties:
-            id:
-              type: integer
-              example: 205
-            measurementUnit:
-              $ref: '#/components/schemas/MeasurementUnit'
-            organizationId:
-              type: integer
-              example: 1
-            createdAt:
-              type: string
-              format: date-time
-              readOnly: true
-            updatedAt:
-              type: string
-              format: date-time
-              readOnly: true
-              
-    MaterialBase:
-      description: Базовые поля материала
-      type: object
-      required:
-        - name
-        - measurement_unit_id
-      properties:
-        name:
-          type: string
-          maxLength: 255
-          example: "Кирпич облицовочный M150"
-        category:
-          type: string
-          maxLength: 100
-          nullable: true
-          example: "Стеновые материалы"
-        measurement_unit_id:
-          type: integer
-          example: 5
-          description: ID единицы измерения
-        isActive:
-          type: boolean
-          default: true
-          example: true
-          
-    MaterialListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: '#/components/schemas/Material'
-            
-    MaterialResponse:
-      type: object
-      properties:
-        data:
-          $ref: '#/components/schemas/Material'
-          
-    StoreMaterialRequest:
-       type: object
-       required:
-        - name
-        - measurement_unit_id
-       properties:
-         name:
-           type: string
-           maxLength: 255
-           example: "Кирпич облицовочный M150"
-         category:
-           type: string
-           maxLength: 100
-           nullable: true
-           example: "Стеновые материалы"
-         measurement_unit_id:
-           type: integer
-           example: 5
-           description: ID единицы измерения
-         isActive:
-           type: boolean
-           default: true
-           example: true
-       
-    UpdateMaterialRequest:
-       type: object
-       properties:
-         name:
-           type: string
-           maxLength: 255
-           example: "Кирпич облицовочный M150"
-         category:
-           type: string
-           maxLength: 100
-           nullable: true
-           example: "Стеновые материалы"
-         measurement_unit_id:
-           type: integer
-           example: 5
-           description: ID единицы измерения
-         isActive:
-           type: boolean
-           default: true
-           example: true
-
-    # Виды работ
-    WorkType:
-      description: Ресурс вида работ
-      allOf:
-        - $ref: '#/components/schemas/WorkTypeBase'
-        - type: object
-          properties:
-            id:
-              type: integer
-              example: 310
-            measurementUnit:
-              $ref: '#/components/schemas/MeasurementUnit'
-            organizationId:
-              type: integer
-              example: 1
-            createdAt:
-              type: string
-              format: date-time
-              readOnly: true
-            updatedAt:
-              type: string
-              format: date-time
-              readOnly: true
-              
-    WorkTypeBase:
-      description: Базовые поля вида работ
-      type: object
-      required:
-        - name
-        - measurement_unit_id
-      properties:
-        name:
-          type: string
-          maxLength: 255
-          example: "Кладка наружных стен"
-        category:
-          type: string
-          maxLength: 100
-          nullable: true
-          example: "Общестроительные работы"
-        measurement_unit_id:
-          type: integer
-          example: 10 # м3
-          description: ID единицы измерения
-        isActive:
-          type: boolean
-          default: true
-          example: true
-          
-    WorkTypeListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: '#/components/schemas/WorkType'
-            
-    WorkTypeResponse:
-      type: object
-      properties:
-        data:
-          $ref: '#/components/schemas/WorkType'
-          
-    StoreWorkTypeRequest:
-       type: object
-       required:
-         - name
-         - measurement_unit_id
-       properties:
-         name:
-           type: string
-           maxLength: 255
-           example: "Кладка наружных стен"
-         category:
-           type: string
-           maxLength: 100
-           nullable: true
-           example: "Общестроительные работы"
-         measurement_unit_id:
-           type: integer
-           example: 10 # м3
-           description: ID единицы измерения
-         isActive:
-           type: boolean
-           default: true
-           example: true
-       
-    UpdateWorkTypeRequest:
-       type: object
-       properties:
-         name:
-           type: string
-           maxLength: 255
-           example: "Кладка наружных стен"
-         category:
-           type: string
-           maxLength: 100
-           nullable: true
-           example: "Общестроительные работы"
-         measurement_unit_id:
-           type: integer
-           example: 10 # м3
-           description: ID единицы измерения
-         isActive:
-           type: boolean
-           default: true
-           example: true
-
-    # Поставщики
-    Supplier:
-      description: Ресурс поставщика
-      allOf:
-        - $ref: '#/components/schemas/SupplierBase'
-        - type: object
-          properties:
-            id:
-              type: integer
-              example: 45
-            organizationId:
-              type: integer
-              example: 1
-            createdAt:
-              type: string
-              format: date-time
-              readOnly: true
-            updatedAt:
-              type: string
-              format: date-time
-              readOnly: true
-              
-    SupplierBase:
-      description: Базовые поля поставщика
-      type: object
-      required:
-        - name
-      properties:
-        name:
-          type: string
-          maxLength: 255
-          example: "ООО КирпичСтройСнаб"
-        contactPerson:
-          type: string
-          maxLength: 255
-          nullable: true
-          example: "Петр Сидоров"
-        phone:
-          type: string
-          maxLength: 50
-          nullable: true
-          example: "+7 (495) 987-65-43"
-        email:
-          type: string
-          format: email
-          maxLength: 255
-          nullable: true
-          example: "sidorov@kirpichstroi.ru"
-        address:
-          type: string
-          maxLength: 1000
-          nullable: true
-          example: "г. Подольск, ул. Заводская, 1"
-        isActive:
-          type: boolean
-          default: true
-          example: true
-          
-    SupplierListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: '#/components/schemas/Supplier'
-            
-    SupplierResponse:
-      type: object
-      properties:
-        data:
-          $ref: '#/components/schemas/Supplier'
-          
-    StoreSupplierRequest:
-       type: object
-       required:
-        - name
-       properties:
-         name:
-           type: string
-           maxLength: 255
-           example: "ООО КирпичСтройСнаб"
-         contactPerson:
-           type: string
-           maxLength: 255
-           nullable: true
-           example: "Петр Сидоров"
-         phone:
-           type: string
-           maxLength: 50
-           nullable: true
-           example: "+7 (495) 987-65-43"
-         email:
-           type: string
-           format: email
-           maxLength: 255
-           nullable: true
-           example: "sidorov@kirpichstroi.ru"
-         address:
-           type: string
-           maxLength: 1000
-           nullable: true
-           example: "г. Подольск, ул. Заводская, 1"
-         isActive:
-           type: boolean
-           default: true
-           example: true
-       
-    UpdateSupplierRequest:
-       type: object
-       properties:
-         name:
-           type: string
-           maxLength: 255
-           example: "ООО КирпичСтройСнаб"
-         contactPerson:
-           type: string
-           maxLength: 255
-           nullable: true
-           example: "Петр Сидоров"
-         phone:
-           type: string
-           maxLength: 50
-           nullable: true
-           example: "+7 (495) 987-65-43"
-         email:
-           type: string
-           format: email
-           maxLength: 255
-           nullable: true
-           example: "sidorov@kirpichstroi.ru"
-         address:
-           type: string
-           maxLength: 1000
-           nullable: true
-           example: "г. Подольск, ул. Заводская, 1"
-         isActive:
-           type: boolean
-           default: true
-           example: true
-
-    # Управление прорабами
-    ForemanUser:
-      description: Ресурс пользователя-прораба
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 15
-        name:
-          type: string
-          example: "Сергей Петров"
-        email:
-          type: string
-          format: email
-          example: "sergey.petrov@example.com"
-        isActiveInOrg:
-          type: boolean
-          description: Активен ли пользователь в текущей организации
-          example: true
-        createdAt:
-          type: string
-          format: date-time
-          readOnly: true
-        updatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-          
-    ForemanUserListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: '#/components/schemas/ForemanUser'
-            
-    ForemanUserResponse:
-      type: object
-      properties:
-        data:
-          $ref: '#/components/schemas/ForemanUser'
-          
-    StoreForemanRequest:
-      type: object
-      required:
-        - name
-        - email
-        - password
-        - password_confirmation
-      properties:
-        name:
-          type: string
-          maxLength: 255
-        email:
-          type: string
-          format: email
-          maxLength: 255
-        password:
-          type: string
-          format: password
-          description: Пароль (мин. 8 символов, по умолчанию)
-        password_confirmation:
-          type: string
-          format: password
-          description: Подтверждение пароля
-          
-    UpdateForemanRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          maxLength: 255
-        password:
-          type: string
-          format: password
-          description: Новый пароль (опционально)
-          nullable: true
-        password_confirmation:
-          type: string
-          format: password
-          description: Подтверждение нового пароля
-        # isActiveInOrg: 
-        #  type: boolean
-        #  description: Активировать/Деактивировать пользователя в организации
-          
-    MeasurementUnit:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 5
-        name:
-          type: string
-          example: "Квадратный метр"
-        symbol:
-          type: string
-          example: "м²"
-        type:
-          type: string
-          enum: [length, area, volume, weight, pieces, time, other]
-          example: area
-          description: Тип единицы измерения 
-
-    # --- Схемы для ЛК (API #1) ---
-    AdminUser:
-      description: Ресурс пользователя-администратора в ЛК
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 12
-        name:
-          type: string
-          example: "Мария Сидорова"
-        email:
-          type: string
-          format: email
-          example: "maria.sidorova@example.com"
-        isActiveInOrg:
-          type: boolean
-          description: Активен ли пользователь в текущей организации
-          example: true
-        createdAt:
-          type: string
-          format: date-time
-          readOnly: true
-        updatedAt:
-          type: string
-          format: date-time
-          readOnly: true
-          
-    AdminUserListResponse:
-      type: object
-      properties:
-        data:
-          type: array
-          items:
-            $ref: '#/components/schemas/AdminUser'
-            
-    AdminUserResponse:
-      type: object
-      properties:
-        data:
-          $ref: '#/components/schemas/AdminUser'
-          
-    StoreAdminRequest:
-      type: object
-      required:
-        - name
-        - email
-        - password
-        - password_confirmation
-      properties:
-        name:
-          type: string
-          maxLength: 255
-        email:
-          type: string
-          format: email
-          maxLength: 255
-        password:
-          type: string
-          format: password
-          description: Пароль (мин. 8 символов, по умолчанию)
-        password_confirmation:
-          type: string
-          format: password
-          description: Подтверждение пароля
-          
-    UpdateAdminRequest:
-      type: object
-      properties:
-        name:
-          type: string
-          maxLength: 255
-        email:
-          type: string
-          format: email
-          maxLength: 255
-          description: Новый email (опционально)
-        password:
-          type: string
-          format: password
-          description: Новый пароль (опционально)
-          nullable: true
-        password_confirmation:
-          type: string
-          format: password
-          description: Подтверждение нового пароля
-    # Восстанавливаем схему ответа для POST /landing/users
-    SuccessCreationAdminUserResponse:
-        description: Успешный ответ при создании администратора организации
-        type: object
-        properties:
-          success:
-            type: boolean
-            example: true
-          message:
-            type: string
-            example: Administrator created successfully
-          data:
-            $ref: '#/components/schemas/AdminUser' # Ссылка на существующую схему AdminUser
-
-    # --- Новые схемы для ЛК (API #1) --- 
-    
-    UpdateOrganizationRequest:
-      description: Данные для обновления организации в ЛК
-      type: object
-      properties:
-        name:
-          type: string
-          maxLength: 255
-          description: Новое название организации (если передано)
-        address:
-          type: string
-          maxLength: 1000
-          nullable: true
-          description: Новый адрес
-        phone:
-          type: string
-          maxLength: 50
-          nullable: true
-          description: Новый телефон
-        email:
-          type: string
-          format: email
-          maxLength: 255
-          nullable: true
-          description: Новый email
-        # Добавьте сюда другие поля из UpdateOrganizationRequest.php
-
-    StoreSupportRequest:
-      description: Данные для создания запроса в поддержку
-      type: object
-      required:
-        - subject
-        - message
-      properties:
-        subject:
-          type: string
-          maxLength: 255
-          example: "Вопрос по тарифу"
-        message:
-          type: string
-          maxLength: 5000
-          example: "Не могу найти информацию о лимитах..."
-
-    # --- Общие схемы ошибок --- (Если еще не определены)
-    ErrorNotFound:
-       description: Ошибка - Ресурс не найден
-       type: object
-       properties:
-          success:
-             type: boolean
-             example: false
-          message:
-             type: string
-             example: Resource not found
-
-    # --- Схемы для Управления Пользователями Админ-Панели (ЛК) ---
-    StoreAdminPanelUserRequest:
-      type: object
-      required:
-        - name
-        - email
-        - password
-        - password_confirmation
-        - role_slug
-      properties:
-        name:
-          type: string
-          maxLength: 255
-          example: "Алексей Бухгалтер"
-        email:
-          type: string
-          format: email
-          maxLength: 255
-          example: "a.buh@example.com"
-        password:
-          type: string
-          format: password
-          description: Пароль (мин. 8 символов)
-        password_confirmation:
-          type: string
-          format: password
-          description: Подтверждение пароля
-        role_slug:
-          type: string
-          description: "Слаг роли пользователя (например, 'web_admin' или 'accountant')"
-          enum: [web_admin, accountant] # Перечислите разрешенные роли
-          example: "accountant"
-          
-    AdminPanelUserResource:
-      description: Ресурс пользователя админ-панели
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 25
-        name:
-          type: string
-          example: "Алексей Бухгалтер"
-        email:
-          type: string
-          format: email
-          example: "a.buh@example.com"
-        role_slug:
-          type: string
-          example: "accountant"
-          description: Слаг роли пользователя
-        is_active:
-          type: boolean
-          description: Активен ли пользователь в системе
-          example: true
-        created_at:
-          type: string
-          format: date-time
-          readOnly: true
-        updated_at:
-          type: string
-          format: date-time
-          readOnly: true
-
-    SuccessCreationAdminPanelUserResponse:
-      description: Успешный ответ при создании пользователя админ-панели
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: true
-        message:
-          type: string
-          example: Admin panel user created successfully
-        data:
-          $ref: '#/components/schemas/AdminPanelUserResource'
-    
-    UpdateAdminPanelUserRequest:
-      description: Данные для обновления пользователя админ-панели (только имя и пароль)
-      type: object
-      properties:
-        name:
-          type: string
-          maxLength: 255
-          example: "Алексей Бухгалтер (Обновлено)"
-        password:
-          type: string
-          format: password
-          description: Новый пароль (опционально, мин. 8 символов)
-          nullable: true
-        password_confirmation:
-          type: string
-          format: password
-          description: Подтверждение нового пароля (требуется, если передан password)
-
-    AdminPanelUserListResponse:
-      description: Ответ со списком пользователей админ-панели
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: true
-        data:
-          type: array
-          items:
-            $ref: '#/components/schemas/AdminPanelUserResource'
-        # Можно добавить пагинацию (links, meta), если она реализована в контроллере
-
-    AdminPanelUserResponse:
-      description: Ответ с одним пользователем админ-панели
-      type: object
-      properties:
-        success:
-          type: boolean
-          example: true
-        data:
-          $ref: '#/components/schemas/AdminPanelUserResource'
-
-  responses:
-    UnauthorizedError:
-      description: Ошибка авторизации (невалидный токен или его отсутствие)
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/AuthError'
-    ForbiddenError:
-      description: Доступ запрещен (нет прав)
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              message: { type: string, example: "Forbidden" }
-    NotFoundError:
-      description: Ресурс не найден
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorNotFound'
-    ValidationError:
-      description: Ошибка валидации данных
-      content:
-        application/json:
-          schema:
+  /mobile/logs/work-completion:
+    post:
+      tags:
+        - Логирование (Мобильное)
+      summary: Зафиксировать выполнение работы
+      description: Прораб фиксирует факт выполнения определенного вида работ на проекте.
+      operationId: storeMobileWorkCompletionLog
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreWorkCompletionLogRequest'
+      responses:
+        '201':
+          description: Запись о выполнении работы успешно создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkCompletionLogResponse'
+        '400':
+          description: Неверный запрос
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          description: Доступ запрещен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string, example: "У вас нет доступа к этому проекту." }
+        '404':
+          description: Ресурс не найден (проект или вид работы)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
             $ref: '#/components/schemas/ValidationError'
     ServerError:
       description: Внутренняя ошибка сервера
       content:
         application/json:
           schema:
+            $ref: '#/components/schemas/ServerError'
+
+  # --- Схемы для мобильного логирования ---
+  MaterialUsageLog:
+    description: Запись лога использования материала
+    type: object
+    properties:
+      id: { type: integer, readOnly: true }
+      project_id: { type: integer }
+      material_id: { type: integer }
+      user_id: { type: integer, readOnly: true }
+      quantity: { type: number, format: float, example: 10.5 }
             $ref: '#/components/schemas/ServerError' 

@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\Api\V1\Mobile;
 
 use App\Http\Controllers\Controller;
-use App\Http\Resources\ProjectResource;
-use App\Http\Resources\ProjectCollection;
-use App\Services\Projects\ProjectService;
-use Illuminate\Http\JsonResponse;
+use App\Services\Project\ProjectService;
+use App\Http\Resources\Api\V1\Mobile\Project\MobileProjectResource;
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use App\Exceptions\BusinessLogicException;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\Log;
 
 class ProjectController extends Controller
 {
@@ -18,66 +20,47 @@ class ProjectController extends Controller
         $this->projectService = $projectService;
     }
 
-    public function index(Request $request): JsonResponse
+    /**
+     * Получить список проектов, назначенных текущему пользователю (прорабу).
+     */
+    public function getAssignedProjects(Request $request): AnonymousResourceCollection | JsonResponse
     {
-        // В мобильном приложении прораб видит только проекты, связанные с ним
-        $projects = $this->projectService->getProjectsForForeman(
-            auth()->id(),
-            $request->get('per_page', 15),
-            $request->get('search'),
-            $request->get('status')
-        );
-
-        return response()->json(new ProjectCollection($projects));
+        try {
+            // Сервис сам определит пользователя и организацию из реквеста
+            $projects = $this->projectService->getProjectsForUser($request);
+            return MobileProjectResource::collection($projects);
+        } catch (BusinessLogicException $e) {
+            return response()->json(['message' => $e->getMessage()], $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error fetching assigned projects for mobile user', [
+                'user_id' => $request->user()?->id,
+                'exception' => $e
+            ]);
+            return response()->json(['message' => 'Произошла внутренняя ошибка сервера.'], 500);
+        }
     }
 
-    public function show(int $id): JsonResponse
+    // Можно добавить другие методы для мобильного приложения, если понадобятся
+    // Например, получение деталей конкретного проекта, доступного прорабу
+    /*
+    public function show(Request $request, int $projectId): MobileProjectResource | JsonResponse
     {
-        $project = $this->projectService->getProjectForForeman($id, auth()->id());
-
-        return response()->json(new ProjectResource($project));
+        try {
+            $project = $this->projectService->getProjectDetailsForUser($request, $projectId); // Нужен новый метод в сервисе
+            if (!$project) {
+                return response()->json(['message' => 'Проект не найден или недоступен.'], 404);
+            }
+            return new MobileProjectResource($project);
+        } catch (BusinessLogicException $e) {
+            return response()->json(['message' => $e->getMessage()], $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error fetching project details for mobile user', [
+                'user_id' => $request->user()?->id,
+                'project_id' => $projectId,
+                'exception' => $e
+            ]);
+            return response()->json(['message' => 'Произошла внутренняя ошибка сервера.'], 500);
+        }
     }
-
-    public function getMaterialsForProject(int $id, Request $request): JsonResponse
-    {
-        $materials = $this->projectService->getProjectMaterialsForForeman(
-            $id,
-            auth()->id(),
-            $request->get('per_page', 50),
-            $request->get('search')
-        );
-
-        return response()->json($materials);
-    }
-
-    public function getWorkTypesForProject(int $id, Request $request): JsonResponse
-    {
-        $workTypes = $this->projectService->getProjectWorkTypesForForeman(
-            $id,
-            auth()->id(),
-            $request->get('per_page', 50),
-            $request->get('search')
-        );
-
-        return response()->json($workTypes);
-    }
-
-    public function getProjectStatistics(int $id): JsonResponse
-    {
-        $statistics = $this->projectService->getProjectStatisticsForForeman($id, auth()->id());
-
-        return response()->json($statistics);
-    }
-
-    public function getSuppliersForProject(int $id, Request $request): JsonResponse
-    {
-        $suppliers = $this->projectService->getProjectSuppliersForForeman(
-            $id,
-            auth()->id(),
-            $request->get('per_page', 50),
-            $request->get('search')
-        );
-
-        return response()->json($suppliers);
-    }
-} 
+    */
+}

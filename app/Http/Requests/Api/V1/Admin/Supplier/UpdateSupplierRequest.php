@@ -3,20 +3,45 @@
 namespace App\Http\Requests\Api\V1\Admin\Supplier;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Validation\Rule;
+use App\Models\Supplier; // Импортируем модель
 
 class UpdateSupplierRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        // TODO: Auth::user()->can('update', $this->route('supplier'))
-        return true;
+        /** @var Supplier|null $supplier */
+        $supplier = $this->route('supplier');
+        
+        // Проверяем права и принадлежность
+        return $supplier && Gate::allows('manage-catalogs') && $supplier->organization_id === (int)$this->attributes->get('organization_id');
     }
 
     public function rules(): array
     {
-        $supplierId = $this->route('supplier');
+        /** @var Supplier|null $supplier */
+        $supplier = $this->route('supplier');
+        $supplierId = $supplier?->id;
+        $organizationId = $this->attributes->get('organization_id');
+        
+        if (!$organizationId || !$supplierId) {
+            return [];
+        }
+
         return [
-            'name' => 'sometimes|required|string|max:255', // TODO: Unique для организации, ignore $supplierId
+            'name' => [
+                'sometimes',
+                'required',
+                'string',
+                'max:255',
+                 Rule::unique('suppliers', 'name')
+                    ->where(function ($query) use ($organizationId) {
+                        return $query->where('organization_id', $organizationId)
+                                    ->whereNull('deleted_at');
+                    })
+                    ->ignore($supplierId), // Игнорируем текущий ID
+            ],
             'contact_person' => 'nullable|string|max:255',
             'phone' => 'nullable|string|max:50',
             'email' => 'nullable|email|max:255',

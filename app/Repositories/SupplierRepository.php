@@ -29,4 +29,32 @@ class SupplierRepository extends BaseRepository implements SupplierRepositoryInt
             ->orderBy('name')
             ->get();
     }
+
+    /**
+     * Получить поставщиков для организации с фильтрацией и пагинацией.
+     */
+    public function getSuppliersForOrganizationPaginated(
+        int $organizationId,
+        int $perPage = 15,
+        array $filters = [],
+        string $sortBy = 'name',
+        string $sortDirection = 'asc'
+    ): \Illuminate\Contracts\Pagination\LengthAwarePaginator
+    {
+        $query = $this->model->where('organization_id', $organizationId);
+
+        // Фильтры
+        if (!empty($filters['name'])) {
+            $query->where('name', 'ilike', '%' . $filters['name'] . '%');
+        }
+        if (isset($filters['is_active'])) {
+            $query->where('is_active', (bool)$filters['is_active']);
+        }
+
+        // Сортировка
+        $query->orderBy($sortBy, $sortDirection);
+
+        // Пагинация
+        return $query->paginate($perPage);
+    }
 } 

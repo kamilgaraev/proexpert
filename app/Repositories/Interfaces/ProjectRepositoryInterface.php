@@ -3,6 +3,7 @@
 namespace App\Repositories\Interfaces;
 
 use App\Repositories\RepositoryInterface;
+use Illuminate\Support\Collection;
 
 interface ProjectRepositoryInterface extends RepositoryInterface
 {
@@ -58,4 +59,13 @@ interface ProjectRepositoryInterface extends RepositoryInterface
      * @return \Illuminate\Database\Eloquent\Collection
      */
     public function getActiveProjects(int $organizationId);
+
+    /**
+     * Получить количество проектов по статусам для организации.
+     *
+     * @param int $organizationId
+     * @param array $filters ['is_archived' => bool, 'status' => string]
+     * @return Collection Ключ - статус, значение - количество.
+     */
+    public function getProjectCountsByStatus(int $organizationId, array $filters = []): Collection;
 } 

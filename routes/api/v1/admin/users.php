@@ -1,11 +1,20 @@
 <?php
 
-use App\Http\Controllers\Api\V1\Admin\UserManagementController;
 use Illuminate\Support\Facades\Route;
- 
-// Используем 'users' как ресурс, но контроллер отвечает за управление прорабами
-Route::apiResource('users', UserManagementController::class);
+use App\Http\Controllers\Api\V1\Admin\UserManagementController;
 
-// Добавляем маршруты для блокировки/разблокировки
+/*
+|--------------------------------------------------------------------------
+| Admin API V1 User Management Routes
+|--------------------------------------------------------------------------
+|
+| Маршруты для управления прорабами в административной панели.
+|
+*/
+
+// Группа уже защищена middleware в RouteServiceProvider
+
+// User Management (Foremen)
+Route::apiResource('users', UserManagementController::class)->except(['destroy']);
 Route::post('users/{user}/block', [UserManagementController::class, 'block'])->name('users.block');
 Route::post('users/{user}/unblock', [UserManagementController::class, 'unblock'])->name('users.unblock'); 

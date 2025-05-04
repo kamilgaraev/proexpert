@@ -5,6 +5,8 @@ namespace App\Repositories;
 use App\Models\Project;
 use App\Repositories\Interfaces\ProjectRepositoryInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Collection;
 
 class ProjectRepository extends BaseRepository implements ProjectRepositoryInterface
 {
@@ -119,5 +121,33 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
         $query->orderBy($sortBy, $sortDirection);
 
         return $query->paginate($perPage);
+    }
+
+    /**
+     * Получить количество проектов по статусам для организации.
+     *
+     * @param int $organizationId
+     * @param array $filters ['is_archived' => bool, 'status' => string]
+     * @return Collection Ключ - статус, значение - количество.
+     */
+    public function getProjectCountsByStatus(int $organizationId, array $filters = []): Collection
+    {
+        $query = $this->model
+            ->select('status', DB::raw('count(*) as count'))
+            ->where('organization_id', $organizationId);
+
+        // Фильтр по статусу (если передан)
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        // Фильтр по архиву (если передан)
+        if (isset($filters['is_archived'])) {
+            $query->where('is_archived', (bool)$filters['is_archived']);
+        }
+
+        return $query->groupBy('status')
+                    ->orderBy('status') // Опционально, для упорядоченного вывода
+                    ->pluck('count', 'status'); // Возвращает коллекцию [status => count]
     }
 } 

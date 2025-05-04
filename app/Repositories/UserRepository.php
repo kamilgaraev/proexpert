@@ -5,6 +5,9 @@ namespace App\Repositories;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Models\Role;
+use Illuminate\Support\Collection;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 
 class UserRepository extends BaseRepository implements UserRepositoryInterface
 {
@@ -166,11 +169,6 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
 
     /**
      * Check if a user has a specific role within a specific organization.
-     *
-     * @param int $userId
-     * @param int $roleId
-     * @param int $organizationId
-     * @return bool
      */
     public function hasRoleInOrganization(int $userId, int $roleId, int $organizationId): bool
     {
@@ -184,5 +182,118 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
                     ->wherePivot('organization_id', $organizationId)
                     ->where('roles.id', $roleId) // Уточняем ID роли в таблице roles
                     ->exists();
+    }
+
+    public function paginateByRoleInOrganization(
+        string $roleSlug,
+        int $organizationId,
+        int $perPage = 15,
+        array $filters = [],
+        string $sortBy = 'name',
+        string $sortDirection = 'asc'
+    ): LengthAwarePaginator
+    {
+        $query = $this->model->whereHas('roles', function ($q) use ($roleSlug, $organizationId) {
+            $q->where('slug', $roleSlug)
+              ->where('role_user.organization_id', $organizationId);
+        });
+
+        // Применяем фильтры (если есть)
+        if (!empty($filters['name'])) {
+            $query->where('name', 'ilike', '%' . $filters['name'] . '%');
+        }
+        if (isset($filters['is_active'])) { // Фильтр по активности в организации
+            $query->whereHas('organizations', function ($orgQuery) use ($organizationId, $filters) {
+                $orgQuery->where('organization_user.organization_id', $organizationId)
+                         ->where('organization_user.is_active', (bool)$filters['is_active']);
+            });
+        } else {
+             // Убедимся, что пользователь в принципе привязан к организации
+            $query->whereHas('organizations', function ($orgQuery) use ($organizationId) {
+                $orgQuery->where('organization_user.organization_id', $organizationId);
+            });
+        }
+
+        // Сортировка
+        $query->orderBy($sortBy, $sortDirection);
+
+        return $query->paginate($perPage);
+    }
+
+    /**
+     * Получить данные по активности прорабов (из логов).
+     */
+    public function getForemanActivity(int $organizationId, array $filters = []): Collection
+    {
+        // Базовый запрос для логов материалов
+        $materialLogsQuery = DB::table('material_usage_logs as mul')
+            ->select(
+                'mul.user_id',
+                DB::raw('count(*) as material_logs_count'),
+                DB::raw('0 as work_logs_count') // Заглушка для UNION
+            )
+            ->join('projects as p', 'mul.project_id', '=', 'p.id')
+            ->where('p.organization_id', $organizationId)
+            ->groupBy('mul.user_id');
+
+        // Базовый запрос для логов работ
+        $workLogsQuery = DB::table('work_completion_logs as wcl')
+            ->select(
+                'wcl.user_id',
+                DB::raw('0 as material_logs_count'), // Заглушка для UNION
+                DB::raw('count(*) as work_logs_count')
+            )
+            ->join('projects as p', 'wcl.project_id', '=', 'p.id')
+            ->where('p.organization_id', $organizationId)
+            ->groupBy('wcl.user_id');
+
+        // Применение общих фильтров к обоим запросам
+        foreach ([$materialLogsQuery, $workLogsQuery] as $query) {
+            if (!empty($filters['project_id'])) {
+                // Имя таблицы разное, используем алиас 'p'
+                $query->where('p.id', $filters['project_id']);
+            }
+            if (!empty($filters['user_id'])) {
+                // Имя колонки user_id одинаковое
+                $query->where($this->getLogUserColumn($query), $filters['user_id']);
+            }
+            if (!empty($filters['date_from'])) {
+                $query->where($this->getLogDateColumn($query), '>=', $filters['date_from']);
+            }
+            if (!empty($filters['date_to'])) {
+                $query->where($this->getLogDateColumn($query), '<=', $filters['date_to']);
+            }
+        }
+
+        // Объединяем запросы через UNION ALL
+        $unionQuery = $materialLogsQuery->unionAll($workLogsQuery);
+
+        // Финальная агрегация после UNION
+        $finalQuery = DB::query()->fromSub($unionQuery, 'activity')
+            ->select(
+                'activity.user_id',
+                DB::raw('SUM(activity.material_logs_count) as total_material_logs'),
+                DB::raw('SUM(activity.work_logs_count) as total_work_logs'),
+                'users.name as user_name' // Добавляем имя пользователя
+            )
+            ->join('users', 'activity.user_id', '=', 'users.id')
+            ->groupBy('activity.user_id', 'users.name')
+            ->orderBy('users.name');
+
+        return $finalQuery->get();
+    }
+
+    // Вспомогательные методы для получения имен колонок логов
+    private function getLogUserColumn($query): string
+    {
+        // Определяем таблицу по алиасу или имени
+        $from = $query->from;
+        return ($from === 'material_usage_logs as mul' || $from === 'material_usage_logs') ? 'mul.user_id' : 'wcl.user_id';
+    }
+
+    private function getLogDateColumn($query): string
+    {
+        $from = $query->from;
+        return ($from === 'material_usage_logs as mul' || $from === 'material_usage_logs') ? 'mul.usage_date' : 'wcl.completion_date';
     }
 } 
