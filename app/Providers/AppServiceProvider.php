@@ -40,18 +40,25 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Регистрация файлов маршрутов API теперь происходит в RouteServiceProvider
-        // $this->bootApiRoutes(); 
-
-        // Регистрируем глобальный CORS middleware
+        // Регистрируем CORS middleware в качестве глобального middleware
+        // с более высоким приоритетом, чем все другие (он выполнится первым)
         $router = $this->app->make(Router::class);
-        $router->prependMiddlewareToGroup('api', CorsMiddleware::class);
         
-        // Убеждаемся, что HandlePrecognitiveRequests идет ПОСЛЕ CorsMiddleware
-        // Это необходимо для корректной обработки preflight OPTIONS запросов
-        if (!App::environment('testing')) {
-            $router->pushMiddlewareToGroup('api', HandlePrecognitiveRequests::class);
+        // Добавляем как глобальный middleware (для всех маршрутов)
+        $router->pushMiddlewareToGroup('web', CorsMiddleware::class);
+        $router->pushMiddlewareToGroup('api', CorsMiddleware::class);
+        
+        // Также добавляем его первым в middleware группе api
+        // для обработки OPTIONS-запросов перед всеми остальными middleware
+        if (method_exists($router, 'prependToGroup')) {
+            $router->prependToGroup('api', CorsMiddleware::class);
+        } else {
+            // Альтернативный способ для Laravel 11
+            $router->prependMiddlewareToGroup('api', CorsMiddleware::class);
         }
+        
+        // Логирование для отладки
+        \Illuminate\Support\Facades\Log::info('CORS middleware зарегистрирован в AppServiceProvider');
     }
 
     // Удаляем весь метод bootApiRoutes и loadRoutesFromSubdirectory
