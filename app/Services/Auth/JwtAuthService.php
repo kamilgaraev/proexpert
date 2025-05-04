@@ -533,7 +533,7 @@ class JwtAuthService
                         'user_id' => $user->id,
                         'org_id' => $organization->id
                     ]);
-                    $this->userRepository->attachToOrganization($user->id, $organization->id);
+                    $this->userRepository->attachToOrganization($user->id, $organization->id, true);
                 } catch (\Exception $e) {
                     Log::error('[JwtAuthService] Failed to attach user to organization', [
                         'error' => $e->getMessage(),

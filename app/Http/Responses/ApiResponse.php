@@ -4,25 +4,25 @@ namespace App\Http\Responses;
 
 use Illuminate\Contracts\Support\Responsable;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Resources\Json\JsonResource;
 use Symfony\Component\HttpFoundation\Response;
 
 abstract class ApiResponse implements Responsable
 {
-    protected mixed $data;
+    protected $data;
     protected int $statusCode;
+    protected string $message;
     protected array $headers;
-    protected ?string $message;
 
     public function __construct(
-        mixed $data = null,
-        int $statusCode = Response::HTTP_OK,
-        ?string $message = null,
+        JsonResource|array|null $data = null,
+        int $statusCode = 200,
+        string|null $message = '',
         array $headers = []
-    )
-    {
+    ) {
         $this->data = $data;
         $this->statusCode = $statusCode;
-        $this->message = $message;
+        $this->message = $message ?? '';
         $this->headers = $headers;
     }
 
@@ -32,25 +32,17 @@ abstract class ApiResponse implements Responsable
      * @param  \Illuminate\Http\Request  $request
      * @return \Symfony\Component\HttpFoundation\Response
      */
-    public function toResponse($request): Response
+    public function toResponse($request): JsonResponse
     {
-        $response = [];
+        $response = [
+            'success' => $this->isSuccessful(),
+            'message' => $this->message,
+        ];
 
-        if ($this->isSuccess()) {
-            $response['success'] = true;
-            if ($this->message !== null) {
-                $response['message'] = $this->message;
-            }
-            if ($this->data !== null) {
-                // Если data - это коллекция или ресурс Laravel, он будет правильно преобразован
-                $response = array_merge($response, $this->prepareData($this->data));
-            }
-        } else {
-            $response['success'] = false;
-            $response['message'] = $this->message ?? 'An error occurred';
-            if ($this->data !== null) { // Для данных ошибки, например, validation errors
-                $response['errors'] = $this->data;
-            }
+        if ($this->data !== null) {
+            $response['data'] = $this->data instanceof JsonResource
+                ? $this->data->response($request)->getData(true)
+                : $this->data;
         }
 
         return new JsonResponse(
@@ -63,7 +55,7 @@ abstract class ApiResponse implements Responsable
     /**
      * Check if the status code represents success.
      */
-    protected function isSuccess(): bool
+    protected function isSuccessful(): bool
     {
         return $this->statusCode >= 200 && $this->statusCode < 300;
     }
@@ -95,11 +87,11 @@ abstract class ApiResponse implements Responsable
 
     public static function success(string $message = 'Операция выполнена успешно', array $data = [], int $statusCode = 200): self
     {
-        return new self(true, $message, $statusCode, $data);
+        return new static($data, $statusCode, $message);
     }
 
     public static function error(string $message = 'Произошла ошибка', int $statusCode = 400, array $data = []): self
     {
-        return new self(false, $message, $statusCode, $data);
+        return new static($data, $statusCode, $message);
     }
 } 

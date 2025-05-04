@@ -20,10 +20,11 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => \App\Http\Middleware\CheckRoleMiddleware::class,
             'auth.jwt' => JwtMiddleware::class,
             'organization.context' => SetOrganizationContext::class,
+            'organization_context' => SetOrganizationContext::class,
         ]);
 
         // Глобальные middleware (если нужны)
-        // $middleware->append(\App\Http\Middleware\SomeGlobalMiddleware::class);
+        $middleware->prepend(\App\Http\Middleware\CorsMiddleware::class);
 
         // Группы middleware (например, для API)
         $middleware->api([

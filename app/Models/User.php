@@ -129,7 +129,7 @@ class User extends Authenticatable implements JWTSubject
      */
     public function ownedOrganizations()
     {
-        return $this->organizations()->wherePivot('is_owner', true);
+        return $this->organizations()->where('organization_user.is_owner', true);
     }
 
     /**
@@ -137,7 +137,7 @@ class User extends Authenticatable implements JWTSubject
      */
     public function activeOrganizations()
     {
-        return $this->organizations()->wherePivot('is_active', true);
+        return $this->organizations()->where('organization_user.is_active', true);
     }
 
     /**
@@ -158,7 +158,7 @@ class User extends Authenticatable implements JWTSubject
      */
     public function rolesInOrganization(int $organizationId)
     {
-        return $this->roles()->wherePivot('organization_id', $organizationId);
+        return $this->roles()->where('role_user.organization_id', $organizationId);
     }
 
     /**
@@ -185,33 +185,11 @@ class User extends Authenticatable implements JWTSubject
             'organization_id' => $organizationId
         ]);
         
-        // Прямая проверка через SQL запрос
-        $roleId = DB::table('roles')
+        // Исправленный запрос без использования "pivot" в SQL
+        return $this->roles()
             ->where('slug', $roleSlug)
-            ->value('id');
-            
-        if (!$roleId) {
-            Log::warning('[User::hasRole] Роль не найдена в системе', [
-                'role_slug' => $roleSlug
-            ]);
-            return false;
-        }
-        
-        $hasRole = DB::table('role_user')
-            ->where('user_id', $this->id)
-            ->where('role_id', $roleId)
-            ->where('organization_id', $organizationId)
+            ->where('role_user.organization_id', $organizationId)
             ->exists();
-            
-        Log::info('[User::hasRole] Результат проверки через SQL', [
-            'user_id' => $this->id,
-            'role_slug' => $roleSlug,
-            'role_id' => $roleId,
-            'organization_id' => $organizationId,
-            'has_role' => $hasRole
-        ]);
-            
-        return $hasRole;
     }
 
     /**

@@ -11,6 +11,8 @@ use Tymon\JWTAuth\Exceptions\JWTException;
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\App;
+use App\Services\Organization\OrganizationContext;
 
 class SetOrganizationContext
 {
@@ -69,11 +71,28 @@ class SetOrganizationContext
 
         $logContext['final_org_id'] = $organizationId;
         if ($organization) {
-             $request->attributes->set('current_organization', $organization);
-             $request->attributes->set('current_organization_id', $organizationId);
-             $logContext['attribute_set'] = true;
+            // Устанавливаем атрибуты запроса
+            $request->attributes->set('current_organization', $organization);
+            $request->attributes->set('current_organization_id', $organizationId);
+            $logContext['attribute_set'] = true;
+             
+            // Обновляем контекст организации через статические методы
+            try {
+                // Используем статические методы класса
+                OrganizationContext::setOrganizationId($organizationId);
+                OrganizationContext::setOrganization($organization);
+                
+                Log::debug('[SetOrganizationContext] Context updated via static methods.', [
+                    'org_id' => $organizationId
+                ]);
+            } catch (\Throwable $e) {
+                Log::error('[SetOrganizationContext] Failed to update context.', [
+                    'error' => $e->getMessage(), 
+                    'trace' => $e->getTraceAsString()
+                ]);
+            }
         } else {
-             $logContext['attribute_set'] = false;
+            $logContext['attribute_set'] = false;
         }
         
         Log::debug('[SetOrganizationContext] Context determination result.', $logContext);

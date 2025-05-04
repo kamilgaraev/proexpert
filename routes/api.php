@@ -100,3 +100,23 @@ use Illuminate\Support\Facades\Route;
 // - Для админки: routes/api/v1/admin/...
 // - Для мобильного приложения: routes/api/v1/mobile/...
 // - Для лендинга/ЛК: routes/api/v1/landing/...
+
+// Начинаем группу маршрутов API v1
+Route::prefix('landing')->name('landing.')->group(function () {
+    // Явно включаем маршруты для Landing API
+    require __DIR__ . '/api/v1/landing/auth.php';
+    require __DIR__ . '/api/v1/landing/users.php';
+    require __DIR__ . '/api/v1/landing/organization.php';
+    
+    // Маршруты для управления пользователями админ-панели (accountant, web_admin)
+    Route::middleware(['auth:api_landing', 'role:organization_owner|organization_admin'])
+        ->prefix('adminPanelUsers')
+        ->name('adminPanelUsers.')
+        ->group(function () {
+            Route::get('/', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'index']);
+            Route::post('/', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'store']);
+            Route::get('/{user}', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'show']);
+            Route::put('/{user}', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'update']);
+            Route::delete('/{user}', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'destroy']);
+        });
+});

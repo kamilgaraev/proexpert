@@ -14,6 +14,7 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use App\Exceptions\BusinessLogicException;
 use App\Services\BaseService;
 use Illuminate\Support\Facades\Log;
+use App\Services\Organization\OrganizationContext;
 
 /**
  * @property UserRepositoryInterface $userRepository
@@ -356,10 +357,9 @@ class UserService
         $foremanRoleSlug = Role::ROLE_FOREMAN;
 
         // Используем метод репозитория, который поддерживает фильтрацию и пагинацию
-        // Предполагаем, что такой метод существует или будет создан в UserRepositoryInterface
         return $this->userRepository->paginateByRoleInOrganization(
-            $intOrganizationId,
             $foremanRoleSlug,
+            $intOrganizationId,
             $perPage,
             $filters
         );
@@ -376,7 +376,40 @@ class UserService
      */
     public function createForeman(array $data, Request $request): User
     {
+        // Получаем ID организации из атрибутов запроса
         $organizationId = $request->attributes->get('current_organization_id');
+        
+        // Если ID не найден в атрибутах, пробуем получить из контекста
+        if (!$organizationId) {
+            try {
+                // Используем статический метод для получения ID организации
+                $organizationId = OrganizationContext::getOrganizationId();
+                
+                if ($organizationId) {
+                    Log::info('[UserService] Используем ID организации из статического контекста', [
+                        'organization_id' => $organizationId
+                    ]);
+                }
+            } catch (\Throwable $e) {
+                Log::error('[UserService] Ошибка при получении контекста организации', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+            }
+        }
+        
+        // Если все еще нет ID, пробуем получить текущую организацию из пользователя
+        if (!$organizationId) {
+            $user = $request->user();
+            if ($user && $user->current_organization_id) {
+                $organizationId = $user->current_organization_id;
+                Log::info('[UserService] Используем current_organization_id пользователя', [
+                    'user_id' => $user->id,
+                    'organization_id' => $organizationId
+                ]);
+            }
+        }
+        
         if(!$organizationId) {
             throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
@@ -394,14 +427,14 @@ class UserService
                  throw new BusinessLogicException('Пользователь с таким email уже является прорабом в этой организации.', 409);
             }
             // If user exists but not foreman, add them to the org with the foreman role
-            $this->userRepository->attachToOrganization($existingUser->id, $organizationId); // Ensure attached
+            $this->userRepository->attachToOrganization($existingUser->id, $organizationId, false); // Ensure attached, NOT as owner
             $this->userRepository->assignRole($existingUser->id, $foremanRole->id, $organizationId);
             $this->userRepository->update($existingUser->id, ['name' => $data['name']]); // Update name
             return $this->userRepository->find($existingUser->id);
         } else {
              // If user doesn't exist, create them and assign role/org
             $newUser = $this->userRepository->create($data);
-            $this->userRepository->attachToOrganization($newUser->id, $organizationId);
+            $this->userRepository->attachToOrganization($newUser->id, $organizationId, false); // Attach as NOT an owner
             $this->userRepository->assignRole($newUser->id, $foremanRole->id, $organizationId);
             return $newUser;
         }

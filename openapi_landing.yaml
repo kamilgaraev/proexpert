@@ -444,53 +444,15 @@ paths:
           $ref: '#/components/responses/InternalServerError'
 
   # ========== Organization Routes (organization.php) ==========
-  /organizations:
-    post:
-      tags:
-        - Landing Organizations
-      summary: Create Organization
-      description: Creates a new organization and associates the current user with it.
-      operationId: landingCreateOrganization
-      security:
-        - bearerAuthLanding: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/StoreOrganizationRequest'
-      responses:
-        '201':
-          description: Organization created successfully
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Organization' # Full organization details
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '422':
-          $ref: '#/components/responses/ValidationError'
-        '500':
-          $ref: '#/components/responses/InternalServerError'
-    # GET /organizations might list organizations the user owns/manages
-
-  /organizations/{organization}: # Assuming detailed view/update/delete for owned org
+  /organization: # Исправленный путь в соответствии с реализацией
     get:
       tags:
         - Landing Organizations
-      summary: Get Organization Details
-      description: Retrieves details of a specific organization the user has access to manage.
-      operationId: landingGetOrganization
+      summary: Get Current Organization Details
+      description: Retrieves details of the current organization the user has access to manage.
+      operationId: landingGetCurrentOrganization
       security:
         - bearerAuthLanding: []
-      parameters:
-        - name: organization
-          in: path
-          required: true
-          description: ID of the Organization
-          schema:
-            type: integer
-            example: 1
       responses:
         '200':
           description: Organization details
@@ -506,22 +468,14 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
-    put:
+    patch: # Исправлено с PUT на PATCH в соответствии с реализацией
       tags:
         - Landing Organizations
       summary: Update Organization
-      description: Updates details of a specific organization the user manages.
-      operationId: landingUpdateOrganization
+      description: Updates details of the current organization the user manages.
+      operationId: landingUpdateCurrentOrganization
       security:
         - bearerAuthLanding: []
-      parameters:
-        - name: organization
-          in: path
-          required: true
-          description: ID of the Organization
-          schema:
-            type: integer
-            example: 1
       requestBody:
         required: true
         content:
@@ -545,18 +499,17 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '500':
           $ref: '#/components/responses/InternalServerError'
-    # DELETE /organizations/{organization} might exist
 
   # ========== Support Routes (support.php) ==========
-  /support/request:
+  /support: # Исправленный путь в соответствии с реализацией
     post:
       tags:
         - Landing Support
       summary: Submit Support Request
       description: Submits a support request or feedback form. May or may not require authentication.
       operationId: landingSubmitSupportRequest
-      # security: # Optional: Add bearerAuthLanding if auth is required
-      #   - bearerAuthLanding: []
+      security:
+        - bearerAuthLanding: [] # Добавлена аутентификация, т.к. в коде есть middleware
       requestBody:
         required: true
         content:
@@ -576,6 +529,314 @@ paths:
                     example: "Ваш запрос в поддержку отправлен."
         '422':
           $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ========== User Management Routes (users.php) ==========
+  /users:
+    get:
+      tags:
+        - Landing Users
+      summary: List Organization Admins
+      description: Retrieves a list of admin users for the current organization.
+      operationId: landingListAdmins
+      security:
+        - bearerAuthLanding: []
+      responses:
+        '200':
+          description: List of admin users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+        - Landing Users
+      summary: Create Organization Admin
+      description: Creates a new admin user for the current organization.
+      operationId: landingCreateAdmin
+      security:
+        - bearerAuthLanding: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreAdminRequest'
+      responses:
+        '201':
+          description: Admin user created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /users/{user}:
+    get:
+      tags:
+        - Landing Users
+      summary: Get Organization Admin
+      description: Retrieves details of a specific admin user.
+      operationId: landingGetAdmin
+      security:
+        - bearerAuthLanding: []
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID of the admin user.
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Admin user details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Landing Users
+      summary: Update Organization Admin
+      description: Updates details of a specific admin user.
+      operationId: landingUpdateAdmin
+      security:
+        - bearerAuthLanding: []
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID of the admin user.
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAdminRequest'
+      responses:
+        '200':
+          description: Admin user updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Landing Users
+      summary: Delete Organization Admin
+      description: Removes an admin user from the organization.
+      operationId: landingDeleteAdmin
+      security:
+        - bearerAuthLanding: []
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID of the admin user.
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '204':
+          description: Admin user deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ========== Admin Panel User Management Routes (adminPanelUsers.php) ==========
+  /adminPanelUsers:
+    get:
+      tags:
+        - Landing Users
+      summary: List Admin Panel Users
+      description: Retrieves a list of admin panel users (web_admin, accountant, etc.) for the current organization.
+      operationId: landingListAdminPanelUsers
+      security:
+        - bearerAuthLanding: []
+      responses:
+        '200':
+          description: List of admin panel users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AdminPanelUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+        - Landing Users
+      summary: Create Admin Panel User
+      description: Creates a new admin panel user (web_admin, accountant, etc.) for the current organization.
+      operationId: landingCreateAdminPanelUser
+      security:
+        - bearerAuthLanding: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreAdminPanelUserRequest'
+      responses:
+        '201':
+          description: Admin panel user created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPanelUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /adminPanelUsers/{user}:
+    get:
+      tags:
+        - Landing Users
+      summary: Get Admin Panel User
+      description: Retrieves details of a specific admin panel user.
+      operationId: landingGetAdminPanelUser
+      security:
+        - bearerAuthLanding: []
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID of the admin panel user.
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Admin panel user details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPanelUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Landing Users
+      summary: Update Admin Panel User
+      description: Updates details of a specific admin panel user.
+      operationId: landingUpdateAdminPanelUser
+      security:
+        - bearerAuthLanding: []
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID of the admin panel user.
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAdminPanelUserRequest'
+      responses:
+        '200':
+          description: Admin panel user updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminPanelUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Landing Users
+      summary: Delete Admin Panel User
+      description: Removes an admin panel user from the organization.
+      operationId: landingDeleteAdminPanelUser
+      security:
+        - bearerAuthLanding: []
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID of the admin panel user.
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '204':
+          description: Admin panel user deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -1005,4 +1266,185 @@ components:
       properties:
         message:
           type: string
-          example: "Конфликт данных" 
+          example: "Конфликт данных"
+
+    # --- User Management Schemas ---
+    AdminUser:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 10
+        name:
+          type: string
+          example: "Иван Иванов"
+        email:
+          type: string
+          format: email
+          example: "ivan.ivanov@example.com"
+        roles:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                example: 2
+              name:
+                type: string
+                example: "Администратор организации"
+              slug:
+                type: string
+                example: "organization_admin"
+              description:
+                type: string
+                example: "Роль администратора организации"
+              pivot:
+                type: object
+                properties:
+                  organization_id:
+                    type: integer
+                    example: 1
+                  created_at:
+                    type: string
+                    format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    AdminPanelUser:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 15
+        name:
+          type: string
+          example: "Петр Петров"
+        email:
+          type: string
+          format: email
+          example: "petr.petrov@example.com"
+        roles:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                example: 4
+              name:
+                type: string
+                example: "Веб-администратор"
+              slug:
+                type: string
+                example: "web_admin"
+              description:
+                type: string
+                example: "Веб-администратор с доступом к админ-панели"
+              pivot:
+                type: object
+                properties:
+                  organization_id:
+                    type: integer
+                    example: 1
+                  created_at:
+                    type: string
+                    format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    StoreAdminRequest:
+      type: object
+      required:
+        - name
+        - email
+        - password
+        - password_confirmation
+      properties:
+        name:
+          type: string
+          example: "Иван Иванов"
+        email:
+          type: string
+          format: email
+          example: "ivan.ivanov@example.com"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "секретныйпароль"
+        password_confirmation:
+          type: string
+          format: password
+          example: "секретныйпароль"
+
+    UpdateAdminRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "Иван Петрович Иванов"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "новыйпароль"
+        password_confirmation:
+          type: string
+          format: password
+          example: "новыйпароль"
+
+    StoreAdminPanelUserRequest:
+      type: object
+      required:
+        - name
+        - email
+        - password
+        - password_confirmation
+        - role_slug
+      properties:
+        name:
+          type: string
+          example: "Петр Петров"
+        email:
+          type: string
+          format: email
+          example: "petr.petrov@example.com"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "секретныйпароль"
+        password_confirmation:
+          type: string
+          format: password
+          example: "секретныйпароль"
+        role_slug:
+          type: string
+          example: "web_admin"
+          description: "Слаг роли пользователя админ-панели (web_admin, accountant, и т.д.)"
+          enum: ["web_admin", "accountant"]
+
+    UpdateAdminPanelUserRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "Петр Иванович Петров"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "новыйпароль"
+        password_confirmation:
+          type: string
+          format: password
+          example: "новыйпароль" 

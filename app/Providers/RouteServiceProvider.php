@@ -32,17 +32,21 @@ class RouteServiceProvider extends ServiceProvider
                 ->group(base_path('routes/api/v1/admin/auth.php'));
 
             // Other Admin API Routes (protected by auth and access gates)
-            Route::middleware(['api', 'auth:api_admin', 'organization_context', 'can:access-admin-panel'])
+            Route::middleware(['api'])
                 ->prefix('api/v1/admin')
                 ->as('api.v1.admin.')
                 ->group(function () {
-                    // Подключаем остальные файлы админки
-                    require base_path('routes/api/v1/admin/users.php');
-                    require base_path('routes/api/v1/admin/projects.php');
-                    require base_path('routes/api/v1/admin/catalogs.php');
-                    require base_path('routes/api/v1/admin/reports.php');
-                    require base_path('routes/api/v1/admin/logs.php');
-                    // TODO: Добавить файл для логов аудита, когда он будет
+                    // Дополнительные middleware применяем в цепочке отдельно
+                    Route::middleware(['auth:api_admin', 'organization.context', 'can:access-admin-panel'])
+                        ->group(function() {
+                            // Подключаем остальные файлы админки
+                            require base_path('routes/api/v1/admin/users.php');
+                            require base_path('routes/api/v1/admin/projects.php');
+                            require base_path('routes/api/v1/admin/catalogs.php');
+                            require base_path('routes/api/v1/admin/reports.php');
+                            require base_path('routes/api/v1/admin/logs.php');
+                            // TODO: Добавить файл для логов аудита, когда он будет
+                        });
                 });
 
             // Mobile API Routes

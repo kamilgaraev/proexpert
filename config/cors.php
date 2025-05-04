@@ -11,14 +11,25 @@ return [
     |
     */
 
-    'paths' => ['api/*', 'sanctum/csrf-cookie'],
+    'paths' => [
+        'api/*', 
+        'sanctum/csrf-cookie', 
+        'api/v1/landing/*',
+        'api/v1/mobile/*',
+        'api/v1/admin/*',
+        '*'  // В крайнем случае, для режима разработки
+    ],
 
     'allowed_origins' => [
         'http://localhost:5173',
         'http://localhost:3000',
+        'http://localhost:8081',
+        'http://127.0.0.1:8000',
+        'http://127.0.0.1:8081',
+        'http://127.0.0.1:3000',
         'http://89.111.152.112',
         'https://89.111.152.112',
-        // Здесь можно добавить другие домены фронтенда
+        '*'  // В крайнем случае, для режима разработки
     ],
 
     'allowed_origins_patterns' => [],

@@ -4,18 +4,19 @@ namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Http\Controllers\Controller;
 use App\Services\User\UserService;
-// --- Используем созданные Request и Resource ---
+// --- Исправляем импорты для Request и Resource ---
 use App\Http\Requests\Api\V1\Landing\User\StoreAdminPanelUserRequest;
 use App\Http\Requests\Api\V1\Landing\AdminPanelUser\UpdateAdminPanelUserRequest;
-use App\Http\Resources\Api\V1\Landing\AdminPanelUserResource; // Используем ресурс
-use App\Http\Responses\Api\V1\SuccessCreationResponse; // Используем правильный ответ
+use App\Http\Resources\Api\V1\Landing\AdminPanelUserResource;
+use App\Http\Responses\Api\V1\SuccessCreationResponse;
 use App\Http\Responses\Api\V1\ErrorResponse;
-use App\Http\Responses\Api\V1\SuccessResourceResponse; // <-- Исправленный путь
-use App\Http\Responses\Api\V1\SuccessResponse;         // <-- Исправленный путь
-use App\Http\Responses\Api\V1\NotFoundResponse;        // <-- Исправленный путь
+use App\Http\Responses\Api\V1\SuccessResourceResponse;
+use App\Http\Responses\Api\V1\SuccessResponse;
+use App\Http\Responses\Api\V1\NotFoundResponse;
 use Illuminate\Contracts\Support\Responsable;
 use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class AdminPanelUserController extends Controller
 {
@@ -42,26 +43,44 @@ class AdminPanelUserController extends Controller
 
     /**
      * Создание нового пользователя для админ-панели (web_admin, accountant).
-     * POST /api/v1/landing/admin-panel-users
+     * POST /api/v1/landing/adminPanelUsers
      */
     public function store(StoreAdminPanelUserRequest $request): Responsable
     {
         try {
+            Log::info('[AdminPanelUserController] Начало создания пользователя админ-панели', [
+                'data' => $request->validated(),
+                'ip' => $request->ip()
+            ]);
+            
             $validatedData = $request->validated();
             $roleSlug = $validatedData['role_slug'];
             unset($validatedData['role_slug']);
 
             $user = $this->userService->createAdminPanelUser($validatedData, $roleSlug, $request);
 
+            Log::info('[AdminPanelUserController] Пользователь админ-панели успешно создан', [
+                'user_id' => $user->id,
+                'email' => $user->email, 
+                'role' => $roleSlug
+            ]);
+
             // Возвращаем правильный Responsable ответ
             return new SuccessCreationResponse(
                 new AdminPanelUserResource($user->load('roles')), // Используем ресурс и загружаем роли
-                message: 'Admin panel user created successfully'
+                'Admin panel user created successfully'
             );
          } catch (\Illuminate\Validation\ValidationException $e) {
+             Log::error('[AdminPanelUserController] Ошибка валидации', [
+                 'errors' => $e->errors()
+             ]);
              report($e);
              return new ErrorResponse('Validation failed', Response::HTTP_UNPROCESSABLE_ENTITY, $e->errors());
         } catch (\Throwable $e) {
+             Log::error('[AdminPanelUserController] Ошибка создания пользователя админ-панели', [
+                 'error' => $e->getMessage(),
+                 'trace' => $e->getTraceAsString()
+             ]);
              report($e);
              return new ErrorResponse('Failed to create admin panel user. ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
         }

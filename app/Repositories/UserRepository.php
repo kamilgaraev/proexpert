@@ -38,34 +38,43 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         })->get();
     }
 
-    public function attachToOrganization(int $userId, int $organizationId): void
+    /**
+     * Привязать пользователя к организации.
+     *
+     * @param int $userId ID пользователя
+     * @param int $organizationId ID организации
+     * @param bool $isOwner Установить пользователя как владельца организации
+     * @return void
+     */
+    public function attachToOrganization(int $userId, int $organizationId, bool $isOwner = false): void
     {
         $user = $this->model->find($userId);
         if ($user) {
-            // Привязываем пользователя к организации, и по умолчанию (при регистрации)
-            // устанавливаем его как владельца (is_owner = true)
-            $user->organizations()->attach($organizationId, ['is_owner' => true]);
+            // Привязываем пользователя к организации
+            $user->organizations()->attach($organizationId, ['is_owner' => $isOwner]);
             
-            // Присваиваем роль владельца (Owner) пользователю в этой организации
-            try {
-                // Находим роль Owner по slug
-                $ownerRole = Role::where('slug', Role::ROLE_OWNER)->first();
-                if ($ownerRole) {
-                    $this->assignRole($userId, $ownerRole->id, $organizationId);
-                    Log::info("Assigned owner role to user", [
+            // Присваиваем роль владельца (Owner) только если $isOwner = true
+            if ($isOwner) {
+                try {
+                    // Находим роль Owner по slug
+                    $ownerRole = Role::where('slug', Role::ROLE_OWNER)->first();
+                    if ($ownerRole) {
+                        $this->assignRole($userId, $ownerRole->id, $organizationId);
+                        Log::info("Assigned owner role to user", [
+                            'user_id' => $userId,
+                            'organization_id' => $organizationId,
+                            'role_id' => $ownerRole->id
+                        ]);
+                    } else {
+                        Log::error("Owner role not found in the system");
+                    }
+                } catch (\Exception $e) {
+                    Log::error("Failed to assign owner role: " . $e->getMessage(), [
                         'user_id' => $userId,
                         'organization_id' => $organizationId,
-                        'role_id' => $ownerRole->id
+                        'exception' => $e->getMessage()
                     ]);
-                } else {
-                    Log::error("Owner role not found in the system");
                 }
-            } catch (\Exception $e) {
-                Log::error("Failed to assign owner role: " . $e->getMessage(), [
-                    'user_id' => $userId,
-                    'organization_id' => $organizationId,
-                    'exception' => $e->getMessage()
-                ]);
             }
             
             // Устанавливаем текущую организацию для пользователя
@@ -80,8 +89,8 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         if ($user) {
             // Проверяем, существует ли уже такая связь с ролью, чтобы избежать дублирования
             $exists = $user->roles()
-                          ->wherePivot('organization_id', $organizationId)
-                          ->wherePivot('role_id', $roleId)
+                          ->where('role_user.organization_id', $organizationId)
+                          ->where('role_user.role_id', $roleId)
                           ->exists();
 
             if (!$exists) {
@@ -102,7 +111,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         return $this->model
             ->whereHas('roles', function ($query) use ($roleSlug, $organizationId) {
                 $query->where('slug', $roleSlug)
-                      ->wherePivot('organization_id', $organizationId);
+                      ->where('role_user.organization_id', $organizationId);
             })
             ->get();
     }
@@ -119,7 +128,8 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     {
         $user = $this->model->find($userId);
         if ($user) {
-            return $user->roles()->wherePivot('organization_id', $organizationId)->detach($roleId) > 0;
+            // В случае detach мы используем специальный синтаксис с условиями
+            return $user->roles()->where('role_user.organization_id', $organizationId)->detach($roleId) > 0;
         }
         return false;
     }
@@ -136,7 +146,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         $user = $this->model->find($userId);
         if ($user) {
             // Удаляем все роли пользователя в этой организации перед откреплением
-            $user->roles()->wherePivot('organization_id', $organizationId)->detach();
+            $user->roles()->where('role_user.organization_id', $organizationId)->detach();
             // Открепляем от организации
             $detached = $user->organizations()->detach($organizationId) > 0;
             // Если это была текущая организация, сбрасываем ее
@@ -157,7 +167,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         $user = $this->model->find($userId);
         if ($user) {
             return $user->roles()
-                        ->wherePivot('organization_id', $organizationId)
+                        ->where('role_user.organization_id', $organizationId)
                         ->where('role_id', $roleId)
                         ->exists();
         }
@@ -176,7 +186,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         $query = $this->model->query()
             ->whereHas('roles', function ($q) use ($roleSlug, $organizationId) {
                 $q->where('slug', $roleSlug);
-                $q->wherePivot('organization_id', $organizationId);
+                $q->where('role_user.organization_id', $organizationId);
             });
 
         // Применяем фильтры (пример)
@@ -209,7 +219,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         return $this->model
             ->whereHas('roles', function ($query) use ($roleSlug, $organizationId) {
                 $query->where('slug', $roleSlug)
-                      ->wherePivot('organization_id', $organizationId);
+                      ->where('role_user.organization_id', $organizationId);
             })
             ->paginate($perPage);
     }
