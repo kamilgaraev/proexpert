@@ -25,12 +25,12 @@ use Illuminate\Support\Facades\Route;
             require __DIR__ . '/api/v1/landing/auth.php';
 
             // Защищенные маршруты Landing (требуют токен landing + контекст организации)
+            // Middleware 'jwt.auth' и 'organization.context' вероятно нужны здесь
             Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])->group(function() {
                 require __DIR__ . '/api/v1/landing/users.php'; // Управление админами из ЛК
-                // Проверяем существование файла перед подключением
-                if (file_exists(__DIR__ . '/api/v1/landing/admin_panel_users.php')) {
-                    require __DIR__ . '/api/v1/landing/admin_panel_users.php'; // Управление пользователями админки из ЛК
-                }
+                 if (file_exists(__DIR__ . '/api/v1/landing/admin_panel_users.php')) {
+                     require __DIR__ . '/api/v1/landing/admin_panel_users.php'; // Управление пользователями админки из ЛК
+                 }
                 require __DIR__ . '/api/v1/landing/organization.php';
                 require __DIR__ . '/api/v1/landing/support.php';
                 // Добавить другие защищенные маршруты ЛК
@@ -43,11 +43,9 @@ use Illuminate\Support\Facades\Route;
             require __DIR__ . '/api/v1/admin/auth.php';
 
             // Защищенные маршруты Admin Panel (требуют токен admin + контекст организации)
-            Route::middleware(['auth:api_admin', 'jwt.auth', 'organization.context'])->group(function() {
+            // Middleware 'jwt.auth' и 'organization.context' + Gate 'access-admin-panel'
+            Route::middleware(['auth:api_admin', 'jwt.auth', 'organization.context', 'can:access-admin-panel'])->group(function() {
                 require __DIR__ . '/api/v1/admin/projects.php';
-                // require __DIR__ . '/api/v1/admin/materials.php'; // Старый путь
-                // require __DIR__ . '/api/v1/admin/work_types.php'; // Старый путь
-                // require __DIR__ . '/api/v1/admin/suppliers.php'; // Старый путь
                 require __DIR__ . '/api/v1/admin/catalogs.php'; // Новый общий путь
                 require __DIR__ . '/api/v1/admin/users.php'; // Управление прорабами
                 require __DIR__ . '/api/v1/admin/logs.php'; // Добавляем подключение логов
@@ -62,10 +60,31 @@ use Illuminate\Support\Facades\Route;
             require __DIR__ . '/api/v1/mobile/auth.php';
 
             // Защищенные маршруты Mobile App (требуют токен mobile + контекст организации)
-            Route::middleware(['auth:api_mobile', 'jwt.auth', 'organization.context'])->group(function() {
-                // require __DIR__ . '/api/v1/mobile/tasks.php'; // Пример
+            // Middleware 'jwt.auth' и 'organization.context' + Gate 'access-mobile-app'
+            Route::middleware(['auth:api_mobile', 'jwt.auth', 'organization.context', 'can:access-mobile-app'])->group(function() {
+                require __DIR__ . '/api/v1/mobile/projects.php';
+                require __DIR__ . '/api/v1/mobile/log.php';
                 // Добавить другие защищенные маршруты мобильного приложения
             });
+        });
+
+        // --- Debug Route ---
+        Route::get('/debug-user', function () {
+            try {
+                $userInstance = app()->make(App\Models\User::class);
+                return response()->json([
+                    'message' => 'Successfully resolved App\\Models\\User',
+                    'class' => get_class($userInstance),
+                    'instance_details' => $userInstance->toArray() // Покажет пустой массив, т.к. это новый экземпляр
+                ]);
+            } catch (\Throwable $e) {
+                return response()->json([
+                    'message' => 'Failed to resolve App\\Models\\User',
+                    'error_class' => get_class($e),
+                    'error_message' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ], 500);
+            }
         });
 
     });

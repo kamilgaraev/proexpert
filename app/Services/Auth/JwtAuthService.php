@@ -5,8 +5,8 @@ namespace App\Services\Auth;
 use App\DTOs\Auth\LoginDTO;
 use App\DTOs\Auth\RegisterDTO;
 use App\Models\User;
-use App\Repositories\OrganizationRepositoryInterface;
-use App\Repositories\UserRepositoryInterface;
+use App\Repositories\Interfaces\OrganizationRepositoryInterface;
+use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Services\LogService;
 use App\Services\PerformanceMonitor;
 use Illuminate\Support\Facades\Auth;
@@ -16,6 +16,7 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
 use Tymon\JWTAuth\Exceptions\TokenExpiredException;
 use Tymon\JWTAuth\Exceptions\TokenInvalidException;
+use Illuminate\Support\Facades\DB;
 
 class JwtAuthService
 {
@@ -71,6 +72,7 @@ class JwtAuthService
                     }
                     Log::info('[JwtAuthService] Auth::validate passed. Before Auth::getLastAttempted.');
 
+                    /** @var User $user */
                     $user = Auth::getLastAttempted();
                     Log::info('[JwtAuthService] User retrieved.', ['user_id' => $user?->id]);
                     $user->update([
@@ -166,6 +168,7 @@ class JwtAuthService
     {
         try {
             Auth::shouldUse($guard);
+            /** @var User $user */
             $user = Auth::user();
 
             if (!$user) {
@@ -183,7 +186,12 @@ class JwtAuthService
             }
 
             // Загружаем дополнительные данные
-            $user = $this->userRepository->findWithRoles($user->id);
+            $userWithRoles = $this->userRepository->findWithRoles($user->id);
+            if (!$userWithRoles) {
+                Log::warning('[JwtAuthService::me] User not found by findWithRoles', ['user_id' => $user->id]);
+            } else {
+                $user = $userWithRoles;
+            }
             
             LogService::authLog('profile_access', [
                 'user_id' => $user->id,
@@ -373,90 +381,45 @@ class JwtAuthService
     }
 
     /**
-     * Регистрация нового пользователя (только для API лендинга).
+     * Регистрация нового пользователя.
      *
      * @param RegisterDTO $registerDTO
      * @return array
      */
     public function register(RegisterDTO $registerDTO): array
     {
-        return PerformanceMonitor::measure('auth.registration', function() use ($registerDTO) {
-            $logContext = [];
-            
-            try {
-                // Используем геттеры через магический метод __get
-                $logContext = [
-                    'email' => $registerDTO->email,
-                    'organization_name' => $registerDTO->organizationName,
-                    'ip' => request()->ip(),
-                    'user_agent' => request()->header('User-Agent')
-                ];
-                
-                // Начинаем транзакцию
-                \DB::beginTransaction();
-                
-                // Создаем организацию
-                $organization = $this->organizationRepository->create($registerDTO->getOrganizationData());
-                
-                // Подготавливаем и создаем пользователя
-                $userData = $registerDTO->getUserData();
-                $userData['password'] = bcrypt($userData['password']);
-                $userData['current_organization_id'] = $organization->id;
-                $userData['user_type'] = 'organization_owner';
-                
-                $user = $this->userRepository->create($userData);
-                
-                // Связываем пользователя с организацией как владельца
-                $this->userRepository->attachToOrganization($user->id, $organization->id, true, true);
-                
-                // Находим или создаем роль ВЛАДЕЛЬЦА организации
-                $role = \App\Models\Role::firstOrCreate(
-                    ['slug' => 'organization_owner', 'organization_id' => null],
-                    ['name' => 'Владелец организации', 'type' => 'system']
-                );
-                
-                // Назначаем роль (которая 'organization_owner') пользователю в контексте организации
-                $this->userRepository->assignRole($user->id, $role->id, $organization->id);
-                
-                // Фиксируем транзакцию
-                \DB::commit();
-                
-                // Аутентифицируем пользователя
-                Auth::shouldUse('api_landing');
-                $token = Auth::login($user);
-                
-                LogService::authLog('registration', array_merge($logContext, [
-                    'user_id' => $user->id,
-                    'organization_id' => $organization->id,
-                    'status' => 'success'
-                ]));
-                
-                return [
-                    'success' => true,
-                    'token' => $token,
-                    'user' => $user,
-                    'organization' => $organization,
-                    'status_code' => 201
-                ];
-            } catch (\Exception $e) {
-                \DB::rollBack();
-                
-                // Добавляем базовую информацию к контексту
-                $errorContext = array_merge($logContext, [
-                    'action' => 'registration',
-                    'status' => 'failed',
-                    'error_message' => $e->getMessage(),
-                    'error_code' => $e->getCode()
+        DB::beginTransaction(); // Используем транзакцию
+        try {
+            // $userData = $registerDTO->toArray(); // Нет такого метода
+            $userData = $registerDTO->getUserData(); // Используем getUserData()
+            // unset($userData['organization_name']); // organization_name нет в getUserData()
+
+            // Создаем пользователя
+            $user = $this->userRepository->create($userData);
+
+            // Создаем организацию, если имя передано
+            $orgName = $registerDTO->organizationName; // Используем магический __get
+            if (!empty($orgName)) {
+                $organization = $this->organizationRepository->create([
+                    'name' => $orgName,
+                    'owner_id' => $user->id,
+                    // Можно добавить больше полей из $registerDTO->getOrganizationData(), если нужно
                 ]);
-                
-                LogService::exception($e, $errorContext);
-                
-                return [
-                    'success' => false,
-                    'message' => 'Ошибка при регистрации: ' . $e->getMessage(),
-                    'status_code' => 500
-                ];
+                // Привязываем пользователя к организации с ролью владельца
+                $this->userRepository->attachToOrganization($user->id, $organization->id);
             }
-        });
+
+            DB::commit(); // Фиксируем транзакцию
+
+            // TODO: Отправка письма для верификации email?
+
+            LogService::authLog('register_success', ['user_id' => $user->id, 'email' => $user->email]);
+            return ['success' => true, 'user' => $user, 'status_code' => 201];
+
+        } catch (\Exception $e) {
+            DB::rollBack(); // Откатываем транзакцию
+            LogService::exception($e, ['action' => 'register', 'email' => $registerDTO->email ?? 'N/A']);
+            return ['success' => false, 'message' => 'Ошибка при регистрации пользователя: ' . $e->getMessage(), 'status_code' => 500];
+        }
     }
 } 

@@ -3,11 +3,13 @@
 namespace App\Repositories;
 
 use App\Models\User;
+use App\Repositories\Interfaces\UserRepositoryInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Models\Role;
 use Illuminate\Support\Collection;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Pagination\LengthAwarePaginator as PaginationLengthAwarePaginator;
 
 class UserRepository extends BaseRepository implements UserRepositoryInterface
 {
@@ -19,14 +21,14 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         parent::__construct(User::class);
     }
 
-    public function findByEmail(string $email)
+    public function findByEmail(string $email): ?User
     {
         return $this->model->where('email', $email)->first();
     }
 
-    public function findWithRoles(int $id)
+    public function findWithRoles(int $id): ?User
     {
-        return $this->model->with(['roles', 'organizations'])->find($id);
+        return $this->model->with('roles')->find($id);
     }
 
     public function getUsersInOrganization(int $organizationId)
@@ -36,34 +38,32 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         })->get();
     }
 
-    public function attachToOrganization(int $userId, int $organizationId, bool $isOwner = false, bool $isActive = true)
+    public function attachToOrganization(int $userId, int $organizationId, bool $isOwner = false, bool $setCurrent = false): void
     {
-        $user = $this->find($userId);
-        
-        if (!$user) {
-            return false;
+        $user = $this->model->find($userId);
+        if ($user) {
+            $user->organizations()->attach($organizationId, [/* 'is_owner' => $isOwner - убираем, если нет в интерфейсе */]);
+            // if ($setCurrent) {
+            //     $user->current_organization_id = $organizationId;
+            //     $user->save();
+            // }
         }
-        
-        $user->organizations()->attach($organizationId, [
-            'is_owner' => $isOwner,
-            'is_active' => $isActive
-        ]);
-        
-        return $user;
     }
 
-    public function assignRole(int $userId, int $roleId, ?int $organizationId = null)
+    public function assignRole(int $userId, int $roleId, int $organizationId): void
     {
-        $user = $this->find($userId);
-        
-        if (!$user) {
-            return false;
+        $user = $this->model->find($userId);
+        if ($user) {
+            // Проверяем, существует ли уже такая связь с ролью, чтобы избежать дублирования
+            $exists = $user->roles()
+                          ->wherePivot('organization_id', $organizationId)
+                          ->wherePivot('role_id', $roleId)
+                          ->exists();
+
+            if (!$exists) {
+                $user->roles()->attach($roleId, ['organization_id' => $organizationId]);
+            }
         }
-        
-        $pivotData = $organizationId ? ['organization_id' => $organizationId] : [];
-        $user->roles()->attach($roleId, $pivotData);
-        
-        return $user;
     }
 
     /**
@@ -73,59 +73,14 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
      * @param string $roleName
      * @return \Illuminate\Database\Eloquent\Collection
      */
-    public function findByRoleInOrganization(int $organizationId, string $roleName)
+    public function findByRoleInOrganization(int $organizationId, string $roleSlug): Collection
     {
-        // Лог типа ПЕРЕД вызовом whereHas - УДАЛЯЕМ
-        /* Log::debug('[UserRepository] findByRoleInOrganization called', [
-            'organizationId_param' => $organizationId,
-            'organizationId_param_type' => gettype($organizationId),
-            'roleName' => $roleName
-        ]); */
-
-        $intOrganizationId = (int) $organizationId; // Убедимся, что ID целочисленный
-
-        // Строим запрос
-        $query = $this->model->whereHas('roles', function ($subQuery) use ($roleName, $intOrganizationId) {
-            $subQuery->where('slug', $roleName)
-                  // Используем where() с явным указанием таблицы и столбца
-                  ->where('role_user.organization_id', $intOrganizationId); 
-        });
-        
-        // Логируем SQL и биндинги ПЕРЕД выполнением - УДАЛЯЕМ
-        /* Log::debug('[UserRepository] SQL Query for findByRoleInOrganization', [
-            'sql' => $query->toSql(),
-            'bindings' => $query->getBindings(),
-            'roleName' => $roleName,
-            'organizationId' => $intOrganizationId
-        ]); */
-
-        // Выполняем запрос
-        return $query->get();
-
-        // Предыдущий вариант с wherePivot, который был некорректен
-        /*
-        return $this->model->whereHas('roles', function ($query) use ($roleName, $intOrganizationId) {
-            $query->where('slug', $roleName)
-                  ->wherePivot('organization_id', $intOrganizationId); // Проверяем pivot
-        })->get();
-        */
-
-        // Старый вариант с двумя whereHas, который мог быть неточным:
-        /*
-        return $this->model->whereHas('organizations', function ($q) use ($intOrganizationId) {
-            Log::debug('[UserRepository] Inside whereHas(organizations) closure', [
-                'organizationId_in_closure' => $intOrganizationId,
-                'organizationId_in_closure_type' => gettype($intOrganizationId)
-            ]);
-            $q->where('organization_user.organization_id', $intOrganizationId); // Уточняем таблицу 
-        })->whereHas('roles', function ($q) use ($roleName) {
-             Log::debug('[UserRepository] Inside whereHas(roles) closure', [
-                'roleName_in_closure' => $roleName,
-                'roleName_in_closure_type' => gettype($roleName)
-            ]);
-            $q->where('slug', $roleName); 
-        })->get();
-        */
+        return $this->model
+            ->whereHas('roles', function ($query) use ($roleSlug, $organizationId) {
+                $query->where('slug', $roleSlug)
+                      ->wherePivot('organization_id', $organizationId);
+            })
+            ->get();
     }
 
     /**
@@ -138,14 +93,11 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
      */
     public function revokeRole(int $userId, int $roleId, int $organizationId): bool
     {
-        $user = $this->find($userId);
-        if (!$user) {
-            return false;
+        $user = $this->model->find($userId);
+        if ($user) {
+            return $user->roles()->wherePivot('organization_id', $organizationId)->detach($roleId) > 0;
         }
-        // Используем detach, передавая ID роли и условие для pivot-таблицы
-        $detachedCount = $user->roles()->wherePivot('organization_id', $organizationId)->detach($roleId);
-        // detach возвращает количество удаленных записей
-        return $detachedCount > 0;
+        return false;
     }
 
     /**
@@ -157,14 +109,20 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
      */
     public function detachFromOrganization(int $userId, int $organizationId): bool
     {
-        $user = $this->find($userId);
-        if (!$user) {
-            return false;
+        $user = $this->model->find($userId);
+        if ($user) {
+            // Удаляем все роли пользователя в этой организации перед откреплением
+            $user->roles()->wherePivot('organization_id', $organizationId)->detach();
+            // Открепляем от организации
+            $detached = $user->organizations()->detach($organizationId) > 0;
+            // Если это была текущая организация, сбрасываем ее
+            // if ($user->current_organization_id === $organizationId) {
+            //     $user->current_organization_id = null;
+            //     $user->save();
+            // }
+            return $detached;
         }
-        // Используем detach для связи organizations
-        $detachedCount = $user->organizations()->detach($organizationId);
-        // detach возвращает количество удаленных записей
-        return $detachedCount > 0;
+        return false;
     }
 
     /**
@@ -172,16 +130,14 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
      */
     public function hasRoleInOrganization(int $userId, int $roleId, int $organizationId): bool
     {
-        $user = $this->find($userId);
-        if (!$user) {
-            return false;
+        $user = $this->model->find($userId);
+        if ($user) {
+            return $user->roles()
+                        ->wherePivot('organization_id', $organizationId)
+                        ->where('role_id', $roleId)
+                        ->exists();
         }
-
-        // Проверяем существование связи в pivot-таблице role_user
-        return $user->roles()
-                    ->wherePivot('organization_id', $organizationId)
-                    ->where('roles.id', $roleId) // Уточняем ID роли в таблице roles
-                    ->exists();
+        return false;
     }
 
     public function paginateByRoleInOrganization(
@@ -193,28 +149,20 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         string $sortDirection = 'asc'
     ): LengthAwarePaginator
     {
-        $query = $this->model->whereHas('roles', function ($q) use ($roleSlug, $organizationId) {
-            $q->where('slug', $roleSlug)
-              ->where('role_user.organization_id', $organizationId);
-        });
+        $query = $this->model->query()
+            ->whereHas('roles', function ($q) use ($roleSlug, $organizationId) {
+                $q->where('slug', $roleSlug);
+                $q->wherePivot('organization_id', $organizationId);
+            });
 
-        // Применяем фильтры (если есть)
+        // Применяем фильтры (пример)
         if (!empty($filters['name'])) {
-            $query->where('name', 'ilike', '%' . $filters['name'] . '%');
+            $query->where('name', 'like', '%' . $filters['name'] . '%');
         }
-        if (isset($filters['is_active'])) { // Фильтр по активности в организации
-            $query->whereHas('organizations', function ($orgQuery) use ($organizationId, $filters) {
-                $orgQuery->where('organization_user.organization_id', $organizationId)
-                         ->where('organization_user.is_active', (bool)$filters['is_active']);
-            });
-        } else {
-             // Убедимся, что пользователь в принципе привязан к организации
-            $query->whereHas('organizations', function ($orgQuery) use ($organizationId) {
-                $orgQuery->where('organization_user.organization_id', $organizationId);
-            });
+        if (isset($filters['is_active'])) {
+            $query->where('is_active', $filters['is_active']);
         }
 
-        // Сортировка
         $query->orderBy($sortBy, $sortDirection);
 
         return $query->paginate($perPage);
@@ -225,75 +173,20 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
      */
     public function getForemanActivity(int $organizationId, array $filters = []): Collection
     {
-        // Базовый запрос для логов материалов
-        $materialLogsQuery = DB::table('material_usage_logs as mul')
-            ->select(
-                'mul.user_id',
-                DB::raw('count(*) as material_logs_count'),
-                DB::raw('0 as work_logs_count') // Заглушка для UNION
-            )
-            ->join('projects as p', 'mul.project_id', '=', 'p.id')
-            ->where('p.organization_id', $organizationId)
-            ->groupBy('mul.user_id');
-
-        // Базовый запрос для логов работ
-        $workLogsQuery = DB::table('work_completion_logs as wcl')
-            ->select(
-                'wcl.user_id',
-                DB::raw('0 as material_logs_count'), // Заглушка для UNION
-                DB::raw('count(*) as work_logs_count')
-            )
-            ->join('projects as p', 'wcl.project_id', '=', 'p.id')
-            ->where('p.organization_id', $organizationId)
-            ->groupBy('wcl.user_id');
-
-        // Применение общих фильтров к обоим запросам
-        foreach ([$materialLogsQuery, $workLogsQuery] as $query) {
-            if (!empty($filters['project_id'])) {
-                // Имя таблицы разное, используем алиас 'p'
-                $query->where('p.id', $filters['project_id']);
-            }
-            if (!empty($filters['user_id'])) {
-                // Имя колонки user_id одинаковое
-                $query->where($this->getLogUserColumn($query), $filters['user_id']);
-            }
-            if (!empty($filters['date_from'])) {
-                $query->where($this->getLogDateColumn($query), '>=', $filters['date_from']);
-            }
-            if (!empty($filters['date_to'])) {
-                $query->where($this->getLogDateColumn($query), '<=', $filters['date_to']);
-            }
-        }
-
-        // Объединяем запросы через UNION ALL
-        $unionQuery = $materialLogsQuery->unionAll($workLogsQuery);
-
-        // Финальная агрегация после UNION
-        $finalQuery = DB::query()->fromSub($unionQuery, 'activity')
-            ->select(
-                'activity.user_id',
-                DB::raw('SUM(activity.material_logs_count) as total_material_logs'),
-                DB::raw('SUM(activity.work_logs_count) as total_work_logs'),
-                'users.name as user_name' // Добавляем имя пользователя
-            )
-            ->join('users', 'activity.user_id', '=', 'users.id')
-            ->groupBy('activity.user_id', 'users.name')
-            ->orderBy('users.name');
-
-        return $finalQuery->get();
+        // TODO: Implementar логику для получения активности прорабов из логов
+        // Например, через запрос к таблицам MaterialUsageLog и WorkCompletionLog
+        // с группировкой и фильтрацией
+        return collect(); // Временная заглушка
     }
 
-    // Вспомогательные методы для получения имен колонок логов
-    private function getLogUserColumn($query): string
+    // Добавляем реализацию недостающего метода
+    public function findByRoleInOrganizationPaginated(int $organizationId, string $roleSlug, int $perPage = 15): PaginationLengthAwarePaginator
     {
-        // Определяем таблицу по алиасу или имени
-        $from = $query->from;
-        return ($from === 'material_usage_logs as mul' || $from === 'material_usage_logs') ? 'mul.user_id' : 'wcl.user_id';
-    }
-
-    private function getLogDateColumn($query): string
-    {
-        $from = $query->from;
-        return ($from === 'material_usage_logs as mul' || $from === 'material_usage_logs') ? 'mul.usage_date' : 'wcl.completion_date';
+        return $this->model
+            ->whereHas('roles', function ($query) use ($roleSlug, $organizationId) {
+                $query->where('slug', $roleSlug)
+                      ->wherePivot('organization_id', $organizationId);
+            })
+            ->paginate($perPage);
     }
 } 

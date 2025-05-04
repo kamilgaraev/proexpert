@@ -3,9 +3,12 @@
 namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
-use Illuminate\Support\Facades\Route;
-use App\Repositories\Interfaces\RoleRepositoryInterface;
-use App\Repositories\RoleRepository;
+// Удаляем use для репозиториев, так как привязки переносятся
+// use App\Repositories\Interfaces\RoleRepositoryInterface;
+// use App\Repositories\RoleRepository;
+// use App\Repositories\Interfaces\ProjectRepositoryInterface;
+// use App\Repositories\ProjectRepository;
+// ... (и остальные use для репозиториев)
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -14,11 +17,18 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        // Явная привязка для диагностики
-        $this->app->bind(RoleRepositoryInterface::class, RoleRepository::class);
-        
-        // Возможно, стоит добавить и для UserRepositoryInterface на всякий случай?
-        // $this->app->bind(\App\Repositories\UserRepositoryInterface::class, \App\Repositories\UserRepository::class);
+        // Оставляем только не-репозиторные привязки, если они есть
+        // $this->app->bind(SomeOtherInterface::class, SomeOtherClass::class);
+
+        // Удаляем все привязки репозиториев отсюда
+        // $this->app->bind(RoleRepositoryInterface::class, RoleRepository::class);
+        // $this->app->bind(UserRepositoryInterface::class, UserRepository::class);
+        // $this->app->bind(ProjectRepositoryInterface::class, ProjectRepository::class);
+        // $this->app->bind(MaterialRepositoryInterface::class, MaterialRepository::class);
+        // $this->app->bind(WorkTypeRepositoryInterface::class, WorkTypeRepository::class);
+        // $this->app->bind(SupplierRepositoryInterface::class, SupplierRepository::class);
+        // $this->app->bind(MaterialUsageLogRepositoryInterface::class, MaterialUsageLogRepository::class);
+        // $this->app->bind(WorkCompletionLogRepositoryInterface::class, WorkCompletionLogRepository::class);
     }
 
     /**

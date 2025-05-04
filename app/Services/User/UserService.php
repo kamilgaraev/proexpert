@@ -4,7 +4,7 @@ namespace App\Services\User;
 
 use App\Models\User;
 use App\Models\Role;
-use App\Repositories\UserRepositoryInterface;
+use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Repositories\Interfaces\RoleRepositoryInterface;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;

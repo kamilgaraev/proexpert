@@ -3,6 +3,7 @@
 namespace App\Repositories;
 
 use App\Models\Organization;
+use App\Repositories\Interfaces\OrganizationRepositoryInterface;
 
 class OrganizationRepository extends BaseRepository implements OrganizationRepositoryInterface
 {

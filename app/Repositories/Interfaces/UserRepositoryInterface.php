@@ -5,10 +5,19 @@ namespace App\Repositories\Interfaces;
 use App\Repositories\RepositoryInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use App\Models\User;
 
 interface UserRepositoryInterface extends RepositoryInterface
 {
     // ... другие методы ...
+
+    /**
+     * Найти пользователя по ID вместе с его ролями.
+     *
+     * @param int $id
+     * @return User|null
+     */
+    public function findWithRoles(int $id): ?User;
 
     public function findByRoleInOrganization(int $organizationId, string $roleSlug): Collection;
     public function findByRoleInOrganizationPaginated(int $organizationId, string $roleSlug, int $perPage = 15): \Illuminate\Pagination\LengthAwarePaginator;
