@@ -37,8 +37,40 @@ class CorsMiddleware
         $maxAge = Config::get('cors.max_age', 86400);
         $supportsCredentials = Config::get('cors.supports_credentials', true);
         
-        // Проверяем, что origin в списке разрешенных
-        $allowOrigin = in_array($origin, $allowedOrigins) ? $origin : '';
+        // Проверяем origin
+        $allowOrigin = '';
+        
+        // В режиме разработки можно разрешить все origins
+        $isDevMode = Config::get('app.env') === 'local';
+        
+        if ($isDevMode && Config::get('cors.allow_any_origin_in_dev', false)) {
+            $allowOrigin = $origin ?: '*';
+            Log::info('CORS: Разрешен любой origin в режиме разработки', ['origin' => $origin]);
+        } else {
+            // Проверяем обычным способом
+            if (in_array($origin, $allowedOrigins)) {
+                $allowOrigin = $origin;
+            } else {
+                // Пытаемся извлечь хост из origin
+                $originHost = parse_url($origin, PHP_URL_HOST);
+                
+                // Проверяем если origin это IP-адрес из списка разрешенных
+                foreach ($allowedOrigins as $allowed) {
+                    $allowedHost = parse_url($allowed, PHP_URL_HOST);
+                    
+                    if ($originHost === $allowedHost) {
+                        $allowOrigin = $origin;
+                        break;
+                    }
+                }
+                
+                // Дополнительная проверка для IP 89.111.152.112
+                if (empty($allowOrigin) && $originHost && strpos($originHost, '89.111.152.112') === 0) {
+                    $allowOrigin = $origin;
+                    Log::info('CORS: Разрешен специальный IP', ['origin' => $origin, 'host' => $originHost]);
+                }
+            }
+        }
         
         // Устанавливаем заголовки CORS для ответа
         $headers = [
