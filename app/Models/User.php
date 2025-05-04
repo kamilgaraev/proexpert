@@ -12,6 +12,7 @@ use Illuminate\Notifications\Notifiable;
 use Tymon\JWTAuth\Contracts\JWTSubject;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 // Импортируем константы роли
 use App\Models\Role;
@@ -169,22 +170,48 @@ class User extends Authenticatable implements JWTSubject
      */
     public function hasRole(string $roleSlug, ?int $organizationId = null): bool
     {
-        $query = $this->roles()->where('slug', $roleSlug);
-
-        // Важно: проверяем наличие роли именно в контексте УКАЗАННОЙ организации
-        $query->wherePivot('organization_id', $organizationId);
-
-        $exists = $query->exists();
-
-        // Добавим лог для отладки hasRole
-        Log::debug('[User::hasRole check]', [
+        // Если организация не указана, проверяем в текущей организации
+        if (!$organizationId) {
+            if (!$this->current_organization_id) {
+                return false; // Нет контекста организации
+            }
+            $organizationId = $this->current_organization_id;
+        }
+        
+        // Повышаем уровень логирования для диагностики
+        Log::info('[User::hasRole] Начало проверки роли', [
             'user_id' => $this->id,
             'role_slug' => $roleSlug,
-            'organization_id' => $organizationId,
-            'exists' => $exists
+            'organization_id' => $organizationId
         ]);
-
-        return $exists;
+        
+        // Прямая проверка через SQL запрос
+        $roleId = DB::table('roles')
+            ->where('slug', $roleSlug)
+            ->value('id');
+            
+        if (!$roleId) {
+            Log::warning('[User::hasRole] Роль не найдена в системе', [
+                'role_slug' => $roleSlug
+            ]);
+            return false;
+        }
+        
+        $hasRole = DB::table('role_user')
+            ->where('user_id', $this->id)
+            ->where('role_id', $roleId)
+            ->where('organization_id', $organizationId)
+            ->exists();
+            
+        Log::info('[User::hasRole] Результат проверки через SQL', [
+            'user_id' => $this->id,
+            'role_slug' => $roleSlug,
+            'role_id' => $roleId,
+            'organization_id' => $organizationId,
+            'has_role' => $hasRole
+        ]);
+            
+        return $hasRole;
     }
 
     /**

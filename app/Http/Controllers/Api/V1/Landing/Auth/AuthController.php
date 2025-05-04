@@ -107,33 +107,6 @@ class AuthController extends Controller
                     'roles' => $user->roles->pluck('slug')->toArray()
                 ]);
 
-                // Прямая проверка роли владельца
-                $hasOwnerRole = false;
-                foreach ($user->roles as $role) {
-                    if ($role->slug === \App\Models\Role::ROLE_OWNER && $role->pivot->organization_id == $organizationId) {
-                        $hasOwnerRole = true;
-                        break;
-                    }
-                }
-                
-                Log::info('[LandingAuthController] Прямая проверка роли владельца', [
-                    'user_id' => $user->id,
-                    'organization_id' => $organizationId,
-                    'has_owner_role' => $hasOwnerRole
-                ]);
-                
-                // Если пользователь владелец, разрешаем доступ без вызова Gate
-                if ($hasOwnerRole) {
-                    Log::info('[LandingAuthController] Пользователь имеет роль владельца, доступ разрешен без Gate');
-                    LogService::authLog('landing_login_success', [
-                        'user_id' => $user->id,
-                        'email' => $user->email,
-                        'organization_id' => $organizationId,
-                        'direct_owner_check' => true
-                    ]);
-                    return LoginResponse::loginSuccess($result['user'], $result['token']);
-                }
-
                 Log::info('[LandingAuthController] Auth successful, checking Landing access via Gate...');
                 // Используем Gate для проверки прав доступа к ЛК
                 if (Gate::denies('access-landing', [$organizationId])) { // Исправлено: Передаем $organizationId в массиве
