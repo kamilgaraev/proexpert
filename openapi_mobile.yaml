@@ -1,0 +1,823 @@
+openapi: 3.0.3
+info:
+  title: ProHelper Mobile API
+  description: API for ProHelper mobile application used by foremen.
+  version: 1.0.0
+servers:
+  - url: /api/v1/mobile
+    description: Main API server
+tags:
+  - name: Auth
+    description: Authentication operations
+  - name: Logs
+    description: Foreman activity logging (materials, work)
+  - name: Projects
+    description: Project and related data access
+  - name: Catalogs
+    description: Access to catalogs (Materials, Work Types, Suppliers)
+paths:
+  /auth/login:
+    post:
+      tags:
+        - Auth
+      summary: User Login
+      description: Authenticates a user (foreman) and returns a JWT token.
+      operationId: mobileLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Successful authentication
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    example: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+                  token_type:
+                    type: string
+                    example: bearer
+                  expires_in:
+                    type: integer
+                    example: 3600
+        '401':
+          description: Invalid credentials or user does not have access to the mobile app
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorUnauthorized'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorValidation'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorServer'
+
+  /material-usage-logs:
+    post:
+      tags:
+        - Logs
+      summary: Log Material Usage
+      description: Creates a log entry for material usage by the foreman. Requires authentication.
+      operationId: storeMaterialUsageLog
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreMaterialUsageLogRequest'
+      responses:
+        '201':
+          description: Log entry created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Запись об использовании материала успешно создана."
+                  data:
+                    $ref: '#/components/schemas/MaterialUsageLog' # Assuming a resource exists or will be created
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorUnauthorized'
+        '403':
+          description: Forbidden (User cannot access mobile app)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorForbidden'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorValidation'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorServer'
+
+  /work-completion-logs:
+    post:
+      tags:
+        - Logs
+      summary: Log Work Completion
+      description: Creates a log entry for work completion by the foreman. Requires authentication.
+      operationId: storeWorkCompletionLog
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreWorkCompletionLogRequest'
+      responses:
+        '201':
+          description: Log entry created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Запись о выполнении работы успешно создана."
+                  data:
+                    $ref: '#/components/schemas/WorkCompletionLog' # Assuming a resource exists or will be created
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorUnauthorized'
+        '403':
+          description: Forbidden (User cannot access mobile app)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorForbidden'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorValidation'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorServer'
+
+  /projects:
+    get:
+      tags:
+        - Projects
+      summary: Get Assigned Projects
+      description: Retrieves a list of projects assigned to the currently authenticated foreman. Requires authentication.
+      operationId: getAssignedProjects
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+          description: Page number for pagination.
+        - in: query
+          name: per_page
+          schema:
+            type: integer
+            default: 15
+          description: Number of projects per page.
+      responses:
+        '200':
+          description: List of assigned projects
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Project' # Assuming ProjectResource structure
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorUnauthorized'
+        '403':
+          description: Forbidden (User cannot access mobile app)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorForbidden'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorServer'
+
+  /materials:
+      get:
+        tags:
+          - Catalogs
+        summary: Get Materials Catalog
+        description: Retrieves a paginated list of materials available in the foreman's organization. Requires authentication.
+        operationId: getMaterialsCatalog
+        security:
+          - bearerAuth: []
+        parameters:
+          - in: query
+            name: page
+            schema:
+              type: integer
+              default: 1
+            description: Page number for pagination.
+          - in: query
+            name: per_page
+            schema:
+              type: integer
+              default: 15
+            description: Number of items per page.
+          - in: query
+            name: name
+            schema:
+              type: string
+            description: Filter by material name (partial match).
+          - in: query
+            name: category_id
+            schema:
+              type: integer
+            description: Filter by material category ID.
+          - in: query
+            name: is_active
+            schema:
+              type: boolean
+            description: Filter by active status.
+        responses:
+          '200':
+            description: Paginated list of materials
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Material' # Based on MaterialResource
+                    links:
+                      $ref: '#/components/schemas/PaginationLinks'
+                    meta:
+                      $ref: '#/components/schemas/PaginationMeta'
+          '401':
+            description: Unauthorized
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ErrorUnauthorized'
+          '403':
+            description: Forbidden
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ErrorForbidden'
+          '500':
+            description: Internal Server Error
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ErrorServer'
+
+  /work-types:
+      get:
+        tags:
+          - Catalogs
+        summary: Get Work Types Catalog
+        description: Retrieves a paginated list of work types available in the foreman's organization. Requires authentication.
+        operationId: getWorkTypesCatalog
+        security:
+          - bearerAuth: []
+        parameters:
+          - in: query
+            name: page
+            schema:
+              type: integer
+              default: 1
+            description: Page number for pagination.
+          - in: query
+            name: per_page
+            schema:
+              type: integer
+              default: 15
+            description: Number of items per page.
+          - in: query
+            name: name
+            schema:
+              type: string
+            description: Filter by work type name (partial match).
+          - in: query
+            name: category_id # Assuming categories exist for work types too
+            schema:
+              type: integer
+            description: Filter by work type category ID.
+          - in: query
+            name: is_active
+            schema:
+              type: boolean
+            description: Filter by active status.
+        responses:
+          '200':
+            description: Paginated list of work types
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/WorkType' # Based on WorkTypeResource
+                    links:
+                      $ref: '#/components/schemas/PaginationLinks'
+                    meta:
+                      $ref: '#/components/schemas/PaginationMeta'
+          '401':
+            description: Unauthorized
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ErrorUnauthorized'
+          '403':
+            description: Forbidden
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ErrorForbidden'
+          '500':
+            description: Internal Server Error
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ErrorServer'
+
+  /suppliers:
+      get:
+        tags:
+          - Catalogs
+        summary: Get Suppliers Catalog
+        description: Retrieves a paginated list of suppliers available in the foreman's organization. Requires authentication.
+        operationId: getSuppliersCatalog
+        security:
+          - bearerAuth: []
+        parameters:
+          - in: query
+            name: page
+            schema:
+              type: integer
+              default: 1
+            description: Page number for pagination.
+          - in: query
+            name: per_page
+            schema:
+              type: integer
+              default: 15
+            description: Number of items per page.
+          - in: query
+            name: name
+            schema:
+              type: string
+            description: Filter by supplier name (partial match).
+          - in: query
+            name: is_active
+            schema:
+              type: boolean
+            description: Filter by active status.
+        responses:
+          '200':
+            description: Paginated list of suppliers
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Supplier' # Based on SupplierResource
+                    links:
+                      $ref: '#/components/schemas/PaginationLinks'
+                    meta:
+                      $ref: '#/components/schemas/PaginationMeta'
+          '401':
+            description: Unauthorized
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ErrorUnauthorized'
+          '403':
+            description: Forbidden
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ErrorForbidden'
+          '500':
+            description: Internal Server Error
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ErrorServer'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "JWT token obtained from `/auth/login` endpoint. Example: `Bearer {token}`"
+
+  schemas:
+    # --- Request Schemas ---
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user1@example.com"
+        password:
+          type: string
+          format: password
+          example: "password"
+
+    StoreMaterialUsageLogRequest:
+      type: object
+      required:
+        - project_id
+        - material_id
+        - quantity
+        - unit
+        - date
+      properties:
+        project_id:
+          type: integer
+          description: ID of the project where material was used
+          example: 1
+        material_id:
+          type: integer
+          description: ID of the material used
+          example: 5
+        quantity:
+          type: number
+          format: float
+          description: Quantity of material used
+          example: 10.5
+        unit:
+          type: string
+          description: Unit of measurement (e.g., 'kg', 'm', 'pcs')
+          example: "kg"
+        date:
+          type: string
+          format: date
+          description: Date of material usage
+          example: "2024-07-28"
+        comment:
+          type: string
+          nullable: true
+          description: Optional comment
+          example: "Used for foundation works"
+
+    StoreWorkCompletionLogRequest:
+      type: object
+      required:
+        - project_id
+        - work_type_id
+        - quantity
+        - unit
+        - date
+      properties:
+        project_id:
+          type: integer
+          description: ID of the project where work was done
+          example: 1
+        work_type_id:
+          type: integer
+          description: ID of the work type completed
+          example: 12
+        quantity:
+          type: number
+          format: float
+          description: Quantity of work completed
+          example: 50.0
+        unit:
+          type: string
+          description: Unit of measurement (e.g., 'm2', 'm3', 'item')
+          example: "m2"
+        date:
+          type: string
+          format: date
+          description: Date of work completion
+          example: "2024-07-28"
+        comment:
+          type: string
+          nullable: true
+          description: Optional comment
+          example: "Completed plastering on the first floor"
+
+    # --- Response/Model Schemas ---
+    MaterialUsageLog:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        project_id:
+          type: integer
+          example: 1
+        material_id:
+          type: integer
+          example: 5
+        user_id: # Foreman ID
+          type: integer
+          example: 8
+        quantity:
+          type: number
+          format: float
+          example: 10.5
+        unit:
+          type: string
+          example: "kg"
+        date:
+          type: string
+          format: date
+          example: "2024-07-28"
+        comment:
+          type: string
+          nullable: true
+          example: "Used for foundation works"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      # Add relation schemas if needed (e.g., nested project, material, user)
+
+    WorkCompletionLog:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        project_id:
+          type: integer
+          example: 1
+        work_type_id:
+          type: integer
+          example: 12
+        user_id: # Foreman ID
+          type: integer
+          example: 8
+        quantity:
+          type: number
+          format: float
+          example: 50.0
+        unit:
+          type: string
+          example: "m2"
+        date:
+          type: string
+          format: date
+          example: "2024-07-28"
+        comment:
+          type: string
+          nullable: true
+          example: "Completed plastering on the first floor"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+      # Add relation schemas if needed
+
+    Project: # Based on ProjectResource, adjust as needed
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Building A"
+        address:
+          type: string
+          example: "123 Main St"
+        status:
+          type: string # Or enum if defined
+          example: "active"
+        is_archived:
+          type: boolean
+          example: false
+        # Include other relevant fields from ProjectResource
+
+    Material: # Based on MaterialResource
+       type: object
+       properties:
+         id:
+           type: integer
+           example: 101
+         name:
+           type: string
+           example: "Cement M500"
+         unit:
+           type: string
+           example: "kg"
+         is_active:
+           type: boolean
+           example: true
+         category: # Assuming a nested category object or just ID/name
+           type: object # Or string/integer if only ID/name is needed
+           properties:
+              id:
+                type: integer
+                example: 1
+              name:
+                type: string
+                example: "Bulk Materials"
+         # Include other relevant fields
+
+    WorkType: # Based on WorkTypeResource
+       type: object
+       properties:
+         id:
+           type: integer
+           example: 201
+         name:
+           type: string
+           example: "Plastering"
+         unit:
+           type: string
+           example: "m2"
+         is_active:
+           type: boolean
+           example: true
+         category: # Assuming a nested category object or just ID/name
+           type: object # Or string/integer if only ID/name is needed
+           properties:
+              id:
+                type: integer
+                example: 5
+              name:
+                type: string
+                example: "Finishing Works"
+         # Include other relevant fields
+
+    Supplier: # Based on SupplierResource
+        type: object
+        properties:
+          id:
+            type: integer
+            example: 301
+          name:
+            type: string
+            example: "Supplier Inc."
+          contact_person:
+            type: string
+            nullable: true
+            example: "John Doe"
+          phone:
+            type: string
+            nullable: true
+            example: "+1234567890"
+          email:
+            type: string
+            format: email
+            nullable: true
+            example: "john.doe@supplier.com"
+          is_active:
+            type: boolean
+            example: true
+          # Include other relevant fields
+
+    # --- Pagination Schemas ---
+    PaginationLinks:
+      type: object
+      properties:
+        first:
+          type: string
+          nullable: true
+          example: "/api/v1/mobile/projects?page=1"
+        last:
+          type: string
+          nullable: true
+          example: "/api/v1/mobile/projects?page=10"
+        prev:
+          type: string
+          nullable: true
+          example: null
+        next:
+          type: string
+          nullable: true
+          example: "/api/v1/mobile/projects?page=2"
+
+    PaginationMeta:
+      type: object
+      properties:
+        current_page:
+          type: integer
+          example: 1
+        from:
+          type: integer
+          nullable: true
+          example: 1
+        last_page:
+          type: integer
+          example: 10
+        links:
+          type: array
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+                nullable: true
+                example: "/api/v1/mobile/projects?page=1"
+              label:
+                type: string
+                example: "1"
+              active:
+                type: boolean
+                example: true
+        path:
+          type: string
+          example: "/api/v1/mobile/projects"
+        per_page:
+          type: integer
+          example: 15
+        to:
+          type: integer
+          nullable: true
+          example: 15
+        total:
+          type: integer
+          example: 150
+
+    # --- Error Schemas ---
+    ErrorValidation:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "The given data was invalid."
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            email: ["The email field is required."]
+            password: ["The password field is required."]
+
+    ErrorUnauthorized:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Unauthenticated." # Or specific message like "Invalid credentials"
+
+    ErrorForbidden:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "This action is unauthorized." # Or specific gate message
+
+    ErrorNotFound: # Although not explicitly listed for mobile yet, good to have
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Not Found"
+
+    ErrorServer:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Internal Server Error" 

@@ -45,10 +45,13 @@ use Illuminate\Support\Facades\Route;
             // Защищенные маршруты Admin Panel (требуют токен admin + контекст организации)
             Route::middleware(['auth:api_admin', 'jwt.auth', 'organization.context'])->group(function() {
                 require __DIR__ . '/api/v1/admin/projects.php';
-                require __DIR__ . '/api/v1/admin/materials.php';
-                require __DIR__ . '/api/v1/admin/work_types.php';
-                require __DIR__ . '/api/v1/admin/suppliers.php';
+                // require __DIR__ . '/api/v1/admin/materials.php'; // Старый путь
+                // require __DIR__ . '/api/v1/admin/work_types.php'; // Старый путь
+                // require __DIR__ . '/api/v1/admin/suppliers.php'; // Старый путь
+                require __DIR__ . '/api/v1/admin/catalogs.php'; // Новый общий путь
                 require __DIR__ . '/api/v1/admin/users.php'; // Управление прорабами
+                require __DIR__ . '/api/v1/admin/logs.php'; // Добавляем подключение логов
+                require __DIR__ . '/api/v1/admin/reports.php'; // Добавляем подключение отчетов
                 // Добавить другие защищенные маршруты админки
             });
         });

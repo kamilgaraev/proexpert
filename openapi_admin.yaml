@@ -1,0 +1,1881 @@
+openapi: 3.0.3
+info:
+  title: ProHelper Admin API
+  description: API for ProHelper administration panel.
+  version: 1.0.0
+servers:
+  - url: /api/v1/admin
+    description: Main Admin API server
+tags:
+  - name: Admin Auth
+    description: Authentication operations for admin users
+  - name: Admin Users
+    description: User management (Admins, Foremen)
+  - name: Admin Projects
+    description: Project management and foreman assignments
+  - name: Admin Catalogs
+    description: Management of Materials, Work Types, Suppliers, Categories
+  - name: Admin Logs
+    description: Viewing application and activity logs
+  - name: Admin Reports
+    description: Generating and viewing reports
+paths:
+  # ========== Auth Routes (auth.php) ==========
+  /auth/login:
+    post:
+      tags:
+        - Admin Auth
+      summary: Admin User Login
+      description: Authenticates an admin user and returns a JWT token.
+      operationId: adminLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLoginRequest' # Assuming specific request
+      responses:
+        '200':
+          description: Successful authentication
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    example: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+                  token_type:
+                    type: string
+                    example: bearer
+                  expires_in:
+                    type: integer
+                    example: 3600
+        '401':
+          description: Invalid credentials or user does not have access to the admin panel
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorUnauthorized'
+        '403':
+           description: Forbidden (User cannot access admin panel)
+           content:
+             application/json:
+               schema:
+                 $ref: '#/components/schemas/ErrorForbidden'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorValidation'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorServer'
+
+  /auth/logout:
+    post:
+      tags:
+        - Admin Auth
+      summary: Admin User Logout
+      description: Invalidates the current admin user's JWT token.
+      operationId: adminLogout
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successfully logged out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Successfully logged out"
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorUnauthorized'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorServer'
+
+  /auth/me:
+    get:
+      tags:
+        - Admin Auth
+      summary: Get Current Admin User
+      description: Retrieves the details of the currently authenticated admin user.
+      operationId: adminGetMe
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user details
+          content:
+            application/json:
+              schema:
+                 $ref: '#/components/schemas/AdminUser' # Assuming specific resource
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorUnauthorized'
+        '500':
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorServer'
+
+  # ========== User Management Routes (users.php) ==========
+  /users/foremen:
+    get:
+      tags:
+        - Admin Users
+      summary: List Foremen
+      description: Retrieves a paginated list of foremen for the current organization.
+      operationId: adminListForemen
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/FilterNameParam'
+        - $ref: '#/components/parameters/FilterIsActiveParam'
+      responses:
+        '200':
+          description: Paginated list of foremen
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                       $ref: '#/components/schemas/ForemanUser' # Using specific foreman resource
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+        - Admin Users
+      summary: Create Foreman
+      description: Creates a new foreman user within the current organization.
+      operationId: adminCreateForeman
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreForemanRequest'
+      responses:
+        '201':
+          description: Foreman created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForemanUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-foremen' permission
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /users/foremen/{user}:
+    get:
+      tags:
+        - Admin Users
+      summary: Get Foreman Details
+      description: Retrieves details of a specific foreman user.
+      operationId: adminGetForeman
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '200':
+          description: Foreman details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForemanUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Admin Users
+      summary: Update Foreman
+      description: Updates details of a specific foreman user.
+      operationId: adminUpdateForeman
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateForemanRequest'
+      responses:
+        '200':
+          description: Foreman updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForemanUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-foremen' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Admin Users
+      summary: Delete Foreman
+      description: Deletes a specific foreman user (soft delete likely).
+      operationId: adminDeleteForeman
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '204':
+          description: Foreman deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-foremen' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /users/foremen/{user}/block:
+    post:
+      tags:
+        - Admin Users
+      summary: Block Foreman
+      description: Blocks a specific foreman user (sets `is_active` to false).
+      operationId: adminBlockForeman
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '200':
+          description: Foreman blocked successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Foreman blocked successfully."
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-foremen' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /users/foremen/{user}/unblock:
+    post:
+      tags:
+        - Admin Users
+      summary: Unblock Foreman
+      description: Unblocks a specific foreman user (sets `is_active` to true).
+      operationId: adminUnblockForeman
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '200':
+          description: Foreman unblocked successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Foreman unblocked successfully."
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-foremen' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ========== Project Management Routes (projects.php) ==========
+  /projects:
+    get:
+      tags:
+        - Admin Projects
+      summary: List Projects
+      description: Retrieves a paginated list of projects for the current organization.
+      operationId: adminListProjects
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/FilterNameParam'
+        - in: query
+          name: status
+          schema:
+            type: string
+          description: Filter by project status.
+        - in: query
+          name: is_archived
+          schema:
+            type: boolean
+          description: Filter by archived status.
+      responses:
+        '200':
+          description: Paginated list of projects
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Project' # Using ProjectResource
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+        - Admin Projects
+      summary: Create Project
+      description: Creates a new project within the current organization.
+      operationId: adminCreateProject
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreProjectRequest'
+      responses:
+        '201':
+          description: Project created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-projects' permission
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /projects/{project}:
+    get:
+      tags:
+        - Admin Projects
+      summary: Get Project Details
+      description: Retrieves details of a specific project.
+      operationId: adminGetProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdParam'
+      responses:
+        '200':
+          description: Project details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Admin Projects
+      summary: Update Project
+      description: Updates details of a specific project.
+      operationId: adminUpdateProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
+      responses:
+        '200':
+          description: Project updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-projects' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Admin Projects
+      summary: Delete Project
+      description: Deletes a specific project (soft delete likely).
+      operationId: adminDeleteProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdParam'
+      responses:
+        '204':
+          description: Project deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-projects' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /projects/{project}/foremen/{user}:
+    post:
+      tags:
+        - Admin Projects
+      summary: Assign Foreman to Project
+      description: Assigns a foreman to a specific project.
+      operationId: adminAssignForemanToProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdParam'
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '200':
+          description: Foreman assigned successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Foreman assigned successfully."
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-project-assignments' permission
+        '404':
+          description: Project or Foreman not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorNotFound'
+        '409': # Conflict - Foreman already assigned or mismatch org etc.
+           description: Conflict (e.g., Foreman already assigned)
+           content:
+             application/json:
+               schema:
+                 $ref: '#/components/schemas/ErrorConflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Admin Projects
+      summary: Detach Foreman from Project
+      description: Detaches a foreman from a specific project.
+      operationId: adminDetachForemanFromProject
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdParam'
+        - $ref: '#/components/parameters/UserIdParam'
+      responses:
+        '200':
+          description: Foreman detached successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Foreman detached successfully."
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-project-assignments' permission
+        '404':
+          description: Project or Foreman not found, or assignment does not exist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorNotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ========== Catalog Management Routes (catalogs.php) ==========
+  # --- Materials ---
+  /materials:
+    get:
+      tags:
+        - Admin Catalogs
+      summary: List Materials
+      description: Retrieves a paginated list of materials for the current organization.
+      operationId: adminListMaterials
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/FilterNameParam'
+        - $ref: '#/components/parameters/FilterCategoryIdParam'
+        - $ref: '#/components/parameters/FilterIsActiveParam'
+      responses:
+        '200':
+          description: Paginated list of materials
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Material'
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+        - Admin Catalogs
+      summary: Create Material
+      description: Creates a new material within the current organization.
+      operationId: adminCreateMaterial
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreMaterialRequest'
+      responses:
+        '201':
+          description: Material created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Material'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-catalogs' permission
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /materials/{material}:
+    get:
+      tags:
+        - Admin Catalogs
+      summary: Get Material Details
+      description: Retrieves details of a specific material.
+      operationId: adminGetMaterial
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/MaterialIdParam'
+      responses:
+        '200':
+          description: Material details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Material'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Admin Catalogs
+      summary: Update Material
+      description: Updates details of a specific material.
+      operationId: adminUpdateMaterial
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/MaterialIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMaterialRequest'
+      responses:
+        '200':
+          description: Material updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Material'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-catalogs' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Admin Catalogs
+      summary: Delete Material
+      description: Deletes a specific material.
+      operationId: adminDeleteMaterial
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/MaterialIdParam'
+      responses:
+        '204':
+          description: Material deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-catalogs' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # --- Work Types ---
+  /work-types:
+    get:
+      tags:
+        - Admin Catalogs
+      summary: List Work Types
+      description: Retrieves a paginated list of work types for the current organization.
+      operationId: adminListWorkTypes
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/FilterNameParam'
+        - $ref: '#/components/parameters/FilterCategoryIdParam' # Assuming work types have categories
+        - $ref: '#/components/parameters/FilterIsActiveParam'
+      responses:
+        '200':
+          description: Paginated list of work types
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WorkType'
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+        - Admin Catalogs
+      summary: Create Work Type
+      description: Creates a new work type within the current organization.
+      operationId: adminCreateWorkType
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreWorkTypeRequest'
+      responses:
+        '201':
+          description: Work type created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkType'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-catalogs' permission
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /work-types/{work_type}:
+    get:
+      tags:
+        - Admin Catalogs
+      summary: Get Work Type Details
+      description: Retrieves details of a specific work type.
+      operationId: adminGetWorkType
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkTypeIdParam'
+      responses:
+        '200':
+          description: Work type details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkType'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Admin Catalogs
+      summary: Update Work Type
+      description: Updates details of a specific work type.
+      operationId: adminUpdateWorkType
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkTypeIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkTypeRequest'
+      responses:
+        '200':
+          description: Work type updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkType'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-catalogs' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Admin Catalogs
+      summary: Delete Work Type
+      description: Deletes a specific work type.
+      operationId: adminDeleteWorkType
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/WorkTypeIdParam'
+      responses:
+        '204':
+          description: Work type deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-catalogs' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # --- Suppliers ---
+  /suppliers:
+    get:
+      tags:
+        - Admin Catalogs
+      summary: List Suppliers
+      description: Retrieves a paginated list of suppliers for the current organization.
+      operationId: adminListSuppliers
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/FilterNameParam'
+        - $ref: '#/components/parameters/FilterIsActiveParam'
+      responses:
+        '200':
+          description: Paginated list of suppliers
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Supplier'
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    post:
+      tags:
+        - Admin Catalogs
+      summary: Create Supplier
+      description: Creates a new supplier within the current organization.
+      operationId: adminCreateSupplier
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreSupplierRequest'
+      responses:
+        '201':
+          description: Supplier created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-catalogs' permission
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /suppliers/{supplier}:
+    get:
+      tags:
+        - Admin Catalogs
+      summary: Get Supplier Details
+      description: Retrieves details of a specific supplier.
+      operationId: adminGetSupplier
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SupplierIdParam'
+      responses:
+        '200':
+          description: Supplier details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Admin Catalogs
+      summary: Update Supplier
+      description: Updates details of a specific supplier.
+      operationId: adminUpdateSupplier
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SupplierIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSupplierRequest'
+      responses:
+        '200':
+          description: Supplier updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-catalogs' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    delete:
+      tags:
+        - Admin Catalogs
+      summary: Delete Supplier
+      description: Deletes a specific supplier.
+      operationId: adminDeleteSupplier
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/SupplierIdParam'
+      responses:
+        '204':
+          description: Supplier deleted successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'manage-catalogs' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # --- Categories (Assuming generic or specific controllers/routes exist) ---
+  # Example: /material-categories, /work-type-categories
+  # Add Category CRUD operations here if they exist...
+
+  # ========== Log Viewing Routes (logs.php) ==========
+  /logs/material-usage:
+    get:
+      tags:
+        - Admin Logs
+      summary: View Material Usage Logs
+      description: Retrieves a paginated list of material usage logs for the organization.
+      operationId: adminViewMaterialUsageLogs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/FilterProjectIdParam'
+        - $ref: '#/components/parameters/FilterUserIdParam' # Filter by foreman
+        - $ref: '#/components/parameters/FilterMaterialIdParam'
+        - $ref: '#/components/parameters/FilterDateFromParam'
+        - $ref: '#/components/parameters/FilterDateToParam'
+      responses:
+        '200':
+          description: Paginated list of material usage logs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MaterialUsageLog' # Reuse mobile schema or create admin-specific
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'view-logs' permission
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /logs/work-completion:
+    get:
+      tags:
+        - Admin Logs
+      summary: View Work Completion Logs
+      description: Retrieves a paginated list of work completion logs for the organization.
+      operationId: adminViewWorkCompletionLogs
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/PerPageParam'
+        - $ref: '#/components/parameters/FilterProjectIdParam'
+        - $ref: '#/components/parameters/FilterUserIdParam' # Filter by foreman
+        - $ref: '#/components/parameters/FilterWorkTypeIdParam'
+        - $ref: '#/components/parameters/FilterDateFromParam'
+        - $ref: '#/components/parameters/FilterDateToParam'
+      responses:
+        '200':
+          description: Paginated list of work completion logs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WorkCompletionLog' # Reuse mobile schema or create admin-specific
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'view-logs' permission
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ========== Report Generation Routes (reports.php) ==========
+  /reports/project-summary/{project}:
+    get:
+      tags:
+        - Admin Reports
+      summary: Generate Project Summary Report
+      description: Generates a summary report for a specific project (e.g., material usage, work progress).
+      operationId: adminGenerateProjectSummaryReport
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ProjectIdParam'
+        - $ref: '#/components/parameters/FilterDateFromParam'
+        - $ref: '#/components/parameters/FilterDateToParam'
+      responses:
+        '200':
+          description: Project summary report data
+          content:
+            application/json:
+              schema:
+                # Define schema for the report structure
+                type: object
+                example:
+                  projectId: 1
+                  projectName: "Building A"
+                  period: "2024-07-01 - 2024-07-31"
+                  totalMaterialsCost: 5250.75 # Example data
+                  totalWorkHours: 320 # Example data
+                  # Add more detailed report fields
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'view-reports' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /reports/foreman-activity/{user}:
+    get:
+      tags:
+        - Admin Reports
+      summary: Generate Foreman Activity Report
+      description: Generates an activity report for a specific foreman.
+      operationId: adminGenerateForemanActivityReport
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/UserIdParam'
+        - $ref: '#/components/parameters/FilterDateFromParam'
+        - $ref: '#/components/parameters/FilterDateToParam'
+      responses:
+        '200':
+          description: Foreman activity report data
+          content:
+            application/json:
+              schema:
+                 # Define schema for the report structure
+                type: object
+                example:
+                   foremanId: 8
+                   foremanName: "User One"
+                   period: "2024-07-01 - 2024-07-31"
+                   projectsWorkedOn: [1, 3]
+                   materialLogsCount: 15
+                   workLogsCount: 22
+                   # Add more detailed report fields
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # Requires 'view-reports' permission
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+# ================= Component Definitions =================
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "Admin JWT token obtained from `/auth/login` endpoint. Example: `Bearer {token}`"
+
+  # ========== Reusable Parameters ==========
+  parameters:
+    PageParam:
+      in: query
+      name: page
+      schema:
+        type: integer
+        default: 1
+      description: Page number for pagination.
+    PerPageParam:
+      in: query
+      name: per_page
+      schema:
+        type: integer
+        default: 15
+      description: Number of items per page.
+    FilterNameParam:
+      in: query
+      name: name
+      schema:
+        type: string
+      description: Filter by name (partial match).
+    FilterIsActiveParam:
+      in: query
+      name: is_active
+      schema:
+        type: boolean
+      description: Filter by active status.
+    FilterCategoryIdParam:
+      in: query
+      name: category_id
+      schema:
+        type: integer
+      description: Filter by category ID.
+    UserIdParam:
+      name: user
+      in: path
+      required: true
+      description: ID of the User (Foreman)
+      schema:
+        type: integer
+        example: 8
+    ProjectIdParam:
+      name: project
+      in: path
+      required: true
+      description: ID of the Project
+      schema:
+        type: integer
+        example: 1
+    MaterialIdParam:
+      name: material
+      in: path
+      required: true
+      description: ID of the Material
+      schema:
+        type: integer
+        example: 101
+    WorkTypeIdParam:
+      name: work_type
+      in: path
+      required: true
+      description: ID of the Work Type
+      schema:
+        type: integer
+        example: 201
+    SupplierIdParam:
+      name: supplier
+      in: path
+      required: true
+      description: ID of the Supplier
+      schema:
+        type: integer
+        example: 301
+    FilterProjectIdParam:
+      in: query
+      name: project_id
+      schema:
+        type: integer
+      description: Filter logs/reports by Project ID.
+    FilterUserIdParam:
+      in: query
+      name: user_id
+      schema:
+        type: integer
+      description: Filter logs/reports by User (Foreman) ID.
+    FilterMaterialIdParam:
+      in: query
+      name: material_id
+      schema:
+        type: integer
+      description: Filter logs by Material ID.
+    FilterWorkTypeIdParam:
+      in: query
+      name: work_type_id
+      schema:
+        type: integer
+      description: Filter logs by Work Type ID.
+    FilterDateFromParam:
+      in: query
+      name: date_from
+      schema:
+        type: string
+        format: date
+        example: "2024-07-01"
+      description: Start date for filtering logs/reports.
+    FilterDateToParam:
+      in: query
+      name: date_to
+      schema:
+        type: string
+        format: date
+        example: "2024-07-31"
+      description: End date for filtering logs/reports.
+
+  # ========== Reusable Responses ==========
+  responses:
+    Unauthorized:
+      description: Unauthorized / Unauthenticated
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorUnauthorized'
+    Forbidden:
+      description: Forbidden (Insufficient permissions)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorForbidden'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorNotFound'
+    ValidationError:
+      description: Validation Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorValidation'
+    InternalServerError:
+      description: Internal Server Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorServer'
+    Conflict:
+       description: Conflict (e.g., resource already exists or state prevents action)
+       content:
+         application/json:
+           schema:
+             $ref: '#/components/schemas/ErrorConflict'
+
+  # ========== Schemas (Requests, Responses, Models) ==========
+  schemas:
+    # --- Auth Schemas ---
+    AdminLoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: "admin@example.com"
+        password:
+          type: string
+          format: password
+          example: "password"
+
+    AdminUser: # Based on a potential AdminUserResource
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Admin User"
+        email:
+          type: string
+          format: email
+          example: "admin@example.com"
+        roles:
+           type: array
+           items:
+             type: string
+           example: ["Admin", "OrganizationAdmin"]
+        current_organization_id:
+           type: integer
+           nullable: true
+           example: 1
+        # Add other relevant admin fields
+
+    # --- User Schemas ---
+    ForemanUser: # Based on ForemanUserResource
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 8
+        name:
+          type: string
+          example: "User One"
+        email:
+          type: string
+          format: email
+          example: "user1@example.com"
+        phone:
+           type: string
+           nullable: true
+           example: "+79001234567"
+        position:
+           type: string
+           nullable: true
+           example: "Senior Foreman"
+        is_active:
+          type: boolean
+          example: true
+        created_at:
+           type: string
+           format: date-time
+        updated_at:
+           type: string
+           format: date-time
+        # Add assigned projects count/ids if needed
+
+    StoreForemanRequest:
+      type: object
+      required:
+        - name
+        - email
+        - password
+      properties:
+        name:
+          type: string
+          example: "New Foreman"
+        email:
+          type: string
+          format: email
+          example: "new.foreman@example.com"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "secretpassword"
+        password_confirmation:
+          type: string
+          format: password
+          example: "secretpassword"
+        phone:
+           type: string
+           nullable: true
+           example: "+79007654321"
+        position:
+           type: string
+           nullable: true
+           example: "Junior Foreman"
+
+    UpdateForemanRequest:
+      type: object
+      # Required fields depend on implementation (maybe none are strictly required for update)
+      properties:
+        name:
+          type: string
+          example: "Updated Foreman Name"
+        email:
+          type: string
+          format: email
+          example: "updated.foreman@example.com"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          nullable: true # Often optional on update
+          example: "newsecretpassword"
+        password_confirmation:
+          type: string
+          format: password
+          example: "newsecretpassword"
+        phone:
+           type: string
+           nullable: true
+           example: "+79001112233"
+        position:
+           type: string
+           nullable: true
+           example: "Lead Foreman"
+        is_active: # Allow updating active status via PUT?
+          type: boolean
+          example: true
+
+    # --- Project Schemas ---
+    Project: # Based on Admin/ProjectResource (potentially more detailed than mobile)
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Building A - Admin View"
+        address:
+          type: string
+          example: "123 Main St, Suite 100"
+        status:
+          type: string
+          example: "active"
+        is_archived:
+          type: boolean
+          example: false
+        created_at:
+           type: string
+           format: date-time
+        updated_at:
+           type: string
+           format: date-time
+        organization_id:
+            type: integer
+            example: 1
+        assigned_foremen: # Example of potentially richer data in admin resource
+            type: array
+            items:
+               type: object
+               properties:
+                 id:
+                   type: integer
+                   example: 8
+                 name:
+                   type: string
+                   example: "User One"
+        # Include other relevant fields from Admin ProjectResource
+
+    StoreProjectRequest:
+      type: object
+      required:
+        - name
+        - address
+      properties:
+        name:
+          type: string
+          example: "New Project Alpha"
+        address:
+          type: string
+          example: "456 Oak Avenue"
+        status:
+          type: string
+          default: "active"
+          example: "planned"
+        is_archived:
+          type: boolean
+          default: false
+
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "Updated Project Alpha"
+        address:
+          type: string
+          example: "456 Oak Avenue, Updated"
+        status:
+          type: string
+          example: "completed"
+        is_archived:
+          type: boolean
+          example: true
+
+    # --- Catalog Schemas (Material, WorkType, Supplier) ---
+    # These might be identical to mobile schemas or have admin-specific fields
+    Material: # Based on Admin/MaterialResource
+       type: object
+       properties:
+         id:
+           type: integer
+           example: 101
+         name:
+           type: string
+           example: "Cement M500"
+         unit:
+           type: string
+           example: "kg"
+         is_active:
+           type: boolean
+           example: true
+         category: # Assuming a nested category object
+           type: object
+           properties:
+              id:
+                type: integer
+                example: 1
+              name:
+                type: string
+                example: "Bulk Materials"
+         organization_id:
+           type: integer
+           example: 1
+         created_at:
+           type: string
+           format: date-time
+         updated_at:
+           type: string
+           format: date-time
+         # Add other admin-specific fields if any
+
+    StoreMaterialRequest:
+      type: object
+      required:
+        - name
+        - unit
+        - category_id
+      properties:
+        name:
+          type: string
+          example: "Sand - Washed"
+        unit:
+          type: string
+          example: "tonne"
+        category_id:
+          type: integer
+          example: 1
+        is_active:
+          type: boolean
+          default: true
+
+    UpdateMaterialRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "Sand - River Washed"
+        unit:
+          type: string
+          example: "tonne"
+        category_id:
+          type: integer
+          example: 1
+        is_active:
+          type: boolean
+          example: false
+
+    WorkType: # Based on Admin/WorkTypeResource
+       type: object
+       properties:
+         id:
+           type: integer
+           example: 201
+         name:
+           type: string
+           example: "Plastering Walls"
+         unit:
+           type: string
+           example: "m2"
+         is_active:
+           type: boolean
+           example: true
+         category: # Assuming a nested category object
+           type: object
+           properties:
+              id:
+                type: integer
+                example: 5
+              name:
+                type: string
+                example: "Finishing Works"
+         organization_id:
+           type: integer
+           example: 1
+         created_at:
+           type: string
+           format: date-time
+         updated_at:
+           type: string
+           format: date-time
+         # Add other admin-specific fields if any
+
+    StoreWorkTypeRequest:
+      type: object
+      required:
+        - name
+        - unit
+        - category_id # Assuming categories exist
+      properties:
+        name:
+          type: string
+          example: "Concrete Pouring"
+        unit:
+          type: string
+          example: "m3"
+        category_id:
+          type: integer
+          example: 2 # Example category ID
+        is_active:
+          type: boolean
+          default: true
+
+    UpdateWorkTypeRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "Reinforced Concrete Pouring"
+        unit:
+          type: string
+          example: "m3"
+        category_id:
+          type: integer
+          example: 2
+        is_active:
+          type: boolean
+          example: false
+
+    Supplier: # Based on Admin/SupplierResource
+        type: object
+        properties:
+          id:
+            type: integer
+            example: 301
+          name:
+            type: string
+            example: "Supplier Inc."
+          contact_person:
+            type: string
+            nullable: true
+            example: "John Doe"
+          phone:
+            type: string
+            nullable: true
+            example: "+1234567890"
+          email:
+            type: string
+            format: email
+            nullable: true
+            example: "john.doe@supplier.com"
+          address:
+            type: string
+            nullable: true
+            example: "789 Supplier Ave"
+          is_active:
+            type: boolean
+            example: true
+          organization_id:
+            type: integer
+            example: 1
+          created_at:
+            type: string
+            format: date-time
+          updated_at:
+            type: string
+            format: date-time
+          # Include other relevant fields
+
+    StoreSupplierRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          example: "New Building Supplies Ltd."
+        contact_person:
+          type: string
+          nullable: true
+          example: "Jane Smith"
+        phone:
+          type: string
+          nullable: true
+          example: "+1987654321"
+        email:
+          type: string
+          format: email
+          nullable: true
+          example: "jane.smith@nbs.com"
+        address:
+          type: string
+          nullable: true
+          example: "101 Supply Road"
+        is_active:
+          type: boolean
+          default: true
+
+    UpdateSupplierRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "Building Supplies Ltd."
+        contact_person:
+          type: string
+          nullable: true
+          example: "Jane Smith-Doe"
+        phone:
+          type: string
+          nullable: true
+          example: "+19876543210"
+        email:
+          type: string
+          format: email
+          nullable: true
+          example: "jane.doe@bsl.com"
+        address:
+          type: string
+          nullable: true
+          example: "101 Supply Road, Unit 5"
+        is_active:
+          type: boolean
+          example: false
+
+    # --- Log Schemas (Potentially reused from mobile or admin-specific view) ---
+    MaterialUsageLog: # Assuming same structure as mobile for now
+      type: object
+      properties:
+        # ... (same as in openapi_mobile.yaml) ...
+        # Optionally add admin-specific details like user name/email, project name
+        user: # Example enrichment
+          type: object
+          properties:
+            id: { type: integer, example: 8 }
+            name: { type: string, example: "User One" }
+        project: # Example enrichment
+          type: object
+          properties:
+            id: { type: integer, example: 1 }
+            name: { type: string, example: "Building A" }
+        material: # Example enrichment
+          type: object
+          properties:
+            id: { type: integer, example: 5 }
+            name: { type: string, example: "Cement M500" }
+
+    WorkCompletionLog: # Assuming same structure as mobile for now
+      type: object
+      properties:
+        # ... (same as in openapi_mobile.yaml) ...
+        # Optionally add admin-specific details like user name/email, project name
+        user: # Example enrichment
+          type: object
+          properties:
+            id: { type: integer, example: 8 }
+            name: { type: string, example: "User One" }
+        project: # Example enrichment
+          type: object
+          properties:
+            id: { type: integer, example: 1 }
+            name: { type: string, example: "Building A" }
+        work_type: # Example enrichment
+          type: object
+          properties:
+            id: { type: integer, example: 12 }
+            name: { type: string, example: "Plastering Walls" }
+
+    # --- Pagination Schemas (Reused) ---
+    PaginationLinks:
+       $ref: './openapi_mobile.yaml#/components/schemas/PaginationLinks' # Example using reference
+       # Or copy definition here
+    PaginationMeta:
+       $ref: './openapi_mobile.yaml#/components/schemas/PaginationMeta' # Example using reference
+       # Or copy definition here
+
+    # --- Error Schemas (Reused) ---
+    ErrorValidation:
+       $ref: './openapi_mobile.yaml#/components/schemas/ErrorValidation'
+    ErrorUnauthorized:
+       $ref: './openapi_mobile.yaml#/components/schemas/ErrorUnauthorized'
+    ErrorForbidden:
+       $ref: './openapi_mobile.yaml#/components/schemas/ErrorForbidden'
+    ErrorNotFound:
+       $ref: './openapi_mobile.yaml#/components/schemas/ErrorNotFound'
+    ErrorServer:
+       $ref: './openapi_mobile.yaml#/components/schemas/ErrorServer'
+    ErrorConflict:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Conflict. Resource already exists or cannot perform action."
+
+</rewritten_file> 

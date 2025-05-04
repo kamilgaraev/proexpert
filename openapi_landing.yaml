@@ -1,0 +1,763 @@
+openapi: 3.0.3
+info:
+  title: ProHelper Landing/Main API
+  description: API for the main ProHelper application/landing page, handling user registration, authentication, profile management, organizations, and support requests.
+  version: 1.0.0
+servers:
+  - url: /api/v1/landing # Assuming this prefix, adjust if different
+    description: Main Landing API server
+tags:
+  - name: Landing Auth
+    description: User authentication, registration, password reset, email verification
+  - name: Landing Users
+    description: Current user profile management
+  - name: Landing Organizations
+    description: Organization creation and management (initial setup)
+  - name: Landing Support
+    description: Handling support requests
+paths:
+  # ========== Auth Routes (auth.php) ==========
+  /auth/register:
+    post:
+      tags:
+        - Landing Auth
+      summary: User Registration
+      description: Registers a new user account.
+      operationId: landingRegister
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered successfully (email verification might be required)
+          content:
+            application/json:
+              schema:
+                # Schema depends on response - might return user data or just success message
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Registration successful. Please check your email to verify your account."
+                  user: # Optional, if user data is returned
+                    $ref: '#/components/schemas/LandingUser'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/login:
+    post:
+      tags:
+        - Landing Auth
+      summary: User Login
+      description: Authenticates a user for the main application and returns a JWT token (using `api_landing` guard).
+      operationId: landingLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest' # Likely similar/identical to mobile login request
+      responses:
+        '200':
+          description: Successful authentication
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    example: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+                  token_type:
+                    type: string
+                    example: bearer
+                  expires_in:
+                    type: integer
+                    example: 3600
+                  user:
+                     $ref: '#/components/schemas/LandingUser'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorUnauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/logout:
+    post:
+      tags:
+        - Landing Auth
+      summary: User Logout
+      description: Invalidates the current user's JWT token (`api_landing`).
+      operationId: landingLogout
+      security:
+        - bearerAuthLanding: []
+      responses:
+        '200':
+          description: Successfully logged out
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Successfully logged out"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/password/email:
+    post:
+      tags:
+        - Landing Auth
+      summary: Request Password Reset Link
+      description: Sends a password reset link to the user's email address.
+      operationId: landingRequestPasswordReset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: "user@example.com"
+      responses:
+        '200':
+          description: Password reset link sent (if email exists)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Password reset link sent to your email."
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/password/reset:
+    post:
+      tags:
+        - Landing Auth
+      summary: Reset Password
+      description: Resets the user's password using the token from the reset link.
+      operationId: landingResetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - token
+                - email
+                - password
+                - password_confirmation
+              properties:
+                token:
+                  type: string
+                  description: The password reset token.
+                email:
+                  type: string
+                  format: email
+                  example: "user@example.com"
+                password:
+                  type: string
+                  format: password
+                  minLength: 8
+                  example: "newsecretpassword"
+                password_confirmation:
+                  type: string
+                  format: password
+                  example: "newsecretpassword"
+      responses:
+        '200':
+          description: Password reset successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Password has been reset successfully."
+        '422':
+          description: Validation error (e.g., invalid token, email mismatch, weak password)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorValidation'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/email/verify/{id}/{hash}: # Assuming verification route structure
+    get:
+      tags:
+        - Landing Auth
+      summary: Verify Email Address
+      description: Verifies the user's email address using the link sent during registration.
+      operationId: landingVerifyEmail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID.
+          schema:
+            type: integer
+        - name: hash
+          in: path
+          required: true
+          description: Verification hash.
+          schema:
+            type: string
+      responses:
+        '200': # Or redirect
+          description: Email verified successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Email verified successfully."
+        '401': # Invalid hash/id or already verified
+          $ref: '#/components/responses/Unauthorized'
+        '403': # Might be used if signature is invalid/expired
+           $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/email/resend: # Assuming resend verification email route exists
+    post:
+      tags:
+        - Landing Auth
+      summary: Resend Verification Email
+      description: Resends the email verification link to the currently authenticated user.
+      operationId: landingResendVerificationEmail
+      security:
+        - bearerAuthLanding: []
+      responses:
+        '200':
+          description: Verification link sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Verification link sent."
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409': # Conflict - Email already verified
+           description: Email already verified
+           content:
+             application/json:
+               schema:
+                 $ref: '#/components/schemas/ErrorConflict' # Custom or generic conflict error
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ========== User Profile Routes (users.php) ==========
+  /user/profile:
+    get:
+      tags:
+        - Landing Users
+      summary: Get User Profile
+      description: Retrieves the profile information of the currently authenticated user.
+      operationId: landingGetUserProfile
+      security:
+        - bearerAuthLanding: []
+      responses:
+        '200':
+          description: Current user profile data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LandingUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Landing Users
+      summary: Update User Profile
+      description: Updates the profile information of the currently authenticated user.
+      operationId: landingUpdateUserProfile
+      security:
+        - bearerAuthLanding: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Profile updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LandingUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /user/password:
+    put:
+      tags:
+        - Landing Users
+      summary: Change User Password
+      description: Changes the password for the currently authenticated user.
+      operationId: landingChangePassword
+      security:
+        - bearerAuthLanding: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200':
+          description: Password changed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Password changed successfully."
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Validation Error (e.g., current password incorrect, new password weak)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorValidation'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /user/organizations: # Assuming endpoint to list user's organizations
+    get:
+      tags:
+        - Landing Users
+        - Landing Organizations
+      summary: List User Organizations
+      description: Retrieves a list of organizations the current user belongs to.
+      operationId: landingGetUserOrganizations
+      security:
+        - bearerAuthLanding: []
+      responses:
+        '200':
+          description: List of user organizations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OrganizationSummary' # Simplified organization view
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  # ========== Organization Routes (organization.php) ==========
+  /organizations:
+    post:
+      tags:
+        - Landing Organizations
+      summary: Create Organization
+      description: Creates a new organization and associates the current user with it.
+      operationId: landingCreateOrganization
+      security:
+        - bearerAuthLanding: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreOrganizationRequest'
+      responses:
+        '201':
+          description: Organization created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization' # Full organization details
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    # GET /organizations might list organizations the user owns/manages
+
+  /organizations/{organization}: # Assuming detailed view/update/delete for owned org
+    get:
+      tags:
+        - Landing Organizations
+      summary: Get Organization Details
+      description: Retrieves details of a specific organization the user has access to manage.
+      operationId: landingGetOrganization
+      security:
+        - bearerAuthLanding: []
+      parameters:
+        - name: organization
+          in: path
+          required: true
+          description: ID of the Organization
+          schema:
+            type: integer
+            example: 1
+      responses:
+        '200':
+          description: Organization details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden' # If user cannot manage this org
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags:
+        - Landing Organizations
+      summary: Update Organization
+      description: Updates details of a specific organization the user manages.
+      operationId: landingUpdateOrganization
+      security:
+        - bearerAuthLanding: []
+      parameters:
+        - name: organization
+          in: path
+          required: true
+          description: ID of the Organization
+          schema:
+            type: integer
+            example: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrganizationRequest'
+      responses:
+        '200':
+          description: Organization updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organization'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    # DELETE /organizations/{organization} might exist
+
+  # ========== Support Routes (support.php) ==========
+  /support/request:
+    post:
+      tags:
+        - Landing Support
+      summary: Submit Support Request
+      description: Submits a support request or feedback form. May or may not require authentication.
+      operationId: landingSubmitSupportRequest
+      # security: # Optional: Add bearerAuthLanding if auth is required
+      #   - bearerAuthLanding: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupportRequest'
+      responses:
+        '200': # Or 202 Accepted
+          description: Support request submitted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Your support request has been submitted."
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+# ================= Component Definitions =================
+components:
+  securitySchemes:
+    bearerAuthLanding:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "Landing/Main App JWT token obtained from `/auth/login` endpoint. Example: `Bearer {token}`"
+
+  # ========== Reusable Responses (Can also reference admin/mobile) ==========
+  responses:
+    Unauthorized:
+      description: Unauthorized / Unauthenticated
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorUnauthorized'
+    Forbidden:
+      description: Forbidden (Insufficient permissions)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorForbidden'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorNotFound'
+    ValidationError:
+      description: Validation Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorValidation'
+    InternalServerError:
+      description: Internal Server Error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorServer'
+    Conflict:
+       description: Conflict (e.g., resource already exists or state prevents action)
+       content:
+         application/json:
+           schema:
+             $ref: '#/components/schemas/ErrorConflict'
+
+  # ========== Schemas (Requests, Responses, Models) ==========
+  schemas:
+    # --- Auth Schemas ---
+    RegisterRequest:
+      type: object
+      required:
+        - name
+        - email
+        - password
+        - password_confirmation
+      properties:
+        name:
+          type: string
+          example: "John Doe"
+        email:
+          type: string
+          format: email
+          example: "john.doe@example.com"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "secretpassword"
+        password_confirmation:
+          type: string
+          format: password
+          example: "secretpassword"
+        # Potentially organization name if created during registration
+        organization_name:
+           type: string
+           nullable: true
+           example: "Doe Construction"
+
+    LoginRequest: # Assuming shared with mobile, otherwise define specifically
+       $ref: './openapi_mobile.yaml#/components/schemas/LoginRequest'
+       # Or copy definition here
+
+    # --- User Schemas ---
+    LandingUser: # Resource for the authenticated user in the landing app
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 10
+        name:
+          type: string
+          example: "John Doe"
+        email:
+          type: string
+          format: email
+          example: "john.doe@example.com"
+        email_verified_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+           type: string
+           format: date-time
+        updated_at:
+           type: string
+           format: date-time
+        current_organization_id: # ID of the org context, if applicable
+           type: integer
+           nullable: true
+           example: 1
+        # Add roles or other relevant fields
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "Johnny Doe"
+        email:
+          type: string
+          format: email
+          example: "johnny.doe@example.com"
+        # Other updatable profile fields?
+
+    ChangePasswordRequest:
+      type: object
+      required:
+        - current_password
+        - password
+        - password_confirmation
+      properties:
+        current_password:
+          type: string
+          format: password
+          example: "oldsecretpassword"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "newstrongpassword"
+        password_confirmation:
+          type: string
+          format: password
+          example: "newstrongpassword"
+
+    # --- Organization Schemas ---
+    Organization:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Doe Construction Inc."
+        owner_id:
+          type: integer
+          example: 10
+        created_at:
+           type: string
+           format: date-time
+        updated_at:
+           type: string
+           format: date-time
+        # Add other relevant fields (e.g., member count, address?)
+
+    OrganizationSummary: # Simplified view for lists
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Doe Construction Inc."
+        role_in_org: # User's role in this specific organization
+           type: string
+           example: "Owner" # or "Admin", "Member"
+
+    StoreOrganizationRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          example: "My New Company"
+        # Other fields needed on creation?
+
+    UpdateOrganizationRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "My Updated Company Name"
+        # Other updatable fields?
+
+    # --- Support Schemas ---
+    SupportRequest:
+      type: object
+      required:
+        - subject
+        - message
+      properties:
+        name: # Optional, auto-filled if logged in
+          type: string
+          example: "John Doe"
+        email: # Optional, auto-filled if logged in
+          type: string
+          format: email
+          example: "john.doe@example.com"
+        subject:
+          type: string
+          example: "Issue with login"
+        message:
+          type: string
+          example: "I am unable to log in to my account..."
+        type: # Optional category
+          type: string
+          enum: ["Bug Report", "Feature Request", "General Inquiry", "Billing"]
+          example: "General Inquiry"
+
+    # --- Error Schemas (Reused) ---
+    ErrorValidation:
+       $ref: './openapi_mobile.yaml#/components/schemas/ErrorValidation'
+    ErrorUnauthorized:
+       $ref: './openapi_mobile.yaml#/components/schemas/ErrorUnauthorized'
+    ErrorForbidden:
+       $ref: './openapi_mobile.yaml#/components/schemas/ErrorForbidden'
+    ErrorNotFound:
+       $ref: './openapi_mobile.yaml#/components/schemas/ErrorNotFound'
+    ErrorServer:
+       $ref: './openapi_mobile.yaml#/components/schemas/ErrorServer'
+    ErrorConflict:
+       $ref: './openapi_admin.yaml#/components/schemas/ErrorConflict' # Reference admin or define here 
