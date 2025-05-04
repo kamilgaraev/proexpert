@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\Auth\AuthController;
 
-Route::prefix('landing/auth')->name('landing.auth.')->group(function () {
+Route::prefix('auth')->name('landing.auth.')->group(function () {
     Route::post('register', [AuthController::class, 'register'])->name('register');
     Route::post('login', [AuthController::class, 'login'])->name('login');
     
