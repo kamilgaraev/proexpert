@@ -81,6 +81,56 @@ class JwtAuthService
                     ]);
                     Log::info('[JwtAuthService] User last login updated.');
 
+                    // Загружаем отношения с ролями для корректной работы Gate
+                    $user->load('roles');
+                    Log::info('[JwtAuthService] User roles loaded.', [
+                        'user_id' => $user->id,
+                        'roles_count' => $user->roles->count()
+                    ]);
+                    
+                    // Если ролей нет вообще, проверяем и восстанавливаем роль владельца
+                    if ($user->roles->count() === 0) {
+                        Log::warning('[JwtAuthService] User has no roles, checking organizations.', [
+                            'user_id' => $user->id,
+                        ]);
+                        
+                        // Проверяем, есть ли у пользователя организации
+                        $userOrganizations = $user->organizations()->get();
+                        if ($userOrganizations->isNotEmpty()) {
+                            Log::info('[JwtAuthService] User has organizations but no roles. Fixing role for first organization.', [
+                                'user_id' => $user->id,
+                                'organizations_count' => $userOrganizations->count()
+                            ]);
+                            
+                            // Берем первую организацию и назначаем роль владельца
+                            $firstOrg = $userOrganizations->first();
+                            
+                            // Находим роль Owner
+                            $ownerRole = \App\Models\Role::where('slug', \App\Models\Role::ROLE_OWNER)->first();
+                            if ($ownerRole) {
+                                // Проверяем, что связь в pivot таблице отсутствует
+                                $roleExists = DB::table('role_user')
+                                    ->where('user_id', $user->id)
+                                    ->where('role_id', $ownerRole->id)
+                                    ->where('organization_id', $firstOrg->id)
+                                    ->exists();
+                                    
+                                if (!$roleExists) {
+                                    // Создаем связь
+                                    $user->roles()->attach($ownerRole->id, ['organization_id' => $firstOrg->id]);
+                                    Log::info('[JwtAuthService] Fixed: Owner role assigned.', [
+                                        'user_id' => $user->id,
+                                        'organization_id' => $firstOrg->id,
+                                        'role_id' => $ownerRole->id
+                                    ]);
+                                    
+                                    // Перезагружаем отношения
+                                    $user->load('roles');
+                                }
+                            }
+                        }
+                    }
+
                     // Определяем ID организации (пока просто первая)
                     $userOrganizations = $user->organizations()->pluck('organizations.id')->toArray(); // <-- Указываем таблицу organizations.id
                     Log::info('[JwtAuthService] User organizations IDs.', ['user_id' => $user->id, 'organization_ids' => $userOrganizations]); // Логируем все организации
@@ -388,54 +438,155 @@ class JwtAuthService
      */
     public function register(RegisterDTO $registerDTO): array
     {
+        Log::info('[JwtAuthService] Register method called', [
+            'email' => $registerDTO->email ?? 'N/A'
+        ]);
+        
         DB::beginTransaction(); // Используем транзакцию
         try {
-            // $userData = $registerDTO->toArray(); // Нет такого метода
+            // Получаем данные пользователя
             $userData = $registerDTO->getUserData(); // Используем getUserData()
-            // unset($userData['organization_name']); // organization_name нет в getUserData()
+            
+            Log::info('[JwtAuthService] User data prepared', [
+                'email' => $userData['email'] ?? 'N/A',
+                'name' => $userData['name'] ?? 'N/A'
+            ]);
+            
+            // Проверяем, не существует ли уже пользователь с таким email
+            $existingUser = $this->userRepository->findByEmail($userData['email']);
+            if ($existingUser) {
+                Log::warning('[JwtAuthService] User already exists with this email', [
+                    'email' => $userData['email'],
+                    'user_id' => $existingUser->id
+                ]);
+                DB::rollBack(); // откатываем транзакцию
+                return ['success' => false, 'message' => 'Пользователь с таким email уже существует', 'status_code' => 422];
+            }
 
             // Создаем пользователя
-            $user = $this->userRepository->create($userData);
+            try {
+                $user = $this->userRepository->create($userData);
+                Log::info('[JwtAuthService] User created', [
+                    'user_id' => $user->id ?? 'Failed to get ID',
+                    'email' => $user->email ?? 'N/A'
+                ]);
+            } catch (\Exception $e) {
+                Log::error('[JwtAuthService] Failed to create user', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                throw $e; // Пробрасываем исключение для обработки во внешнем catch
+            }
+            
             $organization = null;
 
             // Создаем организацию, если имя передано
             $orgName = $registerDTO->organizationName; // Используем магический __get
+            Log::info('[JwtAuthService] Organization name from DTO', [
+                'organization_name' => $orgName
+            ]);
+            
             if (!empty($orgName)) {
-                $organization = $this->organizationRepository->create([
+                // Формируем данные для создания организации
+                $orgData = [
                     'name' => $orgName,
-                    'owner_id' => $user->id,
-                    // Дополнительные поля из $registerDTO->getOrganizationData()
-                    'legal_name' => $registerDTO->organizationLegalName,
-                    'tax_number' => $registerDTO->organizationTaxNumber,
-                    'registration_number' => $registerDTO->organizationRegistrationNumber,
-                    'phone' => $registerDTO->organizationPhone,
-                    'email' => $registerDTO->organizationEmail,
-                    'address' => $registerDTO->organizationAddress,
-                    'city' => $registerDTO->organizationCity,
-                    'postal_code' => $registerDTO->organizationPostalCode,
-                    'country' => $registerDTO->organizationCountry,
+                    'owner_id' => $user->id
+                ];
+                
+                // Добавляем дополнительные поля из DTO, если они есть
+                $orgFields = [
+                    'legal_name', 'tax_number', 'registration_number', 
+                    'phone', 'email', 'address', 'city', 
+                    'postal_code', 'country'
+                ];
+                
+                foreach ($orgFields as $field) {
+                    $dtoField = 'organization' . ucfirst($field);
+                    if (isset($registerDTO->$dtoField)) {
+                        $orgData[$field] = $registerDTO->$dtoField;
+                    }
+                }
+                
+                Log::info('[JwtAuthService] Organization data prepared', [
+                    'org_name' => $orgData['name'],
+                    'owner_id' => $orgData['owner_id']
                 ]);
                 
+                try {
+                    // Создаем организацию
+                    $organization = $this->organizationRepository->create($orgData);
+                    Log::info('[JwtAuthService] Organization created', [
+                        'org_id' => $organization->id ?? 'Failed to get ID',
+                        'name' => $organization->name
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('[JwtAuthService] Failed to create organization', [
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    throw $e; // Пробрасываем исключение для обработки во внешнем catch
+                }
+                
                 // Привязываем пользователя к организации с ролью владельца
-                $this->userRepository->attachToOrganization($user->id, $organization->id);
+                try {
+                    Log::info('[JwtAuthService] Attaching user to organization', [
+                        'user_id' => $user->id,
+                        'org_id' => $organization->id
+                    ]);
+                    $this->userRepository->attachToOrganization($user->id, $organization->id);
+                } catch (\Exception $e) {
+                    Log::error('[JwtAuthService] Failed to attach user to organization', [
+                        'error' => $e->getMessage(),
+                        'user_id' => $user->id,
+                        'org_id' => $organization->id,
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    throw $e; // Пробрасываем исключение для обработки во внешнем catch
+                }
                 
                 // Устанавливаем организацию как текущую для пользователя
                 $user->current_organization_id = $organization->id;
                 $user->save();
+                Log::info('[JwtAuthService] Set current organization for user', [
+                    'user_id' => $user->id,
+                    'current_org_id' => $user->current_organization_id
+                ]);
             }
 
             // Генерируем JWT токен для пользователя
             $token = null;
-            if ($organization) {
-                $customClaims = ['organization_id' => $organization->id];
-                $token = JWTAuth::claims($customClaims)->fromUser($user);
-            } else {
-                $token = JWTAuth::fromUser($user);
+            try {
+                if ($organization) {
+                    $customClaims = ['organization_id' => $organization->id];
+                    $token = JWTAuth::claims($customClaims)->fromUser($user);
+                } else {
+                    $token = JWTAuth::fromUser($user);
+                }
+                Log::info('[JwtAuthService] JWT token generated');
+            } catch (\Exception $e) {
+                Log::error('[JwtAuthService] Failed to generate JWT token', [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                throw $e;
             }
 
-            DB::commit(); // Фиксируем транзакцию
+            // Фиксируем транзакцию
+            DB::commit();
+            Log::info('[JwtAuthService] Transaction committed successfully');
 
-            // TODO: Отправка письма для верификации email?
+            // Верифицируем, что пользователь действительно сохранен
+            $checkUser = $this->userRepository->findByEmail($userData['email']);
+            if (!$checkUser) {
+                Log::critical('[JwtAuthService] User not found after successful registration!', [
+                    'email' => $userData['email']
+                ]);
+            } else {
+                Log::info('[JwtAuthService] User verified after registration', [
+                    'user_id' => $checkUser->id,
+                    'email' => $checkUser->email
+                ]);
+            }
 
             LogService::authLog('register_success', [
                 'user_id' => $user->id, 
@@ -453,8 +604,25 @@ class JwtAuthService
 
         } catch (\Exception $e) {
             DB::rollBack(); // Откатываем транзакцию
-            LogService::exception($e, ['action' => 'register', 'email' => $registerDTO->email ?? 'N/A']);
-            return ['success' => false, 'message' => 'Ошибка при регистрации пользователя: ' . $e->getMessage(), 'status_code' => 500];
+            Log::error('[JwtAuthService] Register exception', [
+                'error' => $e->getMessage(),
+                'type' => get_class($e),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+                'email' => $registerDTO->email ?? 'N/A'
+            ]);
+            
+            LogService::exception($e, [
+                'action' => 'register', 
+                'email' => $registerDTO->email ?? 'N/A'
+            ]);
+            
+            return [
+                'success' => false, 
+                'message' => 'Ошибка при регистрации пользователя: ' . $e->getMessage(), 
+                'status_code' => 500
+            ];
         }
     }
 } 

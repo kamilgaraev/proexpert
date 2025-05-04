@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Gate;
 use App\Models\User;
 use App\Models\Role;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class AuthServiceProvider extends ServiceProvider
 {
@@ -42,11 +43,70 @@ class AuthServiceProvider extends ServiceProvider
         Gate::define('access-landing', function (User $user, ?int $organizationId = null): bool {
             // Используем ID организации из контекста пользователя, если не передан явно
             $orgId = $organizationId ?? $user->current_organization_id;
+            
+            // Подробное логирование для диагностики
+            Log::info('[Gate:access-landing] Проверка доступа к лендингу', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'passed_org_id' => $organizationId,
+                'user_current_org_id' => $user->current_organization_id,
+                'effective_org_id' => $orgId
+            ]);
+            
             if (!$orgId) {
+                Log::warning('[Gate:access-landing] Нет контекста организации', [
+                    'user_id' => $user->id,
+                    'email' => $user->email
+                ]);
                 return false; // Невозможно определить контекст организации
             }
-            // Проверяем роли Owner или Admin
-            return $user->hasRole(Role::ROLE_OWNER, $orgId) || $user->hasRole(Role::ROLE_ADMIN, $orgId);
+            
+            // ДОПОЛНИТЕЛЬНО: Прямая проверка через SQL-запрос
+            $ownerRole = DB::table('roles')
+                ->where('slug', Role::ROLE_OWNER)
+                ->first();
+                
+            $adminRole = DB::table('roles')
+                ->where('slug', Role::ROLE_ADMIN)
+                ->first();
+                
+            if ($ownerRole || $adminRole) {
+                $roleIds = [];
+                if ($ownerRole) $roleIds[] = $ownerRole->id;
+                if ($adminRole) $roleIds[] = $adminRole->id;
+                
+                $hasRoleDirectly = DB::table('role_user')
+                    ->where('user_id', $user->id)
+                    ->where('organization_id', $orgId)
+                    ->whereIn('role_id', $roleIds)
+                    ->exists();
+                    
+                Log::info('[Gate:access-landing] Результат прямой SQL проверки ролей', [
+                    'user_id' => $user->id,
+                    'org_id' => $orgId,
+                    'role_ids_checked' => $roleIds,
+                    'has_role_directly' => $hasRoleDirectly
+                ]);
+                
+                if ($hasRoleDirectly) {
+                    Log::info('[Gate:access-landing] Доступ разрешен по прямой SQL проверке');
+                    return true;
+                }
+            }
+            
+            // Проверяем роли Owner или Admin через ORM
+            $hasOwnerRole = $user->hasRole(Role::ROLE_OWNER, $orgId);
+            $hasAdminRole = $user->hasRole(Role::ROLE_ADMIN, $orgId);
+            
+            Log::info('[Gate:access-landing] Результаты проверки ролей через ORM', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'org_id' => $orgId,
+                'has_owner_role' => $hasOwnerRole,
+                'has_admin_role' => $hasAdminRole
+            ]);
+            
+            return $hasOwnerRole || $hasAdminRole;
         });
 
         /**

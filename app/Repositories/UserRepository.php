@@ -38,15 +38,39 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         })->get();
     }
 
-    public function attachToOrganization(int $userId, int $organizationId, bool $isOwner = false, bool $setCurrent = false): void
+    public function attachToOrganization(int $userId, int $organizationId): void
     {
         $user = $this->model->find($userId);
         if ($user) {
-            $user->organizations()->attach($organizationId, [/* 'is_owner' => $isOwner - убираем, если нет в интерфейсе */]);
-            // if ($setCurrent) {
-            //     $user->current_organization_id = $organizationId;
-            //     $user->save();
-            // }
+            // Привязываем пользователя к организации, и по умолчанию (при регистрации)
+            // устанавливаем его как владельца (is_owner = true)
+            $user->organizations()->attach($organizationId, ['is_owner' => true]);
+            
+            // Присваиваем роль владельца (Owner) пользователю в этой организации
+            try {
+                // Находим роль Owner по slug
+                $ownerRole = Role::where('slug', Role::ROLE_OWNER)->first();
+                if ($ownerRole) {
+                    $this->assignRole($userId, $ownerRole->id, $organizationId);
+                    Log::info("Assigned owner role to user", [
+                        'user_id' => $userId,
+                        'organization_id' => $organizationId,
+                        'role_id' => $ownerRole->id
+                    ]);
+                } else {
+                    Log::error("Owner role not found in the system");
+                }
+            } catch (\Exception $e) {
+                Log::error("Failed to assign owner role: " . $e->getMessage(), [
+                    'user_id' => $userId,
+                    'organization_id' => $organizationId,
+                    'exception' => $e->getMessage()
+                ]);
+            }
+            
+            // Устанавливаем текущую организацию для пользователя
+            $user->current_organization_id = $organizationId;
+            $user->save();
         }
     }
 
