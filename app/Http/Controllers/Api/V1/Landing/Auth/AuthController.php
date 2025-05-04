@@ -109,14 +109,18 @@ class AuthController extends Controller
 
                 Log::info('[LandingAuthController] Auth successful, checking Landing access via Gate...');
                 // Используем Gate для проверки прав доступа к ЛК
-                if (Gate::denies('access-landing', [$organizationId])) { // Исправлено: Передаем $organizationId в массиве
-                    LogService::authLog('landing_login_forbidden', [/*...*/]);
-                    Log::warning('[LandingAuthController] Gate \'access-landing\' denied access.', [/*...*/]);
+                if (Gate::denies('access-landing', [$organizationId])) { // Передаем $organizationId в массиве
+                    LogService::authLog('landing_login_forbidden', ['user_id' => $user->id, 'email' => $user->email]);
+                    Log::warning('[LandingAuthController] Gate \'access-landing\' denied access.', [
+                        'user_id' => $user->id,
+                        'email' => $user->email,
+                        'organization_id' => $organizationId
+                    ]);
                     // Используем наш сервис для инвалидации JWT токена без логирования стандартного logout
                     $this->authService->logout($this->guard, false); 
                     return LoginResponse::forbidden('У вас нет доступа к личному кабинету этой организации');
                 }
-
+                
                 Log::info('[LandingAuthController] Gate \'access-landing\' allowed access.');
                 LogService::authLog('landing_login_success', [/*...*/]);
                 return LoginResponse::loginSuccess($result['user'], $result['token']);

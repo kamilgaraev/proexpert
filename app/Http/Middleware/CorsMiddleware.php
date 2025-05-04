@@ -65,7 +65,8 @@ class CorsMiddleware
                 }
                 
                 // Дополнительная проверка для IP 89.111.152.112
-                if (empty($allowOrigin) && $originHost && strpos($originHost, '89.111.152.112') === 0) {
+                if (empty($allowOrigin) && $originHost && 
+                    (strpos($originHost, '89.111.152.112') === 0 || $originHost === '89.111.152.112')) {
                     $allowOrigin = $origin;
                     Log::info('CORS: Разрешен специальный IP', ['origin' => $origin, 'host' => $originHost]);
                 }
@@ -77,7 +78,8 @@ class CorsMiddleware
             // Устанавливаем конкретный origin вместо wildcard '*'
             'Access-Control-Allow-Origin' => $allowOrigin,
             // Разрешить включать учетные данные (куки, заголовки авторизации)
-            'Access-Control-Allow-Credentials' => $supportsCredentials ? 'true' : 'false',
+            // Но если allowOrigin равен '*', то нельзя указывать true для credentials
+            'Access-Control-Allow-Credentials' => ($allowOrigin === '*') ? 'false' : 'true',
             // Разрешить указанные методы
             'Access-Control-Allow-Methods' => implode(', ', $allowedMethods),
             // Разрешить указанные заголовки
