@@ -9,6 +9,10 @@ use Illuminate\Support\ServiceProvider;
 // use App\Repositories\Interfaces\ProjectRepositoryInterface;
 // use App\Repositories\ProjectRepository;
 // ... (и остальные use для репозиториев)
+use Illuminate\Support\Facades\App;
+use App\Http\Middleware\CorsMiddleware;
+use Illuminate\Foundation\Http\Middleware\HandlePrecognitiveRequests;
+use Illuminate\Routing\Router;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -38,6 +42,16 @@ class AppServiceProvider extends ServiceProvider
     {
         // Регистрация файлов маршрутов API теперь происходит в RouteServiceProvider
         // $this->bootApiRoutes(); 
+
+        // Регистрируем глобальный CORS middleware
+        $router = $this->app->make(Router::class);
+        $router->prependMiddlewareToGroup('api', CorsMiddleware::class);
+        
+        // Убеждаемся, что HandlePrecognitiveRequests идет ПОСЛЕ CorsMiddleware
+        // Это необходимо для корректной обработки preflight OPTIONS запросов
+        if (!App::environment('testing')) {
+            $router->pushMiddlewareToGroup('api', HandlePrecognitiveRequests::class);
+        }
     }
 
     // Удаляем весь метод bootApiRoutes и loadRoutesFromSubdirectory

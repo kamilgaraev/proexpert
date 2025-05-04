@@ -4,7 +4,7 @@ info:
   description: API for the main ProHelper application/landing page, handling user registration, authentication, profile management, organizations, and support requests.
   version: 1.0.0
 servers:
-  - url: /api/v1/landing # Assuming this prefix, adjust if different
+  - url: /api/v1/landing # Base URL, routes now correctly defined
     description: Main Landing API server
 tags:
   - name: Landing Auth
@@ -22,7 +22,7 @@ paths:
       tags:
         - Landing Auth
       summary: User Registration
-      description: Registers a new user account.
+      description: Registers a new user account with organization.
       operationId: landingRegister
       requestBody:
         required: true
@@ -32,18 +32,22 @@ paths:
               $ref: '#/components/schemas/RegisterRequest'
       responses:
         '201':
-          description: User registered successfully (email verification might be required)
+          description: User and organization registered successfully
           content:
             application/json:
               schema:
-                # Schema depends on response - might return user data or just success message
                 type: object
                 properties:
                   message:
                     type: string
-                    example: "Registration successful. Please check your email to verify your account."
-                  user: # Optional, if user data is returned
+                    example: "Регистрация успешна"
+                  user:
                     $ref: '#/components/schemas/LandingUser'
+                  organization:
+                    $ref: '#/components/schemas/Organization'
+                  token:
+                    type: string
+                    example: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
         '422':
           $ref: '#/components/responses/ValidationError'
         '500':
@@ -61,7 +65,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LoginRequest' # Likely similar/identical to mobile login request
+              $ref: '#/components/schemas/LoginRequest'
       responses:
         '200':
           description: Successful authentication
@@ -70,15 +74,12 @@ paths:
               schema:
                 type: object
                 properties:
-                  access_token:
+                  message:
+                    type: string
+                    example: "Вход выполнен успешно"
+                  token:
                     type: string
                     example: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
-                  token_type:
-                    type: string
-                    example: bearer
-                  expires_in:
-                    type: integer
-                    example: 3600
                   user:
                      $ref: '#/components/schemas/LandingUser'
         '401':
@@ -87,6 +88,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorUnauthorized'
+        '403':
+          description: Access Denied
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorForbidden'
         '422':
           $ref: '#/components/responses/ValidationError'
         '500':
@@ -111,7 +118,56 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Successfully logged out"
+                    example: "Выход выполнен успешно"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/me:
+    get:
+      tags:
+        - Landing Auth
+      summary: Get Current User Info
+      description: Gets information about currently authenticated user.
+      operationId: landingMeInfo
+      security:
+        - bearerAuthLanding: []
+      responses:
+        '200':
+          description: User profile information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/LandingUser'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /auth/refresh:
+    post:
+      tags:
+        - Landing Auth
+      summary: Refresh Token
+      description: Refreshes the JWT token for continued authentication.
+      operationId: landingRefreshToken
+      security:
+        - bearerAuthLanding: []
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    example: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
         '401':
           $ref: '#/components/responses/Unauthorized'
         '500':
@@ -147,7 +203,7 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Password reset link sent to your email."
+                    example: "На ваш email отправлена ссылка для сброса пароля."
         '422':
           $ref: '#/components/responses/ValidationError'
         '500':
@@ -198,7 +254,7 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Password has been reset successfully."
+                    example: "Пароль успешно сброшен."
         '422':
           description: Validation error (e.g., invalid token, email mismatch, weak password)
           content:
@@ -238,7 +294,7 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Email verified successfully."
+                    example: "Email успешно подтвержден."
         '401': # Invalid hash/id or already verified
           $ref: '#/components/responses/Unauthorized'
         '403': # Might be used if signature is invalid/expired
@@ -265,7 +321,7 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Verification link sent."
+                    example: "Ссылка для верификации отправлена."
         '401':
           $ref: '#/components/responses/Unauthorized'
         '409': # Conflict - Email already verified
@@ -351,7 +407,7 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Password changed successfully."
+                    example: "Пароль успешно изменен."
         '401':
           $ref: '#/components/responses/Unauthorized'
         '422':
@@ -517,7 +573,7 @@ paths:
                 properties:
                   message:
                     type: string
-                    example: "Your support request has been submitted."
+                    example: "Ваш запрос в поддержку отправлен."
         '422':
           $ref: '#/components/responses/ValidationError'
         '500':
@@ -581,32 +637,80 @@ components:
         - email
         - password
         - password_confirmation
+        - organization_name
       properties:
         name:
           type: string
-          example: "John Doe"
+          example: "Иван Иванов"
         email:
           type: string
           format: email
-          example: "john.doe@example.com"
+          example: "ivan.ivanov@example.com"
         password:
           type: string
           format: password
           minLength: 8
-          example: "secretpassword"
+          example: "секретныйпароль"
         password_confirmation:
           type: string
           format: password
-          example: "secretpassword"
-        # Potentially organization name if created during registration
+          example: "секретныйпароль"
         organization_name:
            type: string
-           nullable: true
-           example: "Doe Construction"
+           example: "ООО Строитель"
+        # Опциональные поля для организации
+        organization_legal_name:
+          type: string
+          nullable: true
+          example: "Общество с ограниченной ответственностью Строитель"
+        organization_tax_number:
+          type: string
+          nullable: true
+          example: "7712345678"
+        organization_registration_number:
+          type: string
+          nullable: true
+          example: "1234567890123"
+        organization_phone:
+          type: string
+          nullable: true
+          example: "+7 (999) 123-45-67"
+        organization_email:
+          type: string
+          format: email
+          nullable: true
+          example: "info@stroitel.ru"
+        organization_address:
+          type: string
+          nullable: true
+          example: "г. Москва, ул. Строителей, д. 1"
+        organization_city:
+          type: string
+          nullable: true
+          example: "Москва"
+        organization_postal_code:
+          type: string
+          nullable: true
+          example: "123456"
+        organization_country:
+          type: string
+          nullable: true
+          example: "Россия"
 
-    LoginRequest: # Assuming shared with mobile, otherwise define specifically
-       $ref: './openapi_mobile.yaml#/components/schemas/LoginRequest'
-       # Or copy definition here
+    LoginRequest:
+       type: object
+       required:
+        - email
+        - password
+       properties:
+        email:
+          type: string
+          format: email
+          example: "ivan.ivanov@example.com"
+        password:
+          type: string
+          format: password
+          example: "секретныйпароль"
 
     # --- User Schemas ---
     LandingUser: # Resource for the authenticated user in the landing app
@@ -617,11 +721,11 @@ components:
           example: 10
         name:
           type: string
-          example: "John Doe"
+          example: "Иван Иванов"
         email:
           type: string
           format: email
-          example: "john.doe@example.com"
+          example: "ivan.ivanov@example.com"
         email_verified_at:
           type: string
           format: date-time
@@ -643,11 +747,11 @@ components:
       properties:
         name:
           type: string
-          example: "Johnny Doe"
+          example: "Иван Петрович Иванов"
         email:
           type: string
           format: email
-          example: "johnny.doe@example.com"
+          example: "ivan.p.ivanov@example.com"
         # Other updatable profile fields?
 
     ChangePasswordRequest:
@@ -660,16 +764,16 @@ components:
         current_password:
           type: string
           format: password
-          example: "oldsecretpassword"
+          example: "старыйпароль"
         password:
           type: string
           format: password
           minLength: 8
-          example: "newstrongpassword"
+          example: "новыйпароль"
         password_confirmation:
           type: string
           format: password
-          example: "newstrongpassword"
+          example: "новыйпароль"
 
     # --- Organization Schemas ---
     Organization:
@@ -680,7 +784,44 @@ components:
           example: 1
         name:
           type: string
-          example: "Doe Construction Inc."
+          example: "ООО Строитель"
+        legal_name:
+          type: string
+          nullable: true
+          example: "Общество с ограниченной ответственностью Строитель"
+        tax_number:
+          type: string
+          nullable: true
+          example: "7712345678"
+        registration_number:
+          type: string
+          nullable: true
+          example: "1234567890123"
+        phone:
+          type: string
+          nullable: true
+          example: "+7 (999) 123-45-67"
+        email:
+          type: string
+          format: email
+          nullable: true
+          example: "info@stroitel.ru"
+        address:
+          type: string
+          nullable: true
+          example: "г. Москва, ул. Строителей, д. 1"
+        city:
+          type: string
+          nullable: true
+          example: "Москва"
+        postal_code:
+          type: string
+          nullable: true
+          example: "123456"
+        country:
+          type: string
+          nullable: true
+          example: "Россия"
         owner_id:
           type: integer
           example: 10
@@ -690,7 +831,6 @@ components:
         updated_at:
            type: string
            format: date-time
-        # Add other relevant fields (e.g., member count, address?)
 
     OrganizationSummary: # Simplified view for lists
       type: object
@@ -700,10 +840,10 @@ components:
           example: 1
         name:
           type: string
-          example: "Doe Construction Inc."
+          example: "ООО Строитель"
         role_in_org: # User's role in this specific organization
            type: string
-           example: "Owner" # or "Admin", "Member"
+           example: "Владелец" # или "Администратор", "Участник"
 
     StoreOrganizationRequest:
       type: object
@@ -712,16 +852,88 @@ components:
       properties:
         name:
           type: string
-          example: "My New Company"
-        # Other fields needed on creation?
+          example: "Моя Новая Компания"
+        legal_name:
+          type: string
+          nullable: true
+          example: "ООО Моя Новая Компания"
+        tax_number:
+          type: string
+          nullable: true
+          example: "7712345678"
+        registration_number:
+          type: string
+          nullable: true
+          example: "1234567890123"
+        phone:
+          type: string
+          nullable: true
+          example: "+7 (999) 123-45-67"
+        email:
+          type: string
+          format: email
+          nullable: true
+          example: "info@mynewcompany.ru"
+        address:
+          type: string
+          nullable: true
+          example: "г. Москва, ул. Строителей, д. 1"
+        city:
+          type: string
+          nullable: true
+          example: "Москва"
+        postal_code:
+          type: string
+          nullable: true
+          example: "123456"
+        country:
+          type: string
+          nullable: true
+          example: "Россия"
 
     UpdateOrganizationRequest:
       type: object
       properties:
         name:
           type: string
-          example: "My Updated Company Name"
-        # Other updatable fields?
+          example: "Обновленное Название Компании"
+        legal_name:
+          type: string
+          nullable: true
+          example: "ООО Обновленное Название Компании"
+        tax_number:
+          type: string
+          nullable: true
+          example: "7712345678"
+        registration_number:
+          type: string
+          nullable: true
+          example: "1234567890123"
+        phone:
+          type: string
+          nullable: true
+          example: "+7 (999) 123-45-67"
+        email:
+          type: string
+          format: email
+          nullable: true
+          example: "new.info@company.ru"
+        address:
+          type: string
+          nullable: true
+          example: "г. Москва, ул. Новая, д. 10"
+        city:
+          type: string
+          nullable: true
+          example: "Москва"
+        postal_code:
+          type: string
+          nullable: true
+          example: "123456"
+        country:
+          type: string
+          nullable: true
+          example: "Россия"
 
     # --- Support Schemas ---
     SupportRequest:
@@ -732,32 +944,65 @@ components:
       properties:
         name: # Optional, auto-filled if logged in
           type: string
-          example: "John Doe"
+          example: "Иван Иванов"
         email: # Optional, auto-filled if logged in
           type: string
           format: email
-          example: "john.doe@example.com"
+          example: "ivan.ivanov@example.com"
         subject:
           type: string
-          example: "Issue with login"
+          example: "Проблема со входом в систему"
         message:
           type: string
-          example: "I am unable to log in to my account..."
+          example: "Я не могу войти в свой аккаунт..."
         type: # Optional category
           type: string
-          enum: ["Bug Report", "Feature Request", "General Inquiry", "Billing"]
-          example: "General Inquiry"
+          enum: ["Сообщение об ошибке", "Запрос функциональности", "Общий вопрос", "Вопрос по оплате"]
+          example: "Общий вопрос"
 
-    # --- Error Schemas (Reused) ---
+    # --- Error Schemas ---
     ErrorValidation:
-       $ref: './openapi_mobile.yaml#/components/schemas/ErrorValidation'
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Данные не прошли валидацию"
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            email: ["Поле email обязательно для заполнения.", "Формат email некорректен."]
+            password: ["Пароль должен быть не менее 8 символов."]
     ErrorUnauthorized:
-       $ref: './openapi_mobile.yaml#/components/schemas/ErrorUnauthorized'
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Неавторизованный доступ"
     ErrorForbidden:
-       $ref: './openapi_mobile.yaml#/components/schemas/ErrorForbidden'
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Доступ запрещен"
     ErrorNotFound:
-       $ref: './openapi_mobile.yaml#/components/schemas/ErrorNotFound'
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Ресурс не найден"
     ErrorServer:
-       $ref: './openapi_mobile.yaml#/components/schemas/ErrorServer'
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Внутренняя ошибка сервера"
     ErrorConflict:
-       $ref: './openapi_admin.yaml#/components/schemas/ErrorConflict' # Reference admin or define here 
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Конфликт данных" 
