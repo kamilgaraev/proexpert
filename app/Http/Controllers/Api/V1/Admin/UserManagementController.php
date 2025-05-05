@@ -11,6 +11,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use App\Exceptions\BusinessLogicException;
+use Illuminate\Support\Facades\Gate;
 
 class UserManagementController extends Controller
 {
@@ -26,11 +27,18 @@ class UserManagementController extends Controller
     }
 
     // Получить список прорабов
-    public function index(Request $request): \Illuminate\Http\Resources\Json\AnonymousResourceCollection
+    public function index(Request $request): \Illuminate\Http\Resources\Json\AnonymousResourceCollection | JsonResponse
     {
-        // Добавляем проверку прав здесь
-        $this->authorize('manage-foremen');
+        // Используем Gate::allows() вместо $this->authorize() для диагностики
+        if (!Gate::allows('manage-foremen')) {
+            // Возвращаем стандартный 403 ответ напрямую
+            return response()->json([
+                'success' => false,
+                'message' => 'Forbidden.' // Или 'У вас нет прав на управление прорабами.'
+            ], 403);
+        }
 
+        // Остальная логика метода, если права есть
         $perPage = $request->query('per_page', 15); // Получаем параметр пагинации из запроса
         $foremenPaginator = $this->userService->getForemenForCurrentOrg($request, (int)$perPage);
         
