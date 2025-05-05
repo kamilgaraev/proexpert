@@ -14,6 +14,12 @@ class ErrorResponse extends ApiResponse
         array $headers = []
     )
     {
-        parent::__construct($errors, $statusCode, $message, $headers);
+        parent::__construct(
+            data: null, 
+            statusCode: $statusCode, 
+            message: $message, 
+            headers: $headers, 
+            errors: $errors
+        );
     }
 } 
