@@ -48,7 +48,11 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $exceptions->renderable(function (\Illuminate\Auth\Access\AuthorizationException $e, $request) {
             if ($request->expectsJson()) {
-                 return new \App\Http\Responses\Api\V1\ErrorResponse($e->getMessage() ?: 'Forbidden.', \Symfony\Component\HttpFoundation\Response::HTTP_FORBIDDEN);
+                 // Используем стандартный JsonResponse вместо кастомного ErrorResponse для диагностики
+                 return response()->json([
+                     'success' => false,
+                     'message' => $e->getMessage() ?: 'Forbidden.'
+                 ], \Symfony\Component\HttpFoundation\Response::HTTP_FORBIDDEN);
             }
         });
 
