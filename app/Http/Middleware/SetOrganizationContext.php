@@ -99,4 +99,20 @@ class SetOrganizationContext
 
         return $next($request);
     }
+
+    /**
+     * Handle tasks after the response has been sent to the browser.
+     *
+     * Добавляем пустой метод terminate, чтобы избежать ошибки вызова 
+     * несуществующего метода ядром Laravel, если оно по какой-то причине
+     * считает этот middleware "terminable".
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @param  \Symfony\Component\HttpFoundation\Response  $response
+     * @return void
+     */
+    public function terminate(Request $request, Response $response): void
+    {
+        // Пока ничего не делаем здесь
+    }
 } 
