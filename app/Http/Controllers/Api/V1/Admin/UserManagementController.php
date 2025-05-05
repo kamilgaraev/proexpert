@@ -21,13 +21,16 @@ class UserManagementController extends Controller
         $this->userService = $userService;
         // Применяем middleware для проверки доступа к админ-панели ко всем методам контроллера
         $this->middleware('can:access-admin-panel');
-        // Применяем middleware для проверки прав на управление прорабами
-        $this->middleware('can:manage-foremen');
+        // Убираем middleware для проверки прав на управление прорабами отсюда
+        // $this->middleware('can:manage-foremen');
     }
 
     // Получить список прорабов
     public function index(Request $request): \Illuminate\Http\Resources\Json\AnonymousResourceCollection
     {
+        // Добавляем проверку прав здесь
+        $this->authorize('manage-foremen');
+
         $perPage = $request->query('per_page', 15); // Получаем параметр пагинации из запроса
         $foremenPaginator = $this->userService->getForemenForCurrentOrg($request, (int)$perPage);
         
