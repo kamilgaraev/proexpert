@@ -15,11 +15,11 @@ class ErrorResponse extends ApiResponse
     )
     {
         parent::__construct(
-            data: null, 
-            statusCode: $statusCode, 
-            message: $message, 
-            headers: $headers, 
-            errors: $errors
+            null,          // 1. data (null для ошибки)
+            $statusCode,   // 2. statusCode
+            $message,      // 3. message
+            $headers,      // 4. headers
+            $errors        // 5. errors
         );
     }
 } 
