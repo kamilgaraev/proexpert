@@ -30,9 +30,8 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->api([
              'throttle:api',
              \Illuminate\Routing\Middleware\SubstituteBindings::class,
-             // Добавьте сюда ApiLoggingMiddleware, если он общий для всех API
-             \App\Http\Middleware\ApiLoggingMiddleware::class,
-             // Добавьте сюда SetOrganizationContext, если он общий
+             // Временно отключаем логирование для диагностики ошибки 500 при 403
+             // \App\Http\Middleware\ApiLoggingMiddleware::class,
              \App\Http\Middleware\SetOrganizationContext::class,
         ]);
 
