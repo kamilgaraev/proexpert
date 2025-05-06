@@ -111,17 +111,31 @@ class CorsMiddleware
             
             return $response;
         } catch (\Throwable $e) {
-            // Логируем ошибку для диагностики
-            Log::error('CORS: Ошибка при обработке запроса', [
+            // --- НАЧАЛО ДИАГНОСТИЧЕСКИХ ЛОГОВ ---
+            Log::info('CORS: Вход в блок catch Throwable', [
+                'request_uri' => $request->getRequestUri(),
+                'method' => $request->method()
+            ]);
+            Log::info('CORS: Исключение - Класс', ['class' => get_class($e)]);
+            Log::info('CORS: Исключение - Сообщение', ['message' => $e->getMessage()]);
+            Log::info('CORS: Исключение - Файл', ['file' => $e->getFile() . ':' . $e->getLine()]);
+            // --- КОНЕЦ ДИАГНОСТИЧЕСКИХ ЛОГОВ ---
+
+            // Логируем ошибку для диагностики (оставляем существующий Log::error)
+            Log::error('CORS: Ошибка при обработке запроса (детальный лог ниже, если сработает)', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                // 'trace' => $e->getTraceAsString(), // Временно уберем стектрейс из этого Log::error, чтобы уменьшить вероятность сбоя самого логирования
                 'request_uri' => $request->getRequestUri()
             ]);
+             // Попытка залогировать стектрейс отдельно через Log::debug, если Log::error его не пишет
+            if (method_exists($e, 'getTraceAsString')) {
+                Log::debug('CORS: Stack trace (попытка записи через Log::debug)', ['trace' => $e->getTraceAsString()]);
+            }
             
             // Возвращаем ответ об ошибке с заголовками CORS
             return response()->json([
                 'error' => 'Ошибка на сервере',
-                'message' => 'При обработке запроса произошла ошибка. Администратор уведомлен.'
+                'message' => 'При обработке запроса произошла ошибка. Администратор уведомлен. [Diag: Catch Block Reached]'
             ], 500, $headers);
         }
     }
