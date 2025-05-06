@@ -15,16 +15,17 @@ class MeasurementUnitSeeder extends Seeder
     public function run(): void
     {
         $now = Carbon::now();
+        $defaultOrganizationId = 12; // ПРЕДУПРЕЖДЕНИЕ: Укажите корректный ID организации, если он отличается
 
         DB::table('measurement_units')->insert([
-            ['name' => 'Штука', 'code' => 'PCE', 'symbol' => 'шт.', 'is_active' => true, 'created_at' => $now, 'updated_at' => $now],
-            ['name' => 'Килограмм', 'code' => 'KGM', 'symbol' => 'кг', 'is_active' => true, 'created_at' => $now, 'updated_at' => $now],
-            ['name' => 'Метр', 'code' => 'MTR', 'symbol' => 'м', 'is_active' => true, 'created_at' => $now, 'updated_at' => $now],
-            ['name' => 'Метр квадратный', 'code' => 'MTK', 'symbol' => 'м²', 'is_active' => true, 'created_at' => $now, 'updated_at' => $now],
-            ['name' => 'Метр кубический', 'code' => 'MTQ', 'symbol' => 'м³', 'is_active' => true, 'created_at' => $now, 'updated_at' => $now],
-            ['name' => 'Литр', 'code' => 'LTR', 'symbol' => 'л', 'is_active' => true, 'created_at' => $now, 'updated_at' => $now],
-            ['name' => 'Тонна', 'code' => 'TNE', 'symbol' => 'т', 'is_active' => true, 'created_at' => $now, 'updated_at' => $now],
-            ['name' => 'Упаковка', 'code' => 'PKG', 'symbol' => 'упак.', 'is_active' => true, 'created_at' => $now, 'updated_at' => $now],
+            ['organization_id' => $defaultOrganizationId, 'name' => 'Штука', 'short_name' => 'шт.', 'created_at' => $now, 'updated_at' => $now],
+            ['organization_id' => $defaultOrganizationId, 'name' => 'Килограмм', 'short_name' => 'кг', 'created_at' => $now, 'updated_at' => $now],
+            ['organization_id' => $defaultOrganizationId, 'name' => 'Метр', 'short_name' => 'м', 'created_at' => $now, 'updated_at' => $now],
+            ['organization_id' => $defaultOrganizationId, 'name' => 'Метр квадратный', 'short_name' => 'м²', 'created_at' => $now, 'updated_at' => $now],
+            ['organization_id' => $defaultOrganizationId, 'name' => 'Метр кубический', 'short_name' => 'м³', 'created_at' => $now, 'updated_at' => $now],
+            ['organization_id' => $defaultOrganizationId, 'name' => 'Литр', 'short_name' => 'л', 'created_at' => $now, 'updated_at' => $now],
+            ['organization_id' => $defaultOrganizationId, 'name' => 'Тонна', 'short_name' => 'т', 'created_at' => $now, 'updated_at' => $now],
+            ['organization_id' => $defaultOrganizationId, 'name' => 'Упаковка', 'short_name' => 'упак.', 'created_at' => $now, 'updated_at' => $now],
         ]);
     }
 }
