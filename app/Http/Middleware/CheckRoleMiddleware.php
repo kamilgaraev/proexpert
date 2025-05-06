@@ -113,7 +113,7 @@ class CheckRoleMiddleware
         // Проверяем, есть ли у пользователя хотя бы одна из разрешенных ролей
         $hasAccess = false;
         Log::info('[CheckRoleMiddleware] Entering roles check loop.', ['user_id' => $user->id, 'allowed_roles' => $allowedRoles, 'org_id' => $organizationId]);
-        foreach ($allowedRoles as $roleSlugLoop) { // Используем другую переменную для итерации, чтобы избежать путаницы
+        foreach ($allowedRoles as $roleSlugLoop) {
             Log::info('[CheckRoleMiddleware] Checking role in loop.', ['role_slug_in_loop' => $roleSlugLoop]);
             if ($user->hasRole($roleSlugLoop, $organizationId)) {
                 Log::info('[CheckRoleMiddleware] Role found in loop.', ['role_slug_found' => $roleSlugLoop]);
@@ -125,26 +125,19 @@ class CheckRoleMiddleware
         Log::info('[CheckRoleMiddleware] Exited roles check loop.', ['has_access_result' => $hasAccess]);
 
         if (!$hasAccess) {
-             Log::warning('[CheckRoleMiddleware] Access DENIED after loop.', ['user_id' => $user->id, 'org_id' => $organizationId]);
-             throw new AccessDeniedHttpException(
-                sprintf('Access denied. Required roles: %s (Org Context: %s)', $roles, $organizationId ?? 'None')
-            );
+             Log::warning('[CheckRoleMiddleware] Access DENIED after loop. Returning custom 403 JSON response for diagnostics.', [
+                'user_id' => $user->id,
+                'org_id' => $organizationId
+             ]);
+             return response()->json([
+                'success' => false,
+                'message' => sprintf('DIAGNOSTIC: Access denied. Required roles: %s (Org Context: %s)', $roles, $organizationId ?? 'None'),
+                'error_code' => 'INSUFFICIENT_PERMISSIONS'
+             ], 403);
         }
 
-        // ---- ВРЕМЕННОЕ ДИАГНОСТИЧЕСКОЕ ИЗМЕНЕНИЕ ----
-        // Если доступ есть, возвращаем тестовый JSON вместо $next($request)
-        Log::info('[CheckRoleMiddleware] Access GRANTED. Bypassing $next($request) for diagnostics.', ['user_id' => $user->id, 'org_id' => $organizationId]);
-        return response()->json([
-            'success' => true,
-            'message' => 'CheckRoleMiddleware passed. User has access.',
-            'user_id' => $user->id,
-            'organization_id' => $organizationId,
-            'checked_roles' => $roles
-        ]);
-        // ---- КОНЕЦ ВРЕМЕННОГО ДИАГНОСТИЧЕСКОГО ИЗМЕНЕНИЯ ----
-
-        // Оригинальный код, который не будет выполнен из-за return выше:
-        // Log::info('[CheckRoleMiddleware] Access GRANTED. Calling $next($request).', ['user_id' => $user->id, 'org_id' => $organizationId]);
-        // return $next($request);
+        // Возвращаем оригинальный код:
+        Log::info('[CheckRoleMiddleware] Access GRANTED. Calling $next($request).', ['user_id' => $user->id, 'org_id' => $organizationId]);
+        return $next($request);
     }
 } 
