@@ -120,9 +120,9 @@ class BalanceController extends Controller
     public function topUp(Request $request)
     {
         $request->validate([
-            'amount' => 'required|numeric|min:1', // Минимальная сумма для пополнения
+            'amount' => 'required|numeric|min:1',
             'currency' => 'required|string|size:3',
-            'payment_method_token' => 'required|string', // Для mock-шлюза делаем обязательным
+            'payment_method_token' => 'nullable|string', // Делаем токен необязательным
         ]);
 
         /** @var User $user */
@@ -130,46 +130,61 @@ class BalanceController extends Controller
         $organization = $user->currentOrganization;
 
         if (!$organization) {
-            return response()->json(['message' => 'Organization not found.'], 404);
+            return response()->json(['message' => 'Organization not found for this user.'], 404); // Изменено сообщение для консистентности
         }
 
         $amountInCents = (int) ($request->input('amount') * 100);
         $currency = strtoupper($request->input('currency'));
 
         try {
-            // При реальной интеграции здесь может быть URL для возврата после успешной/неуспешной оплаты
-            $returnUrl = route('api.v1.landing.billing.balance.show'); // Пример
+            $returnUrl = route('api.v1.landing.billing.balance.show');
+
+            // Для заглушки токен не критичен, но передаем, если есть
+            $paymentMethodToken = $request->input('payment_method_token');
 
             $chargeResponse = $this->paymentGateway->createCharge(
                 $user,
                 $amountInCents,
                 $currency,
                 "Top-up organization balance for {$organization->name}",
-                $request->input('payment_method_token'),
+                $paymentMethodToken, // Передаем токен, если он есть
                 ['organization_id' => $organization->id, 'type' => 'balance_top_up'],
                 $returnUrl
             );
             
+            $payment = null;
             if ($chargeResponse->success && $chargeResponse->chargeId) {
-                 Payment::create([
+                 // Создаем платеж сразу как УСПЕШНЫЙ для тестовых целей
+                 $payment = Payment::create([
                     'user_id' => $user->id,
-                    // 'organization_id' => $organization->id, // Поле organization_id не существует в Payment модели по умолчанию.
-                                                              // Если оно необходимо, его нужно добавить в миграцию и модель Payment.
                     'payment_gateway_payment_id' => $chargeResponse->chargeId,
                     'amount' => $request->input('amount'),
                     'currency' => $currency,
-                    'status' => Payment::STATUS_PENDING, 
-                    'description' => "Balance top-up initiated for {$organization->name}",
+                    'status' => Payment::STATUS_SUCCEEDED, // Сразу успешный
+                    'description' => "Balance top-up successful for {$organization->name}",
+                    'paid_at' => now(), // Проставляем время оплаты
                     'gateway_response' => $chargeResponse->gatewaySpecificResponse,
                 ]);
+
+                // Непосредственно пополняем баланс для тестовых целей
+                // Сумма для balanceService должна быть в центах/копейках
+                $this->balanceService->creditBalance(
+                    $organization,
+                    $amountInCents,
+                    "Balance top-up via mock gateway: " . $chargeResponse->chargeId,
+                    $payment // Связываем транзакцию с платежом
+                );
+                Log::info("Mock balance top-up successful and credited directly for org: {$organization->id}, amount: {$amountInCents}");
             }
 
+            // Возвращаем изначальный ответ от шлюза, который должен быть успешным
             return response()->json($chargeResponse); 
 
-        } catch (BalanceException $e) {
+        } catch (BalanceException $e) { // Это наше кастомное исключение для проблем с балансом
+            Log::error('Balance top-up failed due to BalanceException: ' . $e->getMessage(), ['exception' => $e]);
             return response()->json(['message' => $e->getMessage()], 400);
-        } catch (\Exception $e) {
-            Log::error('Balance top-up initiation failed: ' . $e->getMessage(), ['exception' => $e]);
+        } catch (\Exception $e) { // Любые другие неожиданные ошибки
+            Log::error('Balance top-up initiation failed with general exception: ' . $e->getMessage(), ['exception' => $e]);
             return response()->json(['message' => 'An unexpected error occurred during balance top-up.'], 500);
         }
     }
