@@ -120,3 +120,34 @@ Route::prefix('landing')->name('landing.')->group(function () {
             Route::delete('/{user}', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'destroy']);
         });
 });
+
+// --- Admin Panel API ---
+Route::prefix('admin')->name('admin.')->group(function () {
+    // Если у вас есть отдельный файл для публичных маршрутов аутентификации админки, его можно подключить здесь, например:
+    // require __DIR__ . '/api/v1/admin/auth.php';
+
+    // Защищенные маршруты Admin Panel
+    Route::middleware(['auth:api_admin', 'jwt.auth', 'organization.context', 'can:access-admin-panel'])->group(function() {
+        // Подключаем существующие файлы маршрутов для админки
+        if (file_exists(__DIR__ . '/api/v1/admin/projects.php')) {
+            require __DIR__ . '/api/v1/admin/projects.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/admin/catalogs.php')) {
+            require __DIR__ . '/api/v1/admin/catalogs.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/admin/users.php')) {
+            require __DIR__ . '/api/v1/admin/users.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/admin/logs.php')) {
+            require __DIR__ . '/api/v1/admin/logs.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/admin/reports.php')) {
+            require __DIR__ . '/api/v1/admin/reports.php';
+        }
+        // Сюда можно будет добавлять require для новых файлов маршрутов админки
+    });
+});
+
+// Опционально, если есть Mobile App API, его конфигурация может идти дальше
+// --- Mobile App API ---
+// Route::prefix('mobile')->name('mobile.')->group(function () { ... });
