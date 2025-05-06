@@ -117,6 +117,27 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     }
 
     /**
+     * Найти пользователей с одной из указанных ролей в организации.
+     *
+     * @param int $organizationId
+     * @param array<string> $roleSlugs Массив слагов ролей
+     * @return Collection
+     */
+    public function findByRolesInOrganization(int $organizationId, array $roleSlugs): Collection
+    {
+        if (empty($roleSlugs)) {
+            return new Collection(); // Возвращаем пустую коллекцию, если массив ролей пуст
+        }
+
+        return $this->model
+            ->whereHas('roles', function ($query) use ($roleSlugs, $organizationId) {
+                $query->whereIn('slug', $roleSlugs) // Используем whereIn для массива слагов
+                      ->where('role_user.organization_id', $organizationId);
+            })
+            ->get();
+    }
+
+    /**
      * Отозвать роль у пользователя в рамках организации.
      *
      * @param int $userId ID пользователя.

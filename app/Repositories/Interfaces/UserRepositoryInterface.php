@@ -57,4 +57,13 @@ interface UserRepositoryInterface extends RepositoryInterface
      * @return Collection
      */
     public function getForemanActivity(int $organizationId, array $filters = []): Collection;
+
+    /**
+     * Найти пользователей с одной из указанных ролей в организации.
+     *
+     * @param int $organizationId
+     * @param array<string> $roleSlugs Массив слагов ролей
+     * @return Collection
+     */
+    public function findByRolesInOrganization(int $organizationId, array $roleSlugs): Collection;
 }
