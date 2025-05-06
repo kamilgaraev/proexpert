@@ -115,6 +115,9 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
             $query->where('is_archived', (bool)$filters['is_archived']);
         }
 
+        // Eager load users relationship
+        $query->with('users');
+
         // Применяем сортировку
         // Валидация sortBy нужна, чтобы предотвратить SQL-инъекции, если поле берется из запроса
         // Здесь предполагаем, что sortBy уже проверен
