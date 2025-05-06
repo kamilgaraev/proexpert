@@ -13,6 +13,7 @@ use Tymon\JWTAuth\Contracts\JWTSubject;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Arr;
 
 // Импортируем константы роли
 use App\Models\Role;
@@ -21,6 +22,19 @@ class User extends Authenticatable implements JWTSubject
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable, SoftDeletes;
+
+    /**
+     * Роли, имеющие доступ и полный контроль в Admin Panel.
+     * Эти роли будут иметь неограниченный доступ.
+     */
+    const ADMIN_PANEL_ACCESS_ROLES = [
+        Role::ROLE_SYSTEM_ADMIN,    // system_admin
+        Role::ROLE_OWNER,           // organization_owner
+        Role::ROLE_ADMIN,           // organization_admin
+        Role::ROLE_WEB_ADMIN,       // web_admin
+        Role::ROLE_ACCOUNTANT,      // accountant
+        // Добавьте сюда другие SLUG ролей, если они должны иметь полный доступ к админ-панели
+    ];
 
     /**
      * The attributes that are mass assignable.
@@ -67,19 +81,6 @@ class User extends Authenticatable implements JWTSubject
             'last_login_at' => 'datetime',
         ];
     }
-
-    /**
-     * Roles allowed to access the main Admin Panel.
-     *
-     * @var array
-     */
-    public const ADMIN_PANEL_ACCESS_ROLES = [
-        Role::ROLE_SYSTEM_ADMIN,    // system_admin
-        Role::ROLE_OWNER,           // organization_owner
-        Role::ROLE_ADMIN,           // organization_admin
-        Role::ROLE_WEB_ADMIN,       // web_admin
-        Role::ROLE_ACCOUNTANT,      // accountant
-    ];
 
     /**
      * Get the identifier that will be stored in the subject claim of the JWT.
@@ -271,5 +272,39 @@ class User extends Authenticatable implements JWTSubject
         return $this->belongsToMany(Project::class, 'project_user')
             ->withPivot('role')
             ->withTimestamps();
+    }
+
+    /**
+     * Проверяет, имеет ли пользователь роль, дающую полный доступ к админ-панели.
+     *
+     * @param int|null $organizationId Если null, используется текущая организация пользователя.
+     * @return bool
+     */
+    public function isAdminPanelUser(?int $organizationId = null): bool
+    {
+        // Системный администратор имеет доступ всегда, вне зависимости от организации
+        if ($this->isSystemAdmin()) {
+            return true;
+        }
+
+        $organizationId = $organizationId ?? $this->current_organization_id;
+
+        if (!$organizationId) {
+            // Если нет контекста организации (кроме системного администратора),
+            // то считаем, что доступа к админ-панели организации нет.
+            return false;
+        }
+
+        // Получаем все слаги ролей пользователя в указанной организации
+        $userRoleSlugs = $this->rolesInOrganization($organizationId)->pluck('slug')->toArray();
+
+        // Проверяем, есть ли пересечение между ролями пользователя и разрешенными ролями для админ-панели
+        foreach (self::ADMIN_PANEL_ACCESS_ROLES as $adminRoleSlug) {
+            if (in_array($adminRoleSlug, $userRoleSlugs)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

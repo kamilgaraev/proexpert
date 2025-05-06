@@ -148,20 +148,22 @@ class AuthServiceProvider extends ServiceProvider
          * в текущей организации.
          */
         Gate::define('access-admin-panel', function (User $user, ?int $organizationId = null): bool {
-            if ($user->isSystemAdmin()) {
-                return true;
-            }
-            $orgId = $organizationId ?? $user->current_organization_id;
-            if (!$orgId) {
-                return false;
-            }
-            foreach (User::ADMIN_PANEL_ACCESS_ROLES as $roleSlug) {
-                if ($roleSlug === Role::ROLE_SYSTEM_ADMIN) continue; // Системного админа уже проверили
-                if ($user->hasRole($roleSlug, $orgId)) {
-                    return true;
-                }
-            }
-            return false;
+            // Логирование для отладки, какой $organizationId приходит в Gate
+            Log::debug('[Gate:access-admin-panel] Checking access', [
+                'user_id' => $user->id,
+                'passed_organization_id' => $organizationId,
+                'user_current_organization_id' => $user->current_organization_id,
+            ]);
+
+            // Просто используем новый метод из модели User.
+            // Метод isAdminPanelUser сам обработает случай system_admin и контекст организации.
+            $canAccess = $user->isAdminPanelUser($organizationId);
+
+            Log::info('[Gate:access-admin-panel] Access result', [
+                'user_id' => $user->id,
+                'can_access' => $canAccess
+            ]);
+            return $canAccess;
         });
 
         /**
