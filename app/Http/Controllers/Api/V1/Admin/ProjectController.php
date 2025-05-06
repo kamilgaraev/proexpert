@@ -29,20 +29,50 @@ class ProjectController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): AnonymousResourceCollection | JsonResponse
     {
-        $perPage = $request->query('per_page', 15);
-        $projects = $this->projectService->getProjectsForCurrentOrg($request, (int)$perPage);
-        return ProjectResource::collection($projects);
+        try {
+            $perPage = $request->query('per_page', 15);
+            $projects = $this->projectService->getProjectsForCurrentOrg($request, (int)$perPage);
+            return ProjectResource::collection($projects);
+        } catch (BusinessLogicException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@index', [
+                'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при получении списка проектов.',
+            ], 500);
+        }
     }
 
     /**
      * Store a newly created resource in storage.
      */
-    public function store(StoreProjectRequest $request): ProjectResource
+    public function store(StoreProjectRequest $request): ProjectResource | JsonResponse
     {
-        $project = $this->projectService->createProject($request->validated(), $request);
-        return new ProjectResource($project);
+        try {
+            $project = $this->projectService->createProject($request->validated(), $request);
+            return new ProjectResource($project);
+        } catch (BusinessLogicException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@store', [
+                'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при создании проекта.',
+            ], 500);
+        }
     }
 
     /**
@@ -50,11 +80,29 @@ class ProjectController extends Controller
      */
     public function show(Request $request, string $id): ProjectResource | JsonResponse
     {
-        $project = $this->projectService->findProjectByIdForCurrentOrg((int)$id, $request);
-        if (!$project) {
-            return response()->json(['message' => 'Project not found in your organization'], 404);
+        try {
+            $project = $this->projectService->findProjectByIdForCurrentOrg((int)$id, $request);
+            if (!$project) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Проект не найден в вашей организации.'
+                ], 404);
+            }
+            return new ProjectResource($project->load('users'));
+        } catch (BusinessLogicException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@show', [
+                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при получении проекта.',
+            ], 500);
         }
-        return new ProjectResource($project->load('users'));
     }
 
     /**
@@ -65,14 +113,25 @@ class ProjectController extends Controller
         try {
             $project = $this->projectService->updateProject((int)$id, $request->validated(), $request);
             if (!$project) {
-                return response()->json(['message' => 'Project not found or update failed'], 404);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось обновить проект или проект не найден.'
+                ], 404);
             }
             return new ProjectResource($project);
         } catch (BusinessLogicException $e) {
-            return response()->json(['message' => $e->getMessage()], $e->getCode() ?: 400);
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $e->getCode() ?: 400);
         } catch (\Throwable $e) {
-            Log::error('Error updating project', ['id' => $id, 'exception' => $e]);
-            return response()->json(['message' => 'Internal server error while updating project.'], 500);
+            Log::error('Error in ProjectController@update', [
+                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при обновлении проекта.',
+            ], 500);
         }
     }
 
@@ -84,14 +143,28 @@ class ProjectController extends Controller
         try {
             $success = $this->projectService->deleteProject((int)$id, $request);
             if (!$success) {
-                return response()->json(['message' => 'Project not found or delete failed'], 404);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не удалось удалить проект или проект не найден.'
+                ], 404);
             }
-            return response()->json(null, 204);
+            return response()->json([
+                'success' => true,
+                'message' => 'Проект успешно удален.'
+            ], 200);
         } catch (BusinessLogicException $e) {
-            return response()->json(['message' => $e->getMessage()], $e->getCode() ?: 400);
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $e->getCode() ?: 400);
         } catch (\Throwable $e) {
-            Log::error('Error deleting project', ['id' => $id, 'exception' => $e]);
-            return response()->json(['message' => 'Internal server error while deleting project.'], 500);
+            Log::error('Error in ProjectController@destroy', [
+                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при удалении проекта.',
+            ], 500);
         }
     }
 
@@ -101,16 +174,25 @@ class ProjectController extends Controller
     public function assignForeman(Request $request, string $projectId, string $userId): JsonResponse
     {
         try {
-            $success = $this->projectService->assignForemanToProject((int)$projectId, (int)$userId, $request);
-            if (!$success) {
-                return response()->json(['message' => 'Failed to assign foreman. Project or User not found, or user is not a foreman in the organization.'], 404);
-            }
-            return response()->json(['message' => 'Foreman assigned successfully.']);
+            $this->projectService->assignForemanToProject((int)$projectId, (int)$userId, $request);
+            // Если assignForemanToProject не выбросил исключение, считаем успешным
+            return response()->json([
+                'success' => true,
+                'message' => 'Прораб успешно назначен на проект.'
+            ]);
         } catch (BusinessLogicException $e) {
-            return response()->json(['message' => $e->getMessage()], $e->getCode() ?: 400);
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $e->getCode() ?: 400);
         } catch (\Throwable $e) {
-            Log::error('Error assigning foreman to project', ['project_id' => $projectId, 'user_id' => $userId, 'exception' => $e]);
-            return response()->json(['message' => 'Internal server error during assignment.'], 500);
+            Log::error('Error in ProjectController@assignForeman', [
+                'projectId' => $projectId, 'userId' => $userId, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при назначении прораба на проект.',
+            ], 500);
         }
     }
 
@@ -120,49 +202,94 @@ class ProjectController extends Controller
     public function detachForeman(Request $request, string $projectId, string $userId): JsonResponse
     {
         try {
-            $success = $this->projectService->detachForemanFromProject((int)$projectId, (int)$userId, $request);
-            if (!$success) {
-                return response()->json(['message' => 'Failed to detach foreman. Project or User not found, or user was not assigned.'], 404);
-            }
-            return response()->json(['message' => 'Foreman detached successfully.']);
+            $this->projectService->detachForemanFromProject((int)$projectId, (int)$userId, $request);
+            // Если detachForemanFromProject не выбросил исключение, считаем успешным
+            return response()->json([
+                'success' => true,
+                'message' => 'Прораб успешно откреплен от проекта.'
+            ]);
         } catch (BusinessLogicException $e) {
-            return response()->json(['message' => $e->getMessage()], $e->getCode() ?: 400);
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $e->getCode() ?: 400);
         } catch (\Throwable $e) {
-            Log::error('Error detaching foreman from project', ['project_id' => $projectId, 'user_id' => $userId, 'exception' => $e]);
-            return response()->json(['message' => 'Internal server error during detachment.'], 500);
+            Log::error('Error in ProjectController@detachForeman', [
+                'projectId' => $projectId, 'userId' => $userId, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при откреплении прораба от проекта.',
+            ], 500);
         }
     }
 
     public function statistics(int $id): JsonResponse
     {
-        $statistics = $this->projectService->getProjectStatistics($id);
-
-        return response()->json($statistics);
+        try {
+            $statistics = $this->projectService->getProjectStatistics($id);
+            return response()->json([
+                'success' => true, // Условно true, так как метод-заглушка отработал
+                'data' => $statistics
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@statistics', [
+                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при получении статистики по проекту.',
+            ], 500);
+        }
     }
 
     public function getProjectMaterials(int $id, Request $request): JsonResponse
     {
-        $materials = $this->projectService->getProjectMaterials(
-            $id,
-            $request->get('per_page', 15),
-            $request->get('search'),
-            $request->get('sort_by', 'created_at'),
-            $request->get('sort_direction', 'desc')
-        );
-
-        return response()->json($materials);
+        try {
+            $materials = $this->projectService->getProjectMaterials(
+                $id,
+                $request->get('per_page', 15),
+                $request->get('search'),
+                $request->get('sort_by', 'created_at'),
+                $request->get('sort_direction', 'desc')
+            );
+            return response()->json([
+                'success' => true, // Условно true
+                'data' => $materials
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@getProjectMaterials', [
+                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при получении материалов проекта.',
+            ], 500);
+        }
     }
 
     public function getProjectWorkTypes(int $id, Request $request): JsonResponse
     {
-        $workTypes = $this->projectService->getProjectWorkTypes(
-            $id,
-            $request->get('per_page', 15),
-            $request->get('search'),
-            $request->get('sort_by', 'created_at'),
-            $request->get('sort_direction', 'desc')
-        );
-
-        return response()->json($workTypes);
+        try {
+            $workTypes = $this->projectService->getProjectWorkTypes(
+                $id,
+                $request->get('per_page', 15),
+                $request->get('search'),
+                $request->get('sort_by', 'created_at'),
+                $request->get('sort_direction', 'desc')
+            );
+            return response()->json([
+                'success' => true, // Условно true
+                'data' => $workTypes
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@getProjectWorkTypes', [
+                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при получении видов работ проекта.',
+            ], 500);
+        }
     }
 } 

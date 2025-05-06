@@ -5,6 +5,10 @@ namespace App\Http\Requests\Api\V1\Admin\Project;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
 use App\Models\Role;
+use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\ValidationException;
 
 class StoreProjectRequest extends FormRequest
 {
@@ -34,5 +38,18 @@ class StoreProjectRequest extends FormRequest
             'is_archived' => 'sometimes|boolean',
             // Добавить другие поля
         ];
+    }
+
+    protected function failedValidation(Validator $validator)
+    {
+        $errors = (new ValidationException($validator))->errors();
+
+        throw new HttpResponseException(
+            response()->json([
+                'success' => false,
+                'message' => 'Данные не прошли валидацию.',
+                'errors' => $errors,
+            ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
+        );
     }
 } 
