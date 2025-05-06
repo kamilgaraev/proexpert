@@ -112,14 +112,20 @@ class CheckRoleMiddleware
         
         // Проверяем, есть ли у пользователя хотя бы одна из разрешенных ролей
         $hasAccess = false;
-        foreach ($allowedRoles as $roleSlug) {
-            if ($user->hasRole($roleSlug, $organizationId)) {
+        Log::info('[CheckRoleMiddleware] Entering roles check loop.', ['user_id' => $user->id, 'allowed_roles' => $allowedRoles, 'org_id' => $organizationId]);
+        foreach ($allowedRoles as $roleSlugLoop) { // Используем другую переменную для итерации, чтобы избежать путаницы
+            Log::info('[CheckRoleMiddleware] Checking role in loop.', ['role_slug_in_loop' => $roleSlugLoop]);
+            if ($user->hasRole($roleSlugLoop, $organizationId)) {
+                Log::info('[CheckRoleMiddleware] Role found in loop.', ['role_slug_found' => $roleSlugLoop]);
                 $hasAccess = true;
                 break;
             }
+            Log::info('[CheckRoleMiddleware] Role NOT found in loop, continuing.', ['role_slug_not_found' => $roleSlugLoop]);
         }
+        Log::info('[CheckRoleMiddleware] Exited roles check loop.', ['has_access_result' => $hasAccess]);
 
         if (!$hasAccess) {
+             Log::warning('[CheckRoleMiddleware] Access DENIED after loop.', ['user_id' => $user->id, 'org_id' => $organizationId]);
              throw new AccessDeniedHttpException(
                 sprintf('Access denied. Required roles: %s (Org Context: %s)', $roles, $organizationId ?? 'None')
             );
