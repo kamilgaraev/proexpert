@@ -1,0 +1,562 @@
+openapi: 3.0.0
+info:
+  title: Billing API (Subscriptions and Balance)
+  version: v1
+  description: API для управления подписками и балансом организации пользователя.
+servers:
+  - url: /api/landing/billing # Уточните ваш базовый URL для этих эндпоинтов. Пример /api/v1/landing/billing
+    description: Billing API Endpoints (within Landing/LK context)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    SubscriptionPlanResource:
+      type: object
+      title: Subscription Plan Resource
+      description: Ресурс тарифного плана
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Старт"
+        slug:
+          type: string
+          example: "start"
+        description:
+          type: string
+          nullable: true
+          example: "Для индивидуальных предпринимателей..."
+        price:
+          type: number
+          format: float
+          example: 499.00
+        currency:
+          type: string
+          example: "RUB"
+        duration_in_days:
+          type: integer
+          example: 30
+        max_foremen:
+          type: integer
+          nullable: true
+          example: 1
+        max_projects:
+          type: integer
+          nullable: true
+          example: 1
+        max_storage_gb:
+          type: integer
+          nullable: true
+          example: 1
+        features:
+          type: array
+          items:
+            type: string
+          example: ["Мобильное приложение: приемка, списание, фиксация работ.", "Веб-админка: управление 1 объектом"]
+        display_order:
+          type: integer
+          example: 1
+
+    UserSubscriptionResource:
+      type: object
+      title: User Subscription Resource
+      description: Ресурс подписки пользователя
+      properties:
+        id:
+          type: integer
+          example: 1
+        status:
+          type: string
+          example: "active"
+          description: "Статус подписки (trial, active, pending_payment, past_due, canceled, expired, incomplete)"
+        trial_ends_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-08-01T12:00:00Z"
+        starts_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-07-21T12:00:00Z"
+        ends_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-08-20T12:00:00Z"
+        next_billing_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-08-20T12:00:00Z"
+        canceled_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-08-10T10:00:00Z"
+        is_active_now:
+          type: boolean
+          example: true
+          description: "Является ли подписка валидной на текущий момент (активна или на триале)"
+        plan:
+          $ref: "#/components/schemas/SubscriptionPlanResource"
+        payment_gateway_subscription_id:
+          type: string
+          nullable: true
+          example: "sub_mock_123"
+          description: "ID подписки во внешнем платежном шлюзе"
+
+    OrganizationBalanceResource:
+      type: object
+      title: Organization Balance Resource
+      description: Ресурс баланса организации
+      properties:
+        organization_id:
+          type: integer
+          example: 1
+        balance_cents:
+          type: integer
+          example: 50000
+          description: "Баланс в минорных единицах (копейках)"
+        balance_formatted:
+          type: string
+          example: "500.00"
+          description: "Баланс в основной валюте, отформатированный для отображения"
+        currency:
+          type: string
+          example: "RUB"
+        updated_at:
+          type: string
+          format: date-time
+          example: "2025-07-21T18:00:00Z"
+
+    BalanceTransactionResource:
+      type: object
+      title: Balance Transaction Resource
+      description: Ресурс транзакции по балансу
+      properties:
+        id:
+          type: integer
+          example: 1
+        type:
+          type: string
+          enum: [credit, debit]
+          example: "credit"
+          description: "Тип транзакции"
+        amount_cents:
+          type: integer
+          example: 100000
+          description: "Сумма в минорных единицах (копейках)"
+        amount_formatted:
+          type: string
+          example: "1000.00"
+          description: "Сумма, отформатированная для отображения"
+        balance_before_cents:
+          type: integer
+          example: 0
+          description: "Баланс до транзакции в копейках"
+        balance_after_cents:
+          type: integer
+          example: 100000
+          description: "Баланс после транзакции в копейках"
+        description:
+          type: string
+          nullable: true
+          example: "Пополнение баланса"
+        payment_id:
+          type: integer
+          nullable: true
+          example: 123
+          description: "ID связанного платежа (если есть)"
+        user_subscription_id:
+          type: integer
+          nullable: true
+          example: 456
+          description: "ID связанной подписки (если есть)"
+        meta:
+          type: object
+          nullable: true
+          description: "Дополнительные метаданные"
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-07-21T15:03:01Z"
+
+    PaymentGatewayChargeResponse: # Ответ от шлюза при создании платежа
+      type: object
+      properties:
+        success:
+          type: boolean
+        chargeId:
+          type: string
+          nullable: true
+          description: "ID операции в шлюзе"
+        status:
+          type: string
+          description: "Статус в терминах шлюза (например, succeeded, pending, failed)"
+        message:
+          type: string
+          nullable: true
+        redirectUrl:
+          type: string
+          nullable: true
+          description: "URL для редиректа пользователя на страницу оплаты шлюза"
+        gatewaySpecificResponse:
+          type: object
+          nullable: true
+          description: "Специфичный ответ от шлюза для отладки"
+      example:
+        success: true
+        chargeId: "mock_charge_xxxx"
+        status: "pending" # или succeeded, если оплата мгновенная и не требует редиректа
+        message: "Charge initiated."
+        redirectUrl: "https://payment.gateway/pay/xxxx" # если требуется
+        gatewaySpecificResponse: { "details": "..." }
+
+    PaginatedBalanceTransactionResponse: # Для пагинированного ответа
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/BalanceTransactionResource"
+        links:
+          type: object
+          properties:
+            first: { type: string, nullable: true, example: "/api/landing/billing/balance/transactions?page=1" }
+            last: { type: string, nullable: true, example: "/api/landing/billing/balance/transactions?page=5" }
+            prev: { type: string, nullable: true, example: null }
+            next: { type: string, nullable: true, example: "/api/landing/billing/balance/transactions?page=2" }
+        meta:
+          type: object
+          properties:
+            current_page: { type: integer, example: 1 }
+            from: { type: integer, nullable: true, example: 1 }
+            last_page: { type: integer, example: 5 }
+            path: { type: string, example: "/api/landing/billing/balance/transactions" }
+            per_page: { type: integer, example: 15 }
+            to: { type: integer, nullable: true, example: 15 }
+            total: { type: integer, example: 75 }
+
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Сообщение об ошибке
+      example:
+        message: "An error occurred."
+    
+    ValidationErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "The given data was invalid."
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            plan_slug: ["The plan slug field is required."]
+            amount: ["The amount must be at least 1."]
+
+security:
+  - bearerAuth: []
+
+paths:
+  /plans:
+    get:
+      summary: Получить список активных тарифных планов
+      tags:
+        - Billing - Plans
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список тарифных планов
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SubscriptionPlanResource"
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /subscription:
+    get:
+      summary: Получить текущую подписку пользователя
+      tags:
+        - Billing - User Subscription
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Текущая подписка
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSubscriptionResource"
+        '404':
+          description: Подписка не найдена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '401':
+          description: Не авторизован
+
+    post: # Эндпоинт /subscribe - для создания новой подписки
+      summary: Подписать пользователя на тарифный план (Создать новую подписку)
+      operationId: subscribeUserToPlan
+      tags:
+        - Billing - User Subscription
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - plan_slug
+              properties:
+                plan_slug:
+                  type: string
+                  example: "start"
+                  description: "Slug тарифного плана"
+                payment_method_token:
+                  type: string
+                  nullable: true
+                  example: "tok_mock_visa" 
+                  description: "Токен метода оплаты от платежного шлюза (если требуется немедленная оплата и нет достаточного баланса)"
+      responses:
+        '201': 
+          description: Подписка успешно создана/обновлена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSubscriptionResource"
+        '400':
+          description: Ошибка при подписке (например, неверный план, ошибка платежа, недостаточно средств)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '404':
+          description: Тарифный план не найден
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '422':
+          description: Ошибка валидации входных данных
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+
+  /subscription/cancel:
+    post:
+      summary: Отменить текущую подписку пользователя
+      tags:
+        - Billing - User Subscription
+      security:
+        - bearerAuth: []
+      requestBody:
+        description: "Опционально, указать, отменять ли в конце периода"
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                at_period_end:
+                  type: boolean
+                  example: true
+                  default: true
+                  description: "Отменить в конце оплаченного периода (true) или немедленно (false, если поддерживается)."
+      responses:
+        '200':
+          description: Подписка успешно отменена (или запланирована к отмене)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSubscriptionResource"
+        '400':
+          description: Ошибка при отмене подписки
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '404':
+          description: Активная подписка не найдена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  
+  # TODO: Добавить эндпоинт для смены тарифа /subscription/switch (POST)
+  # Пример тела запроса для /subscription/switch:
+  # {
+  #   "new_plan_slug": "pro",
+  #   "payment_method_token": "tok_mock_visa_if_needed"
+  # }
+
+  /balance:
+    get:
+      summary: Получить текущий баланс организации пользователя
+      tags:
+        - Billing - Balance
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Текущий баланс организации
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationBalanceResource"
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '404':
+          description: Организация не найдена или не привязана к пользователю
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /balance/transactions:
+    get:
+      summary: Получить историю транзакций по балансу организации
+      tags:
+        - Billing - Balance
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: limit
+          in: query
+          description: Количество записей на страницу
+          required: false
+          schema:
+            type: integer
+            default: 15
+        - name: page
+          in: query
+          description: Номер страницы
+          required: false
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: Пагинированный список транзакций
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaginatedBalanceTransactionResponse"
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '404':
+          description: Организация не найдена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /balance/top-up:
+    post:
+      summary: Инициировать пополнение баланса организации
+      tags:
+        - Billing - Balance
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - amount
+                - currency
+                - payment_method_token 
+              properties:
+                amount:
+                  type: number
+                  format: float
+                  example: 1000.00
+                  description: "Сумма пополнения в основной валюте (например, рублях)"
+                currency:
+                  type: string
+                  example: "RUB"
+                  description: "Валюта пополнения (ISO 4217)"
+                payment_method_token:
+                  type: string
+                  example: "tok_mock_visa_chargeable_russian_STANDARD" 
+                  description: "Токен метода оплаты от платежного шлюза (например, YooKassa)"
+      responses:
+        '200': 
+          description: Ответ от платежного шлюза с информацией для проведения платежа
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PaymentGatewayChargeResponse"
+        '400':
+          description: Ошибка операции (например, неверная сумма, валюта)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '404':
+          description: Организация не найдена
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '422':
+          description: Ошибка валидации входных данных
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse" 

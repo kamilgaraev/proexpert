@@ -105,7 +105,7 @@ use Illuminate\Support\Facades\Route;
 Route::prefix('landing')->name('landing.')->group(function () {
     // Явно включаем маршруты для Landing API
     require __DIR__ . '/api/v1/landing/auth.php';
-    require __DIR__ . '/api/v1/landing/users.php';
+    // require __DIR__ . '/api/v1/landing/users.php'; // Закомментировал, т.к. ниже есть более специфичное подключение для adminPanelUsers
     require __DIR__ . '/api/v1/landing/organization.php';
     
     // Маршруты для управления пользователями админ-панели (accountant, web_admin)
@@ -118,6 +118,15 @@ Route::prefix('landing')->name('landing.')->group(function () {
             Route::get('/{user}', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'show']);
             Route::put('/{user}', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'update']);
             Route::delete('/{user}', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'destroy']);
+        });
+
+    // Подключение маршрутов биллинга для лендинга/ЛК
+    // Эти маршруты должны быть доступны аутентифицированному владельцу организации
+    Route::middleware(['auth:api_landing', 'role:organization_owner']) // Примерный middleware, уточните права
+        ->prefix('billing')
+        ->name('billing.')
+        ->group(function () {
+            require __DIR__ . '/api/v1/landing/billing.php';
         });
 });
 

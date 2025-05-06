@@ -176,6 +176,7 @@ return [
         // App\Providers\BroadcastServiceProvider::class, // Файл отсутствует
         // App\Providers\EventServiceProvider::class, // Файл отсутствует
         App\Providers\RouteServiceProvider::class,
+        App\Providers\BillingServiceProvider::class,
 
     ],
 
