@@ -11,6 +11,6 @@ class NotFoundResponse extends ErrorResponse
         array $headers = []
     )
     {
-        parent::__construct($message, Response::HTTP_NOT_FOUND, null, $headers);
+        parent::__construct($message, Response::HTTP_NOT_FOUND, $headers);
     }
 } 
