@@ -65,6 +65,7 @@ class RouteServiceProvider extends ServiceProvider
                 ->as('api.v1.landing.')
                  ->group(function() {
                      require base_path('routes/api/v1/landing/auth.php');
+                     require base_path('routes/api/v1/landing/billing.php');
                      // Добавить другие файлы лендинга...
                  });
 
