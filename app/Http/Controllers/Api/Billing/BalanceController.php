@@ -138,7 +138,7 @@ class BalanceController extends Controller
 
         try {
             // При реальной интеграции здесь может быть URL для возврата после успешной/неуспешной оплаты
-            $returnUrl = route('landing.billing.balance.show'); // Пример
+            $returnUrl = route('api.v1.landing.billing.balance.show'); // Пример
 
             $chargeResponse = $this->paymentGateway->createCharge(
                 $user,
