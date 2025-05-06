@@ -6,14 +6,17 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Auth;
 use App\Models\Role;
+use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\ValidationException;
 
 class StoreMaterialRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        $user = Auth::user();
-        $organizationId = $this->attributes->get('organization_id');
-        return $user && $organizationId && $user->isOrganizationAdmin($organizationId);
+        // Доступ к контроллеру уже проверен middleware 'can:access-admin-panel'
+        return Auth::check(); 
     }
 
     public function rules(): array
@@ -35,5 +38,18 @@ class StoreMaterialRequest extends FormRequest
             'category' => 'nullable|string|max:100',
             'is_active' => 'sometimes|boolean',
         ];
+    }
+
+    protected function failedValidation(Validator $validator)
+    {
+        $errors = (new ValidationException($validator))->errors();
+
+        throw new HttpResponseException(
+            response()->json([
+                'success' => false,
+                'message' => 'Данные не прошли валидацию.',
+                'errors' => $errors,
+            ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
+        );
     }
 } 

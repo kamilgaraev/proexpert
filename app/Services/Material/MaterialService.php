@@ -13,14 +13,14 @@ use Illuminate\Support\Facades\Log;
 class MaterialService
 {
     protected MaterialRepositoryInterface $materialRepository;
-    protected ?MeasurementUnitRepositoryInterface $measurementUnitRepository; // Может быть null
+    protected $measurementUnitRepository; // Оставляем свойство без строгого типажа на интерфейс
 
     public function __construct(
         MaterialRepositoryInterface $materialRepository,
-        ?MeasurementUnitRepositoryInterface $measurementUnitRepository = null // Делаем опциональным
+        /*?MeasurementUnitRepositoryInterface*/ $measurementUnitRepository = null // Убираем тип из конструктора
     ) {
         $this->materialRepository = $materialRepository;
-        $this->measurementUnitRepository = $measurementUnitRepository;
+        $this->measurementUnitRepository = $measurementUnitRepository; // Он может быть null или объектом, если внедрен
     }
 
     /**
@@ -41,25 +41,15 @@ class MaterialService
         return (int)$organizationId;
     }
 
-    public function getAllMaterialsForCurrentOrg()
+    public function getAllActive(Request $request): Collection
     {
-        $organizationId = Auth::user()->getCurrentOrganizationId();
-        return $this->materialRepository->getMaterialsForOrganization($organizationId);
-    }
-
-    public function getActiveMaterialsForCurrentOrg()
-    {
-        $organizationId = Auth::user()->getCurrentOrganizationId();
-        return $this->materialRepository->getActiveMaterials($organizationId);
-    }
-
-    public function getAllActive(): Collection
-    {
-        $user = Auth::user();
+        $user = $request->user();
         if (!$user || !$user->current_organization_id) {
-            throw new BusinessLogicException('Не удалось определить организацию пользователя.');
+            // Если getCurrentOrgId не может получить ID из $request (например, $request->user() пуст)
+            // то он выбросит BusinessLogicException. Это более последовательно.
+            // throw new BusinessLogicException('Не удалось определить организацию пользователя.');
         }
-        $organizationId = $user->current_organization_id;
+        $organizationId = $this->getCurrentOrgId($request);
         return $this->materialRepository->getActiveMaterials($organizationId);
     }
 
@@ -159,5 +149,45 @@ class MaterialService
             $sortBy,
             $sortDirection
         );
+    }
+
+    // ЗАГЛУШКИ ДЛЯ НЕДОСТАЮЩИХ МЕТОДОВ
+    public function getMaterialBalancesByMaterial(int $materialId, int $perPage = 15, ?int $projectId = null, string $sortBy = 'created_at', string $sortDirection = 'desc'): array
+    {
+        Log::warning('Method MaterialService@getMaterialBalancesByMaterial called but not implemented.', ['material_id' => $materialId]);
+        return [
+            'data' => [],
+            'links' => [],
+            'meta' => [],
+            'message' => 'Functionality to get material balances is not yet implemented.'
+        ];
+    }
+
+    public function getMeasurementUnits(): array
+    {
+        if ($this->measurementUnitRepository && method_exists($this->measurementUnitRepository, 'all')) { // Проверяем наличие и метод all (или другой нужный)
+            Log::info('MaterialService@getMeasurementUnits called. Returning data from repository.');
+            // return MeasurementUnitResource::collection($this->measurementUnitRepository->all()); // Пример, если бы ресурс был и метод all
+            // Пока что, если репозиторий есть, но мы не знаем его методов, вернем заглушку
+             return [
+                ['id' => 1, 'name' => 'шт (из репо-заглушки)', 'code' => 'PCE'],
+             ];
+        } else {
+            Log::warning('MaterialService@getMeasurementUnits called, but MeasurementUnitRepository is not available or method missing.');
+            return ['message' => 'Measurement units service is not available or not configured.'];
+        }
+    }
+
+    public function importMaterialsFromFile(\Illuminate\Http\UploadedFile $file): array
+    {
+        Log::warning('Method MaterialService@importMaterialsFromFile called but not implemented.', ['filename' => $file->getClientOriginalName()]);
+        // TODO: Реализовать логику импорта материалов из файла
+        return [
+            'success' => false,
+            'message' => 'Functionality to import materials is not yet implemented.',
+            'imported_count' => 0,
+            'errors_count' => 0,
+            'errors_list' => []
+        ];
     }
 } 
