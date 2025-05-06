@@ -23,6 +23,13 @@ class CheckRoleMiddleware
      */
     public function handle(Request $request, Closure $next, string $roles, ?string $organizationParam = null): Response
     {
+        // САМЫЙ ПЕРВЫЙ ЛОГ В МЕТОДЕ
+        Log::info('[CheckRoleMiddleware] Entered handle method. VERY START.', [
+            'uri' => $request->getRequestUri(),
+            'method' => $request->method(),
+            'roles_param' => $roles
+        ]);
+
         // Добавляем логирование входного параметра $roles
         Log::debug('[CheckRoleMiddleware] handle method called.', [
             'input_roles_parameter' => $roles,
