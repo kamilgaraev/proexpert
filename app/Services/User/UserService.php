@@ -339,7 +339,6 @@ class UserService
      */
     public function getForemenForCurrentOrg(Request $request, int $perPage = 15): LengthAwarePaginator
     {
-        $this->ensureUserIsAdmin($request); // Проверяем права запрашивающего
         $organizationId = $request->attributes->get('current_organization_id');
         if(!$organizationId) {
             throw new BusinessLogicException('Контекст организации не определен.', 500);
