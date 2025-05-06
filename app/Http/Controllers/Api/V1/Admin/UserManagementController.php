@@ -49,8 +49,6 @@ class UserManagementController extends Controller
     // Создать нового прораба
     public function store(StoreForemanRequest $request): ForemanUserResource
     {
-        // TODO: Пагинация, фильтрация, API Resource
-        $foremen = $this->userService->getForemenForCurrentOrg($request);
         // В ресурсе ForemanUserResource используется $this->whenPivotLoaded, 
         // нужно убедиться, что сервис/репозиторий загружает эти данные
         // $foremen->load('organizations'); // Пример загрузки pivot данных
