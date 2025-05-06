@@ -171,26 +171,46 @@ class User extends Authenticatable implements JWTSubject
      */
     public function hasRole(string $roleSlug, ?int $organizationId = null): bool
     {
-        // Если организация не указана, проверяем в текущей организации
-        if (!$organizationId) {
-            if (!$this->current_organization_id) {
-                return false; // Нет контекста организации
+        try {
+            // Если организация не указана, проверяем в текущей организации
+            $effectiveOrganizationId = $organizationId;
+            if (!$effectiveOrganizationId) {
+                if (!$this->current_organization_id) {
+                    Log::warning('[User::hasRole] Attempted to check role without organization context and no current_organization_id.', [
+                        'user_id' => $this->id,
+                        'role_slug' => $roleSlug
+                    ]);
+                    return false; // Нет контекста организации
+                }
+                $effectiveOrganizationId = $this->current_organization_id;
             }
-            $organizationId = $this->current_organization_id;
+            
+            Log::info('[User::hasRole] Начало проверки роли', [
+                'user_id' => $this->id,
+                'role_slug' => $roleSlug,
+                'organization_id' => $effectiveOrganizationId
+            ]);
+            
+            $roleExists = $this->roles()
+                ->where('slug', $roleSlug)
+                ->where('role_user.organization_id', $effectiveOrganizationId)
+                ->exists();
+            
+            // Log::info('[User::hasRole] Результат проверки.', ['exists' => $roleExists]); // Можно добавить для детальной отладки
+            return $roleExists;
+
+        } catch (\Throwable $e) {
+            Log::error('[User::hasRole] Exception caught during role check. Returning false.', [
+                'user_id' => $this->id,
+                'role_slug' => $roleSlug,
+                'passed_organization_id' => $organizationId,
+                'current_organization_id_on_user' => $this->current_organization_id ?? 'null',
+                'exception_message' => $e->getMessage(),
+                'exception_class' => get_class($e),
+                'exception_file' => $e->getFile() . ':' . $e->getLine()
+            ]);
+            return false; // В случае любой ошибки считаем, что роли нет
         }
-        
-        // Повышаем уровень логирования для диагностики
-        Log::info('[User::hasRole] Начало проверки роли', [
-            'user_id' => $this->id,
-            'role_slug' => $roleSlug,
-            'organization_id' => $organizationId
-        ]);
-        
-        // Исправленный запрос без использования "pivot" в SQL
-        return $this->roles()
-            ->where('slug', $roleSlug)
-            ->where('role_user.organization_id', $organizationId)
-            ->exists();
     }
 
     /**
