@@ -44,7 +44,7 @@ class BalanceController extends Controller
     {
         /** @var User $user */
         $user = Auth::user();
-        $organization = $user->organization; // Предполагаем связь user->organization
+        $organization = $user->currentOrganization; // Предполагаем связь user->organization
 
         if (!$organization) {
             return response()->json(['message' => 'Organization not found for this user.'], 404);
@@ -80,7 +80,7 @@ class BalanceController extends Controller
     {
         /** @var User $user */
         $user = Auth::user();
-        $organization = $user->organization;
+        $organization = $user->currentOrganization;
 
         if (!$organization) {
             return response()->json(['message' => 'Organization not found.'], 404);
@@ -127,7 +127,7 @@ class BalanceController extends Controller
 
         /** @var User $user */
         $user = Auth::user();
-        $organization = $user->organization;
+        $organization = $user->currentOrganization;
 
         if (!$organization) {
             return response()->json(['message' => 'Organization not found.'], 404);
