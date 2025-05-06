@@ -35,7 +35,7 @@ class UpdateProjectRequest extends FormRequest
             'address' => 'nullable|string|max:1000',
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date|after_or_equal:start_date',
-            'status' => 'sometimes|required|string|in:active,completed,planned,on_hold',
+            'status' => 'sometimes|required|string|in:active,completed,paused,cancelled',
             'is_archived' => 'sometimes|boolean',
             // Добавить другие поля
         ];
