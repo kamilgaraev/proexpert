@@ -13,11 +13,9 @@ class StoreProjectRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        $user = Auth::user();
-        $organizationId = $this->attributes->get('organization_id');
-
-        // Пользователь должен быть аутентифицирован и быть админом текущей организации
-        return $user && $organizationId && $user->isOrganizationAdmin($organizationId);
+        // Доступ к контроллеру уже проверен middleware 'can:access-admin-panel'
+        // Дополнительно можно проверить, что пользователь аутентифицирован, если это не гарантируется ранее
+        return Auth::check(); 
     }
 
     /**

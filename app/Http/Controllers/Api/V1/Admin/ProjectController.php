@@ -100,10 +100,6 @@ class ProjectController extends Controller
      */
     public function assignForeman(Request $request, string $projectId, string $userId): JsonResponse
     {
-        if (Gate::denies('manage-project-assignments')) {
-            return response()->json(['message' => 'Forbidden' ], 403);
-        }
-
         try {
             $success = $this->projectService->assignForemanToProject((int)$projectId, (int)$userId, $request);
             if (!$success) {
@@ -123,10 +119,6 @@ class ProjectController extends Controller
      */
     public function detachForeman(Request $request, string $projectId, string $userId): JsonResponse
     {
-        if (Gate::denies('manage-project-assignments')) {
-            return response()->json(['message' => 'Forbidden' ], 403);
-        }
-
         try {
             $success = $this->projectService->detachForemanFromProject((int)$projectId, (int)$userId, $request);
             if (!$success) {

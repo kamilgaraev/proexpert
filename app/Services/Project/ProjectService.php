@@ -231,8 +231,35 @@ class ProjectService
         return $project->load(['materials', 'workTypes', 'users']); 
     }
     
-    // TODO: Реализовать методы getProjectStatistics, getProjectMaterials, getProjectWorkTypes если они нужны для MVP админки
-    // public function getProjectStatistics(int $id) { ... }
-    // public function getProjectMaterials(int $id, ...) { ... }
-    // public function getProjectWorkTypes(int $id, ...) { ... }
+    public function getProjectStatistics(int $id): array
+    {
+        // TODO: Реализовать получение статистики по проекту
+        Log::warning("Method getProjectStatistics called but not fully implemented.", ['project_id' => $id]);
+        return ['message' => 'Statistics not available yet.']; 
+    }
+
+    public function getProjectMaterials(int $id, int $perPage = 15, ?string $search = null, string $sortBy = 'created_at', string $sortDirection = 'desc'): array
+    {
+        // TODO: Реализовать получение материалов по проекту
+        Log::warning("Method getProjectMaterials called but not fully implemented.", ['project_id' => $id]);
+        // В идеале, если есть связь, можно было бы сделать $project->materials()->paginate(...)
+        // Пока возвращаем пустой массив, имитируя пагинированный ответ
+        return [
+            'data' => [],
+            'links' => [],
+            'meta' => []
+        ];
+    }
+
+    public function getProjectWorkTypes(int $id, int $perPage = 15, ?string $search = null, string $sortBy = 'created_at', string $sortDirection = 'desc'): array
+    {
+        // TODO: Реализовать получение видов работ по проекту
+        Log::warning("Method getProjectWorkTypes called but not fully implemented.", ['project_id' => $id]);
+        // Аналогично getProjectMaterials
+        return [
+            'data' => [],
+            'links' => [],
+            'meta' => []
+        ];
+    }
 } 

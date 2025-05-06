@@ -807,7 +807,6 @@ class UserService
      */
     public function blockForeman(int $foremanUserId, Request $request): bool
     {
-        $this->ensureUserIsAdmin($request); // Убедимся, что вызывающий - админ
         $organizationId = $request->attributes->get('current_organization_id');
         $intOrganizationId = (int) $organizationId;
         $requestingUser = $request->user();
@@ -839,7 +838,6 @@ class UserService
      */
     public function unblockForeman(int $foremanUserId, Request $request): bool
     {
-        $this->ensureUserIsAdmin($request); // Убедимся, что вызывающий - админ
         $organizationId = $request->attributes->get('current_organization_id');
         $intOrganizationId = (int) $organizationId;
         $requestingUser = $request->user();

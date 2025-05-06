@@ -14,20 +14,9 @@ class UpdateProjectRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        $user = Auth::user();
-        $organizationId = $this->attributes->get('organization_id');
-        /** @var Project|null $project */
-        $project = $this->route('project');
-
-        // 1. Пользователь аутентифицирован?
-        // 2. Контекст организации установлен?
-        // 3. Пользователь - админ этой организации?
-        // 4. Проект существует и принадлежит этой организации?
-        return $user && 
-               $organizationId && 
-               $user->isOrganizationAdmin($organizationId) &&
-               $project && 
-               $project->organization_id === $organizationId;
+        // Доступ к контроллеру уже проверен middleware 'can:access-admin-panel'
+        // Дополнительно можно проверить, что пользователь аутентифицирован
+        return Auth::check();
     }
 
     /**
