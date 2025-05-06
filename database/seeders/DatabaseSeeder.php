@@ -23,6 +23,7 @@ class DatabaseSeeder extends Seeder
         // Вызываем сидер ролей и разрешений
         $this->call([
             RolePermissionSeeder::class,
+            MeasurementUnitSeeder::class,
             // Добавьте сюда другие необходимые сидеры
         ]);
     }
