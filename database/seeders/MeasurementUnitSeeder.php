@@ -27,20 +27,28 @@ class MeasurementUnitSeeder extends Seeder
         ];
 
         for ($organizationId = 1; $organizationId <= 20; $organizationId++) {
-            $dataToInsert = [];
-            foreach ($unitsData as $unit) {
-                $dataToInsert[] = [
-                    'organization_id' => $organizationId,
-                    'name' => $unit['name'],
-                    'short_name' => $unit['short_name'],
-                    // 'type' => 'material', // Будет использовано значение по умолчанию из миграции
-                    // 'is_default' => false, // Будет использовано значение по умолчанию из миграции
-                    // 'is_system' => false, // Будет использовано значение по умолчанию из миграции
-                    'created_at' => $now,
-                    'updated_at' => $now,
-                ];
+            // Проверяем, существует ли организация с таким ID
+            $organizationExists = DB::table('organizations')->where('id', $organizationId)->exists();
+
+            if ($organizationExists) {
+                $dataToInsert = [];
+                foreach ($unitsData as $unit) {
+                    $dataToInsert[] = [
+                        'organization_id' => $organizationId,
+                        'name' => $unit['name'],
+                        'short_name' => $unit['short_name'],
+                        // 'type' => 'material', // Будет использовано значение по умолчанию из миграции
+                        // 'is_default' => false, // Будет использовано значение по умолчанию из миграции
+                        // 'is_system' => false, // Будет использовано значение по умолчанию из миграции
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ];
+                }
+                DB::table('measurement_units')->insert($dataToInsert);
+                $this->command->info("Seeded measurement units for existing organization ID: {$organizationId}");
+            } else {
+                $this->command->info("Skipped measurement units for non-existing organization ID: {$organizationId}");
             }
-            DB::table('measurement_units')->insert($dataToInsert);
         }
     }
 }
