@@ -630,14 +630,13 @@ class UserService
             'roles_to_fetch' => $rolesToFetch
         ]);
 
-        /** @var User $requestingUser */
+        /** @var \App\Models\User $requestingUser */
         $requestingUser = $request->user();
-        // Добавим проверку, что $requestingUser действительно объект User
         if (!$requestingUser instanceof \App\Models\User) {
             Log::error('[UserService@getAdminPanelUsersForCurrentOrg] Requesting user is not a User instance or is null.', [
                 'user_object_type' => is_object($requestingUser) ? get_class($requestingUser) : gettype($requestingUser)
             ]);
-            throw new BusinessLogicException('Ошибка аутентификации пользователя.', 401); // Или 500, если это неожиданно
+            throw new BusinessLogicException('Ошибка аутентификации пользователя.', 401);
         }
 
         $organizationId = $request->attributes->get('current_organization_id');
@@ -648,15 +647,6 @@ class UserService
         }
         $intOrganizationId = (int) $organizationId;
 
-        Log::debug('[UserService@getAdminPanelUsersForCurrentOrg] Performing role check for user.', ['user_id' => $requestingUser->id, 'org_id' => $intOrganizationId]);
-        if (!($requestingUser->isOwnerOfOrganization($intOrganizationId) || $requestingUser->isOrganizationAdmin($intOrganizationId))) {
-             Log::warning('[UserService@getAdminPanelUsersForCurrentOrg] Access denied by role check.', [
-                 'user_id' => $requestingUser->id,
-                 'organization_id' => $intOrganizationId
-             ]);
-             throw new BusinessLogicException('Доступ запрещен. Вы не являетесь администратором или владельцем этой организации.', 403);
-        }
-        
         Log::debug('[UserService@getAdminPanelUsersForCurrentOrg] Calling userRepository->findByRolesInOrganization.', ['org_id' => $intOrganizationId, 'roles' => $rolesToFetch]);
         try {
             $users = $this->userRepository->findByRolesInOrganization($intOrganizationId, $rolesToFetch);
@@ -666,9 +656,8 @@ class UserService
             Log::error('[UserService@getAdminPanelUsersForCurrentOrg] Exception caught during repository call.', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile() . ':' . $e->getLine(),
-                // 'trace' => $e->getTraceAsString()
             ]);
-            throw $e; // Перебрасываем, чтобы обработалось выше или глобальным обработчиком
+            throw $e;
         }
     }
     

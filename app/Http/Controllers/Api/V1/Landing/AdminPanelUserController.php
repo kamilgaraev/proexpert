@@ -39,17 +39,26 @@ class AdminPanelUserController extends Controller
         Log::info('[AdminPanelUserController@index] Method entered.', ['user_id' => Auth::id(), 'organization_id' => $request->attributes->get('current_organization_id')]);
         try {
             $users = $this->userService->getAdminPanelUsersForCurrentOrg($request);
-            Log::info('[AdminPanelUserController@index] Users received from service.', ['count' => count($users)]);
+            Log::info('[AdminPanelUserController@index] Users received from service.', ['count' => $users->count()]);
+            
+            // --- ВРЕМЕННОЕ ДИАГНОСТИЧЕСКОЕ ИЗМЕНЕНИЕ ---
+            // Вместо AdminPanelUserResource::collection($users), вернем что-то простое
+            // return response()->json(['success' => true, 'data' => ['users_count' => $users->count(), 'users_ids' => $users->pluck('id')]]);
+            // Если и это не работает, пробуем еще проще:
+            return response()->json(['success' => true, 'message' => 'Reached controller, user count: ' . $users->count()]);
+            // ---- КОНЕЦ ВРЕМЕННОГО ИЗМЕНЕНИЯ ----
+
+            // Возвращаем оригинальную логику, если диагностика не нужна
+            /* // <--- ЗАКОММЕНТИРОВАНО
             return new SuccessResourceResponse(
                 AdminPanelUserResource::collection($users)
             );
+            */ // <--- ЗАКОММЕНТИРОВАНО
         } catch (\Throwable $e) {
             Log::error('[AdminPanelUserController@index] Exception caught in controller.', [
                 'message' => $e->getMessage(),
                 'file' => $e->getFile() . ':' . $e->getLine(),
-                // 'trace' => $e->getTraceAsString() // Опционально, если нужно и если Log::error его пишет
             ]);
-            // Перебрасываем исключение, чтобы его поймал глобальный handler или CorsMiddleware
             throw $e; 
         }
     }

@@ -120,11 +120,11 @@ class AuthServiceProvider extends ServiceProvider
                     return false;
                 }
             } catch (\Throwable $e) {
-                Log::error('[Gate:access-landing] Ошибка при проверке ролей', [
+                Log::error('[Gate:access-landing] Ошибка при проверке ролей через SQL. Сообщение: ' . $e->getMessage(), [
                     'user_id' => $user->id,
-                    'organization_id' => $orgId,
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
+                    'organization_id' => $orgId, // Используем $orgId, который был определен до try
+                    // Убираем полный стектрейс из этого лога, чтобы уменьшить вероятность сбоя самого логирования
+                    // 'trace' => $e->getTraceAsString()
                 ]);
                 
                 // В случае ошибки делаем запасной вариант - проверяем через модель
