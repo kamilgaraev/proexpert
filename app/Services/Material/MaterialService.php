@@ -165,10 +165,12 @@ class MaterialService
         ];
     }
 
-    public function getMeasurementUnits(): \Illuminate\Http\Resources\Json\AnonymousResourceCollection | array
+    public function getMeasurementUnits(Request $request): \Illuminate\Http\Resources\Json\AnonymousResourceCollection | array
     {
         try {
-            $units = $this->measurementUnitRepository->all();
+            $organizationId = $this->getCurrentOrgId($request);
+            $units = $this->measurementUnitRepository->getByOrganization($organizationId);
+            
             // Предполагается, что у вас есть или будет ресурс MeasurementUnitResource
             // Если его нет, можно просто вернуть $units->toArray() или $units
             if (class_exists(MeasurementUnitResource::class)) {
@@ -176,9 +178,12 @@ class MaterialService
             }
             Log::info('MeasurementUnitResource not found, returning raw collection/array for measurement units.');
             return $units->toArray(); // или return $units; если хотите вернуть коллекцию Eloquent
+        } catch (BusinessLogicException $e) { // Сначала ловим BusinessLogicException, если getCurrentOrgId ее бросит
+            Log::warning('BusinessLogicException in MaterialService@getMeasurementUnits: ' . $e->getMessage());
+            return ['message' => $e->getMessage(), 'success' => false]; 
         } catch (\Throwable $e) {
             Log::error('Error in MaterialService@getMeasurementUnits: ' . $e->getMessage());
-            return ['message' => 'Не удалось получить список единиц измерения.', 'success' => false]; // Более информативное сообщение
+            return ['message' => 'Не удалось получить список единиц измерения.', 'success' => false];
         }
     }
 

@@ -39,6 +39,22 @@ class MeasurementUnitRepository implements MeasurementUnitRepositoryInterface
             return null; // Возвращаем null в случае ошибки
         }
     }
+
+    /**
+     * Получить все единицы измерения для указанной организации.
+     *
+     * @param int $organizationId
+     * @return Collection<int, MeasurementUnit>
+     */
+    public function getByOrganization(int $organizationId): Collection
+    {
+        try {
+            return MeasurementUnit::where('organization_id', $organizationId)->get();
+        } catch (\Throwable $e) {
+            Log::error("Error in MeasurementUnitRepository@getByOrganization for Organization ID {$organizationId}: " . $e->getMessage());
+            return new Collection(); // Возвращаем пустую коллекцию в случае ошибки
+        }
+    }
     
     // Реализации других методов интерфейса, если они будут добавлены
 } 

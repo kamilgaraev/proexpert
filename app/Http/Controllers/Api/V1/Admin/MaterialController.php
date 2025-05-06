@@ -130,12 +130,15 @@ class MaterialController extends Controller
         }
     }
 
-    public function getMeasurementUnits(): JsonResponse
+    public function getMeasurementUnits(Request $request): JsonResponse
     {
         try {
-            $units = $this->materialService->getMeasurementUnits();
+            $units = $this->materialService->getMeasurementUnits($request);
+            if (is_array($units) && isset($units['success']) && $units['success'] === false) {
+                return response()->json($units, isset($units['code']) ? $units['code'] : 400);
+            }
             return response()->json(['success' => true, 'data' => $units]);
-        } catch (BusinessLogicException $e) { // Маловероятно для этого метода, но для консистентности
+        } catch (BusinessLogicException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in MaterialController@getMeasurementUnits', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
