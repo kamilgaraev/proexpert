@@ -3,24 +3,26 @@
 namespace App\Services\Material;
 
 use App\Repositories\Interfaces\MaterialRepositoryInterface;
+use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Database\Eloquent\Collection;
 use App\Exceptions\BusinessLogicException;
 use Illuminate\Http\Request;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
+use App\Http\Resources\Api\V1\Admin\MeasurementUnitResource;
 
 class MaterialService
 {
     protected MaterialRepositoryInterface $materialRepository;
-    protected $measurementUnitRepository; // Оставляем свойство без строгого типажа на интерфейс
+    protected MeasurementUnitRepositoryInterface $measurementUnitRepository;
 
     public function __construct(
         MaterialRepositoryInterface $materialRepository,
-        /*?MeasurementUnitRepositoryInterface*/ $measurementUnitRepository = null // Убираем тип из конструктора
+        MeasurementUnitRepositoryInterface $measurementUnitRepository
     ) {
         $this->materialRepository = $materialRepository;
-        $this->measurementUnitRepository = $measurementUnitRepository; // Он может быть null или объектом, если внедрен
+        $this->measurementUnitRepository = $measurementUnitRepository;
     }
 
     /**
@@ -59,7 +61,7 @@ class MaterialService
         $data['organization_id'] = $organizationId;
 
         // Проверяем measurement_unit_id, если репозиторий доступен
-        if (isset($data['measurement_unit_id']) && $this->measurementUnitRepository) {
+        if (isset($data['measurement_unit_id'])) {
             if (!$this->measurementUnitRepository->find($data['measurement_unit_id'])) {
                 throw new BusinessLogicException('Указанная единица измерения не найдена', 400);
             }
@@ -88,7 +90,7 @@ class MaterialService
         }
         
         // Проверяем measurement_unit_id, если он передан и репозиторий доступен
-        if (isset($data['measurement_unit_id']) && $this->measurementUnitRepository) {
+        if (isset($data['measurement_unit_id'])) {
             if (!$this->measurementUnitRepository->find($data['measurement_unit_id'])) {
                 throw new BusinessLogicException('Указанная единица измерения не найдена', 400);
             }
@@ -163,18 +165,20 @@ class MaterialService
         ];
     }
 
-    public function getMeasurementUnits(): array
+    public function getMeasurementUnits(): \Illuminate\Http\Resources\Json\AnonymousResourceCollection | array
     {
-        if ($this->measurementUnitRepository && method_exists($this->measurementUnitRepository, 'all')) { // Проверяем наличие и метод all (или другой нужный)
-            Log::info('MaterialService@getMeasurementUnits called. Returning data from repository.');
-            // return MeasurementUnitResource::collection($this->measurementUnitRepository->all()); // Пример, если бы ресурс был и метод all
-            // Пока что, если репозиторий есть, но мы не знаем его методов, вернем заглушку
-             return [
-                ['id' => 1, 'name' => 'шт (из репо-заглушки)', 'code' => 'PCE'],
-             ];
-        } else {
-            Log::warning('MaterialService@getMeasurementUnits called, but MeasurementUnitRepository is not available or method missing.');
-            return ['message' => 'Measurement units service is not available or not configured.'];
+        try {
+            $units = $this->measurementUnitRepository->all();
+            // Предполагается, что у вас есть или будет ресурс MeasurementUnitResource
+            // Если его нет, можно просто вернуть $units->toArray() или $units
+            if (class_exists(MeasurementUnitResource::class)) {
+                return MeasurementUnitResource::collection($units);
+            }
+            Log::info('MeasurementUnitResource not found, returning raw collection/array for measurement units.');
+            return $units->toArray(); // или return $units; если хотите вернуть коллекцию Eloquent
+        } catch (\Throwable $e) {
+            Log::error('Error in MaterialService@getMeasurementUnits: ' . $e->getMessage());
+            return ['message' => 'Не удалось получить список единиц измерения.', 'success' => false]; // Более информативное сообщение
         }
     }
 

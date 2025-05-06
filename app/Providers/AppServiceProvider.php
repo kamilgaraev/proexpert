@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\App;
 use App\Http\Middleware\CorsMiddleware;
 use Illuminate\Routing\Router;
 use App\Services\Organization\OrganizationContext;
+use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
+use App\Repositories\MeasurementUnitRepository;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -15,7 +17,13 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        // Удаляем регистрацию singleton, так как теперь используем статические методы
+        // Связываем интерфейс с конкретной реализацией
+        $this->app->bind(
+            MeasurementUnitRepositoryInterface::class,
+            MeasurementUnitRepository::class
+        );
+        
+        // Здесь могут быть другие связывания
     }
 
     /**
