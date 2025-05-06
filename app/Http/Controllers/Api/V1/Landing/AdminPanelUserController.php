@@ -17,6 +17,7 @@ use Illuminate\Contracts\Support\Responsable;
 use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 
 class AdminPanelUserController extends Controller
 {
@@ -35,10 +36,22 @@ class AdminPanelUserController extends Controller
      */
     public function index(Request $request): Responsable
     {
-        $users = $this->userService->getAdminPanelUsersForCurrentOrg($request);
-        return new SuccessResourceResponse(
-            AdminPanelUserResource::collection($users)
-        );
+        Log::info('[AdminPanelUserController@index] Method entered.', ['user_id' => Auth::id(), 'organization_id' => $request->attributes->get('current_organization_id')]);
+        try {
+            $users = $this->userService->getAdminPanelUsersForCurrentOrg($request);
+            Log::info('[AdminPanelUserController@index] Users received from service.', ['count' => count($users)]);
+            return new SuccessResourceResponse(
+                AdminPanelUserResource::collection($users)
+            );
+        } catch (\Throwable $e) {
+            Log::error('[AdminPanelUserController@index] Exception caught in controller.', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+                // 'trace' => $e->getTraceAsString() // Опционально, если нужно и если Log::error его пишет
+            ]);
+            // Перебрасываем исключение, чтобы его поймал глобальный handler или CorsMiddleware
+            throw $e; 
+        }
     }
 
     /**

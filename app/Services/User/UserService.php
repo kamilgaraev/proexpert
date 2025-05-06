@@ -624,21 +624,52 @@ class UserService
      */
     public function getAdminPanelUsersForCurrentOrg(Request $request, array $rolesToFetch = ['web_admin', 'accountant']): Collection
     {
-        // Проверяем права доступа
-        $this->ensureUserIsAdmin($request);
+        Log::info('[UserService@getAdminPanelUsersForCurrentOrg] Method entered.', [
+            'user_id' => $request->user() ? $request->user()->id : null, 
+            'organization_id' => $request->attributes->get('current_organization_id'),
+            'roles_to_fetch' => $rolesToFetch
+        ]);
+
+        /** @var User $requestingUser */
+        $requestingUser = $request->user();
+        // Добавим проверку, что $requestingUser действительно объект User
+        if (!$requestingUser instanceof \App\Models\User) {
+            Log::error('[UserService@getAdminPanelUsersForCurrentOrg] Requesting user is not a User instance or is null.', [
+                'user_object_type' => is_object($requestingUser) ? get_class($requestingUser) : gettype($requestingUser)
+            ]);
+            throw new BusinessLogicException('Ошибка аутентификации пользователя.', 401); // Или 500, если это неожиданно
+        }
+
         $organizationId = $request->attributes->get('current_organization_id');
+
         if (!$organizationId) {
+            Log::error('[UserService@getAdminPanelUsersForCurrentOrg] Organization ID not found in request attributes.');
             throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
         $intOrganizationId = (int) $organizationId;
 
-        $allUsers = new Collection();
-        foreach ($rolesToFetch as $roleSlug) {
-            $users = $this->userRepository->findByRoleInOrganization($intOrganizationId, $roleSlug);
-            $allUsers = $allUsers->merge($users);
+        Log::debug('[UserService@getAdminPanelUsersForCurrentOrg] Performing role check for user.', ['user_id' => $requestingUser->id, 'org_id' => $intOrganizationId]);
+        if (!($requestingUser->isOwnerOfOrganization($intOrganizationId) || $requestingUser->isOrganizationAdmin($intOrganizationId))) {
+             Log::warning('[UserService@getAdminPanelUsersForCurrentOrg] Access denied by role check.', [
+                 'user_id' => $requestingUser->id,
+                 'organization_id' => $intOrganizationId
+             ]);
+             throw new BusinessLogicException('Доступ запрещен. Вы не являетесь администратором или владельцем этой организации.', 403);
         }
-
-        return $allUsers->unique('id'); // Объединяем и убираем дубликаты, если у пользователя несколько ролей
+        
+        Log::debug('[UserService@getAdminPanelUsersForCurrentOrg] Calling userRepository->findByRolesInOrganization.', ['org_id' => $intOrganizationId, 'roles' => $rolesToFetch]);
+        try {
+            $users = $this->userRepository->findByRolesInOrganization($intOrganizationId, $rolesToFetch);
+            Log::info('[UserService@getAdminPanelUsersForCurrentOrg] Users received from repository.', ['count' => count($users)]);
+            return $users;
+        } catch (\Throwable $e) {
+            Log::error('[UserService@getAdminPanelUsersForCurrentOrg] Exception caught during repository call.', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine(),
+                // 'trace' => $e->getTraceAsString()
+            ]);
+            throw $e; // Перебрасываем, чтобы обработалось выше или глобальным обработчиком
+        }
     }
     
     /**
