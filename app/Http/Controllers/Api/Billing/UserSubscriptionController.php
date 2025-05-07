@@ -77,6 +77,12 @@ class UserSubscriptionController extends Controller
      */
     public function subscribe(Request $request)
     {
+        Log::info('[UserSubscriptionController::subscribe] Method entered.', [
+            'request_data' => $request->all(),
+            'user_id' => Auth::id(), // Логируем ID аутентифицированного пользователя
+            'ip_address' => $request->ip()
+        ]);
+
         $request->validate([
             'plan_slug' => 'required|string|exists:subscription_plans,slug',
             'payment_method_token' => 'nullable|string',
@@ -142,7 +148,7 @@ class UserSubscriptionController extends Controller
         } catch (SubscriptionException $e) {
             return response()->json(['message' => $e->getMessage()], 400);
         } catch (\Exception $e) {
-            // Log::error('Generic cancellation error: ' . $e->getMessage());
+            Log::error('Generic cancellation error: ' . $e->getMessage() . ' Stack trace: ' . $e->getTraceAsString());
             return response()->json(['message' => 'An unexpected error occurred while canceling the subscription.'], 500);
         }
     }
