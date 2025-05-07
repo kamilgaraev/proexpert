@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use App\Models\UserSubscription; // Для Route Model Binding, если понадобится
 use App\Exceptions\Billing\SubscriptionException;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class UserSubscriptionController extends Controller
 {
@@ -98,7 +99,7 @@ class UserSubscriptionController extends Controller
         } catch (SubscriptionException $e) {
             return response()->json(['message' => $e->getMessage()], 400);
         } catch (\Exception $e) {
-            // Log::error('Generic subscription error: ' . $e->getMessage());
+            Log::error('Generic subscription error: ' . $e->getMessage() . ' Stack trace: ' . $e->getTraceAsString());
             return response()->json(['message' => 'An unexpected error occurred while subscribing.'], 500);
         }
     }
