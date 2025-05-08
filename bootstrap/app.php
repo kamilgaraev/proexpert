@@ -66,8 +66,7 @@ return Application::configure(basePath: dirname(__DIR__))
             if ($request->expectsJson()) {
                 return new \App\Http\Responses\Api\V1\ErrorResponse(
                     message: $e->getMessage() ?: 'Validation Failed',
-                    statusCode: \Symfony\Component\HttpFoundation\Response::HTTP_UNPROCESSABLE_ENTITY,
-                    errors: $e->errors()
+                    statusCode: \Symfony\Component\HttpFoundation\Response::HTTP_UNPROCESSABLE_ENTITY
                 );
             }
         });
@@ -75,6 +74,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Обработка всех остальных ошибок для API в production
         $exceptions->renderable(function (\Throwable $e, $request) {
              if ($request->expectsJson() && !app()->hasDebugModeEnabled()) {
+                error_log('[bootstrap/app.php withExceptions] Caught Throwable: ' . $e->getMessage() . "\nStack Trace:\n" . $e->getTraceAsString());
                 report($e); // Логируем ошибку
                 return new \App\Http\Responses\Api\V1\ErrorResponse(
                     message: 'Internal Server Error',
