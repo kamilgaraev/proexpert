@@ -15,6 +15,8 @@ use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\CreateAdvanceTransactionRe
 use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\UpdateAdvanceTransactionRequest;
 use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\TransactionReportRequest;
 use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\TransactionApprovalRequest;
+use App\Http\Resources\Api\V1\Admin\AdvanceTransaction\AdvanceTransactionResource;
+use App\Http\Resources\Api\V1\Admin\AdvanceTransaction\AdvanceTransactionCollection;
 
 class AdvanceAccountTransactionController extends Controller
 {
@@ -91,19 +93,22 @@ class AdvanceAccountTransactionController extends Controller
      * Получить список транзакций с фильтрацией.
      *
      * @param Request $request
-     * @return JsonResponse
+     * @return AdvanceTransactionCollection
      */
-    public function index(Request $request): JsonResponse
+    public function index(Request $request): AdvanceTransactionCollection
     {
         $filters = $request->only([
             'user_id', 'organization_id', 'project_id', 'type', 
             'reporting_status', 'date_from', 'date_to'
         ]);
 
+        // Всегда используем текущую организацию из контекста
+        $filters['organization_id'] = Auth::user()->current_organization_id;
+
         $perPage = $request->input('per_page', 15);
         $transactions = $this->advanceService->getTransactions($filters, $perPage);
 
-        return response()->json($transactions);
+        return new AdvanceTransactionCollection($transactions);
     }
 
     /**
@@ -111,51 +116,45 @@ class AdvanceAccountTransactionController extends Controller
      *
      * @param Request $request
      * @param AdvanceAccountTransaction $transaction
-     * @return JsonResponse
+     * @return AdvanceTransactionResource
      */
-    public function show(Request $request, AdvanceAccountTransaction $transaction): JsonResponse
+    public function show(Request $request, AdvanceAccountTransaction $transaction): AdvanceTransactionResource
     {
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Transaction not found or access denied'
-            ], 404);
+            // Возвращаем ошибку 404, если ресурс не найден в контексте
+            abort(404, 'Transaction not found or access denied');
         }
 
         // Загружаем связанные данные
         $transaction->load(['user', 'project', 'createdBy', 'approvedBy']);
 
-        // Получаем прикрепленные файлы
-        $attachments = $transaction->getAttachments();
-
-        // Добавляем прикрепленные файлы к ответу
-        $data = $transaction->toArray();
-        $data['attachments'] = $attachments;
-
-        return response()->json([
-            'data' => $data
-        ]);
+        // Возвращаем ресурс
+        return new AdvanceTransactionResource($transaction);
     }
 
     /**
      * Создать новую транзакцию подотчетных средств.
      *
      * @param CreateAdvanceTransactionRequest $request
-     * @return JsonResponse
+     * @return JsonResponse | AdvanceTransactionResource
      */
-    public function store(CreateAdvanceTransactionRequest $request): JsonResponse
+    public function store(CreateAdvanceTransactionRequest $request): JsonResponse | AdvanceTransactionResource
     {
         // Валидация запроса происходит в CreateAdvanceTransactionRequest
 
         try {
             $transaction = $this->advanceService->createTransaction($request->validated());
             
-            return response()->json([
-                'success' => true,
-                'message' => 'Transaction created successfully',
-                'data' => $transaction
-            ], 201);
+            // Загружаем связи перед возвратом через ресурс
+            $transaction->load(['user', 'project', 'createdBy']); 
+
+            // Возвращаем ресурс созданной транзакции
+            return (new AdvanceTransactionResource($transaction))
+                    ->additional(['success' => true, 'message' => 'Transaction created successfully'])
+                    ->response()
+                    ->setStatusCode(201);
+
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,

@@ -28,7 +28,8 @@ class CostCategoryResource extends JsonResource
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
             
-            // Включаем связанные данные, если они загружены
+            // Временно убраны поля со связями для отладки 500 ошибки
+            /*
             'parent' => $this->when($this->relationLoaded('parent'), function () {
                 return [
                     'id' => $this->parent->id ?? null,
@@ -41,12 +42,10 @@ class CostCategoryResource extends JsonResource
                 return self::collection($this->children);
             }),
             
-            // Количество проектов, связанных с категорией
             'projects_count' => $this->when($this->relationLoaded('projects'), function () {
                 return $this->projects->count();
             }),
             
-            // Путь категории (для иерархических отображений)
             'path' => $this->when($this->relationLoaded('parent'), function () {
                 $path = [];
                 $currentCategory = $this;
@@ -70,6 +69,7 @@ class CostCategoryResource extends JsonResource
 
                 return $path;
             }),
+            */
         ];
     }
 }
