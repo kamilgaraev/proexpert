@@ -48,6 +48,9 @@ class UserSubscriptionController extends Controller
         if (!$subscription) {
             return response()->json(['message' => 'No active subscription found.'], 404);
         }
+
+        $subscription->loadMissing('plan');
+
         return new UserSubscriptionResource($subscription);
     }
 
@@ -149,6 +152,9 @@ class UserSubscriptionController extends Controller
                 $request->input('payment_method_token')
             );
             Log::info('[UserSubscriptionController::subscribe] Subscription successful.', ['subscription_id' => $subscription->id]);
+            
+            $subscription->loadMissing('plan');
+
             return new UserSubscriptionResource($subscription);
         } catch (SubscriptionException $e) {
             Log::warning('[UserSubscriptionController::subscribe] SubscriptionException caught.', [
