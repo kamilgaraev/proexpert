@@ -79,33 +79,88 @@ class UserSubscriptionController extends Controller
     {
         Log::info('[UserSubscriptionController::subscribe] Method entered.', [
             'request_data' => $request->all(),
-            'user_id' => Auth::id(), // Логируем ID аутентифицированного пользователя
+            'user_id' => Auth::id(),
             'ip_address' => $request->ip()
         ]);
 
-        $request->validate([
-            'plan_slug' => 'required|string|exists:subscription_plans,slug',
-            'payment_method_token' => 'nullable|string',
-        ]);
+        try {
+            Log::info('[UserSubscriptionController::subscribe] Attempting validation.');
+            $request->validate([
+                'plan_slug' => 'required|string|exists:subscription_plans,slug',
+                'payment_method_token' => 'nullable|string',
+            ]);
+            Log::info('[UserSubscriptionController::subscribe] Validation passed.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            Log::warning('[UserSubscriptionController::subscribe] ValidationException caught.', [
+                'error' => $e->getMessage(),
+                'errors' => $e->errors(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            // ValidationException обычно сама формирует корректный ответ 422, перевыбрасываем ее.
+            throw $e;
+        } catch (\Throwable $e) {
+            Log::error('[UserSubscriptionController::subscribe] Critical error during validation.', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json(['message' => 'Critical error during request validation.'], 500);
+        }
 
-        $user = Auth::user();
-        $plan = $this->planService->findBySlug($request->input('plan_slug'));
+        $user = null;
+        try {
+            Log::info('[UserSubscriptionController::subscribe] Attempting to get authenticated user.');
+            $user = Auth::user();
+            if (!$user) {
+                Log::warning('[UserSubscriptionController::subscribe] Auth::user() returned null.');
+                return response()->json(['message' => 'User not authenticated.'], 401); // Или 500, если это неожиданно
+            }
+            Log::info('[UserSubscriptionController::subscribe] Authenticated user retrieved.', ['user_id' => $user->id]);
+        } catch (\Throwable $e) {
+            Log::error('[UserSubscriptionController::subscribe] Critical error retrieving authenticated user.', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json(['message' => 'Critical error retrieving user.'], 500);
+        }
 
-        if (!$plan) {
-            return response()->json(['message' => 'Plan not found.'], 404);
+        $plan = null;
+        try {
+            Log::info('[UserSubscriptionController::subscribe] Attempting to find plan by slug.', ['plan_slug' => $request->input('plan_slug')]);
+            $plan = $this->planService->findBySlug($request->input('plan_slug'));
+            if (!$plan) {
+                Log::warning('[UserSubscriptionController::subscribe] Plan not found by slug.', ['plan_slug' => $request->input('plan_slug')]);
+                return response()->json(['message' => 'Plan not found.'], 404);
+            }
+            Log::info('[UserSubscriptionController::subscribe] Plan found.', ['plan_id' => $plan->id]);
+        } catch (\Throwable $e) {
+            Log::error('[UserSubscriptionController::subscribe] Critical error finding plan.', [
+                'plan_slug' => $request->input('plan_slug'),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json(['message' => 'Critical error finding plan.'], 500);
         }
 
         try {
+            Log::info('[UserSubscriptionController::subscribe] Attempting to subscribe user to plan.', ['user_id' => $user->id, 'plan_id' => $plan->id]);
             $subscription = $this->subscriptionService->subscribeUserToPlan(
                 $user,
                 $plan,
                 $request->input('payment_method_token')
             );
+            Log::info('[UserSubscriptionController::subscribe] Subscription successful.', ['subscription_id' => $subscription->id]);
             return new UserSubscriptionResource($subscription);
         } catch (SubscriptionException $e) {
+            Log::warning('[UserSubscriptionController::subscribe] SubscriptionException caught.', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString() // Логируем и для SubscriptionException
+            ]);
             return response()->json(['message' => $e->getMessage()], 400);
-        } catch (\Exception $e) {
-            Log::error('Generic subscription error: ' . $e->getMessage() . ' Stack trace: ' . $e->getTraceAsString());
+        } catch (\Throwable $e) { // Изменено с \Exception на \Throwable
+            Log::error('[UserSubscriptionController::subscribe] Generic subscription error (main try-catch).', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
             return response()->json(['message' => 'An unexpected error occurred while subscribing.'], 500);
         }
     }
