@@ -6,8 +6,20 @@ use Illuminate\Support\Facades\Route;
 Route::apiResource('projects', ProjectController::class);
 
 // Дополнительные маршруты для проекта
-Route::post('projects/{project}/foremen/{user}', [ProjectController::class, 'assignForeman'])->name('projects.foremen.assign');
-Route::delete('projects/{project}/foremen/{user}', [ProjectController::class, 'detachForeman'])->name('projects.foremen.detach');
+Route::post('/projects/{projectId}/foremen/{userId}', [ProjectController::class, 'assignForeman'])->name('projects.foremen.assign');
+Route::delete('/projects/{projectId}/foremen/{userId}', [ProjectController::class, 'detachForeman'])->name('projects.foremen.detach');
+
+// Получить статистику по проекту
+Route::get('/projects/{id}/statistics', [ProjectController::class, 'statistics'])->name('projects.statistics');
+
+// Получить материалы проекта
+Route::get('/projects/{id}/materials', [ProjectController::class, 'getProjectMaterials'])->name('projects.materials');
+
+// Получить типы работ проекта
+Route::get('/projects/{id}/work-types', [ProjectController::class, 'getProjectWorkTypes'])->name('projects.workTypes');
+
+// Получить доступные категории затрат для проектов
+Route::get('/projects/available-cost-categories', [ProjectController::class, 'getAvailableCostCategories'])->name('projects.cost-categories');
 
 // Статистика (если понадобится)
 // Route::get('projects/{project}/statistics', [ProjectController::class, 'statistics'])->name('projects.statistics'); 

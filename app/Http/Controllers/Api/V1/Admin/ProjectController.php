@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Project;
 use App\Models\User;
+use App\Models\CostCategory;
 use App\Services\Project\ProjectService;
 use App\Http\Requests\Api\V1\Admin\Project\StoreProjectRequest;
 use App\Http\Requests\Api\V1\Admin\Project\UpdateProjectRequest;
@@ -88,7 +89,7 @@ class ProjectController extends Controller
                     'message' => 'Проект не найден в вашей организации.'
                 ], 404);
             }
-            return new ProjectResource($project->load('users'));
+            return new ProjectResource($project->load(['users', 'costCategory']));
         } catch (BusinessLogicException $e) {
             return response()->json([
                 'success' => false,
@@ -289,6 +290,32 @@ class ProjectController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Внутренняя ошибка сервера при получении видов работ проекта.',
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить список категорий затрат для выбора при создании/редактировании проекта.
+     */
+    public function getAvailableCostCategories(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->user()->current_organization_id;
+            
+            $costCategories = CostCategory::activeForOrganization($organizationId)
+                ->get(['id', 'name', 'code', 'external_code', 'parent_id']);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $costCategories
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@getAvailableCostCategories', [
+                'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при получении категорий затрат.',
             ], 500);
         }
     }

@@ -22,6 +22,10 @@ class Project extends Model
         'status',
         'additional_info',
         'is_archived',
+        'external_code',
+        'cost_category_id',
+        'accounting_data',
+        'use_in_accounting_reports',
     ];
 
     protected $casts = [
@@ -29,6 +33,8 @@ class Project extends Model
         'end_date' => 'date',
         'additional_info' => 'array',
         'is_archived' => 'boolean',
+        'accounting_data' => 'array',
+        'use_in_accounting_reports' => 'boolean',
     ];
 
     /**
@@ -37,6 +43,14 @@ class Project extends Model
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class);
+    }
+
+    /**
+     * Получить категорию затрат, к которой относится проект.
+     */
+    public function costCategory(): BelongsTo
+    {
+        return $this->belongsTo(CostCategory::class);
     }
 
     /**
@@ -87,5 +101,40 @@ class Project extends Model
     public function files()
     {
         return $this->morphMany(File::class, 'fileable');
+    }
+
+    /**
+     * Проекты, которые используются в бухгалтерских отчетах.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    public function scopeUsedInAccounting($query)
+    {
+        return $query->where('use_in_accounting_reports', true);
+    }
+
+    /**
+     * Проекты с указанным внешним кодом.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @param string $externalCode
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    public function scopeWithExternalCode($query, $externalCode)
+    {
+        return $query->where('external_code', $externalCode);
+    }
+
+    /**
+     * Проекты, относящиеся к указанной категории затрат.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @param int $costCategoryId
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    public function scopeByCostCategory($query, $costCategoryId)
+    {
+        return $query->where('cost_category_id', $costCategoryId);
     }
 }

@@ -37,7 +37,28 @@ class UpdateProjectRequest extends FormRequest
             'end_date' => 'nullable|date|after_or_equal:start_date',
             'status' => 'sometimes|required|string|in:active,completed,paused,cancelled',
             'is_archived' => 'sometimes|boolean',
-            // Добавить другие поля
+            'description' => 'nullable|string|max:2000',
+            'additional_info' => 'sometimes|nullable|array',
+            
+            // Новые поля для интеграции с бухгалтерским учетом
+            'external_code' => 'sometimes|nullable|string|max:100',
+            'cost_category_id' => 'sometimes|nullable|exists:cost_categories,id',
+            'accounting_data' => 'sometimes|nullable|array',
+            'use_in_accounting_reports' => 'sometimes|nullable|boolean',
+        ];
+    }
+
+    /**
+     * Получить пользовательские сообщения об ошибках для правил проверки.
+     *
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'name.required' => 'Название проекта обязательно для заполнения.',
+            'end_date.after_or_equal' => 'Дата окончания должна быть больше или равна дате начала.',
+            'cost_category_id.exists' => 'Выбранная категория затрат не существует.',
         ];
     }
 

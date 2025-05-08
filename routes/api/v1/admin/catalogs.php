@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\MaterialController;
 use App\Http\Controllers\Api\V1\Admin\WorkTypeController;
 use App\Http\Controllers\Api\V1\Admin\SupplierController;
+use App\Http\Controllers\Api\V1\Admin\CostCategoryController;
 
 /*
 |--------------------------------------------------------------------------
@@ -28,4 +29,8 @@ Route::post('/materials/import', [MaterialController::class, 'importMaterials'])
 
 Route::apiResource('materials', MaterialController::class);
 Route::apiResource('work-types', WorkTypeController::class);
-Route::apiResource('suppliers', SupplierController::class); 
+Route::apiResource('suppliers', SupplierController::class);
+
+// Маршруты для категорий затрат
+Route::post('/cost-categories/import', [CostCategoryController::class, 'import'])->name('cost-categories.import');
+Route::apiResource('cost-categories', CostCategoryController::class); 
