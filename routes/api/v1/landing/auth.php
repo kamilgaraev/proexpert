@@ -10,7 +10,7 @@ Route::prefix('auth')->name('auth.')->group(function () {
     
     Route::middleware(['auth:api_landing', 'auth.jwt:api_landing'])->group(function () {
         Route::get('me', [AuthController::class, 'me'])->name('me');
-        Route::patch('me', [ProfileController::class, 'update'])->name('me.update');
+        Route::put('me', [ProfileController::class, 'update'])->name('me.update');
         Route::post('refresh', [AuthController::class, 'refresh'])->name('refresh');
         Route::post('logout', [AuthController::class, 'logout'])->name('logout');
     });
