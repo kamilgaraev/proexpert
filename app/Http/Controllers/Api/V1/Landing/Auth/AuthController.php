@@ -44,7 +44,8 @@ class AuthController extends Controller
     {
         return PerformanceMonitor::measure('landing.register', function() use ($request) {
             // Создаем DTO из запроса
-            $registerDTO = RegisterDTO::fromRequest($request->all());
+            // Убедимся, что DTO не падает, если avatar нет в request->all()
+            $registerDTO = RegisterDTO::fromRequest($request->safe()->except('avatar')); // Используем safe()->except(), чтобы DTO не получил файл
             
             // Выполняем регистрацию через сервис
             $result = $this->authService->register($registerDTO);
@@ -63,11 +64,28 @@ class AuthController extends Controller
                 return RegisterResponse::error('Ошибка регистрации: неполные данные', 500);
             }
 
-            return RegisterResponse::registerSuccess(
-                $result['user'],
-                $result['organization'],
-                $result['token']
-            );
+            /** @var \App\Models\User $user */
+            $user = $result['user'];
+            $organization = $result['organization'];
+            $token = $result['token'];
+
+            // Обработка загрузки аватара
+            if ($request->hasFile('avatar')) {
+                // Вызываем метод из трейта HasImages
+                if ($user->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'public')) {
+                    // Если uploadImage успешен (путь установлен), сохраняем пользователя
+                    // Предполагаем, что authService->register мог не сохранить User или что повторное сохранение безопасно
+                    $user->save(); 
+                    Log::info('[LandingAuthController] Avatar uploaded and user saved.', ['user_id' => $user->id, 'avatar_path' => $user->avatar_path]);
+                } else {
+                    // Логируем ошибку загрузки аватара, но продолжаем регистрацию
+                    Log::error('[LandingAuthController] Failed to upload avatar during registration.', ['user_id' => $user->id]);
+                    // Можно вернуть ошибку, если загрузка аватара критична, но обычно нет.
+                }
+            }
+
+            // Возвращаем успешный ответ
+            return RegisterResponse::registerSuccess($user, $organization, $token);
         });
     }
 

@@ -14,6 +14,7 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Arr;
+use App\Traits\HasImages;
 
 // Импортируем константы роли
 use App\Models\Role;
@@ -21,7 +22,7 @@ use App\Models\Role;
 class User extends Authenticatable implements JWTSubject
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
-    use HasFactory, Notifiable, SoftDeletes;
+    use HasFactory, Notifiable, SoftDeletes, HasImages;
 
     /**
      * Роли, имеющие доступ и полный контроль в Admin Panel.
@@ -64,6 +65,11 @@ class User extends Authenticatable implements JWTSubject
     protected $hidden = [
         'password',
         'remember_token',
+    ];
+
+    // Добавляем avatar_url к сериализации модели
+    protected $appends = [
+        'avatar_url'
     ];
 
     /**
@@ -248,7 +254,7 @@ class User extends Authenticatable implements JWTSubject
     {
         // TODO: Проверить, нужно ли сверяться с таблицей ролей или достаточно user_type
         // Пока оставляем user_type для системного админа
-        return $this->user_type === Role::ROLE_SYSTEM_ADMIN;
+        return $this->user_type === 'system_admin';
     }
 
     /**
@@ -326,5 +332,18 @@ class User extends Authenticatable implements JWTSubject
         }
 
         return false;
+    }
+
+    /**
+     * Аксессор для получения URL аватара.
+     *
+     * @return string|null
+     */
+    public function getAvatarUrlAttribute(): ?string
+    {
+        // Предполагаем, что дефолтный аватар находится в public/images/default-avatar.png
+        // или вы настроите свой путь к дефолтному изображению.
+        // Если аватары загружаются с видимостью 'public', то $temporary = false (по умолчанию)
+        return $this->getImageUrl('avatar_path', asset('images/default-avatar.png'));
     }
 }

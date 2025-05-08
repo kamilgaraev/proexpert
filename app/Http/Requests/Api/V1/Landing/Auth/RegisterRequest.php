@@ -41,6 +41,7 @@ class RegisterRequest extends FormRequest
                 'regex:/^(\+7|8)[- ]?\(?[0-9]{3}\)?[- ]?[0-9]{3}[- ]?[0-9]{2}[- ]?[0-9]{2}$/' // Российский формат телефона
             ],
             'position' => 'nullable|string|max:100',
+            'avatar' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             
             // Данные организации
             'organization_name' => 'required|string|max:255',
