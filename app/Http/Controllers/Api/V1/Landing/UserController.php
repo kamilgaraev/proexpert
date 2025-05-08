@@ -13,6 +13,7 @@ use Illuminate\Contracts\Support\Responsable;
 use Illuminate\Http\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Http\Request;
+use App\Exceptions\BusinessLogicException;
 
 class UserController extends Controller
 {
@@ -56,8 +57,7 @@ class UserController extends Controller
              report($e);
              return new ErrorResponse(
                 message: 'Validation failed',
-                statusCode: Response::HTTP_UNPROCESSABLE_ENTITY,
-                errors: $e->errors()
+                statusCode: Response::HTTP_UNPROCESSABLE_ENTITY
              );
         } catch (\Throwable $e) { // Ловим другие возможные ошибки (например, ошибка БД)
             report($e);
@@ -135,6 +135,25 @@ class UserController extends Controller
         } catch (\Throwable $e) {
              report($e);
              return new ErrorResponse('Failed to delete administrator. ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Список всех пользователей организации, имеющих доступ к админ-панели.
+     * GET /api/v1/landing/admin-panel-users 
+     */
+    public function adminPanelUsersIndex(Request $request): JsonResponse
+    {
+        try {
+            $users = $this->userService->getAllAdminPanelUsersForCurrentOrg($request)->load('roles');
+            // Используем тот же ресурс, что и для index, если он подходит
+            return AdminUserResource::collection($users)->response(); 
+        } catch (BusinessLogicException $e) {
+            // Перехватываем ошибки бизнес-логики (например, нет прав доступа)
+            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 403);
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json(['success' => false, 'message' => 'Failed to retrieve admin panel users.'], 500);
         }
     }
 } 

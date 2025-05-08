@@ -871,4 +871,27 @@ class UserService
         Log::info('Unblocking foreman', ['user_id' => $foremanUserId, 'org_id' => $intOrganizationId, 'admin_id' => $requestingUser->id]);
         return $this->userRepository->update($foremanUserId, ['is_active' => true]);
     }
+
+    /**
+     * Get ALL users with Admin Panel access roles for the current organization.
+     *
+     * @param Request $request
+     * @return Collection
+     * @throws BusinessLogicException
+     */
+    public function getAllAdminPanelUsersForCurrentOrg(Request $request): Collection
+    {
+        $this->ensureUserIsAdmin($request); // Проверяем, что запрашивающий - админ/владелец
+        $organizationId = $request->attributes->get('current_organization_id');
+        if(!$organizationId) {
+            throw new BusinessLogicException('Контекст организации не определен.', 500);
+        }
+        $intOrganizationId = (int) $organizationId;
+
+        $adminPanelRoles = User::ADMIN_PANEL_ACCESS_ROLES; // Получаем все роли из константы
+
+        $users = $this->userRepository->findByRolesInOrganization($intOrganizationId, $adminPanelRoles);
+
+        return $users->unique('id'); // Возвращаем уникальных пользователей
+    }
 } 
