@@ -7,6 +7,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
+use App\Models\OrganizationBalance;
 
 class Organization extends Model
 {
@@ -76,6 +78,14 @@ class Organization extends Model
     public function roles(): HasMany
     {
         return $this->hasMany(Role::class);
+    }
+
+    /**
+     * Получить баланс организации.
+     */
+    public function balance(): HasOne
+    {
+        return $this->hasOne(OrganizationBalance::class, 'organization_id');
     }
 
     /**
