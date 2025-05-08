@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\AdvanceAccountTransaction;
 use App\Models\User;
 use App\Models\File;
+use App\Models\Project;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -431,5 +432,76 @@ class AdvanceAccountService
         $user->save();
         
         return $user;
+    }
+
+    /**
+     * Получить пользователей, доступных для транзакций подотчетных средств.
+     *
+     * @param int $organizationId
+     * @param string|null $search
+     * @return \Illuminate\Database\Eloquent\Collection
+     */
+    public function getAvailableUsers(int $organizationId, ?string $search = null)
+    {
+        $query = User::whereHas('organizations', function ($q) use ($organizationId) {
+                $q->where('organization_id', $organizationId);
+            })
+            ->whereHas('roles', function ($q) {
+                $q->whereIn('slug', ['foreman', 'site_manager', 'project_manager']);
+            })
+            ->select([
+                'id', 'name', 'current_balance', 'has_overdue_balance', 'position', 'avatar_path'
+            ]);
+
+        // Применяем поиск, если задан
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('position', 'like', "%{$search}%");
+            });
+        }
+
+        $users = $query->orderBy('name')->get();
+
+        // Добавляем URL аватара для каждого пользователя
+        $users->each(function ($user) {
+            $user->append('avatar_url');
+        });
+
+        return $users;
+    }
+
+    /**
+     * Получить проекты, доступные для транзакций подотчетных средств.
+     *
+     * @param int $organizationId
+     * @param int|null $userId
+     * @param string|null $search
+     * @return \Illuminate\Database\Eloquent\Collection
+     */
+    public function getAvailableProjects(int $organizationId, ?int $userId = null, ?string $search = null)
+    {
+        // Базовый запрос для проектов
+        $query = Project::where('organization_id', $organizationId)
+            ->where('is_archived', false)
+            ->select(['id', 'name', 'external_code', 'status', 'address']);
+
+        // Если указан ID пользователя, фильтруем по проектам, назначенным этому пользователю
+        if ($userId) {
+            $query->whereHas('users', function ($q) use ($userId) {
+                $q->where('user_id', $userId);
+            });
+        }
+
+        // Применяем поиск, если задан
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('address', 'like', "%{$search}%")
+                  ->orWhere('external_code', 'like', "%{$search}%");
+            });
+        }
+
+        return $query->orderBy('name')->get();
     }
 } 

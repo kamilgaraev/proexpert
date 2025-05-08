@@ -155,6 +155,10 @@ Route::prefix('admin')->name('admin.')->group(function () {
         if (file_exists(__DIR__ . '/api/v1/admin/reports.php')) {
             require __DIR__ . '/api/v1/admin/reports.php';
         }
+        // Подключаем маршруты для подотчетных средств
+        if (file_exists(__DIR__ . '/api/v1/admin/advance_transactions.php')) {
+            require __DIR__ . '/api/v1/admin/advance_transactions.php';
+        }
         // Сюда можно будет добавлять require для новых файлов маршрутов админки
     });
 });
@@ -163,86 +167,4 @@ Route::prefix('admin')->name('admin.')->group(function () {
 // --- Mobile App API ---
 // Route::prefix('mobile')->name('mobile.')->group(function () { ... });
 
-/*
-|--------------------------------------------------------------------------
-| Маршруты API для подотчетных средств
-|--------------------------------------------------------------------------
-*/
-
-// Основные CRUD операции для транзакций подотчетных средств
-Route::middleware(['auth:api'])->group(function () {
-    // Транзакции подотчетных средств
-    Route::apiResource('advance-transactions', AdvanceAccountTransactionController::class);
-
-    // Дополнительные методы для транзакций
-    Route::post('advance-transactions/{transaction}/report', [AdvanceAccountTransactionController::class, 'report'])
-        ->name('advance-transactions.report');
-    
-    Route::post('advance-transactions/{transaction}/approve', [AdvanceAccountTransactionController::class, 'approve'])
-        ->name('advance-transactions.approve');
-    
-    Route::post('advance-transactions/{transaction}/attachments', [AdvanceAccountTransactionController::class, 'attachFiles'])
-        ->name('advance-transactions.attach-files');
-    
-    Route::delete('advance-transactions/{transaction}/attachments/{fileId}', [AdvanceAccountTransactionController::class, 'detachFile'])
-        ->name('advance-transactions.detach-file');
-
-    // Работа с балансом пользователей
-    Route::get('users/{user}/advance-balance', [UserController::class, 'getAdvanceBalance'])
-        ->name('users.advance-balance');
-    
-    Route::get('users/{user}/advance-transactions', [UserController::class, 'getAdvanceTransactions'])
-        ->name('users.advance-transactions');
-    
-    Route::post('users/{user}/issue-funds', [UserController::class, 'issueFunds'])
-        ->name('users.issue-funds');
-    
-    Route::post('users/{user}/return-funds', [UserController::class, 'returnFunds'])
-        ->name('users.return-funds');
-
-    /*
-    |--------------------------------------------------------------------------
-    | Маршруты API для отчетов по подотчетным средствам
-    |--------------------------------------------------------------------------
-    */
-    
-    Route::prefix('reports/advance-accounts')->name('reports.advance-accounts.')->group(function () {
-        Route::get('/summary', [\App\Http\Controllers\Api\AdvanceAccountReportController::class, 'summary'])
-            ->name('summary');
-        
-        Route::get('/users/{userId}', [\App\Http\Controllers\Api\AdvanceAccountReportController::class, 'userReport'])
-            ->name('user');
-        
-        Route::get('/projects/{projectId}', [\App\Http\Controllers\Api\AdvanceAccountReportController::class, 'projectReport'])
-            ->name('project');
-        
-        Route::get('/overdue', [\App\Http\Controllers\Api\AdvanceAccountReportController::class, 'overdueReport'])
-            ->name('overdue');
-        
-        Route::get('/export/{format}', [\App\Http\Controllers\Api\AdvanceAccountReportController::class, 'export'])
-            ->name('export');
-    });
-
-    /*
-    |--------------------------------------------------------------------------
-    | Маршруты API для интеграции с бухгалтерскими системами
-    |--------------------------------------------------------------------------
-    */
-    
-    Route::prefix('accounting')->name('accounting.')->group(function () {
-        Route::post('/import-users', [\App\Http\Controllers\Api\AccountingIntegrationController::class, 'importUsers'])
-            ->name('import-users');
-        
-        Route::post('/import-projects', [\App\Http\Controllers\Api\AccountingIntegrationController::class, 'importProjects'])
-            ->name('import-projects');
-        
-        Route::post('/import-materials', [\App\Http\Controllers\Api\AccountingIntegrationController::class, 'importMaterials'])
-            ->name('import-materials');
-        
-        Route::post('/export-transactions', [\App\Http\Controllers\Api\AccountingIntegrationController::class, 'exportTransactions'])
-            ->name('export-transactions');
-        
-        Route::get('/sync-status', [\App\Http\Controllers\Api\AccountingIntegrationController::class, 'getSyncStatus'])
-            ->name('sync-status');
-    });
-});
+// Все маршруты API для подотчетных средств перенесены в файл routes/api/v1/admin/advance_transactions.php

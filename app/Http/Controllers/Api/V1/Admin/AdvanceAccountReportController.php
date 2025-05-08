@@ -1,11 +1,12 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Services\Report\AdvanceAccountReportService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
 
 class AdvanceAccountReportController extends Controller
 {
@@ -19,6 +20,7 @@ class AdvanceAccountReportController extends Controller
     public function __construct(AdvanceAccountReportService $reportService)
     {
         $this->reportService = $reportService;
+        $this->middleware('can:access-admin-panel');
     }
 
     /**
@@ -30,8 +32,11 @@ class AdvanceAccountReportController extends Controller
     public function summary(Request $request): JsonResponse
     {
         $filters = $request->only([
-            'date_from', 'date_to', 'organization_id'
+            'date_from', 'date_to'
         ]);
+        
+        // Устанавливаем текущую организацию
+        $filters['organization_id'] = Auth::user()->current_organization_id;
 
         $report = $this->reportService->getSummaryReport($filters);
         return response()->json($report);
@@ -47,8 +52,11 @@ class AdvanceAccountReportController extends Controller
     public function userReport(Request $request, int $userId): JsonResponse
     {
         $filters = $request->only([
-            'date_from', 'date_to', 'organization_id'
+            'date_from', 'date_to'
         ]);
+        
+        // Устанавливаем текущую организацию и пользователя
+        $filters['organization_id'] = Auth::user()->current_organization_id;
         $filters['user_id'] = $userId;
 
         $report = $this->reportService->getUserReport($filters);
@@ -65,8 +73,11 @@ class AdvanceAccountReportController extends Controller
     public function projectReport(Request $request, int $projectId): JsonResponse
     {
         $filters = $request->only([
-            'date_from', 'date_to', 'organization_id'
+            'date_from', 'date_to'
         ]);
+        
+        // Устанавливаем текущую организацию и проект
+        $filters['organization_id'] = Auth::user()->current_organization_id;
         $filters['project_id'] = $projectId;
 
         $report = $this->reportService->getProjectReport($filters);
@@ -82,8 +93,11 @@ class AdvanceAccountReportController extends Controller
     public function overdueReport(Request $request): JsonResponse
     {
         $filters = $request->only([
-            'organization_id', 'overdue_days'
+            'overdue_days'
         ]);
+        
+        // Устанавливаем текущую организацию
+        $filters['organization_id'] = Auth::user()->current_organization_id;
 
         $report = $this->reportService->getOverdueReport($filters);
         return response()->json($report);
@@ -99,8 +113,11 @@ class AdvanceAccountReportController extends Controller
     public function export(Request $request, string $format)
     {
         $filters = $request->only([
-            'date_from', 'date_to', 'organization_id', 'user_id', 'project_id', 'report_type'
+            'date_from', 'date_to', 'user_id', 'project_id', 'report_type'
         ]);
+        
+        // Устанавливаем текущую организацию
+        $filters['organization_id'] = Auth::user()->current_organization_id;
 
         return $this->reportService->exportReport($filters, $format);
     }

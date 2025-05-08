@@ -1,11 +1,12 @@
 <?php
 
-namespace App\Http\Controllers\Api;
+namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Services\AccountingIntegrationService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Auth;
 
 class AccountingIntegrationController extends Controller
 {
@@ -19,6 +20,7 @@ class AccountingIntegrationController extends Controller
     public function __construct(AccountingIntegrationService $integrationService)
     {
         $this->integrationService = $integrationService;
+        $this->middleware('can:access-admin-panel');
     }
 
     /**
@@ -29,7 +31,7 @@ class AccountingIntegrationController extends Controller
      */
     public function importUsers(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id');
+        $organizationId = Auth::user()->current_organization_id;
 
         if (!$organizationId) {
             return response()->json([
@@ -51,7 +53,7 @@ class AccountingIntegrationController extends Controller
      */
     public function importProjects(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id');
+        $organizationId = Auth::user()->current_organization_id;
 
         if (!$organizationId) {
             return response()->json([
@@ -73,7 +75,7 @@ class AccountingIntegrationController extends Controller
      */
     public function importMaterials(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id');
+        $organizationId = Auth::user()->current_organization_id;
 
         if (!$organizationId) {
             return response()->json([
@@ -95,7 +97,7 @@ class AccountingIntegrationController extends Controller
      */
     public function exportTransactions(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id');
+        $organizationId = Auth::user()->current_organization_id;
         $startDate = $request->input('start_date');
         $endDate = $request->input('end_date');
 
@@ -119,7 +121,7 @@ class AccountingIntegrationController extends Controller
      */
     public function getSyncStatus(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id');
+        $organizationId = Auth::user()->current_organization_id;
 
         if (!$organizationId) {
             return response()->json([
