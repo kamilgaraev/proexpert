@@ -5,6 +5,7 @@ namespace App\Services;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
 
 class ImageUploadService
 {
@@ -21,20 +22,59 @@ class ImageUploadService
      */
     public function upload(UploadedFile $file, string $directory, ?string $existingPath = null, string $visibility = 'public'): string|false
     {
+        Log::info('[ImageUploadService] Starting upload process.', [
+            'directory' => $directory,
+            'original_filename' => $file->getClientOriginalName(),
+            'visibility' => $visibility,
+            'disk' => $this->disk,
+            'existing_path' => $existingPath
+        ]);
+
         // Удаляем существующий файл, если он есть
         if ($existingPath) {
-            $this->delete($existingPath);
+            Log::info('[ImageUploadService] Attempting to delete existing file.', ['path' => $existingPath]);
+            $deleted = $this->delete($existingPath);
+            Log::info('[ImageUploadService] Deletion result for existing file.', ['path' => $existingPath, 'success' => $deleted]);
         }
 
         // Генерируем уникальное имя файла, сохраняя расширение
         $filename = Str::uuid()->toString() . '.' . $file->getClientOriginalExtension();
-        
-        $path = $file->storeAs($directory, $filename, [
-            'disk' => $this->disk,
-            'visibility' => $visibility, // Важно для генерации URL и доступа
-        ]);
+        $fullPath = $directory . '/' . $filename;
 
-        return $path;
+        try {
+            Log::info('[ImageUploadService] Attempting to store file.', [
+                'disk' => $this->disk,
+                'path' => $fullPath,
+                'visibility' => $visibility
+            ]);
+            
+            // storeAs возвращает путь или false при ошибке (хотя чаще кидает Exception)
+            $storedPath = $file->storeAs($directory, $filename, [
+                'disk' => $this->disk,
+                'visibility' => $visibility,
+            ]);
+
+            if ($storedPath === false) {
+                Log::error('[ImageUploadService] storeAs returned false.', [
+                    'disk' => $this->disk,
+                    'path' => $fullPath
+                ]);
+                return false;
+            }
+
+            Log::info('[ImageUploadService] File stored successfully.', ['path' => $storedPath]);
+            return $storedPath;
+
+        } catch (\Throwable $e) {
+            // Логируем любую ошибку, возникшую при сохранении на диск
+            Log::error('[ImageUploadService] Exception during file storage.', [
+                'disk' => $this->disk,
+                'path' => $fullPath,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return false; // Возвращаем false, чтобы контроллер мог обработать ошибку
+        }
     }
 
     /**
