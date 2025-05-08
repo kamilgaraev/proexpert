@@ -49,22 +49,25 @@ class CostCategoryResource extends JsonResource
             // Путь категории (для иерархических отображений)
             'path' => $this->when($this->relationLoaded('parent'), function () {
                 $path = [];
-                $category = $this;
-                
-                while ($category->parent && $category->parent->id) {
-                    array_unshift($path, [
-                        'id' => $category->parent->id,
-                        'name' => $category->parent->name,
-                    ]);
-                    
-                    // Предотвращаем зацикливание
-                    if ($category->parent->id === $category->id) {
+                $currentCategory = $this;
+
+                while ($currentCategory && $currentCategory->relationLoaded('parent') && $currentCategory->parent) {
+                    if (!$currentCategory->parent->id) {
                         break;
                     }
-                    
-                    $category = $category->parent;
+
+                    array_unshift($path, [
+                        'id' => $currentCategory->parent->id,
+                        'name' => $currentCategory->parent->name,
+                    ]);
+
+                    if ($currentCategory->parent->id === $currentCategory->id) {
+                        break;
+                    }
+
+                    $currentCategory = $currentCategory->parent;
                 }
-                
+
                 return $path;
             }),
         ];
