@@ -33,10 +33,19 @@ class UserSubscriptionService implements UserSubscriptionServiceInterface
     ): UserSubscription {
         DB::beginTransaction();
         try {
-            $organization = $user->organization;
+            Log::info('[UserSubscriptionService] Attempting to get organization from user.', [
+                'user_id' => $user->id,
+                'current_organization_id_on_user_object' => $user->current_organization_id ?? 'NOT SET'
+            ]);
+            $organization = $user->currentOrganization;
             if (!$organization) {
-                throw new SubscriptionException('User is not associated with an organization.');
+                Log::warning('[UserSubscriptionService] $user->currentOrganization returned null.', [
+                    'user_id' => $user->id,
+                    'current_organization_id_on_user_object' => $user->current_organization_id ?? 'NOT SET'
+                ]);
+                throw new SubscriptionException('User is not associated with an organization or current organization could not be loaded.');
             }
+            Log::info('[UserSubscriptionService] Organization retrieved successfully.', ['organization_id' => $organization->id]);
 
             $currentSubscription = $this->getUserCurrentValidSubscription($user);
             if ($currentSubscription && $currentSubscription->plan->id === $plan->id && $currentSubscription->isActive()) {
@@ -151,7 +160,7 @@ class UserSubscriptionService implements UserSubscriptionServiceInterface
         DB::beginTransaction();
         try {
             $user = $currentSubscription->user;
-            $organization = $user->organization;
+            $organization = $user->currentOrganization;
             if (!$organization) {
                 throw new SubscriptionException('User is not associated with an organization for balance operations.');
             }
@@ -308,10 +317,10 @@ class UserSubscriptionService implements UserSubscriptionServiceInterface
                     ]);
 
                     $user = $payment->user;
-                    if ($user && $user->organization) {
+                    if ($user && $user->currentOrganization) {
                         $amountToCredit = (int) ($payload['object']['amount']['value'] * 100); 
                         $this->balanceService->creditBalance(
-                            $user->organization,
+                            $user->currentOrganization,
                             $amountToCredit, 
                             "Balance top-up successful: {$paymentGatewayIdFromPayload}",
                             $payment,
