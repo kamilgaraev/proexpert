@@ -40,9 +40,52 @@ class UpdateMaterialRequest extends FormRequest
                     })
                     ->ignore($materialId), // Игнорируем текущий материал
             ],
+            'code' => 'sometimes|nullable|string|max:50',
             'measurement_unit_id' => 'sometimes|required|integer|exists:measurement_units,id',
-            'category' => 'nullable|string|max:100',
+            'description' => 'sometimes|nullable|string|max:1000',
+            'category' => 'sometimes|nullable|string|max:100',
+            'default_price' => 'sometimes|nullable|numeric|min:0',
+            'additional_properties' => 'sometimes|nullable|array',
             'is_active' => 'sometimes|boolean',
+            
+            // Поля для бухгалтерской интеграции
+            'external_code' => [
+                'sometimes',
+                'nullable', 
+                'string', 
+                'max:100',
+                Rule::unique('materials', 'external_code')
+                    ->where(function ($query) use ($organizationId) {
+                        return $query->where('organization_id', $organizationId)
+                                    ->whereNull('deleted_at');
+                    })
+                    ->ignore($materialId), // Игнорируем текущий материал
+            ],
+            'sbis_nomenclature_code' => 'sometimes|nullable|string|max:100',
+            'sbis_unit_code' => 'sometimes|nullable|string|max:100',
+            'consumption_rates' => 'sometimes|nullable|array',
+            'consumption_rates.*' => 'numeric|min:0',
+            'accounting_data' => 'sometimes|nullable|array',
+            'use_in_accounting_reports' => 'sometimes|nullable|boolean',
+            'accounting_account' => 'sometimes|nullable|string|max:50',
+        ];
+    }
+
+    /**
+     * Получить пользовательские сообщения об ошибках для правил проверки.
+     *
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'name.required' => 'Название материала обязательно для заполнения.',
+            'name.unique' => 'Материал с таким названием уже существует в вашей организации.',
+            'measurement_unit_id.required' => 'Необходимо указать единицу измерения.',
+            'measurement_unit_id.exists' => 'Выбранная единица измерения не существует.',
+            'external_code.unique' => 'Материал с таким внешним кодом уже существует в вашей организации.',
+            'default_price.min' => 'Цена по умолчанию не может быть отрицательной.',
+            'consumption_rates.*.min' => 'Норма списания не может быть отрицательной.',
         ];
     }
 

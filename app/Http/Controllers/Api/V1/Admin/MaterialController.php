@@ -14,6 +14,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Log;
 use App\Exceptions\BusinessLogicException;
+use App\Models\Material;
+use App\Models\WorkType;
 
 class MaterialController extends Controller
 {
@@ -62,6 +64,12 @@ class MaterialController extends Controller
             if (!$material) {
                 return response()->json(['success' => false, 'message' => 'Материал не найден.'], 404);
             }
+            
+            // Включаем нормы списания, если запрошено
+            if ($request->has('include_consumption_rates')) {
+                $material->setAttribute('include_consumption_rates', true);
+            }
+            
             return new MaterialResource($material->load('measurementUnit'));
         } catch (BusinessLogicException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
@@ -149,14 +157,23 @@ class MaterialController extends Controller
     public function importMaterials(Request $request): JsonResponse
     {
         try {
-            // Валидация файла остается здесь, т.к. это не FormRequest
+            // Расширяем валидацию, добавляя поддержку формата импорта
             $validatedData = $this->validate($request, [
                 'file' => 'required|file|mimes:xlsx,xls,csv|max:2048',
+                'format' => 'nullable|string|in:simple,sbis,onec',
+                'options' => 'nullable|array',
             ]);
 
-            $result = $this->materialService->importMaterialsFromFile($validatedData['file']);
+            $format = $validatedData['format'] ?? 'simple';
+            $options = $validatedData['options'] ?? [];
 
-            return response()->json($result); // Предполагаем, что сервис вернет массив с success/message
+            $result = $this->materialService->importMaterialsFromFile(
+                $validatedData['file'], 
+                $format, 
+                $options
+            );
+
+            return response()->json($result);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'success' => false,
@@ -168,6 +185,185 @@ class MaterialController extends Controller
         } catch (\Throwable $e) {
             Log::error('Error in MaterialController@importMaterials', ['message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
             return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при импорте материалов.'], 500);
+        }
+    }
+
+    /**
+     * Получить нормы списания для материала.
+     */
+    public function getConsumptionRates(Request $request, int $id): JsonResponse
+    {
+        try {
+            $material = $this->materialService->findMaterialById($id, $request);
+            if (!$material) {
+                return response()->json([
+                    'success' => false, 
+                    'message' => 'Материал не найден.'
+                ], 404);
+            }
+
+            $rates = $material->getConsumptionRatesWithWorkTypes();
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'material_id' => $material->id,
+                    'material_name' => $material->name,
+                    'consumption_rates' => $rates
+                ]
+            ]);
+        } catch (BusinessLogicException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in MaterialController@getConsumptionRates', [
+                'id' => $id, 
+                'message' => $e->getMessage(), 
+                'file' => $e->getFile(), 
+                'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при получении норм списания материала.'
+            ], 500);
+        }
+    }
+
+    /**
+     * Обновить нормы списания для материала.
+     */
+    public function updateConsumptionRates(Request $request, int $id): JsonResponse
+    {
+        try {
+            // Валидация входящих данных
+            $validated = $request->validate([
+                'consumption_rates' => 'required|array',
+                'consumption_rates.*' => 'numeric|min:0',
+            ], [
+                'consumption_rates.required' => 'Необходимо указать нормы списания.',
+                'consumption_rates.array' => 'Нормы списания должны быть представлены в виде массива.',
+                'consumption_rates.*.numeric' => 'Нормы списания должны быть числовыми значениями.',
+                'consumption_rates.*.min' => 'Нормы списания не могут быть отрицательными.',
+            ]);
+
+            $material = $this->materialService->findMaterialById($id, $request);
+            if (!$material) {
+                return response()->json([
+                    'success' => false, 
+                    'message' => 'Материал не найден.'
+                ], 404);
+            }
+
+            // Проверяем существование видов работ
+            $workTypeIds = array_keys($validated['consumption_rates']);
+            $existingWorkTypeCount = WorkType::whereIn('id', $workTypeIds)->count();
+            
+            if (count($workTypeIds) != $existingWorkTypeCount) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Некоторые виды работ не найдены.'
+                ], 422);
+            }
+
+            // Обновляем нормы списания
+            $material->consumption_rates = $validated['consumption_rates'];
+            $material->save();
+
+            // Возвращаем обновленные данные
+            return response()->json([
+                'success' => true,
+                'message' => 'Нормы списания успешно обновлены.',
+                'data' => [
+                    'material_id' => $material->id,
+                    'material_name' => $material->name,
+                    'consumption_rates' => $material->getConsumptionRatesWithWorkTypes()
+                ]
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации данных.',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (BusinessLogicException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in MaterialController@updateConsumptionRates', [
+                'id' => $id, 
+                'message' => $e->getMessage(), 
+                'file' => $e->getFile(), 
+                'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при обновлении норм списания материала.'
+            ], 500);
+        }
+    }
+
+    /**
+     * Проверить валидность данных материала для интеграции с СБИС/1С.
+     */
+    public function validateForAccounting(Request $request, int $id): JsonResponse
+    {
+        try {
+            $material = $this->materialService->findMaterialById($id, $request);
+            if (!$material) {
+                return response()->json([
+                    'success' => false, 
+                    'message' => 'Материал не найден.'
+                ], 404);
+            }
+
+            // Проверка на наличие необходимых полей для интеграции
+            $validationErrors = [];
+            
+            if (empty($material->external_code)) {
+                $validationErrors[] = 'Не указан внешний код материала для интеграции.';
+            }
+            
+            if (empty($material->sbis_nomenclature_code)) {
+                $validationErrors[] = 'Не указан код номенклатуры СБИС.';
+            }
+            
+            // Проверка соответствия единиц измерения
+            if (empty($material->sbis_unit_code)) {
+                $validationErrors[] = 'Не указан код единицы измерения СБИС.';
+            }
+            
+            // Проверка счета учета
+            if (empty($material->accounting_account)) {
+                $validationErrors[] = 'Не указан счет учета в бухгалтерии.';
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'material_id' => $material->id,
+                    'material_name' => $material->name,
+                    'is_valid' => empty($validationErrors),
+                    'validation_errors' => $validationErrors,
+                    'accounting_data' => [
+                        'external_code' => $material->external_code,
+                        'sbis_nomenclature_code' => $material->sbis_nomenclature_code,
+                        'sbis_unit_code' => $material->sbis_unit_code,
+                        'accounting_account' => $material->accounting_account,
+                        'use_in_accounting_reports' => $material->use_in_accounting_reports,
+                    ]
+                ]
+            ]);
+        } catch (BusinessLogicException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in MaterialController@validateForAccounting', [
+                'id' => $id, 
+                'message' => $e->getMessage(), 
+                'file' => $e->getFile(), 
+                'line' => $e->getLine()
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при проверке материала для интеграции.'
+            ], 500);
         }
     }
 } 

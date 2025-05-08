@@ -27,6 +27,16 @@ Route::get('/materials/{id}/balances', [MaterialController::class, 'getMaterialB
 // Маршрут для импорта материалов
 Route::post('/materials/import', [MaterialController::class, 'importMaterials'])->name('materials.import');
 
+// Новые маршруты для работы с нормами списания материалов
+Route::get('/materials/{id}/consumption-rates', [MaterialController::class, 'getConsumptionRates'])
+    ->name('materials.consumption-rates.index');
+Route::put('/materials/{id}/consumption-rates', [MaterialController::class, 'updateConsumptionRates'])
+    ->name('materials.consumption-rates.update');
+
+// Маршрут для проверки валидности материала для интеграции с СБИС/1С
+Route::get('/materials/{id}/validate-for-accounting', [MaterialController::class, 'validateForAccounting'])
+    ->name('materials.validate-for-accounting');
+
 Route::apiResource('materials', MaterialController::class);
 Route::apiResource('work-types', WorkTypeController::class);
 Route::apiResource('suppliers', SupplierController::class);
