@@ -2,6 +2,8 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\AdvanceAccountTransactionController;
+use App\Http\Controllers\Api\UserController;
 
 /*
 |--------------------------------------------------------------------------
@@ -160,3 +162,87 @@ Route::prefix('admin')->name('admin.')->group(function () {
 // Опционально, если есть Mobile App API, его конфигурация может идти дальше
 // --- Mobile App API ---
 // Route::prefix('mobile')->name('mobile.')->group(function () { ... });
+
+/*
+|--------------------------------------------------------------------------
+| Маршруты API для подотчетных средств
+|--------------------------------------------------------------------------
+*/
+
+// Основные CRUD операции для транзакций подотчетных средств
+Route::middleware(['auth:api'])->group(function () {
+    // Транзакции подотчетных средств
+    Route::apiResource('advance-transactions', AdvanceAccountTransactionController::class);
+
+    // Дополнительные методы для транзакций
+    Route::post('advance-transactions/{transaction}/report', [AdvanceAccountTransactionController::class, 'report'])
+        ->name('advance-transactions.report');
+    
+    Route::post('advance-transactions/{transaction}/approve', [AdvanceAccountTransactionController::class, 'approve'])
+        ->name('advance-transactions.approve');
+    
+    Route::post('advance-transactions/{transaction}/attachments', [AdvanceAccountTransactionController::class, 'attachFiles'])
+        ->name('advance-transactions.attach-files');
+    
+    Route::delete('advance-transactions/{transaction}/attachments/{fileId}', [AdvanceAccountTransactionController::class, 'detachFile'])
+        ->name('advance-transactions.detach-file');
+
+    // Работа с балансом пользователей
+    Route::get('users/{user}/advance-balance', [UserController::class, 'getAdvanceBalance'])
+        ->name('users.advance-balance');
+    
+    Route::get('users/{user}/advance-transactions', [UserController::class, 'getAdvanceTransactions'])
+        ->name('users.advance-transactions');
+    
+    Route::post('users/{user}/issue-funds', [UserController::class, 'issueFunds'])
+        ->name('users.issue-funds');
+    
+    Route::post('users/{user}/return-funds', [UserController::class, 'returnFunds'])
+        ->name('users.return-funds');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Маршруты API для отчетов по подотчетным средствам
+    |--------------------------------------------------------------------------
+    */
+    
+    Route::prefix('reports/advance-accounts')->name('reports.advance-accounts.')->group(function () {
+        Route::get('/summary', [\App\Http\Controllers\Api\AdvanceAccountReportController::class, 'summary'])
+            ->name('summary');
+        
+        Route::get('/users/{userId}', [\App\Http\Controllers\Api\AdvanceAccountReportController::class, 'userReport'])
+            ->name('user');
+        
+        Route::get('/projects/{projectId}', [\App\Http\Controllers\Api\AdvanceAccountReportController::class, 'projectReport'])
+            ->name('project');
+        
+        Route::get('/overdue', [\App\Http\Controllers\Api\AdvanceAccountReportController::class, 'overdueReport'])
+            ->name('overdue');
+        
+        Route::get('/export/{format}', [\App\Http\Controllers\Api\AdvanceAccountReportController::class, 'export'])
+            ->name('export');
+    });
+
+    /*
+    |--------------------------------------------------------------------------
+    | Маршруты API для интеграции с бухгалтерскими системами
+    |--------------------------------------------------------------------------
+    */
+    
+    Route::prefix('accounting')->name('accounting.')->group(function () {
+        Route::post('/import-users', [\App\Http\Controllers\Api\AccountingIntegrationController::class, 'importUsers'])
+            ->name('import-users');
+        
+        Route::post('/import-projects', [\App\Http\Controllers\Api\AccountingIntegrationController::class, 'importProjects'])
+            ->name('import-projects');
+        
+        Route::post('/import-materials', [\App\Http\Controllers\Api\AccountingIntegrationController::class, 'importMaterials'])
+            ->name('import-materials');
+        
+        Route::post('/export-transactions', [\App\Http\Controllers\Api\AccountingIntegrationController::class, 'exportTransactions'])
+            ->name('export-transactions');
+        
+        Route::get('/sync-status', [\App\Http\Controllers\Api\AccountingIntegrationController::class, 'getSyncStatus'])
+            ->name('sync-status');
+    });
+});
