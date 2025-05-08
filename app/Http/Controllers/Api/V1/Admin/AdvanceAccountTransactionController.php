@@ -11,6 +11,10 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\ResourceCollection;
 use Illuminate\Support\Facades\Auth;
+use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\CreateAdvanceTransactionRequest;
+use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\UpdateAdvanceTransactionRequest;
+use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\TransactionReportRequest;
+use App\Http\Requests\Api\V1\Admin\AdvanceTransaction\TransactionApprovalRequest;
 
 class AdvanceAccountTransactionController extends Controller
 {
@@ -137,25 +141,15 @@ class AdvanceAccountTransactionController extends Controller
     /**
      * Создать новую транзакцию подотчетных средств.
      *
-     * @param Request $request
+     * @param CreateAdvanceTransactionRequest $request
      * @return JsonResponse
      */
-    public function store(Request $request): JsonResponse
+    public function store(CreateAdvanceTransactionRequest $request): JsonResponse
     {
-        // Валидация запроса
-        $request->validate([
-            'user_id' => 'required|exists:users,id',
-            'organization_id' => 'required|exists:organizations,id',
-            'project_id' => 'nullable|exists:projects,id',
-            'type' => 'required|in:issue,expense,return',
-            'amount' => 'required|numeric|min:0.01',
-            'description' => 'nullable|string|max:255',
-            'document_number' => 'nullable|string|max:100',
-            'document_date' => 'nullable|date',
-        ]);
+        // Валидация запроса происходит в CreateAdvanceTransactionRequest
 
         try {
-            $transaction = $this->advanceService->createTransaction($request->all());
+            $transaction = $this->advanceService->createTransaction($request->validated());
             
             return response()->json([
                 'success' => true,
@@ -173,11 +167,11 @@ class AdvanceAccountTransactionController extends Controller
     /**
      * Обновить транзакцию подотчетных средств.
      *
-     * @param Request $request
+     * @param UpdateAdvanceTransactionRequest $request
      * @param AdvanceAccountTransaction $transaction
      * @return JsonResponse
      */
-    public function update(Request $request, AdvanceAccountTransaction $transaction): JsonResponse
+    public function update(UpdateAdvanceTransactionRequest $request, AdvanceAccountTransaction $transaction): JsonResponse
     {
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
@@ -187,17 +181,10 @@ class AdvanceAccountTransactionController extends Controller
             ], 404);
         }
 
-        // Валидация запроса
-        $request->validate([
-            'description' => 'nullable|string|max:255',
-            'document_number' => 'nullable|string|max:100',
-            'document_date' => 'nullable|date',
-            'external_code' => 'nullable|string|max:100',
-            'accounting_data' => 'nullable|array',
-        ]);
+        // Валидация запроса происходит в UpdateAdvanceTransactionRequest
 
         try {
-            $updatedTransaction = $this->advanceService->updateTransaction($transaction, $request->all());
+            $updatedTransaction = $this->advanceService->updateTransaction($transaction, $request->validated());
             
             return response()->json([
                 'success' => true,
@@ -246,11 +233,11 @@ class AdvanceAccountTransactionController extends Controller
     /**
      * Отметить транзакцию как отчитанную.
      *
-     * @param Request $request
+     * @param TransactionReportRequest $request
      * @param AdvanceAccountTransaction $transaction
      * @return JsonResponse
      */
-    public function report(Request $request, AdvanceAccountTransaction $transaction): JsonResponse
+    public function report(TransactionReportRequest $request, AdvanceAccountTransaction $transaction): JsonResponse
     {
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
@@ -260,17 +247,10 @@ class AdvanceAccountTransactionController extends Controller
             ], 404);
         }
 
-        // Валидация запроса
-        $request->validate([
-            'description' => 'required|string|max:255',
-            'document_number' => 'required|string|max:100',
-            'document_date' => 'required|date',
-            'files' => 'nullable|array',
-            'files.*' => 'file|max:10240',
-        ]);
+        // Валидация запроса происходит в TransactionReportRequest
 
         try {
-            $reportedTransaction = $this->advanceService->reportTransaction($transaction, $request->all());
+            $reportedTransaction = $this->advanceService->reportTransaction($transaction, $request->validated());
             
             return response()->json([
                 'success' => true,
@@ -288,11 +268,11 @@ class AdvanceAccountTransactionController extends Controller
     /**
      * Утвердить отчет по транзакции.
      *
-     * @param Request $request
+     * @param TransactionApprovalRequest $request
      * @param AdvanceAccountTransaction $transaction
      * @return JsonResponse
      */
-    public function approve(Request $request, AdvanceAccountTransaction $transaction): JsonResponse
+    public function approve(TransactionApprovalRequest $request, AdvanceAccountTransaction $transaction): JsonResponse
     {
         // Проверяем, что транзакция принадлежит организации пользователя
         if ($transaction->organization_id !== Auth::user()->current_organization_id) {
@@ -302,13 +282,10 @@ class AdvanceAccountTransactionController extends Controller
             ], 404);
         }
 
-        // Валидация запроса
-        $request->validate([
-            'accounting_data' => 'nullable|array',
-        ]);
+        // Валидация запроса происходит в TransactionApprovalRequest
 
         try {
-            $approvedTransaction = $this->advanceService->approveTransaction($transaction, $request->all());
+            $approvedTransaction = $this->advanceService->approveTransaction($transaction, $request->validated());
             
             return response()->json([
                 'success' => true,
