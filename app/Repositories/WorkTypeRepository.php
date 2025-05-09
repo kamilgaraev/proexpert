@@ -42,7 +42,8 @@ class WorkTypeRepository extends BaseRepository implements WorkTypeRepositoryInt
         string $sortDirection = 'asc'
     ): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
-        $query = $this->model->where('organization_id', $organizationId);
+        $query = $this->model->where('organization_id', $organizationId)
+                              ->with('measurementUnit');
 
         // Фильтры
         if (!empty($filters['name'])) {
