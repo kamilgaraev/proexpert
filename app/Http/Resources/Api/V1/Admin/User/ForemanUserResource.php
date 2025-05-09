@@ -45,6 +45,7 @@ class ForemanUserResource extends JsonResource
             'email' => $this->resource->email,
             'phone' => $this->resource->phone ?? null, // Добавляем телефон
             'position' => $this->resource->position ?? null, // Добавляем должность
+            'avatar_url' => $this->resource->avatar_url, // Добавляем URL аватара
             'is_active' => (bool) $this->resource->is_active, // Возвращаем глобальный статус
             // 'isActiveInOrg' => $isActiveInOrg, // Убрали
             'createdAt' => $this->resource->created_at,
