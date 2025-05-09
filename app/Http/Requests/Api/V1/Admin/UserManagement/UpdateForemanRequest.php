@@ -27,7 +27,7 @@ class UpdateForemanRequest extends FormRequest
             'password' => ['nullable', 'confirmed', Password::defaults()], // Пароль опционален и требует подтверждения
             'phone' => ['sometimes', 'nullable', 'string', 'regex:/^\+?[0-9\s\-\(\)]{7,20}$/'],
             'position' => ['sometimes', 'nullable', 'string', 'max:255'],
-            'avatar' => ['sometimes', 'nullable', 'image', 'mimes:jpg,jpeg,png', 'max:2048'], // 2MB Max
+            'avatar' => ['sometimes', 'nullable', 'file', 'mimetypes:image/jpeg,image/png,image/jpg', 'mimes:jpeg,png,jpg', 'max:2048'], // 2MB Max
             'remove_avatar' => ['sometimes', 'boolean'],
             // Можно добавить поле для активации/деактивации пользователя в организации
             // 'is_active_in_org' => ['sometimes', 'boolean'] 

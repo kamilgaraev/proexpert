@@ -83,7 +83,7 @@ class LogViewingService
     public function getMaterialUsageLogs(Request $request): LengthAwarePaginator
     {
         $organizationId = $this->getCurrentOrgId($request);
-        $params = $this->prepareLogRequestParams($request, ['project_id', 'material_id', 'user_id', 'date_from', 'date_to']);
+        $params = $this->prepareLogRequestParams($request, ['project_id', 'material_id', 'user_id', 'date_from', 'date_to', 'operation_type']);
 
         return $this->materialLogRepo->getPaginatedLogs(
             $organizationId,
