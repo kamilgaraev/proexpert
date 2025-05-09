@@ -12,6 +12,7 @@ use App\Repositories\Interfaces\SupplierRepositoryInterface;
 use App\Repositories\Interfaces\RoleRepositoryInterface;
 use App\Repositories\Interfaces\Log\MaterialUsageLogRepositoryInterface;
 use App\Repositories\Interfaces\Log\WorkCompletionLogRepositoryInterface;
+use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
 use App\Repositories\MaterialRepository;
 use App\Repositories\OrganizationRepository;
 use App\Repositories\ProjectRepository;
@@ -22,6 +23,7 @@ use App\Repositories\UserRepository;
 use App\Repositories\WorkTypeRepository;
 use App\Repositories\Log\MaterialUsageLogRepository;
 use App\Repositories\Log\WorkCompletionLogRepository;
+use App\Repositories\Eloquent\EloquentMeasurementUnitRepository;
 use Illuminate\Support\ServiceProvider;
 
 class RepositoryServiceProvider extends ServiceProvider
@@ -43,6 +45,10 @@ class RepositoryServiceProvider extends ServiceProvider
         $this->app->bind(RoleRepositoryInterface::class, RoleRepository::class);
         $this->app->bind(MaterialUsageLogRepositoryInterface::class, MaterialUsageLogRepository::class);
         $this->app->bind(WorkCompletionLogRepositoryInterface::class, WorkCompletionLogRepository::class);
+        
+        // Привязка для MeasurementUnitRepository
+        $this->app->bind(MeasurementUnitRepositoryInterface::class, EloquentMeasurementUnitRepository::class);
+        
         // Добавить другие репозитории по мере необходимости
     }
 
