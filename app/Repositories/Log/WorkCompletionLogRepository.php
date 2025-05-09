@@ -19,6 +19,28 @@ class WorkCompletionLogRepository extends BaseRepository implements WorkCompleti
         parent::__construct(WorkCompletionLog::class);
     }
 
+    // Implementations for methods from the old RepositoryInterface
+    public function all(array $columns = ['*']): Collection
+    {
+        return parent::getAll($columns);
+    }
+
+    public function find(int $id, array $columns = ['*']): ?WorkCompletionLog // Уточняем тип
+    {
+        return parent::findById($id, $columns);
+    }
+
+    public function findBy(string $field, mixed $value, array $columns = ['*']): Collection
+    {
+        return $this->model->where($field, $value)->get($columns);
+    }
+
+    public function delete(int $id): bool
+    {
+        return parent::deleteById($id);
+    }
+    // End of RepositoryInterface methods
+
     /**
      * Получить агрегированные данные по выполненным работам.
      *

@@ -4,6 +4,8 @@ namespace App\Repositories;
 
 use App\Models\WorkType;
 use App\Repositories\Interfaces\WorkTypeRepositoryInterface;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 
 class WorkTypeRepository extends BaseRepository implements WorkTypeRepositoryInterface
 {
@@ -62,4 +64,26 @@ class WorkTypeRepository extends BaseRepository implements WorkTypeRepositoryInt
         // Пагинация
         return $query->paginate($perPage);
     }
+
+    // Implementations for methods from the old RepositoryInterface
+    public function all(array $columns = ['*']): Collection
+    {
+        return parent::getAll($columns);
+    }
+
+    public function find(int $id, array $columns = ['*']): ?WorkType
+    {
+        return parent::findById($id, $columns);
+    }
+
+    public function findBy(string $field, mixed $value, array $columns = ['*']): Collection
+    {
+        return $this->model->where($field, $value)->get($columns);
+    }
+
+    public function delete(int $id): bool
+    {
+        return parent::deleteById($id);
+    }
+    // End of RepositoryInterface methods
 } 

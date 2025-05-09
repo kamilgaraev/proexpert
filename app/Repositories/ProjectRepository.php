@@ -18,6 +18,28 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
         parent::__construct(Project::class); // Передаем имя класса
     }
 
+    // Implementations for methods from the old RepositoryInterface
+    public function all(array $columns = ['*']): Collection
+    {
+        return parent::getAll($columns);
+    }
+
+    public function find(int $id, array $columns = ['*']): ?Project // Уточняем тип
+    {
+        return parent::findById($id, $columns);
+    }
+
+    public function findBy(string $field, mixed $value, array $columns = ['*']): Collection
+    {
+        return $this->model->where($field, $value)->get($columns);
+    }
+
+    public function delete(int $id): bool
+    {
+        return parent::deleteById($id);
+    }
+    // End of RepositoryInterface methods
+
     /**
      * Получить проекты для определенной организации
      *
