@@ -24,30 +24,32 @@ class WorkTypeService
      */
     protected function getCurrentOrgId(Request $request): int
     {
-        /** @var \App\Models\User|null $user */
         $user = $request->user(); 
         $organizationId = $request->attributes->get('current_organization_id');
+        Log::debug('[WorkTypeService@getCurrentOrgId] Attempting to get org ID from request attributes.', ['attr_org_id' => $organizationId]);
+        
         if (!$organizationId && $user) {
             $organizationId = $user->current_organization_id;
+            Log::debug('[WorkTypeService@getCurrentOrgId] Org ID from user object.', ['user_org_id' => $organizationId]);
         }
+        
         if (!$organizationId) {
-            Log::error('Failed to determine organization context in WorkTypeService', ['user_id' => $user?->id, 'request_attributes' => $request->attributes->all()]);
+            Log::error('[WorkTypeService@getCurrentOrgId] Failed to determine organization context.', ['user_id' => $user?->id, 'request_attributes' => $request->attributes->all()]);
             throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
+        Log::info('[WorkTypeService@getCurrentOrgId] Successfully determined org ID.', ['organization_id' => (int)$organizationId]);
         return (int)$organizationId;
     }
 
     public function getAllWorkTypesForCurrentOrg()
     {
-        $organizationId = Auth::user()->getCurrentOrganizationId();
-        // В базовом репозитории нет метода all для конкретной организации, 
-        // но можно использовать findBy
+        $organizationId = Auth::user()->current_organization_id;
         return $this->workTypeRepository->findBy('organization_id', $organizationId);
     }
 
     public function getActiveWorkTypesForCurrentOrg()
     {
-        $organizationId = Auth::user()->getCurrentOrganizationId();
+        $organizationId = Auth::user()->current_organization_id;
         return $this->workTypeRepository->getActiveWorkTypes($organizationId);
     }
 
@@ -66,72 +68,80 @@ class WorkTypeService
      */
     public function getWorkTypesPaginated(Request $request, int $perPage = 15): LengthAwarePaginator
     {
-        Log::info('[WorkTypeService@getWorkTypesPaginated] Called', [
-            'request_query' => $request->query(),
+        Log::info('[WorkTypeService@getWorkTypesPaginated] Service method CALLED.', [
+            'query_params' => $request->query(),
             'perPage' => $perPage
         ]);
 
         try {
             $organizationId = $this->getCurrentOrgId($request);
-            Log::info('[WorkTypeService@getWorkTypesPaginated] Organization ID determined', ['organization_id' => $organizationId]);
-        } catch (\Throwable $e) {
-            Log::error('[WorkTypeService@getWorkTypesPaginated] Error in getCurrentOrgId', ['error' => $e->getMessage()]);
-            throw $e; // Перебрасываем исключение, чтобы увидеть его в основных логах
-        }
-        
-        $filters = [
-            'name' => $request->query('name'),
-            'category' => $request->query('category'),
-            'is_active' => $request->query('is_active'),
-        ];
-        
-        Log::debug('[WorkTypeService@getWorkTypesPaginated] Raw filters from request', $filters);
+            Log::info('[WorkTypeService@getWorkTypesPaginated] Org ID determined in main method.', ['organization_id' => $organizationId]);
+            
+            $filters = [
+                'name' => $request->query('name'),
+                'category' => $request->query('category'),
+                'is_active' => $request->query('is_active'),
+            ];
+            Log::debug('[WorkTypeService@getWorkTypesPaginated] Raw filters.', $filters);
 
-        if (isset($filters['is_active'])) {
-            $filters['is_active'] = filter_var($filters['is_active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
-        } else {
-             unset($filters['is_active']); 
-        }
-        $processedFilters = array_filter($filters, fn($value) => !is_null($value) && $value !== '');
-        
-        Log::debug('[WorkTypeService@getWorkTypesPaginated] Processed filters', $processedFilters);
+            if (array_key_exists('is_active', $filters) && !is_null($filters['is_active'])) {
+                $filters['is_active'] = filter_var($filters['is_active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            } else {
+                 unset($filters['is_active']); 
+            }
+            $processedFilters = array_filter($filters, fn($value) => !is_null($value) && $value !== '');
+            Log::debug('[WorkTypeService@getWorkTypesPaginated] Processed filters.', $processedFilters);
 
-        $sortBy = $request->query('sort_by', 'name');
-        $sortDirection = $request->query('sort_direction', 'asc');
+            $sortBy = $request->query('sort_by', 'name');
+            $sortDirection = $request->query('sort_direction', 'asc');
+            Log::debug('[WorkTypeService@getWorkTypesPaginated] Sort params.', ['sortBy' => $sortBy, 'sortDirection' => $sortDirection]);
 
-        $allowedSortBy = ['name', 'category', 'created_at', 'updated_at'];
-        if (!in_array(strtolower($sortBy), $allowedSortBy)) {
-            Log::warning('[WorkTypeService@getWorkTypesPaginated] Invalid sort_by provided, defaulting to name.', ['requested_sort_by' => $sortBy]);
-            $sortBy = 'name';
-        }
-        if (!in_array(strtolower($sortDirection), ['asc', 'desc'])) {
-            $sortDirection = 'asc';
-        }
-        
-        Log::info('[WorkTypeService@getWorkTypesPaginated] Calling repository with params', [
-            'organizationId' => $organizationId,
-            'perPage' => $perPage,
-            'filters' => $processedFilters,
-            'sortBy' => $sortBy,
-            'sortDirection' => $sortDirection
-        ]);
+            $allowedSortBy = ['name', 'category', 'created_at', 'updated_at'];
+            if (!in_array(strtolower($sortBy), $allowedSortBy)) {
+                Log::warning('[WorkTypeService@getWorkTypesPaginated] Invalid sort_by, defaulting to name.', ['requested_sort_by' => $sortBy]);
+                $sortBy = 'name';
+            }
+            if (!in_array(strtolower($sortDirection), ['asc', 'desc'])) {
+                $sortDirection = 'asc';
+            }
+            
+            Log::info('[WorkTypeService@getWorkTypesPaginated] PRE-CALL to repository.', [
+                'organizationId' => $organizationId,
+                'perPage' => $perPage,
+                'filters' => $processedFilters,
+                'sortBy' => $sortBy,
+                'sortDirection' => $sortDirection
+            ]);
 
-        try {
             $result = $this->workTypeRepository->getWorkTypesForOrganizationPaginated(
                 $organizationId,
                 $perPage,
-                $processedFilters, // Используем обработанные фильтры
+                $processedFilters,
                 $sortBy,
                 $sortDirection
             );
-            Log::info('[WorkTypeService@getWorkTypesPaginated] Repository call successful');
+            Log::info('[WorkTypeService@getWorkTypesPaginated] POST-CALL to repository. Result type: ' . gettype($result));
+            
+            if ($result instanceof LengthAwarePaginator) {
+                 Log::info('[WorkTypeService@getWorkTypesPaginated] Repository returned LengthAwarePaginator.', ['total' => $result->total(), 'count' => $result->count()]);
+            } else {
+                 Log::warning('[WorkTypeService@getWorkTypesPaginated] Repository DID NOT return LengthAwarePaginator!');
+            }
             return $result;
-        } catch (\Throwable $e) {
-            Log::error('[WorkTypeService@getWorkTypesPaginated] Error calling workTypeRepository', [
-                'error' => $e->getMessage(), 
-                'trace' => $e->getTraceAsString() // Добавляем полный трейс
+
+        } catch (BusinessLogicException $e) { // Для BusinessLogicException логируем и перебрасываем
+            Log::error('[WorkTypeService@getWorkTypesPaginated] BusinessLogicException caught.', ['error' => $e->getMessage(), 'code' => $e->getCode()]);
+            throw $e;
+        } catch (\Throwable $e) { // Для всех остальных исключений — полное логгирование
+            Log::critical('[WorkTypeService@getWorkTypesPaginated] CRITICAL ERROR caught in service method.', [
+                'error_message' => $e->getMessage(), 
+                'error_class' => get_class($e),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
             ]);
-            throw $e; // Важно перебросить исключение, чтобы оно попало в стандартный обработчик Laravel
+            // Бросаем общее исключение, чтобы Laravel вернул 500, но детали уже залогированы
+            throw new BusinessLogicException('Внутренняя ошибка сервера при получении видов работ.', 500, $e);
         }
     }
 
