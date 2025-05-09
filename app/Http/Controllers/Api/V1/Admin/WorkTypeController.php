@@ -25,11 +25,13 @@ class WorkTypeController extends Controller
         Log::info('[WorkTypeController] Constructor FINISHED.');
     }
 
-    public function index(Request $request): AnonymousResourceCollection
+    public function index(Request $request): JsonResponse
     {
+        Log::info('[WorkTypeController@index] Method CALLED.');
         $perPage = $request->query('per_page', 15);
         $workTypes = $this->workTypeService->getWorkTypesPaginated($request, (int)$perPage);
-        return WorkTypeResource::collection($workTypes);
+        Log::info('[WorkTypeController@index] Received from service.', ['workTypes_class' => get_class($workTypes), 'workTypes_total' => $workTypes->total()]);
+        return response()->json($workTypes);
     }
 
     public function store(StoreWorkTypeRequest $request): WorkTypeResource

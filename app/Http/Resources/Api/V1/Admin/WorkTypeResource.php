@@ -14,7 +14,7 @@ class WorkTypeResource extends JsonResource
             'name' => $this->name,
             'category' => $this->category,
             'isActive' => $this->is_active,
-            //'measurementUnit' => new MeasurementUnitResource($this->whenLoaded('measurementUnit')), // Временно закомментировано для отладки
+            'measurementUnit' => new MeasurementUnitResource($this->whenLoaded('measurementUnit')),
             'organizationId' => $this->organization_id,
             'createdAt' => $this->created_at->format('Y-m-d H:i:s'),
             'updatedAt' => $this->updated_at->format('Y-m-d H:i:s'),
