@@ -40,13 +40,15 @@ class AdvanceAccountTransactionController extends Controller
      */
     public function getAvailableUsers(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id');
+        // Берем ID организации из контекста авторизованного пользователя
+        $organizationId = Auth::user()->current_organization_id;
         $search = $request->input('search');
 
         if (!$organizationId) {
+            // Эта ситуация не должна возникать, если middleware отработал корректно
             return response()->json([
                 'success' => false,
-                'message' => 'Organization ID is required'
+                'message' => 'Organization context not found for the user.'
             ], 400);
         }
 
@@ -66,14 +68,16 @@ class AdvanceAccountTransactionController extends Controller
      */
     public function getAvailableProjects(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id');
+        // Берем ID организации из контекста авторизованного пользователя
+        $organizationId = Auth::user()->current_organization_id;
         $userId = $request->input('user_id');
         $search = $request->input('search');
 
         if (!$organizationId) {
+             // Эта ситуация не должна возникать, если middleware отработал корректно
             return response()->json([
                 'success' => false,
-                'message' => 'Organization ID is required'
+                'message' => 'Organization context not found for the user.'
             ], 400);
         }
 
