@@ -255,15 +255,43 @@ class AuthServiceProvider extends ServiceProvider
          * Требует роль System Admin ИЛИ Owner/Admin в текущей организации.
          */
         Gate::define('manage-catalogs', function(User $user, ?int $organizationId = null): bool {
-            if ($user->isSystemAdmin()) {
-                return true;
+            try {
+                if ($user->isSystemAdmin()) {
+                    Log::info('[Gate:manage-catalogs] Access GRANTED for System Admin.', ['user_id' => $user->id]);
+                    return true;
+                }
+                $orgId = $organizationId ?? $user->current_organization_id;
+                if (!$orgId) {
+                    Log::warning('[Gate:manage-catalogs] Access DENIED due to missing organizationId.', ['user_id' => $user->id]);
+                    return false; 
+                }
+                
+                $allowedRoles = [
+                    Role::ROLE_OWNER,
+                    Role::ROLE_ADMIN,
+                    Role::ROLE_ACCOUNTANT,
+                    Role::ROLE_WEB_ADMIN,
+                ];
+                Log::debug('[Gate:manage-catalogs] Checking roles for user.', ['user_id' => $user->id, 'org_id' => $orgId, 'allowed_roles' => $allowedRoles]);
+
+                foreach ($allowedRoles as $roleSlug) {
+                    if ($user->hasRole($roleSlug, $orgId)) {
+                        Log::info('[Gate:manage-catalogs] Access GRANTED for user via role.', ['user_id' => $user->id, 'role_slug' => $roleSlug, 'org_id' => $orgId]);
+                        return true;
+                    }
+                }
+                Log::warning('[Gate:manage-catalogs] Access DENIED for user. No matching role found.', ['user_id' => $user->id, 'org_id' => $orgId, 'checked_roles' => $allowedRoles]);
+                return false;
+            } catch (\Throwable $e) {
+                Log::error('[Gate:manage-catalogs] Exception caught inside Gate definition!', [
+                    'user_id' => $user->id,
+                    'passed_organization_id' => $organizationId,
+                    'message' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                ]);
+                return false; // В случае ошибки не даем доступ
             }
-            $orgId = $organizationId ?? $user->current_organization_id;
-            if (!$orgId) {
-                return false; // Нет контекста организации
-            }
-            // Используем ту же логику, что и для manage-foremen
-            return $user->hasRole(Role::ROLE_OWNER, $orgId) || $user->hasRole(Role::ROLE_ADMIN, $orgId);
         });
 
         /**
