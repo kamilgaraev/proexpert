@@ -10,9 +10,9 @@ use Illuminate\Support\Facades\DB;
 
 class ReportTemplateRepository extends BaseRepository implements ReportTemplateRepositoryInterface
 {
-    public function __construct(ReportTemplate $model)
+    public function __construct()
     {
-        parent::__construct($model);
+        parent::__construct(ReportTemplate::class);
     }
 
     public function getPaginatedTemplatesForOrganization(int $organizationId, Request $request, int $perPage): LengthAwarePaginator
