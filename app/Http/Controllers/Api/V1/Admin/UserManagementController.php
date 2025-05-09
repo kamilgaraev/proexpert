@@ -53,7 +53,25 @@ class UserManagementController extends Controller
     public function store(StoreForemanRequest $request): ForemanUserResource | JsonResponse
     {
         try {
+            // Сначала создаем пользователя через сервис
+            // $request->validated() уже будет содержать phone и position, если они были переданы
             $foreman = $this->userService->createForeman($request->validated(), $request);
+
+            // Обработка загрузки аватара, если файл был передан
+            if ($request->hasFile('avatar') && $request->file('avatar')->isValid()) {
+                // Используем метод uploadImage из трейта HasImages
+                // 'avatar_path' - имя атрибута в модели User для хранения пути к файлу
+                // 'avatars' - директория в S3 (или другом сконфигурированном диске)
+                // 'public' - видимость файла
+                if ($foreman->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'public')) {
+                    $foreman->save(); // Сохраняем модель User с обновленным avatar_path
+                } else {
+                    // Логируем ошибку, если загрузка не удалась, но не прерываем процесс,
+                    // так как пользователь уже создан. Можно добавить более сложную логику отката.
+                    Log::error('[UserManagementController@store] Failed to upload avatar for user.', ['user_id' => $foreman->id]);
+                }
+            }
+
             // Загружаем pivot данные для ресурса, если пользователь успешно создан
             $foreman->load('organizations'); 
             return new ForemanUserResource($foreman);
@@ -110,7 +128,42 @@ class UserManagementController extends Controller
     public function update(UpdateForemanRequest $request, string $id): ForemanUserResource | JsonResponse
     {
         try {
+            // Сначала получаем пользователя, затем обновляем его данные из $request->validated()
+            // $this->userService->updateForeman должен возвращать модель User
             $foreman = $this->userService->updateForeman((int)$id, $request->validated(), $request);
+            
+            if (!$foreman) {
+                 return response()->json(['success' => false, 'message' => 'Прораб не найден или не удалось обновить основные данные.'], 404);
+            }
+
+            $avatarChanged = false;
+
+            // Обработка удаления аватара
+            if ($request->has('remove_avatar') && $request->boolean('remove_avatar')) {
+                if ($foreman->deleteImage('avatar_path')) {
+                    $avatarChanged = true;
+                } else {
+                    Log::warning('[UserManagementController@update] Failed to delete avatar from storage for user.', ['user_id' => $foreman->id]);
+                    // Можно решить, является ли это критической ошибкой и возвращать JsonResponse с ошибкой
+                }
+            } 
+            // Загрузка нового аватара (только если не было запроса на удаление)
+            // или если remove_avatar = false и пришел новый файл
+            else if ($request->hasFile('avatar') && $request->file('avatar')->isValid()) {
+                if ($foreman->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'public')) {
+                    $avatarChanged = true;
+                } else {
+                    Log::error('[UserManagementController@update] Failed to upload new avatar for user.', ['user_id' => $foreman->id]);
+                    // Можно вернуть ошибку, если загрузка аватара критична
+                    return response()->json(['success' => false, 'message' => 'Не удалось загрузить новый аватар.'], 500);
+                }
+            }
+
+            // Если аватар менялся, сохраняем модель
+            if ($avatarChanged) {
+                $foreman->save();
+            }
+
             // Загружаем pivot данные для ресурса
             $foreman->load('organizations');
             return new ForemanUserResource($foreman);
