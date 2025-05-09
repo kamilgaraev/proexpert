@@ -5,6 +5,7 @@ namespace App\Http\Requests\Api\V1\Admin\WorkType;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Auth;
 
 class StoreWorkTypeRequest extends FormRequest
 {
@@ -16,14 +17,16 @@ class StoreWorkTypeRequest extends FormRequest
 
     public function rules(): array
     {
-        // Получаем ID организации из атрибутов запроса (установленных middleware)
-        $organizationId = $this->attributes->get('organization_id');
+        // Получаем ID организации из аутентифицированного пользователя
+        $organizationId = Auth::user()->current_organization_id;
+
         if (!$organizationId) {
-             // Если ID организации не определен, валидация не должна пройти
-             // Можно добавить правило, которое всегда провалится, или вернуть пустой массив,
-             // но лучше выбрасывать исключение или проверять в authorize 
-             // (хотя authorize уже должен отсечь по Gate)
-             return []; 
+            // Эта ситуация не должна происходить, если пользователь аутентифицирован
+            // и middleware OrganizationContext отработал правильно.
+            // Возвращаем правило, которое всегда провалит валидацию, если ID организации не определен.
+            return [
+                'organization_id' => 'required' // Это вызовет ошибку валидации, если organization_id не будет найден
+            ];
         }
 
         return [
@@ -40,6 +43,26 @@ class StoreWorkTypeRequest extends FormRequest
             'measurement_unit_id' => 'required|integer|exists:measurement_units,id',
             'category' => 'nullable|string|max:100',
             'is_active' => 'sometimes|boolean',
+            // Добавляем неявные поля, которые могут приходить от фронтенда, но не должны сохраняться напрямую
+            // или должны быть обработаны отдельно в контроллере/сервисе, если они нужны.
+            // 'description' => 'nullable|string', 
+            // 'external_code' => 'nullable|string|max:255',
+        ];
+    }
+
+    /**
+     * Сообщения для правил валидации.
+     *
+     * @return array
+     */
+    public function messages(): array
+    {
+        return [
+            'name.required' => 'Название вида работ обязательно для заполнения.',
+            'name.unique' => 'Вид работ с таким названием уже существует в вашей организации.',
+            'measurement_unit_id.required' => 'Необходимо указать единицу измерения.',
+            'measurement_unit_id.exists' => 'Выбранная единица измерения не существует.',
+            'organization_id.required' => 'Не удалось определить организацию. Обратитесь к администратору.' // Сообщение для случая, если $organizationId не определен
         ];
     }
 } 
