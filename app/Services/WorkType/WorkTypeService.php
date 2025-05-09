@@ -16,7 +16,9 @@ class WorkTypeService
 
     public function __construct(WorkTypeRepositoryInterface $workTypeRepository)
     {
+        Log::info('[WorkTypeService] Constructor CALLED.');
         $this->workTypeRepository = $workTypeRepository;
+        Log::info('[WorkTypeService] Constructor FINISHED.');
     }
 
     /**

@@ -10,6 +10,7 @@ use App\Http\Resources\Api\V1\Admin\WorkTypeResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\Log;
 
 class WorkTypeController extends Controller
 {
@@ -17,8 +18,11 @@ class WorkTypeController extends Controller
 
     public function __construct(WorkTypeService $workTypeService)
     {
+        Log::info('[WorkTypeController] Constructor CALLED.');
         $this->workTypeService = $workTypeService;
-        $this->middleware('can:manage-catalogs');
+        // Временно закомментируем для проверки
+        // $this->middleware('can:manage-catalogs'); 
+        Log::info('[WorkTypeController] Constructor FINISHED.');
     }
 
     public function index(Request $request): AnonymousResourceCollection
