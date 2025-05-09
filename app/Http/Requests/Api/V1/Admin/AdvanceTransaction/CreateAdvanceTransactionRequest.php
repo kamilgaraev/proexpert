@@ -26,7 +26,6 @@ class CreateAdvanceTransactionRequest extends FormRequest
     {
         return [
             'user_id' => 'required|exists:users,id',
-            'organization_id' => 'required|exists:organizations,id',
             'project_id' => 'nullable|exists:projects,id',
             'type' => 'required|in:issue,expense,return',
             'amount' => 'required|numeric|min:0.01',

@@ -146,9 +146,18 @@ class AdvanceAccountTransactionController extends Controller
     public function store(CreateAdvanceTransactionRequest $request): JsonResponse | AdvanceTransactionResource
     {
         // Валидация запроса происходит в CreateAdvanceTransactionRequest
+        $validatedData = $request->validated();
 
         try {
-            $transaction = $this->advanceService->createTransaction($request->validated());
+            // Явно добавляем ID организации из контекста пользователя
+            $validatedData['organization_id'] = Auth::user()->current_organization_id;
+            if (empty($validatedData['organization_id'])) {
+                 // Эта ошибка не должна возникать при правильной работе middleware
+                 throw new \Exception('Could not determine organization context for the current user.');
+            }
+
+            // Передаем данные в сервис
+            $transaction = $this->advanceService->createTransaction($validatedData);
             
             // Загружаем связи перед возвратом через ресурс
             $transaction->load(['user', 'project', 'createdBy']); 
