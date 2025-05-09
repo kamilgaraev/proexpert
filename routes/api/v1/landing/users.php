@@ -23,7 +23,6 @@ Route::middleware(['auth:api_landing', 'role:organization_owner|organization_adm
     ->prefix('adminPanelUsers') // Новый префикс
     ->name('adminPanelUsers.')  // Новый неймспейс имен
     ->group(function () {
-        // Пока добавляем только создание. GET, PUT, DELETE можно добавить по аналогии, если нужно.
         Route::post('/', [AdminPanelUserController::class, 'store'])->name('store');
         Route::get('/', [AdminPanelUserController::class, 'index'])->name('index');
         Route::get('/{user}', [AdminPanelUserController::class, 'show'])->name('show');
