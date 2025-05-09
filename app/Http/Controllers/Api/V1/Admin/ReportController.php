@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 // use Illuminate\Http\Request; // Убираем
 use Illuminate\Http\JsonResponse;
 use App\Services\Report\ReportService;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 // Импортируем созданные Request классы
 use App\Http\Requests\Api\V1\Admin\Report\MaterialUsageReportRequest;
@@ -28,21 +29,31 @@ class ReportController extends Controller
     /**
      * Отчет по расходу материалов на объектах.
      */
-    public function materialUsageReport(MaterialUsageReportRequest $request): JsonResponse
+    public function materialUsageReport(MaterialUsageReportRequest $request): JsonResponse | StreamedResponse
     {
         // TODO: Получить фильтры (project_id, date_from, date_to, material_id)
-        $reportData = $this->reportService->getMaterialUsageReport($request);
-        return response()->json($reportData);
+        $reportOutput = $this->reportService->getMaterialUsageReport($request);
+
+        if ($reportOutput instanceof StreamedResponse) {
+            return $reportOutput;
+        }
+
+        return response()->json($reportOutput);
     }
 
     /**
      * Отчет по выполненным работам.
      */
-    public function workCompletionReport(WorkCompletionReportRequest $request): JsonResponse
+    public function workCompletionReport(WorkCompletionReportRequest $request): JsonResponse | StreamedResponse
     {
         // TODO: Получить фильтры (project_id, date_from, date_to, work_type_id)
-        $reportData = $this->reportService->getWorkCompletionReport($request);
-        return response()->json($reportData);
+        $reportOutput = $this->reportService->getWorkCompletionReport($request);
+
+        if ($reportOutput instanceof StreamedResponse) {
+            return $reportOutput;
+        }
+
+        return response()->json($reportOutput);
     }
 
     /**

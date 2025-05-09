@@ -155,6 +155,9 @@ Route::prefix('admin')->name('admin.')->group(function () {
         if (file_exists(__DIR__ . '/api/v1/admin/reports.php')) {
             require __DIR__ . '/api/v1/admin/reports.php';
         }
+        if (file_exists(__DIR__ . '/api/v1/admin/report_templates.php')) {
+            require __DIR__ . '/api/v1/admin/report_templates.php';
+        }
         // Подключаем маршруты для подотчетных средств
         if (file_exists(__DIR__ . '/api/v1/admin/advance_transactions.php')) {
             require __DIR__ . '/api/v1/admin/advance_transactions.php';

@@ -2,9 +2,11 @@
 
 namespace App\Repositories;
 
+use App\Repositories\Interfaces\BaseRepositoryInterface;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Collection;
 
-abstract class BaseRepository implements RepositoryInterface
+class BaseRepository implements BaseRepositoryInterface
 {
     protected Model $model;
 
@@ -22,44 +24,33 @@ abstract class BaseRepository implements RepositoryInterface
         }
     }
 
-    public function all(array $columns = ['*'])
+    public function getAll(array $columns = ['*'], array $relations = []): Collection
     {
-        return $this->model->all($columns);
+        return $this->model->with($relations)->get($columns);
     }
 
-    public function find(int $id, array $columns = ['*'])
+    public function findById(int $modelId, array $columns = ['*'], array $relations = [], array $appends = []): ?Model
     {
-        return $this->model->find($id, $columns);
+        return $this->model->with($relations)->find($modelId, $columns)?->append($appends);
     }
 
-    public function findBy(string $field, mixed $value, array $columns = ['*'])
+    public function create(array $payload): ?Model
     {
-        return $this->model->where($field, $value)->get($columns);
+        $model = $this->model->create($payload);
+        return $model->fresh();
     }
 
-    public function findOneBy(string $field, mixed $value, array $columns = ['*'])
+    public function update(int $modelId, array $payload): bool
     {
-        return $this->model->where($field, $value)->first($columns);
-    }
-
-    public function create(array $data)
-    {
-        return $this->model->create($data);
-    }
-
-    public function update(int $id, array $data)
-    {
-        $record = $this->find($id);
-        
-        if (!$record) {
+        $model = $this->findById($modelId);
+        if (!$model) {
             return false;
         }
-        
-        return $record->update($data);
+        return $model->update($payload);
     }
 
-    public function delete(int $id)
+    public function deleteById(int $modelId): bool
     {
-        return $this->model->destroy($id);
+        return $this->findById($modelId)?->delete() ?? false;
     }
 } 

@@ -6,6 +6,7 @@ use App\Repositories\Interfaces\Log\MaterialUsageLogRepositoryInterface;
 use App\Repositories\Interfaces\Log\WorkCompletionLogRepositoryInterface;
 use App\Repositories\Interfaces\ProjectRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
+use App\Services\Export\CsvExporterService;
 use App\Models\User;
 use App\Models\Role;
 use Illuminate\Http\Request;
@@ -15,6 +16,9 @@ use Carbon\Carbon;
 use App\Exceptions\BusinessLogicException;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use App\Services\Report\ReportTemplateService;
+use App\Models\ReportTemplate;
 
 class ReportService
 {
@@ -22,17 +26,23 @@ class ReportService
     protected WorkCompletionLogRepositoryInterface $workLogRepo;
     protected ProjectRepositoryInterface $projectRepo;
     protected UserRepositoryInterface $userRepo;
+    protected CsvExporterService $csvExporter;
+    protected ReportTemplateService $reportTemplateService;
 
     public function __construct(
         MaterialUsageLogRepositoryInterface $materialLogRepo,
         WorkCompletionLogRepositoryInterface $workLogRepo,
         ProjectRepositoryInterface $projectRepo,
-        UserRepositoryInterface $userRepo
+        UserRepositoryInterface $userRepo,
+        CsvExporterService $csvExporter,
+        ReportTemplateService $reportTemplateService
     ) {
         $this->materialLogRepo = $materialLogRepo;
         $this->workLogRepo = $workLogRepo;
         $this->projectRepo = $projectRepo;
         $this->userRepo = $userRepo;
+        $this->csvExporter = $csvExporter;
+        $this->reportTemplateService = $reportTemplateService;
     }
 
     /**
@@ -80,42 +90,156 @@ class ReportService
         return $filters;
     }
 
+    private function getColumnMappingFromTemplate(?ReportTemplate $template, array $defaultMapping): array
+    {
+        if ($template && !empty($template->columns_config)) {
+            $mappedColumns = [];
+            // Сортируем колонки по полю order
+            $sortedColumns = collect($template->columns_config)->sortBy('order')->values();
+            foreach ($sortedColumns as $column) {
+                if (isset($column['header']) && isset($column['data_key'])) {
+                    $mappedColumns[$column['header']] = $column['data_key'];
+                }
+            }
+            return $mappedColumns;
+        }
+        return $defaultMapping; // Возвращаем маппинг по умолчанию, если шаблон не найден или пуст
+    }
+
     /**
      * Отчет по расходу материалов.
+     * @return array|StreamedResponse
      */
-    public function getMaterialUsageReport(Request $request): array
+    public function getMaterialUsageReport(Request $request): array | StreamedResponse
     {
         $organizationId = $this->getCurrentOrgId($request);
-        $filters = $this->prepareReportFilters($request, ['project_id', 'material_id', 'user_id', 'date_from', 'date_to']);
+        $filters = $this->prepareReportFilters($request, ['project_id', 'material_id', 'user_id', 'date_from', 'date_to', 'operation_type']);
+        $templateId = $request->query('template_id') ? (int)$request->query('template_id') : null;
 
-        Log::info('Generating Material Usage Report', ['org_id' => $organizationId, 'filters' => $filters]);
+        Log::info('Generating Material Usage Report', [
+            'org_id' => $organizationId, 
+            'filters' => $filters, 
+            'format' => $request->query('format'),
+            'template_id' => $templateId
+        ]);
 
-        $reportData = $this->materialLogRepo->getAggregatedUsage($organizationId, $filters);
+        $allLogsPaginator = $this->materialLogRepo->getPaginatedLogs(
+            $organizationId,
+            $request->query('format') === 'csv' ? 100000 : $request->query('per_page', 15),
+            $filters,
+            $request->query('sort_by', 'usage_date'),
+            $request->query('sort_direction', 'desc')
+        );
+        $logEntries = collect($allLogsPaginator->items());
 
+        if ($request->query('format') === 'csv') {
+            $reportTemplate = $this->reportTemplateService->getTemplateForReport('material_usage', $request, $templateId);
+            
+            $defaultColumnMapping = [
+                'Дата операции' => 'usage_date',
+                'Проект' => 'project.name',
+                'Материал' => 'material.name',
+                'Ед. изм.' => 'material.measurementUnit.symbol',
+                'Тип операции' => 'operation_type',
+                'Количество' => 'quantity',
+                'Цена за ед.' => 'unit_price',
+                'Сумма' => 'total_price',
+                'Поставщик' => 'supplier.name',
+                'Документ' => 'document_number',
+                'Исполнитель' => 'user.name',
+                'Примечание' => 'notes',
+                'Дата создания записи' => 'created_at',
+            ];
+            
+            $columnMapping = $this->getColumnMappingFromTemplate($reportTemplate, $defaultColumnMapping);
+
+            if (empty($columnMapping)) {
+                throw new BusinessLogicException('Не удалось определить колонки для CSV отчета. Проверьте шаблон или маппинг по умолчанию.', 400);
+            }
+
+            $exportable = $this->csvExporter->prepareDataForExport($logEntries, $columnMapping);
+            $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'material_usage_report';
+            return $this->csvExporter->streamDownload($filename . '_' . date('YmdHis'), $exportable['headers'], $exportable['data']);
+        }
+
+        $aggregatedData = $this->materialLogRepo->getAggregatedUsage($organizationId, $filters);
         return [
             'title' => 'Отчет по расходу материалов',
             'filters' => $filters,
-            'data' => $reportData,
+            'data' => $aggregatedData,
+            'pagination' => [
+                'total' => $allLogsPaginator->total(),
+                'per_page' => $allLogsPaginator->perPage(),
+                'current_page' => $allLogsPaginator->currentPage(),
+                'last_page' => $allLogsPaginator->lastPage(),
+            ],
             'generated_at' => Carbon::now(),
         ];
     }
 
     /**
      * Отчет по выполненным работам.
+     * @return array|StreamedResponse
      */
-    public function getWorkCompletionReport(Request $request): array
+    public function getWorkCompletionReport(Request $request): array | StreamedResponse
     {
         $organizationId = $this->getCurrentOrgId($request);
         $filters = $this->prepareReportFilters($request, ['project_id', 'work_type_id', 'user_id', 'date_from', 'date_to']);
+        $templateId = $request->query('template_id') ? (int)$request->query('template_id') : null;
 
-        Log::info('Generating Work Completion Report', ['org_id' => $organizationId, 'filters' => $filters]);
+        Log::info('Generating Work Completion Report', [
+            'org_id' => $organizationId, 
+            'filters' => $filters, 
+            'format' => $request->query('format'),
+            'template_id' => $templateId
+        ]);
 
-        $reportData = $this->workLogRepo->getAggregatedUsage($organizationId, $filters);
+        $allLogsPaginator = $this->workLogRepo->getPaginatedLogs(
+            $organizationId,
+            $request->query('format') === 'csv' ? 100000 : $request->query('per_page', 15),
+            $filters,
+            $request->query('sort_by', 'completion_date'),
+            $request->query('sort_direction', 'desc')
+        );
+        $logEntries = collect($allLogsPaginator->items());
 
+        if ($request->query('format') === 'csv') {
+            $reportTemplate = $this->reportTemplateService->getTemplateForReport('work_completion', $request, $templateId);
+            
+            $defaultColumnMapping = [
+                'Дата выполнения' => 'completion_date',
+                'Проект' => 'project.name',
+                'Вид работы' => 'workType.name',
+                'Ед. изм.' => 'workType.measurementUnit.symbol',
+                'Объем' => 'quantity',
+                'Цена за ед.' => 'unit_price',
+                'Сумма' => 'total_price',
+                'Исполнитель' => 'user.name',
+                'Примечание' => 'notes',
+                'Дата создания записи' => 'created_at',
+            ];
+            $columnMapping = $this->getColumnMappingFromTemplate($reportTemplate, $defaultColumnMapping);
+
+            if (empty($columnMapping)) {
+                throw new BusinessLogicException('Не удалось определить колонки для CSV отчета. Проверьте шаблон или маппинг по умолчанию.', 400);
+            }
+
+            $exportable = $this->csvExporter->prepareDataForExport($logEntries, $columnMapping);
+            $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'work_completion_report';
+            return $this->csvExporter->streamDownload($filename . '_' . date('YmdHis'), $exportable['headers'], $exportable['data']);
+        }
+        
+        $aggregatedData = $this->workLogRepo->getAggregatedUsage($organizationId, $filters);
         return [
             'title' => 'Отчет по выполненным работам',
             'filters' => $filters,
-            'data' => $reportData,
+            'data' => $aggregatedData,
+            'pagination' => [
+                'total' => $allLogsPaginator->total(),
+                'per_page' => $allLogsPaginator->perPage(),
+                'current_page' => $allLogsPaginator->currentPage(),
+                'last_page' => $allLogsPaginator->lastPage(),
+            ],
             'generated_at' => Carbon::now(),
         ];
     }
