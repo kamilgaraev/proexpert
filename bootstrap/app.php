@@ -48,7 +48,6 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $exceptions->renderable(function (\Illuminate\Auth\Access\AuthorizationException $e, $request) {
             if ($request->expectsJson()) {
-                 // Используем стандартный JsonResponse вместо кастомного ErrorResponse для диагностики
                  return response()->json([
                      'success' => false,
                      'message' => $e->getMessage() ?: 'Forbidden.'
@@ -71,15 +70,24 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
         
-        // Обработка всех остальных ошибок для API в production
+        // Обработка всех остальных ошибок для API, когда НЕ в режиме отладки
         $exceptions->renderable(function (\Throwable $e, $request) {
              if ($request->expectsJson() && !app()->hasDebugModeEnabled()) {
-                error_log('[bootstrap/app.php withExceptions] Caught Throwable: ' . $e->getMessage() . "\nStack Trace:\n" . $e->getTraceAsString());
-                report($e); // Логируем ошибку
+                error_log('[bootstrap/app.php withExceptions] Caught Throwable for non-debug API: ' . $e->getMessage() . "\nStack Trace:\n" . $e->getTraceAsString());
+                report($e); // Логируем ошибку стандартным механизмом Laravel
+                
+                // ВРЕМЕННАЯ ЗАМЕНА для диагностики ErrorResponse::send()
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Internal Server Error (diag via direct json)'
+                ], \Symfony\Component\HttpFoundation\Response::HTTP_INTERNAL_SERVER_ERROR);
+                
+                /* Оригинальный код:
                 return new \App\Http\Responses\Api\V1\ErrorResponse(
                     message: 'Internal Server Error',
                     statusCode: \Symfony\Component\HttpFoundation\Response::HTTP_INTERNAL_SERVER_ERROR
                 );
+                */
              }
         });
 

@@ -21,6 +21,36 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         parent::__construct(User::class);
     }
 
+    // Implementations for methods from the old RepositoryInterface
+    public function all(array $columns = ['*']): Collection
+    {
+        return parent::getAll($columns);
+    }
+
+    public function find(int $id, array $columns = ['*']): ?User // Type hint to User for clarity
+    {
+        // BaseRepository::findById returns ?Model, which is compatible.
+        // We cast to ?User for stricter type hinting if desired, or leave as ?Model.
+        return parent::findById($id, $columns);
+    }
+
+    public function findBy(string $field, mixed $value, array $columns = ['*']): Collection
+    {
+        return $this->model->where($field, $value)->get($columns);
+    }
+
+    // create(array $data) - parent::create(array $payload) has same name, different signature.
+    // PHP might not flag as missing abstract IF name matches. Assuming it's not one of the 4.
+
+    // update(int $id, array $data) - parent::update(int $modelId, array $payload) has same name, different signature.
+    // Assuming it's not one of the 4.
+
+    public function delete(int $id): bool
+    {
+        return parent::deleteById($id);
+    }
+    // End of RepositoryInterface methods
+
     public function findByEmail(string $email): ?User
     {
         return $this->model->where('email', $email)->first();
