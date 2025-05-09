@@ -66,38 +66,73 @@ class WorkTypeService
      */
     public function getWorkTypesPaginated(Request $request, int $perPage = 15): LengthAwarePaginator
     {
-        $organizationId = $this->getCurrentOrgId($request);
+        Log::info('[WorkTypeService@getWorkTypesPaginated] Called', [
+            'request_query' => $request->query(),
+            'perPage' => $perPage
+        ]);
+
+        try {
+            $organizationId = $this->getCurrentOrgId($request);
+            Log::info('[WorkTypeService@getWorkTypesPaginated] Organization ID determined', ['organization_id' => $organizationId]);
+        } catch (\Throwable $e) {
+            Log::error('[WorkTypeService@getWorkTypesPaginated] Error in getCurrentOrgId', ['error' => $e->getMessage()]);
+            throw $e; // Перебрасываем исключение, чтобы увидеть его в основных логах
+        }
         
         $filters = [
             'name' => $request->query('name'),
             'category' => $request->query('category'),
             'is_active' => $request->query('is_active'),
         ];
+        
+        Log::debug('[WorkTypeService@getWorkTypesPaginated] Raw filters from request', $filters);
+
         if (isset($filters['is_active'])) {
             $filters['is_active'] = filter_var($filters['is_active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
         } else {
              unset($filters['is_active']); 
         }
-        $filters = array_filter($filters, fn($value) => !is_null($value) && $value !== '');
+        $processedFilters = array_filter($filters, fn($value) => !is_null($value) && $value !== '');
+        
+        Log::debug('[WorkTypeService@getWorkTypesPaginated] Processed filters', $processedFilters);
 
         $sortBy = $request->query('sort_by', 'name');
         $sortDirection = $request->query('sort_direction', 'asc');
 
         $allowedSortBy = ['name', 'category', 'created_at', 'updated_at'];
         if (!in_array(strtolower($sortBy), $allowedSortBy)) {
+            Log::warning('[WorkTypeService@getWorkTypesPaginated] Invalid sort_by provided, defaulting to name.', ['requested_sort_by' => $sortBy]);
             $sortBy = 'name';
         }
         if (!in_array(strtolower($sortDirection), ['asc', 'desc'])) {
             $sortDirection = 'asc';
         }
+        
+        Log::info('[WorkTypeService@getWorkTypesPaginated] Calling repository with params', [
+            'organizationId' => $organizationId,
+            'perPage' => $perPage,
+            'filters' => $processedFilters,
+            'sortBy' => $sortBy,
+            'sortDirection' => $sortDirection
+        ]);
 
-        return $this->workTypeRepository->getWorkTypesForOrganizationPaginated(
-            $organizationId,
-            $perPage,
-            $filters,
-            $sortBy,
-            $sortDirection
-        );
+        try {
+            $result = $this->workTypeRepository->getWorkTypesForOrganizationPaginated(
+                $organizationId,
+                $perPage,
+                $processedFilters, // Используем обработанные фильтры
+                $sortBy,
+                $sortDirection
+            );
+            Log::info('[WorkTypeService@getWorkTypesPaginated] Repository call successful');
+            return $result;
+        } catch (\Throwable $e) {
+            Log::error('[WorkTypeService@getWorkTypesPaginated] Error calling workTypeRepository', [
+                'error' => $e->getMessage(), 
+                'trace' => $e->getTraceAsString() // Добавляем полный трейс
+            ]);
+            throw $e; // Важно перебросить исключение, чтобы оно попало в стандартный обработчик Laravel
+        }
     }
 
     public function createWorkType(array $data, Request $request)
