@@ -299,25 +299,41 @@ class AuthServiceProvider extends ServiceProvider
          * в текущей организации. Бухгалтеру (Accountant) не даем доступ к сырым логам.
          */
         Gate::define('view-operation-logs', function(User $user, ?int $organizationId = null): bool {
-            if ($user->isSystemAdmin()) {
-                return true;
-            }
-            $orgId = $organizationId ?? $user->current_organization_id;
-            if (!$orgId) {
-                return false;
-            }
-            $allowedRoles = [
-                Role::ROLE_OWNER,
-                Role::ROLE_ADMIN,
-                Role::ROLE_WEB_ADMIN,
-                // Role::ROLE_ACCOUNTANT, // Исключаем бухгалтера
-            ];
-            foreach ($allowedRoles as $roleSlug) {
-                if ($user->hasRole($roleSlug, $orgId)) {
+            try {
+                if ($user->isSystemAdmin()) {
                     return true;
                 }
+                $orgId = $organizationId ?? $user->current_organization_id;
+                if (!$orgId) {
+                    Log::warning('[Gate:view-operation-logs] Access denied due to missing organizationId.', ['user_id' => $user->id]);
+                    return false;
+                }
+                $allowedRoles = [
+                    Role::ROLE_OWNER,
+                    Role::ROLE_ADMIN,
+                    Role::ROLE_WEB_ADMIN,
+                ];
+                Log::debug('[Gate:view-operation-logs] Checking roles for user.', ['user_id' => $user->id, 'org_id' => $orgId, 'allowed_roles' => $allowedRoles]);
+                foreach ($allowedRoles as $roleSlug) {
+                    Log::debug('[Gate:view-operation-logs] Checking role.', ['user_id' => $user->id, 'role_slug' => $roleSlug]);
+                    if ($user->hasRole($roleSlug, $orgId)) {
+                        Log::info('[Gate:view-operation-logs] Access GRANTED for user via role.', ['user_id' => $user->id, 'role_slug' => $roleSlug]);
+                        return true;
+                    }
+                }
+                Log::warning('[Gate:view-operation-logs] Access DENIED for user. No matching role found.', ['user_id' => $user->id, 'org_id' => $orgId]);
+                return false;
+            } catch (\Throwable $e) {
+                Log::error('[Gate:view-operation-logs] Exception caught inside Gate definition!', [
+                    'user_id' => $user->id,
+                    'passed_organization_id' => $organizationId,
+                    'message' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                    // 'trace' => $e->getTraceAsString() // Можно раскомментировать для полного стека
+                ]);
+                return false; // В случае ошибки не даем доступ
             }
-            return false;
         });
 
         // TODO: Добавить другие Gates по мере необходимости
