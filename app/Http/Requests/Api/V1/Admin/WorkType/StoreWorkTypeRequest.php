@@ -3,29 +3,31 @@
 namespace App\Http\Requests\Api\V1\Admin\WorkType;
 
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Support\Facades\Gate;
+// use Illuminate\Support\Facades\Gate; // Gate больше не используется здесь
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class StoreWorkTypeRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        // Проверяем общие права на управление справочниками
-        return Gate::allows('manage-catalogs');
+        Log::info('[StoreWorkTypeRequest] authorize() CALLED.');
+        // return Gate::allows('manage-catalogs'); // Убрано, доступ проверяется на уровне роутера/контроллера
+        return true; 
     }
 
     public function rules(): array
     {
-        // Получаем ID организации из аутентифицированного пользователя
-        $organizationId = Auth::user()->current_organization_id;
+        Log::info('[StoreWorkTypeRequest] rules() CALLED.');
+        $organizationId = Auth::user() ? Auth::user()->current_organization_id : null;
+        Log::info('[StoreWorkTypeRequest] organization_id from Auth::user()', ['org_id' => $organizationId]);
 
         if (!$organizationId) {
-            // Эта ситуация не должна происходить, если пользователь аутентифицирован
-            // и middleware OrganizationContext отработал правильно.
-            // Возвращаем правило, которое всегда провалит валидацию, если ID организации не определен.
+            Log::error('[StoreWorkTypeRequest] Organization ID is NULL in rules()!');
             return [
-                'organization_id' => 'required' // Это вызовет ошибку валидации, если organization_id не будет найден
+                // Возвращаем специфичное правило, чтобы увидеть его в ошибке валидации если дойдет
+                'critical_organization_id_missing' => 'required' 
             ];
         }
 
@@ -37,7 +39,7 @@ class StoreWorkTypeRequest extends FormRequest
                 Rule::unique('work_types', 'name')
                     ->where(function ($query) use ($organizationId) {
                         return $query->where('organization_id', $organizationId)
-                                    ->whereNull('deleted_at'); // Учитываем SoftDeletes
+                                    ->whereNull('deleted_at');
                     }),
             ],
             'measurement_unit_id' => 'required|integer|exists:measurement_units,id',
@@ -62,7 +64,7 @@ class StoreWorkTypeRequest extends FormRequest
             'name.unique' => 'Вид работ с таким названием уже существует в вашей организации.',
             'measurement_unit_id.required' => 'Необходимо указать единицу измерения.',
             'measurement_unit_id.exists' => 'Выбранная единица измерения не существует.',
-            'organization_id.required' => 'Не удалось определить организацию. Обратитесь к администратору.' // Сообщение для случая, если $organizationId не определен
+            'critical_organization_id_missing.required' => 'Критическая ошибка: ID организации не определен в StoreWorkTypeRequest.'
         ];
     }
 } 

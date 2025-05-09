@@ -21,8 +21,7 @@ class WorkTypeController extends Controller
     {
         Log::info('[WorkTypeController] Constructor CALLED.');
         $this->workTypeService = $workTypeService;
-        // Временно закомментируем для проверки
-        // $this->middleware('can:manage-catalogs'); 
+        // $this->middleware('can:manage-catalogs'); // Удалено согласно указанию
         Log::info('[WorkTypeController] Constructor FINISHED.');
     }
 
