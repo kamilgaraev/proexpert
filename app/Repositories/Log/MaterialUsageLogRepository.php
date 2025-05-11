@@ -92,7 +92,7 @@ class MaterialUsageLogRepository extends BaseRepository implements MaterialUsage
         // Загружаем единицы измерения одним запросом
         $unitIds = $results->pluck('measurement_unit_id')->unique()->filter();
         if ($unitIds->isNotEmpty()) {
-            $units = DB::table('measurement_units')->whereIn('id', $unitIds)->pluck('symbol', 'id');
+            $units = DB::table('measurement_units')->whereIn('id', $unitIds)->pluck('short_name', 'id');
             // Добавляем символ единицы измерения к результатам
             $results->each(function ($item) use ($units) {
                 $item->unit_symbol = $units->get($item->measurement_unit_id);
