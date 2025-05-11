@@ -41,7 +41,11 @@ class LogController extends Controller
             $logEntry = $this->logService->logMaterialReceipt($validatedData, $user, $request->file('photo'));
             // Загружаем связи, которые могут понадобиться ресурсу, если сервис их не загрузил
             $logEntry->load(['project', 'material.measurementUnit', 'user', 'supplier']);
-            return new MobileMaterialUsageLogResource($logEntry);
+            
+            // Возвращаем ресурс с кодом 201 Created
+            return (new MobileMaterialUsageLogResource($logEntry))
+                        ->response()
+                        ->setStatusCode(201);
         } catch (BusinessLogicException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
         } catch (\Throwable $e) {
