@@ -189,11 +189,11 @@ class ReportService
                 throw new BusinessLogicException('Не удалось определить колонки для отчета. Проверьте шаблон или маппинг по умолчанию.', 400);
             }
 
-            $dataForExport = \App\Http\Resources\Api\V1\Admin\Log\MaterialUsageLogResource::collection($logEntriesModels)->resolve($request); // Передаем $request в resolve(), если ресурс его использует
+            $dataForExport = \App\Http\Resources\Api\V1\Admin\Log\MaterialUsageLogResource::collection($logEntriesModels)->resolve($request);
 
-            Log::debug('[ReportService] Data prepared for file export (after resource transformation):', [
-                'count' => count($dataForExport),
-                'first_entry_example' => !empty($dataForExport) ? $dataForExport[0] : null,
+            Log::debug('[ReportService] Data TRULY PREPARED for CsvExporterService:', [
+                'data_for_export_count' => count($dataForExport),
+                'first_data_for_export_example' => !empty($dataForExport) ? ($dataForExport[0] ?? null) : null,
             ]);
 
             $exportable = $this->csvExporter->prepareDataForExport($dataForExport, $columnMapping);
