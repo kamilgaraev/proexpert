@@ -13,11 +13,13 @@ use App\Http\Controllers\Api\V1\Mobile\LogController;
 */
 
 Route::middleware(['auth:api_mobile', 'can:access-mobile-app'])->group(function () {
-    // Логирование расхода материалов
-    Route::post('logs/material-usage', [LogController::class, 'storeMaterialUsage'])
-        ->name('mobile.logs.material.store');
+    // Логирование материалов
+    Route::post('logs/material-receipts', [LogController::class, 'storeMaterialReceipt'])
+        ->name('mobile.logs.material-receipts.store');
+    Route::post('logs/material-write-offs', [LogController::class, 'storeMaterialWriteOff'])
+        ->name('mobile.logs.material-write-offs.store');
 
     // Логирование выполнения работ
     Route::post('logs/work-completion', [LogController::class, 'storeWorkCompletion'])
-        ->name('mobile.logs.work.store');
+        ->name('mobile.logs.work-completion.store');
 }); 

@@ -4,6 +4,7 @@ namespace App\Services\Material;
 
 use App\Repositories\Interfaces\MaterialRepositoryInterface;
 use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
+use App\Repositories\Interfaces\Log\MaterialUsageLogRepositoryInterface;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Database\Eloquent\Collection;
 use App\Exceptions\BusinessLogicException;
@@ -11,18 +12,22 @@ use Illuminate\Http\Request;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
 use App\Http\Resources\Api\V1\Admin\MeasurementUnitResource;
+use App\Models\Material;
 
 class MaterialService
 {
     protected MaterialRepositoryInterface $materialRepository;
     protected MeasurementUnitRepositoryInterface $measurementUnitRepository;
+    protected MaterialUsageLogRepositoryInterface $materialUsageLogRepository;
 
     public function __construct(
         MaterialRepositoryInterface $materialRepository,
-        MeasurementUnitRepositoryInterface $measurementUnitRepository
+        MeasurementUnitRepositoryInterface $measurementUnitRepository,
+        MaterialUsageLogRepositoryInterface $materialUsageLogRepository
     ) {
         $this->materialRepository = $materialRepository;
         $this->measurementUnitRepository = $measurementUnitRepository;
+        $this->materialUsageLogRepository = $materialUsageLogRepository;
     }
 
     /**
@@ -151,6 +156,56 @@ class MaterialService
             $sortBy,
             $sortDirection
         );
+    }
+
+    /**
+     * Получить балансы материалов для указанного проекта.
+     *
+     * @param int $organizationId
+     * @param int $projectId
+     * @return Collection
+     */
+    public function getMaterialBalancesForProject(int $organizationId, int $projectId): Collection
+    {
+        // Получаем все логи прихода и расхода для данного проекта
+        // Предполагаем, что в MaterialUsageLogRepository есть метод для получения всех логов по фильтрам
+        // или мы используем getPaginatedLogs с очень большим perPage, что не идеально, но для начала.
+        // Идеально: $allLogs = $this->materialUsageLogRepository->getAllLogsForProject($projectId, $organizationId);
+        
+        // Временное решение: используем пагинатор с большим числом записей
+        // ВАЖНО: это неэффективно для большого количества логов. Нужен специальный метод в репозитории.
+        $logsPaginator = $this->materialUsageLogRepository->getPaginatedLogs(
+            $organizationId, 
+            100000, // Очень большое число для получения всех записей
+            ['project_id' => $projectId],
+            'usage_date', 
+            'asc'
+        );
+        $allLogs = collect($logsPaginator->items());
+
+        $balances = [];
+
+        foreach ($allLogs as $log) {
+            if (!isset($balances[$log->material_id])) {
+                $balances[$log->material_id] = [
+                    'material_id' => $log->material_id,
+                    'material_name' => $log->material?->name, // Предполагается, что связь material загружена или доступна
+                    'measurement_unit_id' => $log->material?->measurementUnit?->id,
+                    'measurement_unit_symbol' => $log->material?->measurementUnit?->symbol,
+                    'current_balance' => 0,
+                ];
+            }
+
+            if ($log->operation_type === 'receipt') {
+                $balances[$log->material_id]['current_balance'] += $log->quantity;
+            } elseif ($log->operation_type === 'write_off') {
+                $balances[$log->material_id]['current_balance'] -= $log->quantity;
+            }
+        }
+
+        // Оставляем только материалы с положительным балансом или все, в зависимости от требований
+        // return collect(array_values($balances))->filter(fn($item) => $item['current_balance'] > 0);
+        return collect(array_values($balances));
     }
 
     // ЗАГЛУШКИ ДЛЯ НЕДОСТАЮЩИХ МЕТОДОВ

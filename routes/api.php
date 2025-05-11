@@ -70,6 +70,9 @@ use App\Http\Controllers\Api\UserController;
             Route::middleware(['auth:api_mobile', 'jwt.auth', 'organization.context', 'can:access-mobile-app'])->group(function() {
                 require __DIR__ . '/api/v1/mobile/projects.php';
                 require __DIR__ . '/api/v1/mobile/log.php';
+                if (file_exists(__DIR__ . '/api/v1/mobile/catalogs.php')) {
+                    require __DIR__ . '/api/v1/mobile/catalogs.php';
+                }
                 // Добавить другие защищенные маршруты мобильного приложения
             });
         });

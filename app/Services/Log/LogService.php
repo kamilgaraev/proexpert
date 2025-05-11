@@ -9,10 +9,16 @@ use App\Repositories\Interfaces\MaterialRepositoryInterface;
 use App\Repositories\Interfaces\WorkTypeRepositoryInterface;
 use App\Models\User;
 use App\Models\Project;
+use App\Models\Models\Log\MaterialUsageLog;
+use App\Models\Models\Log\WorkCompletionLog;
 use App\Exceptions\BusinessLogicException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Arr;
 use Carbon\Carbon;
+use App\Services\ImageUploadService;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Log as LaravelLog;
+use App\Services\Material\MaterialService;
 
 class LogService
 {
@@ -21,19 +27,25 @@ class LogService
     protected ProjectRepositoryInterface $projectRepository;
     protected MaterialRepositoryInterface $materialRepository;
     protected WorkTypeRepositoryInterface $workTypeRepository;
+    protected ImageUploadService $imageUploadService;
+    protected MaterialService $materialService;
 
     public function __construct(
         MaterialUsageLogRepositoryInterface $materialUsageLogRepository,
         WorkCompletionLogRepositoryInterface $workCompletionLogRepository,
         ProjectRepositoryInterface $projectRepository,
         MaterialRepositoryInterface $materialRepository,
-        WorkTypeRepositoryInterface $workTypeRepository
+        WorkTypeRepositoryInterface $workTypeRepository,
+        ImageUploadService $imageUploadService,
+        MaterialService $materialService
     ) {
         $this->materialUsageLogRepository = $materialUsageLogRepository;
         $this->workCompletionLogRepository = $workCompletionLogRepository;
         $this->projectRepository = $projectRepository;
         $this->materialRepository = $materialRepository;
         $this->workTypeRepository = $workTypeRepository;
+        $this->imageUploadService = $imageUploadService;
+        $this->materialService = $materialService;
     }
 
     /**
@@ -44,25 +56,82 @@ class LogService
      * @return \App\Models\Models\Log\MaterialUsageLog
      * @throws BusinessLogicException
      */
-    public function logMaterialUsage(array $data, User $user): \App\Models\Models\Log\MaterialUsageLog
+    public function logMaterialReceipt(array $data, User $user, ?UploadedFile $photoFile): MaterialUsageLog
     {
         $projectId = Arr::get($data, 'project_id');
         $materialId = Arr::get($data, 'material_id');
 
-        // 1. Проверка, что проект существует и пользователь на него назначен
         $project = $this->checkUserProjectAccess($user, $projectId);
-
-        // 2. Проверка, что материал существует и принадлежит организации проекта
         $material = $this->materialRepository->find($materialId);
         if (!$material || $material->organization_id !== $project->organization_id) {
             throw new BusinessLogicException('Материал не найден в организации проекта.', 404);
         }
 
-        // 3. Подготовка данных для сохранения
-        $logData = [            'project_id' => $projectId,            'material_id' => $materialId,            'user_id' => $user->id,            'quantity' => Arr::get($data, 'quantity'),            'usage_date' => Carbon::parse(Arr::get($data, 'usage_date'))->toDateString(), // Приводим к дате            'notes' => Arr::get($data, 'notes'),
-        ];
+        $photoPath = null;
+        if ($photoFile) {
+            $photoPath = $this->imageUploadService->upload($photoFile, 'material_log_photos', null, 'public');
+            if (!$photoPath) {
+                LaravelLog::warning('[LogService] Failed to upload material receipt photo.', ['user_id' => $user->id, 'project_id' => $projectId]);
+            }
+        }
 
-        // 4. Сохранение лога
+        $logData = [
+            'project_id' => $projectId,
+            'material_id' => $materialId,
+            'user_id' => $user->id,
+            'organization_id' => $project->organization_id,
+            'operation_type' => 'receipt',
+            'quantity' => Arr::get($data, 'quantity'),
+            'usage_date' => Carbon::parse(Arr::get($data, 'usage_date'))->toDateString(),
+            'supplier_id' => Arr::get($data, 'supplier_id'),
+            'document_number' => Arr::get($data, 'invoice_number'),
+            'invoice_date' => Arr::get($data, 'invoice_date') ? Carbon::parse(Arr::get($data, 'invoice_date'))->toDateString() : null,
+            'photo_path' => $photoPath,
+            'notes' => Arr::get($data, 'notes'),
+            'unit_price' => Arr::get($data, 'unit_price'),
+            'total_price' => Arr::get($data, 'total_price'),
+        ];
+        return $this->materialUsageLogRepository->create($logData);
+    }
+
+    public function logMaterialWriteOff(array $data, User $user): MaterialUsageLog
+    {
+        $projectId = Arr::get($data, 'project_id');
+        $materialId = Arr::get($data, 'material_id');
+        $quantityToWithdraw = (float)Arr::get($data, 'quantity');
+
+        $project = $this->checkUserProjectAccess($user, $projectId);
+        $material = $this->materialRepository->find($materialId);
+        if (!$material || $material->organization_id !== $project->organization_id) {
+            throw new BusinessLogicException('Материал не найден в организации проекта.', 404);
+        }
+        
+        $materialBalances = $this->materialService->getMaterialBalancesForProject($project->organization_id, $projectId);
+        $currentBalance = 0;
+        $materialBalanceEntry = $materialBalances->firstWhere('material_id', $materialId);
+        if ($materialBalanceEntry) {
+            $currentBalance = (float)$materialBalanceEntry['current_balance'];
+        }
+
+        if ($quantityToWithdraw <= 0) {
+             throw new BusinessLogicException('Количество для списания должно быть больше нуля.', 400);
+        }
+
+        if ($quantityToWithdraw > $currentBalance) {
+            throw new BusinessLogicException('Недостаточно материала "'. $material->name .'" для списания. Доступно: ' . $currentBalance . ' ' . ($material->measurementUnit?->symbol ?? ''), 400);
+        }
+
+        $logData = [
+            'project_id' => $projectId,
+            'material_id' => $materialId,
+            'user_id' => $user->id,
+            'organization_id' => $project->organization_id,
+            'operation_type' => 'write_off',
+            'quantity' => $quantityToWithdraw,
+            'usage_date' => Carbon::parse(Arr::get($data, 'usage_date'))->toDateString(),
+            'work_type_id' => Arr::get($data, 'work_type_id'),
+            'notes' => Arr::get($data, 'notes'),
+        ];
         return $this->materialUsageLogRepository->create($logData);
     }
 
@@ -74,26 +143,38 @@ class LogService
      * @return \App\Models\Models\Log\WorkCompletionLog
      * @throws BusinessLogicException
      */
-    public function logWorkCompletion(array $data, User $user): \App\Models\Models\Log\WorkCompletionLog
+    public function logWorkCompletion(array $data, User $user, ?UploadedFile $photoFile): WorkCompletionLog
     {
         $projectId = Arr::get($data, 'project_id');
         $workTypeId = Arr::get($data, 'work_type_id');
 
-        // 1. Проверка, что проект существует и пользователь на него назначен
         $project = $this->checkUserProjectAccess($user, $projectId);
-
-        // 2. Проверка, что вид работы существует и принадлежит организации проекта
         $workType = $this->workTypeRepository->find($workTypeId);
         if (!$workType || $workType->organization_id !== $project->organization_id) {
             throw new BusinessLogicException('Вид работы не найден в организации проекта.', 404);
         }
 
-        // 3. Подготовка данных
-        $logData = [            'project_id' => $projectId,            'work_type_id' => $workTypeId,            'user_id' => $user->id,            'quantity' => Arr::get($data, 'quantity'), // quantity может быть null
-            'completion_date' => Carbon::parse(Arr::get($data, 'completion_date'))->toDateString(),            'notes' => Arr::get($data, 'notes'),
-        ];
+        $photoPath = null;
+        if ($photoFile) {
+            $photoPath = $this->imageUploadService->upload($photoFile, 'work_completion_photos', null, 'public');
+            if (!$photoPath) {
+                LaravelLog::warning('[LogService] Failed to upload work completion photo.', ['user_id' => $user->id, 'project_id' => $projectId]);
+            }
+        }
 
-        // 4. Сохранение лога
+        $logData = [
+            'project_id' => $projectId,
+            'work_type_id' => $workTypeId,
+            'user_id' => $user->id,
+            'organization_id' => $project->organization_id,
+            'quantity' => Arr::get($data, 'quantity'),
+            'completion_date' => Carbon::parse(Arr::get($data, 'completion_date'))->toDateString(),
+            'performers_description' => Arr::get($data, 'performers_description'),
+            'photo_path' => $photoPath,
+            'notes' => Arr::get($data, 'notes'),
+            'unit_price' => Arr::get($data, 'unit_price'),
+            'total_price' => Arr::get($data, 'total_price'),
+        ];
         return $this->workCompletionLogRepository->create($logData);
     }
 
@@ -107,20 +188,13 @@ class LogService
      */
     protected function checkUserProjectAccess(User $user, int $projectId): Project
     {
-        /** @var Project|null $project */
         $project = $this->projectRepository->find($projectId);
-
         if (!$project) {
             throw new BusinessLogicException('Проект не найден.', 404);
         }
-
-        // Проверяем, что пользователь привязан к проекту через pivot таблицу
         if (!$project->users()->where('user_id', $user->id)->exists()) {
-            // Дополнительно можно проверить, состоит ли пользователь в организации проекта,
-            // но для прораба достаточно проверки назначения на проект.
-            throw new BusinessLogicException('У вас нет доступа к этому проекту.', 403);
+            throw new BusinessLogicException('Пользователь не назначен на данный проект.', 403);
         }
-
         return $project;
     }
 } 

@@ -6,25 +6,32 @@ use Illuminate\Database\Eloquent\Model;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\Material;
+use App\Models\Supplier;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use App\Traits\HasImages;
 
 class MaterialUsageLog extends Model
 {
+    use HasImages;
+
     protected $table = 'material_usage_logs'; // Явно укажем имя таблицы, на всякий случай
 
     protected $fillable = [
         'project_id',
         'material_id',
         'user_id',
+        'organization_id',  // Важно для привязки к организации
+        'operation_type',   // Добавлено ('receipt', 'write_off')
         'quantity',
         'unit_price',       // Добавлено
         'total_price',      // Добавлено
         'supplier_id',      // Добавлено
-        'document_number',  // Добавлено
-        'operation_type',   // Добавлено ('receipt', 'write_off')
+        'document_number',  // Переименовано из invoice_number для общности
+        'invoice_date',     // Оставляем для обратной совместимости или специфики приемки
         'usage_date',       // или 'operation_date'
+        'photo_path',       // Добавлено
         'notes',
-        'organization_id',  // Важно для привязки к организации
+        'work_type_id',     // Добавлено для списания на работы
     ];
 
     /**
@@ -34,9 +41,14 @@ class MaterialUsageLog extends Model
      */
     protected $casts = [
         'usage_date' => 'date',
+        'invoice_date' => 'date',
         'quantity' => 'decimal:3', // Пример каста для точности
         'unit_price' => 'decimal:2',
         'total_price' => 'decimal:2',
+    ];
+
+    protected $appends = [
+        'photo_url' // <--- Добавляем аксессор в вывод JSON
     ];
 
     /**
@@ -68,6 +80,20 @@ class MaterialUsageLog extends Model
      */
     public function supplier(): BelongsTo
     {
-        return $this->belongsTo(\App\Models\Supplier::class, 'supplier_id');
+        return $this->belongsTo(Supplier::class, 'supplier_id');
+    }
+
+    public function workType(): BelongsTo // Для списания
+    {
+        return $this->belongsTo(\App\Models\WorkType::class, 'work_type_id');
+    }
+
+    /**
+     * Аксессор для получения URL фото.
+     */
+    public function getPhotoUrlAttribute(): ?string
+    {
+        // Предполагаем, что дефолтного изображения для логов нет, или оно другое
+        return $this->getImageUrl('photo_path', null); // null если нет дефолтного
     }
 }

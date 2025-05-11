@@ -44,9 +44,9 @@ class SupplierService
         return $this->supplierRepository->findBy('organization_id', $organizationId);
     }
 
-    public function getActiveSuppliersForCurrentOrg()
+    public function getActiveSuppliersForCurrentOrg(Request $request): Collection
     {
-        $organizationId = Auth::user()->getCurrentOrganizationId();
+        $organizationId = $this->getCurrentOrgId($request);
         return $this->supplierRepository->getActiveSuppliers($organizationId);
     }
 

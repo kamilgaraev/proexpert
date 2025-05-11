@@ -43,25 +43,21 @@ class WorkTypeService
         return (int)$organizationId;
     }
 
-    public function getAllWorkTypesForCurrentOrg()
+    public function getAllWorkTypesForCurrentOrg(Request $request)
     {
-        $organizationId = Auth::user()->current_organization_id;
+        $organizationId = $this->getCurrentOrgId($request);
         return $this->workTypeRepository->findBy('organization_id', $organizationId);
     }
 
-    public function getActiveWorkTypesForCurrentOrg()
+    public function getActiveWorkTypesForCurrentOrg(Request $request): Collection
     {
-        $organizationId = Auth::user()->current_organization_id;
+        $organizationId = $this->getCurrentOrgId($request);
         return $this->workTypeRepository->getActiveWorkTypes($organizationId);
     }
 
-    public function getAllActive(): Collection
+    public function getAllActive(Request $request): Collection
     {
-        $user = Auth::user();
-        if (!$user || !$user->current_organization_id) {
-            throw new BusinessLogicException('Не удалось определить организацию пользователя.');
-        }
-        $organizationId = $user->current_organization_id;
+        $organizationId = $this->getCurrentOrgId($request);
         return $this->workTypeRepository->getActiveWorkTypes($organizationId);
     }
 

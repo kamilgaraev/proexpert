@@ -24,6 +24,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             RolePermissionSeeder::class,
             MeasurementUnitSeeder::class,
+            SubscriptionPlanSeeder::class,
             // Добавьте сюда другие необходимые сидеры
         ]);
     }

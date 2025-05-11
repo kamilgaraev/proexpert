@@ -5,24 +5,19 @@ namespace App\Http\Requests\Api\V1\Mobile\Log;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
 use App\Models\Project;
+use App\Models\Material;
 use App\Models\WorkType;
 use Illuminate\Validation\Rule;
 
-class StoreWorkCompletionRequest extends FormRequest
+class StoreMaterialWriteOffRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     */
     public function authorize(): bool
     {
         $user = Auth::user();
         $projectId = $this->input('project_id');
-
         if (!$user || !$projectId) {
             return false;
         }
-
-        // Проверяем, назначен ли пользователь (прораб) на данный проект
         return Project::where('id', $projectId)
                     ->whereHas('users', function ($query) use ($user) {
                         $query->where('user_id', $user->id);
@@ -30,11 +25,6 @@ class StoreWorkCompletionRequest extends FormRequest
                     ->exists();
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array|string>
-     */
     public function rules(): array
     {
         $project = Project::find($this->input('project_id'));
@@ -42,8 +32,21 @@ class StoreWorkCompletionRequest extends FormRequest
 
         return [
             'project_id' => 'required|integer|exists:projects,id',
-            'work_type_id' => [
+            'material_id' => [
                 'required',
+                'integer',
+                Rule::exists(Material::class, 'id')->where(function ($query) use ($organizationId) {
+                    if ($organizationId) {
+                        $query->where('organization_id', $organizationId);
+                    }
+                    // TODO: Добавить проверку, что материал есть на остатках проекта, если это требуется на уровне валидации
+                    // Это может быть сложно сделать здесь эффективно. Лучше в сервисе.
+                }),
+            ],
+            'quantity' => 'required|numeric|min:0.001',
+            'usage_date' => 'required|date_format:Y-m-d', // Дата списания
+            'work_type_id' => [
+                'nullable', // Может быть не указан, если просто списание без привязки к работе
                 'integer',
                 Rule::exists(WorkType::class, 'id')->where(function ($query) use ($organizationId) {
                     if ($organizationId) {
@@ -51,25 +54,17 @@ class StoreWorkCompletionRequest extends FormRequest
                     }
                 }),
             ],
-            'quantity' => 'required|numeric|min:0.001', // Сделано обязательным и > 0
-            'completion_date' => 'required|date_format:Y-m-d',
+            // 'cost_category_id' => 'nullable|integer|exists:cost_categories,id', // Если используется
             'notes' => 'nullable|string|max:1000',
-            'photo' => 'nullable|image|mimes:jpg,jpeg,png|max:5120', // 5MB Max
-            // Исполнители могут быть массивом ID пользователей или просто текстовым описанием
-            // Если это ID пользователей из системы:
-            // 'performer_ids' => 'nullable|array',
-            // 'performer_ids.*' => 'integer|exists:users,id', 
-            // Если это просто текст:
-            'performers_description' => 'nullable|string|max:500',
         ];
     }
 
     protected function prepareForValidation()
     {
-        if ($this->has('completion_date') && !is_null($this->completion_date)) {
+        if ($this->has('usage_date') && !is_null($this->usage_date)) {
             try {
                 $this->merge([
-                    'completion_date' => \Carbon\Carbon::parse($this->completion_date)->format('Y-m-d'),
+                    'usage_date' => \Carbon\Carbon::parse($this->usage_date)->format('Y-m-d'),
                 ]);
             } catch (\Exception $e) {
                 // Оставить как есть
