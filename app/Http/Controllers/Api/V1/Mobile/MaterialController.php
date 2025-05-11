@@ -29,6 +29,13 @@ class MaterialController extends Controller
     public function index(Request $request): AnonymousResourceCollection | JsonResponse
     {
         try {
+            $user = $request->user();
+            Log::info('[Mobile\MaterialController@index] User requested material list.', [
+                'user_id' => $user?->id,
+                'organization_id' => $user?->current_organization_id,
+                'params' => $request->all(), // Можно добавить параметры запроса, если они есть и важны
+            ]);
+
             $materials = $this->materialService->getAllActive($request); // Используем существующий метод getAllActive
             
             return MobileMaterialResource::collection($materials);
