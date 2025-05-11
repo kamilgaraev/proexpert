@@ -163,9 +163,9 @@ class MaterialService
      *
      * @param int $organizationId
      * @param int $projectId
-     * @return Collection
+     * @return \Illuminate\Support\Collection
      */
-    public function getMaterialBalancesForProject(int $organizationId, int $projectId): Collection
+    public function getMaterialBalancesForProject(int $organizationId, int $projectId): \Illuminate\Support\Collection
     {
         // Получаем все логи прихода и расхода для данного проекта
         // Предполагаем, что в MaterialUsageLogRepository есть метод для получения всех логов по фильтрам
