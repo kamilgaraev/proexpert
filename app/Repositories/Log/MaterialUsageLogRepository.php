@@ -113,7 +113,7 @@ class MaterialUsageLogRepository extends BaseRepository implements MaterialUsage
         string $sortDirection = 'desc'
     ): LengthAwarePaginator
     {
-        $query = $this->model->with(['project', 'material.measurementUnit', 'user']) // Загружаем связи
+        $query = $this->model->with(['project', 'material.measurementUnit', 'user', 'supplier', 'workType']) // ДОБАВЛЕНЫ supplier и workType
             ->whereHas('project', function ($q) use ($organizationId) {
                 $q->where('organization_id', $organizationId);
             });

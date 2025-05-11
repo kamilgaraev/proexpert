@@ -28,6 +28,7 @@ class MaterialUsageLogResource extends JsonResource
             'user_id' => $this->resource->user_id,
             'user_name' => $this->whenLoaded('user', fn() => $this->resource->user?->name),
             'operation_type' => $this->resource->operation_type,
+            'operation_type_readable' => $this->getReadableOperationType($this->resource->operation_type),
             'quantity' => (float) $this->resource->quantity,
             'unit_symbol' => $this->whenLoaded('material', fn() => $this->resource->material?->measurementUnit?->short_name),
             'unit_price' => $this->resource->unit_price ? (float) $this->resource->unit_price : null,
@@ -44,5 +45,22 @@ class MaterialUsageLogResource extends JsonResource
             'created_at' => $this->resource->created_at?->toISOString(),
             'updated_at' => $this->resource->updated_at?->toISOString(),
         ];
+    }
+
+    /**
+     * Get a human-readable operation type.
+     *
+     * @param string|null $type
+     * @return string|null
+     */
+    protected function getReadableOperationType(?string $type): ?string
+    {
+        if ($type === 'receipt') {
+            return 'Приемка';
+        }
+        if ($type === 'write_off') {
+            return 'Списание';
+        }
+        return $type; // Return original type if not matched
     }
 } 

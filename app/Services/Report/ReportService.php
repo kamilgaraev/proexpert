@@ -115,74 +115,101 @@ class ReportService
         $organizationId = $this->getCurrentOrgId($request);
         $filters = $this->prepareReportFilters($request, ['project_id', 'material_id', 'user_id', 'date_from', 'date_to', 'operation_type']);
         $templateId = $request->query('template_id') ? (int)$request->query('template_id') : null;
+        $format = $request->query('format');
 
         Log::info('Generating Material Usage Report', [
             'org_id' => $organizationId, 
             'filters' => $filters, 
-            'format' => $request->query('format'),
+            'format' => $format,
             'template_id' => $templateId
         ]);
 
+        $isExport = ($format === 'csv' || $format === 'xlsx');
+        
+        // Сначала получим общее количество для экспорта, если это необходимо для установки perPage
+        // Это может потребовать дополнительного запроса count(*), если не хотим грузить все в память сразу
+        // Для простоты пока оставим получение всех записей через большой perPage для экспорта
+        // Оптимальнее было бы сделать отдельный метод в репозитории для получения всех отфильтрованных записей без пагинации
+        $perPageForPaginator = $isExport ? 100000 : $request->query('per_page', 15); // Большое число для "всех" записей при экспорте
+
         $allLogsPaginator = $this->materialLogRepo->getPaginatedLogs(
             $organizationId,
-            $request->query('format') === 'csv' ? 100000 : $request->query('per_page', 15),
+            $perPageForPaginator,
             $filters,
             $request->query('sort_by', 'usage_date'),
             $request->query('sort_direction', 'desc')
         );
-        $logEntries = collect($allLogsPaginator->items());
+        
+        $logEntriesModels = collect($allLogsPaginator->items());
 
-        Log::debug('[ReportService] Data for potential export:', [
-            'filters_used_for_paginator' => $filters,
-            'log_entries_count' => $logEntries->count(),
-            'first_log_entry_example' => $logEntries->first() && is_object($logEntries->first()) && method_exists($logEntries->first(), 'toArray') ? $logEntries->first()->toArray() : ($logEntries->first() ?? 'N/A')
+        Log::debug('[ReportService] Data for potential export/display:', [
+            'filters_used' => $filters,
+            'log_entries_count' => $logEntriesModels->count(),
+            'retrieved_for_pagination_total' => $allLogsPaginator->total(), // Общее количество найденное пагинатором
+            'first_log_entry_model_example' => $logEntriesModels->first() ?? null 
         ]);
 
-        if ($logEntries->isEmpty()) {
-            Log::warning('[ReportService] No log entries found for export with current filters.');
-            // Для реального приложения здесь можно было бы вернуть ошибку или пустой файл с уведомлением
-        }
+        if ($isExport) {
+            if ($logEntriesModels->isEmpty()) {
+                Log::warning('[ReportService] No log entries found for file export with current filters.');
+                // Вернуть пустой файл или HTTP ошибку/сообщение
+                // Для примера, вернем пустой CSV, чтобы не было ошибки 500
+                if ($format === 'csv') {
+                    return $this->csvExporter->streamDownload('empty_report_'.date('YmdHis').'.csv', ['Сообщение'], [['Данные по указанным фильтрам отсутствуют.']]);
+                }
+                // Для xlsx можно аналогично вернуть пустой Excel или ошибку
+                throw new BusinessLogicException('Нет данных для экспорта по указанным фильтрам.', 404);
+            }
 
-        if ($request->query('format') === 'csv') {
             $reportTemplate = $this->reportTemplateService->getTemplateForReport('material_usage', $request, $templateId);
             
             $defaultColumnMapping = [
+                'ID' => 'id',
                 'Дата операции' => 'usage_date',
-                'Проект' => 'project.name',
-                'Материал' => 'material.name',
-                'Ед. изм.' => 'material.measurementUnit.short_name',
-                'Тип операции' => 'operation_type',
+                'Проект' => 'project_name',
+                'Материал' => 'material_name',
+                'Ед. изм.' => 'unit_symbol',
+                'Тип операции' => 'operation_type_readable', 
                 'Количество' => 'quantity',
                 'Цена за ед.' => 'unit_price',
                 'Сумма' => 'total_price',
-                'Поставщик' => 'supplier.name',
-                'Документ' => 'document_number',
-                'Исполнитель' => 'user.name',
+                'Поставщик' => 'supplier_name',
+                'Документ №' => 'document_number',
+                'Дата накладной' => 'invoice_date',
+                'Вид работ (списание)' => 'work_type_name',
+                'Исполнитель' => 'user_name',
                 'Примечание' => 'notes',
                 'Дата создания записи' => 'created_at',
             ];
             
             $columnMapping = $this->getColumnMappingFromTemplate($reportTemplate, $defaultColumnMapping);
-
-            Log::debug('[ReportService] Column mapping for CSV export:', ['column_mapping_used' => $columnMapping]);
+            Log::debug('[ReportService] Column mapping for file export:', ['column_mapping_used' => $columnMapping]);
 
             if (empty($columnMapping)) {
-                throw new BusinessLogicException('Не удалось определить колонки для CSV отчета. Проверьте шаблон или маппинг по умолчанию.', 400);
+                throw new BusinessLogicException('Не удалось определить колонки для отчета. Проверьте шаблон или маппинг по умолчанию.', 400);
             }
 
-            $exportable = $this->csvExporter->prepareDataForExport($logEntries, $columnMapping);
+            $dataForExport = \App\Http\Resources\Api\V1\Admin\Log\MaterialUsageLogResource::collection($logEntriesModels)->resolve($request); // Передаем $request в resolve(), если ресурс его использует
+
+            Log::debug('[ReportService] Data prepared for file export (after resource transformation):', [
+                'count' => count($dataForExport),
+                'first_entry_example' => !empty($dataForExport) ? $dataForExport[0] : null,
+            ]);
+
+            $exportable = $this->csvExporter->prepareDataForExport($dataForExport, $columnMapping);
             $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'material_usage_report';
-            return $this->csvExporter->streamDownload($filename . '_' . date('YmdHis'), $exportable['headers'], $exportable['data']);
+            return $this->csvExporter->streamDownload($filename . '_' . date('YmdHis') . '.' . $format, $exportable['headers'], $exportable['data']);
         }
 
+        // Логика для JSON ответа (использует $aggregatedData)
         $aggregatedData = $this->materialLogRepo->getAggregatedUsage($organizationId, $filters);
         return [
             'title' => 'Отчет по расходу материалов',
             'filters' => $filters,
-            'data' => $aggregatedData,
+            'data' => $aggregatedData, // Для JSON по-прежнему агрегированные данные
             'pagination' => [
-                'total' => $allLogsPaginator->total(),
-                'per_page' => $allLogsPaginator->perPage(),
+                'total' => $allLogsPaginator->total(),       // Общее количество сырых логов
+                'per_page' => $allLogsPaginator->perPage(),   // Сколько на странице для JSON (если бы он был пагинированным)
                 'current_page' => $allLogsPaginator->currentPage(),
                 'last_page' => $allLogsPaginator->lastPage(),
             ],
