@@ -191,7 +191,7 @@ class MaterialService
                     'material_id' => $log->material_id,
                     'material_name' => $log->material?->name, // Предполагается, что связь material загружена или доступна
                     'measurement_unit_id' => $log->material?->measurementUnit?->id,
-                    'measurement_unit_symbol' => $log->material?->measurementUnit?->symbol,
+                    'measurement_unit_symbol' => $log->material?->measurementUnit?->short_name,
                     'current_balance' => 0,
                 ];
             }
