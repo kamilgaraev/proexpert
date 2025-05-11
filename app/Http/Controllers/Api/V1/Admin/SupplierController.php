@@ -10,6 +10,7 @@ use App\Http\Resources\Api\V1\Admin\SupplierResource;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Support\Facades\Log;
 
 class SupplierController extends Controller
 {
@@ -30,7 +31,10 @@ class SupplierController extends Controller
 
     public function store(StoreSupplierRequest $request): SupplierResource
     {
-        $supplier = $this->supplierService->createSupplier($request->validated(), $request);
+        $validatedData = $request->validated();
+        Log::info('[Admin\SupplierController@store] Validated data for supplier creation:', $validatedData);
+
+        $supplier = $this->supplierService->createSupplier($validatedData, $request);
         return new SupplierResource($supplier);
     }
 

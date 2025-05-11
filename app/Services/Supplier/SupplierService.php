@@ -100,8 +100,10 @@ class SupplierService
 
     public function createSupplier(array $data, Request $request)
     {
+        Log::info('[SupplierService@createSupplier] Data before adding organization_id:', $data);
         $organizationId = $this->getCurrentOrgId($request);
         $data['organization_id'] = $organizationId;
+        Log::info('[SupplierService@createSupplier] Data before calling repository create:', $data);
         // TODO: Валидация
         return $this->supplierRepository->create($data);
     }
