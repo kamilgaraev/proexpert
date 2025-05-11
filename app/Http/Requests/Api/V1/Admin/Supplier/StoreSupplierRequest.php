@@ -5,6 +5,7 @@ namespace App\Http\Requests\Api\V1\Admin\Supplier;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Log;
 
 class StoreSupplierRequest extends FormRequest
 {
@@ -16,8 +17,13 @@ class StoreSupplierRequest extends FormRequest
 
     public function rules(): array
     {
+        Log::info('[StoreSupplierRequest@rules] Starting rules method.', ['attributes' => $this->attributes->all()]);
+
         $organizationId = $this->attributes->get('organization_id');
+        Log::info('[StoreSupplierRequest@rules] Organization ID from attributes:', ['organization_id' => $organizationId]);
+
         if (!$organizationId) {
+            Log::warning('[StoreSupplierRequest@rules] Organization ID not found in attributes, returning empty rules array.');
             return [];
         }
         
