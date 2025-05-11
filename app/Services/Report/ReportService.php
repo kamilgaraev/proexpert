@@ -132,6 +132,17 @@ class ReportService
         );
         $logEntries = collect($allLogsPaginator->items());
 
+        Log::debug('[ReportService] Data for potential export:', [
+            'filters_used_for_paginator' => $filters,
+            'log_entries_count' => $logEntries->count(),
+            'first_log_entry_example' => $logEntries->first() && is_object($logEntries->first()) && method_exists($logEntries->first(), 'toArray') ? $logEntries->first()->toArray() : ($logEntries->first() ?? 'N/A')
+        ]);
+
+        if ($logEntries->isEmpty()) {
+            Log::warning('[ReportService] No log entries found for export with current filters.');
+            // Для реального приложения здесь можно было бы вернуть ошибку или пустой файл с уведомлением
+        }
+
         if ($request->query('format') === 'csv') {
             $reportTemplate = $this->reportTemplateService->getTemplateForReport('material_usage', $request, $templateId);
             
@@ -139,7 +150,7 @@ class ReportService
                 'Дата операции' => 'usage_date',
                 'Проект' => 'project.name',
                 'Материал' => 'material.name',
-                'Ед. изм.' => 'material.measurementUnit.symbol',
+                'Ед. изм.' => 'material.measurementUnit.short_name',
                 'Тип операции' => 'operation_type',
                 'Количество' => 'quantity',
                 'Цена за ед.' => 'unit_price',
@@ -152,6 +163,8 @@ class ReportService
             ];
             
             $columnMapping = $this->getColumnMappingFromTemplate($reportTemplate, $defaultColumnMapping);
+
+            Log::debug('[ReportService] Column mapping for CSV export:', ['column_mapping_used' => $columnMapping]);
 
             if (empty($columnMapping)) {
                 throw new BusinessLogicException('Не удалось определить колонки для CSV отчета. Проверьте шаблон или маппинг по умолчанию.', 400);
