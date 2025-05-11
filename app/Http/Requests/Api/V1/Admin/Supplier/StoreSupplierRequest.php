@@ -19,7 +19,7 @@ class StoreSupplierRequest extends FormRequest
     {
         Log::info('[StoreSupplierRequest@rules] Starting rules method.', ['attributes' => $this->attributes->all()]);
 
-        $organizationId = $this->attributes->get('organization_id');
+        $organizationId = $this->attributes->get('current_organization_id');
         Log::info('[StoreSupplierRequest@rules] Organization ID from attributes:', ['organization_id' => $organizationId]);
 
         if (!$organizationId) {
