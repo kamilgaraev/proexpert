@@ -7,6 +7,7 @@ use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
 use App\Models\MeasurementUnit;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Collection;
 use Exception;
 
 class MeasurementUnitService
@@ -20,9 +21,18 @@ class MeasurementUnitService
 
     public function getAllMeasurementUnits(int $organizationId, int $perPage, array $filters = []): LengthAwarePaginator
     {
-        // TODO: Добавить фильтрацию, если необходимо, на основе $filters
-        // Например, по типу: $filters['type']
-        return $this->measurementUnitRepository->getAllPaginated($organizationId, $perPage, $filters);
+        // Добавляем organization_id в массив фильтров, который ожидает базовый репозиторий
+        $repositoryFilters = $filters; // Копируем существующие фильтры
+        $repositoryFilters['organization_id'] = $organizationId;
+        // Также можно добавить фильтр для is_system, если это требуется на уровне сервиса
+        // $repositoryFilters['include_system'] = true; // Пример, если репозиторий это поддерживает
+
+        // Передаем фильтры и параметры пагинации в правильном порядке
+        return $this->measurementUnitRepository->getAllPaginated(
+            filters: $repositoryFilters, 
+            perPage: $perPage
+            // sortBy и sortDirection можно также передавать из контроллера через $filters или отдельные параметры
+        );
     }
 
     public function getMeasurementUnitById(int $id, int $organizationId): ?MeasurementUnit
@@ -107,7 +117,7 @@ class MeasurementUnitService
      * Получает единицы измерения, специфичные для материалов, для указанной организации.
      * Это замена для MaterialController@getMeasurementUnits
      */
-    public function getMaterialMeasurementUnits(int $organizationId): array
+    public function getMaterialMeasurementUnits(int $organizationId): Collection
     {
         return $this->measurementUnitRepository->getUnitsByType($organizationId, 'material');
     }
