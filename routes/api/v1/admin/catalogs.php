@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\MaterialController;
 use App\Http\Controllers\Api\V1\Admin\WorkTypeController;
 use App\Http\Controllers\Api\V1\Admin\SupplierController;
+use App\Http\Controllers\Api\V1\Admin\ContractorController;
 use App\Http\Controllers\Api\V1\Admin\CostCategoryController;
 
 /*
@@ -40,6 +41,7 @@ Route::get('/materials/{id}/validate-for-accounting', [MaterialController::class
 Route::apiResource('materials', MaterialController::class);
 
 Route::apiResource('suppliers', SupplierController::class);
+Route::apiResource('contractors', ContractorController::class);
 
 // Группа для видов работ и связанных с ними материалов
 Route::apiresource('work-types', WorkTypeController::class)->except([]); // Оставляем все стандартные CRUD для WorkType
