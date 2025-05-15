@@ -1,0 +1,77 @@
+openapi: 3.0.0
+info:
+  title: Accounting Integration API
+  version: v1
+tags:
+  - name: AccountingIntegration
+    description: Операции по интеграции с бухгалтерскими системами
+paths:
+  /api/v1/admin/accounting/import-users:
+    post:
+      tags: [AccountingIntegration]
+      summary: Импорт пользователей из бухгалтерской системы
+      security:
+        - bearerAuth: []
+      # requestBody: может потребоваться для указания источника или параметров импорта
+      responses:
+        '200':
+          description: Результат импорта пользователей (например, количество импортированных)
+          # content: application/json: schema: ...
+        # ... другие стандартные ответы (400, 401, 403, 500)
+
+  /api/v1/admin/accounting/import-projects:
+    post:
+      tags: [AccountingIntegration]
+      summary: Импорт проектов из бухгалтерской системы
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Результат импорта проектов
+
+  /api/v1/admin/accounting/import-materials:
+    post:
+      tags: [AccountingIntegration]
+      summary: Импорт материалов из бухгалтерской системы
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Результат импорта материалов
+
+  /api/v1/admin/accounting/export-transactions:
+    post:
+      tags: [AccountingIntegration]
+      summary: Экспорт транзакций в бухгалтерскую систему
+      security:
+        - bearerAuth: []
+      # requestBody: параметры для экспорта (период, типы транзакций и т.д.)
+      responses:
+        '200':
+          description: Результат экспорта транзакций
+
+  /api/v1/admin/accounting/sync-status:
+    get:
+      tags: [AccountingIntegration]
+      summary: Получить статус последней синхронизации с бухгалтерской системой
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Статус синхронизации
+          # content: application/json: schema: SyncStatus
+
+components:
+  schemas:
+    # SyncStatus: # Пример
+    #   type: object
+    #   properties:
+    #     last_sync_time: { type: string, format: date-time }
+    #     status: { type: string, enum: [success, failed, in_progress] }
+    #     details: { type: string, nullable: true }
+    BadRequest: { $ref: 'common_components.yaml#/components/responses/BadRequest' } 
+    Unauthorized: { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+    Forbidden: { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+    InternalError: { $ref: 'common_components.yaml#/components/responses/InternalError' }
+  securitySchemes:
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' } 

@@ -1,0 +1,251 @@
+openapi: 3.0.0
+info:
+  title: Admin Authentication API
+  version: v1
+tags:
+  - name: AdminAuth
+    description: Аутентификация администраторов и управление сессией
+
+paths:
+  /api/v1/admin/auth/login:
+    post:
+      tags: [AdminAuth]
+      summary: Вход в систему для административной панели
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLoginRequest'
+      responses:
+        '200':
+          description: Успешный вход в систему
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminLoginSuccessResponse'
+        '401':
+          description: Ошибка аутентификации (неверный email или пароль)
+          content:
+            application/json:
+              schema:
+                $ref: 'common_components.yaml#/components/schemas/ErrorResponse' # Общая ошибка
+        '403':
+          description: Доступ запрещен (например, нет прав для входа в админ-панель)
+          content:
+            application/json:
+              schema:
+                $ref: 'common_components.yaml#/components/schemas/ErrorResponse'
+        '422':
+          description: Ошибка валидации входных данных
+          content:
+            application/json:
+              schema:
+                $ref: 'common_components.yaml#/components/schemas/ValidationError'
+        '500':
+          $ref: 'common_components.yaml#/components/responses/InternalError'
+
+  /api/v1/admin/auth/me:
+    get:
+      tags: [AdminAuth]
+      summary: Получить информацию о текущем аутентифицированном пользователе
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Информация о текущем пользователе
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminProfileResponse'
+        '401':
+          $ref: 'common_components.yaml#/components/responses/Unauthorized' 
+        '404':
+          description: Пользователь не найден (маловероятно при валидном токене)
+          content:
+            application/json:
+              schema:
+                $ref: 'common_components.yaml#/components/schemas/ErrorResponse'
+        '500':
+          $ref: 'common_components.yaml#/components/responses/InternalError'
+
+  /api/v1/admin/auth/refresh:
+    post:
+      tags: [AdminAuth]
+      summary: Обновить JWT токен доступа
+      security:
+        - bearerAuth: [] # Обычно старый токен передается для обновления
+      responses:
+        '200':
+          description: Токен успешно обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminTokenRefreshResponse'
+        '401':
+          description: Ошибка обновления токена (например, старый токен недействителен или истек)
+          content:
+            application/json:
+              schema:
+                $ref: 'common_components.yaml#/components/schemas/ErrorResponse'
+        '500':
+          $ref: 'common_components.yaml#/components/responses/InternalError'
+
+  /api/v1/admin/auth/logout:
+    post:
+      tags: [AdminAuth]
+      summary: Выход из системы (инвалидация токена)
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Успешный выход из системы
+          content:
+            application/json:
+              schema:
+                $ref: 'common_components.yaml#/components/schemas/SuccessResponseMessage' # Общий успешный ответ
+        '401':
+          description: Ошибка при выходе (например, токен уже недействителен)
+          content:
+            application/json:
+              schema:
+                $ref: 'common_components.yaml#/components/schemas/ErrorResponse'
+        '500':
+          $ref: 'common_components.yaml#/components/responses/InternalError'
+
+components:
+  schemas:
+    AdminLoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          description: Email пользователя
+          example: admin@example.com
+        password:
+          type: string
+          format: password
+          description: Пароль пользователя
+          example: "password123"
+
+    AdminUserAuthProfile: # Схема для пользователя в контексте аутентификации
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        email:
+          type: string
+          format: email
+          readOnly: true
+        phone:
+          type: string
+          nullable: true
+          readOnly: true
+        position:
+          type: string
+          nullable: true
+          readOnly: true
+        avatar_url:
+          type: string
+          format: url
+          nullable: true
+          readOnly: true
+        is_active:
+          type: boolean
+          readOnly: true
+        current_organization_id:
+          type: integer
+          format: int64
+          nullable: true
+          readOnly: true
+        current_organization: # Добавим базовую информацию о текущей организации
+          type: object
+          nullable: true
+          readOnly: true
+          properties:
+            id:
+              type: integer
+              format: int64
+            name:
+              type: string
+        roles: # Роли в текущей организации
+          type: array
+          readOnly: true
+          items:
+            type: object
+            properties:
+              slug:
+                type: string
+              name:
+                type: string
+        permissions: # Разрешения в текущей организации (обобщенные)
+          type: array
+          readOnly: true
+          items:
+            type: string
+            description: Slug разрешения
+      # Добавить required поля по необходимости, например, id, name, email, is_active
+
+    AdminLoginSuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Вход выполнен успешно"
+        data:
+          type: object
+          properties:
+            token:
+              type: string
+              description: JWT токен доступа
+              example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+            user:
+              $ref: '#/components/schemas/AdminUserAuthProfile'
+
+    AdminProfileResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          nullable: true
+        data:
+          type: object
+          properties:
+            user:
+              $ref: '#/components/schemas/AdminUserAuthProfile'
+
+    AdminTokenRefreshResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: "Токен успешно обновлен"
+        data:
+          type: object
+          properties:
+            token:
+              type: string
+              description: Новый JWT токен доступа
+              example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+  securitySchemes:
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' }
+ 

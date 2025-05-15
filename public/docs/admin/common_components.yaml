@@ -1,0 +1,200 @@
+openapi: 3.0.0
+info:
+  title: Common API Components
+  version: v1
+components:
+  schemas:
+    ProjectMini: 
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID проекта
+        name:
+          type: string
+          description: Название проекта
+      required:
+        - id
+        - name
+
+    ContractorMini: 
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID контрагента
+        name:
+          type: string
+          description: Название контрагента
+      required:
+        - id
+        - name
+
+    ContractMini: 
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID контракта
+        number:
+          type: string
+          description: Номер контракта
+        date:
+          type: string
+          format: date
+          description: Дата контракта
+      required:
+        - id
+        - number
+        - date
+
+    PaginationLinks:
+      type: object
+      properties:
+        first:
+          type: string
+          format: uri
+          nullable: true
+          description: URL первой страницы результатов
+        last:
+          type: string
+          format: uri
+          nullable: true
+          description: URL последней страницы результатов
+        prev:
+          type: string
+          format: uri
+          nullable: true
+          description: URL предыдущей страницы результатов
+        next:
+          type: string
+          format: uri
+          nullable: true
+          description: URL следующей страницы результатов
+      description: Ссылки для пагинации
+
+    PaginationMeta:
+      type: object
+      properties:
+        current_page:
+          type: integer
+          description: Текущая страница
+        from:
+          type: integer
+          nullable: true 
+          description: Номер первого элемента на странице
+        last_page:
+          type: integer
+          description: Номер последней страницы
+        links: 
+          type: array
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+                format: uri
+                nullable: true
+                description: URL страницы
+              label:
+                type: string
+                description: Метка страницы (например, номер страницы или 'Next &raquo;')
+              active:
+                type: boolean
+                description: Является ли данная ссылка активной (текущая страница)
+        path:
+          type: string
+          format: uri
+          description: Базовый URL для страниц пагинации
+        per_page:
+          type: integer
+          description: Количество элементов на странице
+        to:
+          type: integer
+          nullable: true 
+          description: Номер последнего элемента на странице
+        total:
+          type: integer
+          description: Общее количество элементов
+      description: Мета-информация для пагинации
+
+  responses:
+    NotFound:
+      description: Ресурс не найден (404)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: Not Found
+    BadRequest:
+      description: Некорректный запрос (400)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: Bad Request
+              errors: # Опционально, если ваш BadRequest может включать детали ошибок
+                type: object
+                additionalProperties: true 
+    ValidationError:
+      description: Ошибка валидации данных (422)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: The given data was invalid.
+              errors:
+                type: object
+                description: Объект с ошибками валидации по полям
+                additionalProperties:
+                  type: array
+                  items:
+                    type: string
+            required:
+              - message
+              - errors
+    Unauthorized:
+      description: Неавторизованный доступ (401)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: Unauthorized
+    Forbidden:
+      description: Доступ запрещен (403)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: Forbidden
+    InternalError:
+      description: Внутренняя ошибка сервера (500)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: Internal Server Error
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT 

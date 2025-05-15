@@ -1,0 +1,425 @@
+openapi: 3.0.0
+info:
+  title: Log Viewing API
+  version: v1
+tags:
+  - name: OperationLogs
+    description: Просмотр логов операций (использование материалов, выполнение работ)
+
+paths:
+  /api/v1/admin/logs/material-usage:
+    get:
+      tags: [OperationLogs]
+      summary: Получить логи использования материалов
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: query
+          required: false
+          description: ID проекта
+          schema:
+            type: integer
+        - name: material_id
+          in: query
+          required: false
+          description: ID материала
+          schema:
+            type: integer
+        - name: user_id
+          in: query
+          required: false
+          description: ID пользователя (прораба)
+          schema:
+            type: integer
+        - name: operation_type # Уточнить enum на основе реальных данных, если нужно
+          in: query
+          required: false
+          description: "Тип операции (например, 'receipt' - приемка, 'write_off' - списание)"
+          schema:
+            type: string
+            enum: [receipt, write_off]
+        - name: date_from
+          in: query
+          required: false
+          description: Дата начала периода (YYYY-MM-DD) для usage_date
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          description: Дата окончания периода (YYYY-MM-DD) для usage_date
+          schema:
+            type: string
+            format: date
+        - name: per_page
+          in: query
+          description: Количество элементов на странице
+          required: false
+          schema:
+            type: integer
+            default: 15
+        - name: page
+          in: query
+          description: Номер страницы
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: sort_by
+          in: query
+          description: Поле для сортировки
+          required: false
+          schema:
+            type: string
+            default: usage_date
+            enum: [id, usage_date, created_at, project_id, material_id, user_id, operation_type, quantity]
+        - name: sort_direction
+          in: query
+          description: Направление сортировки (asc, desc)
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Список логов использования материалов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MaterialUsageLogEntry'
+                  links:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationMeta'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/logs/work-completion:
+    get:
+      tags: [OperationLogs]
+      summary: Получить логи выполнения работ
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: query
+          required: false
+          description: ID проекта
+          schema:
+            type: integer
+        - name: work_type_id
+          in: query
+          required: false
+          description: ID вида работ
+          schema:
+            type: integer
+        - name: user_id
+          in: query
+          required: false
+          description: ID пользователя (прораба)
+          schema:
+            type: integer
+        - name: date_from
+          in: query
+          required: false
+          description: Дата начала периода (YYYY-MM-DD) для completion_date
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          description: Дата окончания периода (YYYY-MM-DD) для completion_date
+          schema:
+            type: string
+            format: date
+        - name: per_page
+          in: query
+          description: Количество элементов на странице
+          required: false
+          schema:
+            type: integer
+            default: 15
+        - name: page
+          in: query
+          description: Номер страницы
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: sort_by
+          in: query
+          description: Поле для сортировки
+          required: false
+          schema:
+            type: string
+            default: completion_date
+            enum: [id, completion_date, created_at, project_id, work_type_id, user_id, quantity]
+        - name: sort_direction
+          in: query
+          description: Направление сортировки (asc, desc)
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Список логов выполнения работ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WorkCompletionLogEntry'
+                  links:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationMeta'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+components:
+  schemas:
+    MaterialUsageLogEntry: # Переименовано из MaterialUsageLog для ясности
+      type: object
+      description: Запись лога использования материалов
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+        organization_id:
+          type: integer
+          format: int64
+          readOnly: true
+        project_id:
+          type: integer
+          format: int64
+          nullable: true
+          readOnly: true
+        project: # Связанная информация, если будет передаваться из контроллера
+          $ref: 'common_components.yaml#/components/schemas/ProjectMini'
+          nullable: true
+          readOnly: true
+        material_id:
+          type: integer
+          format: int64
+          nullable: true
+          readOnly: true
+        material: # Связанная информация
+          $ref: 'common_components.yaml#/components/schemas/MaterialMini'
+          nullable: true
+          readOnly: true
+        user_id:
+          type: integer
+          format: int64
+          nullable: true
+          readOnly: true
+        user: # Связанная информация
+          $ref: 'common_components.yaml#/components/schemas/UserMini'
+          nullable: true
+          readOnly: true
+        supplier_id:
+          type: integer
+          format: int64
+          nullable: true
+          readOnly: true
+        supplier: # Связанная информация
+          $ref: 'common_components.yaml#/components/schemas/SupplierMini' # Предполагаем наличие такой схемы
+          nullable: true
+          readOnly: true
+        work_type_id: # Для списания на работы
+          type: integer
+          format: int64
+          nullable: true
+          readOnly: true
+        work_type: # Связанная информация
+          $ref: 'common_components.yaml#/components/schemas/WorkTypeMini' # Предполагаем наличие такой схемы
+          nullable: true
+          readOnly: true
+        operation_type:
+          type: string
+          description: "Тип операции (например, 'receipt' - приемка, 'write_off' - списание)"
+          example: "write_off"
+          readOnly: true
+        quantity:
+          type: number
+          format: float # decimal:3 в модели
+          description: Количество
+          readOnly: true
+        unit_price:
+          type: number
+          format: float # decimal:2 в модели
+          description: Цена за единицу
+          nullable: true
+          readOnly: true
+        total_price:
+          type: number
+          format: float # decimal:2 в модели
+          description: Общая стоимость
+          nullable: true
+          readOnly: true
+        document_number:
+          type: string
+          maxLength: 255 # В модели не указана длина, беру стандартную
+          nullable: true
+          description: Номер документа (например, накладной)
+          readOnly: true
+        invoice_date: # В модели usage_date, это может быть дата накладной/счета-фактуры
+          type: string
+          format: date
+          nullable: true
+          description: Дата документа (например, накладной)
+          readOnly: true
+        usage_date: # Основная дата операции
+          type: string
+          format: date
+          description: Дата использования/операции
+          readOnly: true
+        photo_path:
+          type: string
+          nullable: true
+          readOnly: true
+          description: Путь к файлу фотографии (если есть)
+        photo_url:
+          type: string
+          format: url
+          nullable: true
+          readOnly: true
+          description: URL фотографии (если есть)
+        notes:
+          type: string
+          nullable: true
+          description: Примечания
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+        - id
+        - organization_id
+        - operation_type
+        - quantity
+        - usage_date
+        - created_at
+        - updated_at
+
+    WorkCompletionLogEntry: # Переименовано из WorkCompletionLog
+      type: object
+      description: Запись лога выполнения работ
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+        organization_id:
+          type: integer
+          format: int64
+          readOnly: true
+        project_id:
+          type: integer
+          format: int64
+          readOnly: true
+        project: # Связанная информация
+          $ref: 'common_components.yaml#/components/schemas/ProjectMini'
+          readOnly: true
+        work_type_id:
+          type: integer
+          format: int64
+          readOnly: true
+        work_type: # Связанная информация
+          $ref: 'common_components.yaml#/components/schemas/WorkTypeMini' # Предполагаем наличие такой схемы
+          readOnly: true
+        user_id:
+          type: integer
+          format: int64
+          readOnly: true
+        user: # Связанная информация
+          $ref: 'common_components.yaml#/components/schemas/UserMini'
+          readOnly: true
+        quantity:
+          type: number
+          format: float # decimal:3 в модели
+          description: Объем выполненных работ
+          readOnly: true
+        unit_price:
+          type: number
+          format: float # decimal:2 в модели
+          description: Цена за единицу работы
+          nullable: true # В модели не указано nullable, но цена может быть не всегда
+          readOnly: true
+        total_price:
+          type: number
+          format: float # decimal:2 в модели
+          description: Общая стоимость выполненных работ
+          nullable: true # Аналогично unit_price
+          readOnly: true
+        completion_date:
+          type: string
+          format: date
+          description: Дата выполнения работ
+          readOnly: true
+        performers_description:
+          type: string
+          nullable: true
+          description: Описание исполнителей/бригады
+          readOnly: true
+        photo_path:
+          type: string
+          nullable: true
+          readOnly: true
+          description: Путь к файлу фотографии (если есть)
+        photo_url:
+          type: string
+          format: url
+          nullable: true
+          readOnly: true
+          description: URL фотографии (если есть)
+        notes:
+          type: string
+          nullable: true
+          description: Примечания
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+        - id
+        - organization_id
+        - project_id
+        - work_type_id
+        - user_id
+        - quantity
+        - completion_date
+        - created_at
+        - updated_at
+
+  securitySchemes:
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' }
+ 

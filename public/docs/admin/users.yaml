@@ -1,0 +1,626 @@
+openapi: 3.0.0
+info:
+  title: User Management API (Foremen & Advance Accounting)
+  version: v1
+tags:
+  - name: UserManagement
+    description: Управление пользователями (прорабами) - основные операции
+  - name: UserAdvanceAccounting
+    description: Подотчетные средства пользователей (баланс, транзакции, выдача, возврат)
+
+paths:
+  /api/v1/admin/users:
+    get:
+      tags: [UserManagement]
+      summary: Получить список пользователей (прорабов)
+      description: Получает пагинированный список прорабов для текущей организации.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: per_page
+          in: query
+          description: Количество элементов на странице
+          required: false
+          schema:
+            type: integer
+            default: 15
+        - name: page
+          in: query
+          description: Номер страницы
+          required: false
+          schema:
+            type: integer
+        - name: name
+          in: query
+          description: Фильтр по имени (частичное совпадение)
+          required: false
+          schema:
+            type: string
+        - name: email
+          in: query
+          description: Фильтр по email (частичное совпадение)
+          required: false
+          schema:
+            type: string
+        - name: is_active
+          in: query
+          description: "Фильтр по статусу активности (true - активные, false - неактивные/заблокированные)"
+          required: false
+          schema:
+            type: boolean
+        - name: sort_by
+          in: query
+          description: Поле для сортировки
+          required: false
+          schema:
+            type: string
+            default: created_at
+            enum: [id, name, email, created_at, is_active]
+        - name: sort_direction
+          in: query
+          description: Направление сортировки
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Список пользователей (прорабов)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ForemanUser'
+                  links:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationMeta'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    post:
+      tags: [UserManagement]
+      summary: Создать нового пользователя (прораба)
+      description: Создает нового пользователя с ролью прораба и привязывает к текущей организации.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/StoreForemanRequest'
+      responses:
+        '201':
+          description: Пользователь (прораб) успешно создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ForemanUser'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/users/{user}:
+    get:
+      tags: [UserManagement]
+      summary: Получить информацию о пользователе (прорабе)
+      description: Получает детальную информацию о пользователе (прорабе) по его ID.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID пользователя (прораба)
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Информация о пользователе
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ForemanUser'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    put:
+      tags: [UserManagement]
+      summary: Обновить информацию о пользователе (прорабе)
+      description: "Обновляет данные указанного пользователя (прораба). Email не обновляется через этот эндпоинт."
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID пользователя (прораба)
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UpdateForemanRequest'
+      responses:
+        '200':
+          description: Пользователь (прораб) успешно обновлен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ForemanUser'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/users/{user}/block:
+    post:
+      tags: [UserManagement]
+      summary: Заблокировать пользователя (прораба)
+      description: Устанавливает пользователю статус неактивного (is_active = false).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID пользователя (прораба)
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Пользователь успешно заблокирован
+          content:
+            application/json:
+              schema:
+                $ref: 'common_components.yaml#/components/schemas/SuccessResponseMessage'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/users/{user}/unblock:
+    post:
+      tags: [UserManagement]
+      summary: Разблокировать пользователя (прораба)
+      description: Устанавливает пользователю статус активного (is_active = true).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user
+          in: path
+          required: true
+          description: ID пользователя (прораба)
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Пользователь успешно разблокирован
+          content:
+            application/json:
+              schema:
+                $ref: 'common_components.yaml#/components/schemas/SuccessResponseMessage'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/users/{user}/advance-balance:
+    get:
+      tags: [UserAdvanceAccounting]
+      summary: Баланс подотчетных средств пользователя
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user 
+          in: path
+          required: true
+          description: ID пользователя
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Баланс подотчетных средств пользователя
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/UserAdvanceBalance'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/users/{user}/advance-transactions:
+    get:
+      tags: [UserAdvanceAccounting]
+      summary: Транзакции подотчетных средств пользователя
+      description: Получает пагинированный список транзакций подотчетных средств для указанного пользователя.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user 
+          in: path
+          required: true
+          description: ID пользователя
+          schema:
+            type: integer
+            format: int64
+        - name: per_page
+          in: query
+          description: Количество элементов на странице
+          schema: { type: integer, default: 15 }
+        - name: page
+          in: query
+          description: Номер страницы
+          schema: { type: integer, default: 1 }
+        - name: type
+          in: query
+          required: false
+          description: Фильтр по типу транзакции
+          schema:
+            $ref: 'advance_transactions.yaml#/components/schemas/AdvanceTransactionTypeEnum'
+        - name: reporting_status
+          in: query
+          required: false
+          description: Фильтр по статусу отчетности
+          schema:
+            $ref: 'advance_transactions.yaml#/components/schemas/AdvanceTransactionStatusEnum'
+        - name: project_id
+          in: query
+          required: false
+          description: Фильтр по ID проекта
+          schema:
+            type: integer
+            format: int64
+        - name: date_from
+          in: query
+          required: false
+          description: Дата начала периода для создания транзакции (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          description: Дата окончания периода для создания транзакции (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: sort_by
+          in: query
+          required: false
+          description: Поле для сортировки
+          schema:
+            type: string
+            default: created_at
+            enum: [id, amount, document_date, created_at, reporting_status, project_id, type]
+        - name: sort_direction
+          in: query
+          required: false
+          description: Направление сортировки
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Список транзакций пользователя
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: 'advance_transactions.yaml#/components/schemas/AdvanceTransaction'
+                  links:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationMeta'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/users/{user}/issue-funds:
+    post:
+      tags: [UserAdvanceAccounting]
+      summary: Выдать подотчетные средства пользователю
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user 
+          in: path
+          required: true
+          description: ID пользователя
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueReturnFundsRequest'
+      responses:
+        '201':
+          description: Средства успешно выданы (создана транзакция типа 'issue')
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: 'advance_transactions.yaml#/components/schemas/AdvanceTransaction'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/users/{user}/return-funds:
+    post:
+      tags: [UserAdvanceAccounting]
+      summary: Оформить возврат подотчетных средств от пользователя
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user 
+          in: path
+          required: true
+          description: ID пользователя
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueReturnFundsRequest'
+      responses:
+        '201':
+          description: Возврат средств успешно оформлен (создана транзакция типа 'return')
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: 'advance_transactions.yaml#/components/schemas/AdvanceTransaction'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+components:
+  schemas:
+    StoreForemanRequest:
+      type: object
+      description: Данные для создания нового пользователя (прораба)
+      required:
+        - name
+        - email
+        - password
+        - password_confirmation
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          description: Должен быть уникальным
+        password:
+          type: string
+          format: password
+          description: Мин. 8 символов, требуется подтверждение (password_confirmation)
+        password_confirmation:
+          type: string
+          format: password
+        phone:
+          type: string
+          nullable: true
+        position:
+          type: string
+          maxLength: 255
+          nullable: true
+        avatar:
+          type: string
+          format: binary
+          nullable: true
+          description: Файл изображения (jpeg, png, jpg), макс. 2MB.
+
+    UpdateForemanRequest:
+      type: object
+      description: Данные для обновления пользователя (прораба). Email не обновляется.
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        password:
+          type: string
+          format: password
+          nullable: true
+          description: Мин. 8 символов, требуется подтверждение (password_confirmation), если указан
+        password_confirmation:
+          type: string
+          format: password
+          nullable: true
+        phone:
+          type: string
+          nullable: true
+        position:
+          type: string
+          maxLength: 255
+          nullable: true
+        avatar:
+          type: string
+          format: binary
+          nullable: true
+          description: Новый файл изображения (jpeg, png, jpg), макс. 2MB.
+        remove_avatar:
+          type: boolean
+          nullable: true
+          default: false
+          description: Установить в true для удаления текущего аватара.
+
+    ForemanUser:
+      type: object
+      description: Информация о пользователе (прорабе)
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        email:
+          type: string
+          format: email
+          readOnly: true
+        phone:
+          type: string
+          nullable: true
+          readOnly: true
+        position:
+          type: string
+          nullable: true
+          readOnly: true
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+          readOnly: true
+        is_active:
+          type: boolean
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+        - id
+        - name
+        - email
+        - is_active
+        - created_at
+        - updated_at
+
+    UserAdvanceBalance:
+      type: object
+      description: Баланс подотчетных средств пользователя и связанная информация.
+      properties:
+        user_id:
+          type: integer
+          format: int64
+          readOnly: true
+        name:
+          type: string
+          readOnly: true
+        current_balance:
+          type: number
+          format: float
+          description: Текущий баланс подотчетных средств пользователя
+          readOnly: true
+        total_issued:
+          type: number
+          format: float
+          description: Общая сумма выданных средств
+          readOnly: true
+        total_reported:
+          type: number
+          format: float
+          description: Общая сумма отчитанных средств
+          readOnly: true
+        has_overdue_balance:
+          type: boolean
+          description: Наличие просроченной задолженности
+          readOnly: true
+        last_transaction_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Дата и время последней транзакции (любого типа)
+          readOnly: true
+      required:
+        - user_id
+        - name
+        - current_balance
+        - total_issued
+        - total_reported
+        - has_overdue_balance
+
+    IssueReturnFundsRequest:
+      type: object
+      description: Данные для запроса на выдачу или возврат подотчетных средств.
+      required:
+        - amount
+        - document_date
+      properties:
+        amount:
+          type: number
+          format: float
+          minimum: 0.01
+          description: Сумма выдачи/возврата
+        document_date:
+          type: string
+          format: date
+          description: Дата операции (документа)
+        description:
+          type: string
+          maxLength: 1000
+          nullable: true
+          description: Комментарий/описание операции
+        project_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: ID связанного проекта (опционально)
+
+  securitySchemes:
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' }
+
+security:
+  - bearerAuth: [] 

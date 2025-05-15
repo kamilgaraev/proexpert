@@ -1,0 +1,242 @@
+openapi: 3.0.0
+info:
+  title: Contracts API - Performance Acts
+  version: v1
+tags:
+  - name: ContractPerformanceActs
+    description: Операции с актами выполненных работ по контрактам
+paths:
+  /api/v1/admin/contracts/{contract}/performance-acts:
+    get:
+      tags: [ContractPerformanceActs]
+      summary: Список актов выполненных работ для контракта
+      description: Получает все акты выполненных работ, связанные с указанным контрактом.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: contract
+          in: path
+          required: true
+          description: ID контракта
+          schema: { type: integer }
+        - name: is_approved
+          in: query
+          required: false
+          description: Фильтр по статусу утверждения акта (true/false)
+          schema: { type: boolean }
+        # Additional query params for filtering/sorting if available
+        # - name: per_page
+        #   in: query
+        #   schema: { type: integer, default: 15 }
+        # - name: page
+        #   in: query
+        #   schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Список актов выполненных работ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ContractPerformanceAct'
+                  # links: { $ref: 'common_components.yaml#/components/schemas/PaginationLinks' } # If paginated
+                  # meta: { $ref: 'common_components.yaml#/components/schemas/PaginationMeta' } # If paginated
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' } # Contract not found
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    post:
+      tags: [ContractPerformanceActs]
+      summary: Создать новый акт выполненных работ для контракта
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: contract
+          in: path
+          required: true
+          description: ID контракта
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreContractPerformanceActRequest'
+      responses:
+        '201':
+          description: Акт создан успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContractPerformanceAct'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' } # Contract not found
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/performance-acts/{performance_act}:
+    get:
+      tags: [ContractPerformanceActs]
+      summary: Получить информацию об акте выполненных работ
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: performance_act
+          in: path
+          required: true
+          description: ID акта выполненных работ
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Информация об акте
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContractPerformanceAct'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    put:
+      tags: [ContractPerformanceActs]
+      summary: Обновить акт выполненных работ
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: performance_act
+          in: path
+          required: true
+          description: ID акта выполненных работ
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContractPerformanceActRequest'
+      responses:
+        '200':
+          description: Акт обновлен успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContractPerformanceAct'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    patch: # Typically mirrors PUT for partial updates
+      tags: [ContractPerformanceActs]
+      summary: Частично обновить акт выполненных работ
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: performance_act
+          in: path
+          required: true
+          description: ID акта выполненных работ
+          schema: { type: integer }
+      requestBody:
+        required: true # Or false if all fields in schema are optional
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContractPerformanceActRequest' # Often reuses Update schema
+      responses:
+        '200':
+          description: Акт обновлен успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContractPerformanceAct'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [ContractPerformanceActs]
+      summary: Удалить акт выполненных работ
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: performance_act
+          in: path
+          required: true
+          description: ID акта выполненных работ
+          schema: { type: integer }
+      responses:
+        '204':
+          description: Акт удален успешно (No Content)
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+components:
+  schemas:
+    ContractPerformanceAct:
+      type: object
+      description: Акт выполненных работ по контракту
+      properties:
+        id: { type: integer, readOnly: true, description: "ID акта" }
+        contract_id: { type: integer, readOnly: true, description: "ID связанного контракта" }
+        act_document_number: { type: string, nullable: true, description: "Номер документа акта", maxLength: 255 }
+        act_date: { type: string, format: date, description: "Дата акта (YYYY-MM-DD)" }
+        amount: { type: number, format: float, description: "Сумма по акту" }
+        description: { type: string, nullable: true, description: "Описание работ по акту" }
+        is_approved: { type: boolean, description: "Статус утверждения акта", default: true }
+        approval_date: { type: string, format: date, nullable: true, description: "Дата утверждения (YYYY-MM-DD), если is_approved=true" }
+        created_at: { type: string, format: date-time, readOnly: true, description: "Дата создания" }
+        updated_at: { type: string, format: date-time, readOnly: true, description: "Дата последнего обновления" }
+      required:
+         - id
+         - contract_id
+         - act_date
+         - amount
+         - is_approved
+         - created_at
+         - updated_at
+
+    StoreContractPerformanceActRequest:
+      type: object
+      description: Данные для создания нового акта выполненных работ
+      required:
+        - act_date
+        - amount
+      properties:
+        act_document_number: { type: string, nullable: true, description: "Номер документа акта", maxLength: 255 }
+        act_date: { type: string, format: date, description: "Дата акта (YYYY-MM-DD)" }
+        amount: { type: number, format: float, description: "Сумма по акту", minimum: 0 }
+        description: { type: string, nullable: true, description: "Описание работ по акту" }
+        is_approved: { type: boolean, description: "Статус утверждения акта (по умолчанию true при создании)", default: true }
+        approval_date: { type: string, format: date, nullable: true, description: "Дата утверждения (YYYY-MM-DD). Обязательно, если is_approved=true и передается." }
+
+    UpdateContractPerformanceActRequest:
+      type: object
+      description: Данные для обновления акта выполненных работ
+      properties: # Все поля не обязательны при обновлении
+        act_document_number: { type: string, nullable: true, description: "Номер документа акта", maxLength: 255 }
+        act_date: { type: string, format: date, description: "Дата акта (YYYY-MM-DD)" }
+        amount: { type: number, format: float, description: "Сумма по акту", minimum: 0 }
+        description: { type: string, nullable: true, description: "Описание работ по акту" }
+        is_approved: { type: boolean, description: "Статус утверждения акта" }
+        approval_date: { type: string, format: date, nullable: true, description: "Дата утверждения (YYYY-MM-DD). Обязательно, если is_approved=true и передается." }
+  
+  securitySchemes:
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' } 

@@ -1,0 +1,520 @@
+openapi: 3.0.0
+info:
+  title: Advance Transactions API
+  version: v1
+tags:
+  - name: AdvanceTransactions
+    description: Операции с транзакциями подотчетных средств
+paths:
+  # Advance Transactions
+  /api/v1/admin/advance-transactions/available-users:
+    get:
+      tags: [AdvanceTransactions]
+      summary: Доступные пользователи для транзакций подотчетных средств
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список пользователей (для выбора)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'common_components.yaml#/components/schemas/UserMini'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+  /api/v1/admin/advance-transactions/available-projects:
+    get:
+      tags: [AdvanceTransactions]
+      summary: Доступные проекты для транзакций подотчетных средств
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список проектов (для выбора)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: 'common_components.yaml#/components/schemas/ProjectMini'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+  /api/v1/admin/advance-transactions:
+    get:
+      tags: [AdvanceTransactions]
+      summary: Список транзакций подотчетных средств
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: per_page
+          in: query
+          description: Количество элементов на странице
+          schema: { type: integer, default: 15 }
+        - name: page
+          in: query
+          description: Номер страницы
+          schema: { type: integer, default: 1 }
+        - name: user_id
+          in: query
+          description: ID подотчетного лица
+          required: false
+          schema: { type: integer }
+        - name: project_id
+          in: query
+          description: ID проекта
+          required: false
+          schema: { type: integer }
+        - name: type
+          in: query
+          description: Тип транзакции
+          required: false
+          schema: { $ref: '#/components/schemas/AdvanceTransactionTypeEnum' }
+        - name: reporting_status
+          in: query
+          description: Статус отчетности
+          required: false
+          schema: { $ref: '#/components/schemas/AdvanceTransactionStatusEnum' }
+        - name: date_from
+          in: query
+          description: "Дата начала периода для фильтрации (по document_date)"
+          required: false
+          schema: { type: string, format: date }
+        - name: date_to
+          in: query
+          description: "Дата конца периода для фильтрации (по document_date)"
+          required: false
+          schema: { type: string, format: date }
+        - name: sort_by
+          in: query
+          description: Поле для сортировки (по умолчанию, обычно latest() = created_at desc)
+          required: false
+          schema: { type: string, enum: [id, amount, document_date, created_at, updated_at, user_id, project_id, type, reporting_status] }
+        - name: sort_direction
+          in: query
+          description: Направление сортировки
+          required: false
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        '200':
+          description: Список транзакций
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AdvanceTransaction'
+                  links:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationMeta'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    post:
+      tags: [AdvanceTransactions]
+      summary: Создать транзакцию подотчетных средств
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreAdvanceTransactionRequest'
+      responses:
+        '201':
+          description: Транзакция создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdvanceTransaction'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+  /api/v1/admin/advance-transactions/{transaction}:
+    get:
+      tags: [AdvanceTransactions]
+      summary: Информация о транзакции
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: transaction
+          in: path
+          required: true
+          description: ID транзакции
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Информация о транзакции
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdvanceTransaction'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    put:
+      tags: [AdvanceTransactions]
+      summary: Обновить транзакцию
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: transaction
+          in: path
+          required: true
+          description: ID транзакции
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAdvanceTransactionRequest'
+      responses:
+        '200':
+          description: Транзакция обновлена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdvanceTransaction'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [AdvanceTransactions]
+      summary: Удалить транзакцию
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: transaction
+          in: path
+          required: true
+          description: ID транзакции
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Транзакция удалена
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+  /api/v1/admin/advance-transactions/{transaction}/report:
+    post:
+      tags: [AdvanceTransactions]
+      summary: Отчитаться по транзакции (создать отчет по расходу)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: transaction
+          in: path
+          required: true
+          description: ID транзакции (типа 'issue'), по которой создается отчет
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TransactionReportRequestData'
+      responses:
+        '200':
+          description: Отчет по транзакции принят/обновлена транзакция
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AdvanceTransaction'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+  /api/v1/admin/advance-transactions/{transaction}/approve:
+    post:
+      tags: [AdvanceTransactions]
+      summary: Утвердить транзакцию (или отчет по ней)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: transaction
+          in: path
+          required: true
+          description: ID транзакции (со статусом 'reported') для утверждения
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionApprovalRequestData'
+      responses:
+        '200':
+          description: Транзакция/отчет утвержден(а)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AdvanceTransaction'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+  /api/v1/admin/advance-transactions/{transaction}/attach-files:
+    post:
+      tags: [AdvanceTransactions]
+      summary: Прикрепить файлы к транзакции
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: transaction
+          in: path
+          required: true
+          description: ID транзакции
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [files]
+              properties:
+                files:
+                  type: array
+                  items:
+                    type: string
+                    format: binary
+                  description: Один или несколько файлов для загрузки (макс. 10MB каждый)
+      responses:
+        '200':
+          description: Файлы прикреплены, возвращена обновленная транзакция
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AdvanceTransaction'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+  /api/v1/admin/advance-transactions/{transaction}/detach-file/{file}:
+    delete:
+      tags: [AdvanceTransactions]
+      summary: Удалить прикрепленный файл из транзакции
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: transaction
+          in: path
+          required: true
+          description: ID транзакции
+          schema:
+            type: integer
+            format: int64
+        - name: file
+          in: path
+          required: true
+          description: ID файла для удаления
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Файл удален, возвращена обновленная транзакция
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AdvanceTransaction'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+components:
+  schemas:
+    AdvanceTransactionTypeEnum:
+      type: string
+      enum: [issue, expense, return]
+      description: Тип транзакции (выдача, расход средств по отчету, возврат неиспользованных)
+    AdvanceTransactionStatusEnum:
+      type: string
+      enum: [pending, reported, approved]
+      description: Статус отчетности по транзакции (ожидание отчета, отчет предоставлен, отчет утвержден)
+    AdvanceTransactionBase:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          description: ID подотчетного лица (пользователя)
+        project_id:
+          type: integer
+          nullable: true
+          description: ID связанного проекта
+        type:
+          $ref: '#/components/schemas/AdvanceTransactionTypeEnum'
+        amount:
+          type: number
+          format: float
+          description: Сумма транзакции
+        description:
+          type: string
+          nullable: true
+          maxLength: 255
+          description: Описание/назначение транзакции
+        document_number:
+          type: string
+          nullable: true
+          maxLength: 100
+          description: Номер первичного документа (если есть)
+        document_date:
+          type: string
+          format: date
+          nullable: true
+          description: Дата первичного документа (или дата операции)
+    StoreAdvanceTransactionRequest:
+      type: object
+      description: Данные для создания новой транзакции подотчетных средств.
+      required:
+        - user_id
+        - type
+        - amount
+        document_date
+      properties:
+        user_id: { type: integer, description: "ID пользователя, которому выдаются/от которого принимаются средства" }
+        project_id: { type: integer, nullable: true, description: "ID проекта, к которому относится транзакция" }
+        type: { $ref: '#/components/schemas/AdvanceTransactionTypeEnum' }
+        amount: { type: number, format: float, minimum: 0.01, description: "Сумма транзакции" }
+        description: { type: string, nullable: true, maxLength: 255, description: "Комментарий к транзакции" }
+        document_number: { type: string, nullable: true, maxLength: 100, description: "Номер связанного документа (приказа, заявления)" }
+        document_date: { type: string, format: date, nullable: true, description: "Дата связанного документа или операции" }
+    UpdateAdvanceTransactionRequest:
+      type: object
+      description: Данные для обновления транзакции. Поля зависят от статуса транзакции.
+      properties:
+        project_id: { type: integer, nullable: true, description: "ID связанного проекта" }
+        description: { type: string, nullable: true, maxLength: 255, description: "Описание/назначение транзакции" }
+        document_number: { type: string, nullable: true, maxLength: 100, description: "Номер первичного документа" }
+        document_date: { type: string, format: date, nullable: true, description: "Дата первичного документа" }
+        external_code: { type: string, nullable: true, maxLength: 100, description: "Внешний код для интеграции" }
+        accounting_data: { type: object, additionalProperties: true, nullable: true, description: "Дополнительные данные для бухгалтерии" }
+        attachment_ids: { type: string, nullable: true, description: "Строка ID прикрепленных файлов через запятую (управление через /attachments эндпоинты предпочтительнее)"}
+    TransactionReportRequestData:
+      type: object
+      required:
+        - description
+        - document_number
+        - document_date
+      properties:
+        description: { type: string, maxLength: 255, description: "Описание выполненных расходов" }
+        document_number: { type: string, maxLength: 100, description: "Номер отчетного документа (авансового отчета)" }
+        document_date: { type: string, format: date, description: "Дата отчетного документа" }
+        reported_amount:
+          type: number
+          format: float
+          nullable: true
+          description: Сумма, по которой отчитываются (если отличается от суммы исходной транзакции; обычно не используется, если отчет на всю сумму)
+        files:
+          type: array
+          nullable: true
+          items:
+            type: string
+            format: binary
+          description: Прикрепляемые файлы (чеки, акты)
+        comment:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: "Дополнительный комментарий к отчету"
+    TransactionApprovalRequestData:
+      type: object
+      properties:
+        accounting_data: { type: object, additionalProperties: true, nullable: true, description: "Данные для бухгалтерии при утверждении" }
+        comment:
+          type: string
+          nullable: true
+          maxLength: 1000
+          description: "Комментарий при утверждении (сервисом не используется)"
+    AdvanceTransaction:
+      type: object
+      description: Детальная информация о транзакции подотчетных средств
+      required:
+        - id
+        - user_id
+        - organization_id
+        - type
+        - amount
+        - balance_after
+        - reporting_status
+        - created_by_user_id
+        - created_at
+        - updated_at
+      properties:
+        id: { type: integer, readOnly: true }
+        user_id: { type: integer, readOnly: true, description: "ID подотчетного лица" }
+        user: { $ref: 'common_components.yaml#/components/schemas/UserMini', readOnly: true, description: "Подотчетное лицо" }
+        organization_id: { type: integer, readOnly: true, description: "ID организации" }
+        project_id: { type: integer, nullable: true, readOnly: true, description: "ID связанного проекта" }
+        project: { $ref: 'common_components.yaml#/components/schemas/ProjectMini', nullable: true, readOnly: true, description: "Связанный проект" }
+        type: { $ref: '#/components/schemas/AdvanceTransactionTypeEnum', readOnly: true }
+        amount: { type: number, format: float, readOnly: true, description: "Сумма транзакции" }
+        description: { type: string, nullable: true, readOnly: true, description: "Описание" }
+        document_number: { type: string, nullable: true, readOnly: true, description: "Номер документа" }
+        document_date: { type: string, format: date, nullable: true, readOnly: true, description: "Дата документа" }
+        balance_after: { type: number, format: float, readOnly: true, description: "Баланс пользователя после этой транзакции" }
+        reporting_status: { $ref: '#/components/schemas/AdvanceTransactionStatusEnum', readOnly: true, description: "Статус отчетности" }
+        reported_at: { type: string, format: date-time, nullable: true, readOnly: true, description: "Дата предоставления отчета" }
+        approved_at: { type: string, format: date-time, nullable: true, readOnly: true, description: "Дата утверждения отчета" }
+        created_by_user_id: { type: integer, readOnly: true, description: "ID пользователя, создавшего транзакцию" }
+        created_by: { $ref: 'common_components.yaml#/components/schemas/UserMini', readOnly: true, description: "Пользователь, создавший транзакцию" }
+        approved_by_user_id: { type: integer, nullable: true, readOnly: true, description: "ID пользователя, утвердившего отчет" }
+        approved_by: { $ref: 'common_components.yaml#/components/schemas/UserMini', nullable: true, readOnly: true, description: "Пользователь, утвердивший отчет" }
+        external_code: { type: string, nullable: true, readOnly: true, description: "Внешний код для интеграции" }
+        accounting_data: { type: object, additionalProperties: true, nullable: true, readOnly: true, description: "Данные для бухгалтерии" }
+        attachment_ids: { type: string, nullable: true, readOnly: true, description: "Строка ID прикрепленных файлов (deprecated, use files relationship)" }
+        files:
+          type: array
+          readOnly: true
+          items: { $ref: 'common_components.yaml#/components/schemas/File' }
+          description: "Список прикрепленных файлов (если загружены через ресурс)"
+        created_at: { type: string, format: date-time, readOnly: true }
+        updated_at: { type: string, format: date-time, readOnly: true }
+
+  securitySchemes:
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' } 

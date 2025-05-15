@@ -1,0 +1,199 @@
+openapi: 3.0.0
+info:
+  title: Rate Coefficients API
+  version: v1
+servers:
+  - url: /api/v1/admin
+paths:
+  /rate-coefficients:
+    get:
+      summary: Получить список коэффициентов ставок
+      tags:
+        - RateCoefficients
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          description: Номер страницы
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          description: Количество на страницу
+          schema:
+            type: integer
+            default: 15
+        - name: name
+          in: query
+          description: Фильтр по названию
+          schema:
+            type: string
+        - name: code
+          in: query
+          description: Фильтр по коду
+          schema:
+            type: string
+        - name: type
+          in: query
+          description: Фильтр по типу
+          schema:
+            type: string
+            enum: [percentage, fixed_addition]
+        - name: applies_to
+          in: query
+          description: Фильтр по назначению
+          schema:
+            type: string
+            enum: [material_norms, work_costs, labor_hours, general]
+        - name: scope
+          in: query
+          description: Фильтр по области применения
+          schema:
+            type: string
+            enum: [global_org, project, work_type_category, work_type, material_category, material]
+        - name: is_active
+          in: query
+          description: Фильтр по активности (true/false)
+          schema:
+            type: boolean
+        - name: sort_by
+          in: query
+          description: Поле для сортировки
+          schema:
+            type: string
+            default: created_at
+            enum: [name, code, value, type, applies_to, scope, is_active, valid_from, valid_to, created_at, updated_at]
+        - name: sort_direction
+          in: query
+          description: Направление сортировки (asc/desc)
+          schema:
+            type: string
+            default: desc
+            enum: [asc, desc]
+      responses:
+        '200':
+          description: Список коэффициентов
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateCoefficientCollection'
+        '401':
+          description: Не авторизован
+    post:
+      summary: Создать новый коэффициент ставки
+      tags:
+        - RateCoefficients
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RateCoefficientStoreRequest'
+      responses:
+        '201':
+          description: Коэффициент создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateCoefficient'
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+        '401':
+          description: Не авторизован
+
+  /rate-coefficients/{rate_coefficient_id}:
+    get:
+      summary: Получить информацию о коэффициенте ставки
+      tags:
+        - RateCoefficients
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: rate_coefficient_id
+          in: path
+          required: true
+          description: ID коэффициента
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Информация о коэффициенте
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateCoefficient'
+        '404':
+          description: Коэффициент не найден
+        '401':
+          description: Не авторизован
+    put:
+      summary: Обновить коэффициент ставки
+      tags:
+        - RateCoefficients
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: rate_coefficient_id
+          in: path
+          required: true
+          description: ID коэффициента
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RateCoefficientUpdateRequest'
+      responses:
+        '200':
+          description: Коэффициент обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RateCoefficient'
+        '404':
+          description: Коэффициент не найден
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+        '401':
+          description: Не авторизован
+    delete:
+      summary: Удалить коэффициент ставки
+      tags:
+        - RateCoefficients
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: rate_coefficient_id
+          in: path
+          required: true
+          description: ID коэффициента
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Коэффициент удален
+        '404':
+          description: Коэффициент не найден
+        '401':
+          description: Не авторизован
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT 

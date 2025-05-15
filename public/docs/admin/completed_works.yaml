@@ -1,0 +1,563 @@
+openapi: 3.0.0
+info:
+  title: Completed Works API
+  version: v1
+paths:
+  /api/v1/admin/completed-works:
+    get:
+      summary: Получить список выполненных работ
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: query
+          description: ID проекта для фильтрации
+          schema:
+            type: integer
+        - name: contract_id
+          in: query
+          description: ID договора для фильтрации
+          schema:
+            type: integer
+        - name: work_type_id
+          in: query
+          description: ID типа работ для фильтрации
+          schema:
+            type: integer
+        - name: user_id
+          in: query
+          description: ID пользователя (исполнителя) для фильтрации
+          schema:
+            type: integer
+        - name: status
+          in: query
+          description: Статус выполненной работы (например, draft, confirmed, cancelled)
+          schema:
+            type: string
+        - name: completion_date_from
+          in: query
+          description: Начальная дата выполнения для фильтрации (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: completion_date_to
+          in: query
+          description: Конечная дата выполнения для фильтрации (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: sortBy
+          in: query
+          description: Поле для сортировки (по умолчанию completion_date)
+          schema:
+            type: string
+            default: completion_date
+        - name: sortDirection
+          in: query
+          description: Направление сортировки (asc или desc, по умолчанию desc)
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: perPage
+          in: query
+          description: Количество записей на страницу (по умолчанию 15)
+          schema:
+            type: integer
+            default: 15
+      responses:
+        '200':
+          description: Список выполненных работ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CompletedWork'
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+    post:
+      summary: Создать запись о выполненной работе (Администратором)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompletedWorkStoreRequest'
+      responses:
+        '201':
+          description: Запись создана
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Запись о выполненной работе успешно создана.
+                  data:
+                    $ref: '#/components/schemas/CompletedWork'
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+  /api/v1/admin/completed-works/{completed_work}:
+    get:
+      summary: Получить информацию о выполненной работе
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: completed_work
+          in: path
+          required: true
+          description: ID выполненной работы
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Информация о выполненной работе
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CompletedWork'
+        '404':
+          description: Запись не найдена
+    put:
+      summary: Обновить запись о выполненной работе (Администратором)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: completed_work
+          in: path
+          required: true
+          description: ID выполненной работы
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompletedWorkUpdateRequest'
+      responses:
+        '200':
+          description: Запись обновлена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Запись о выполненной работе успешно обновлена.
+                  data:
+                    $ref: '#/components/schemas/CompletedWork'
+        '404':
+          description: Запись не найдена
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+    delete:
+      summary: Удалить запись о выполненной работе (Администратором)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: completed_work
+          in: path
+          required: true
+          description: ID выполненной работы
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Запись удалена
+        '403':
+          description: Это действие не авторизовано
+        '404':
+          description: Запись не найдена
+components:
+  schemas:
+    CompletedWork:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID выполненной работы
+          example: 1
+        organization_id:
+          type: integer
+          description: ID организации
+          example: 1
+        project:
+          $ref: '#/components/schemas/ProjectMini'
+        contract:
+          $ref: '#/components/schemas/ContractMini'
+        work_type:
+          $ref: '#/components/schemas/WorkType'
+        user:
+          $ref: '#/components/schemas/UserMini'
+        quantity:
+          type: number
+          format: float
+          description: Объем выполненных работ
+          example: 10.5
+        price:
+          type: number
+          format: float
+          nullable: true
+          description: Цена за единицу
+          example: 100.50
+        total_amount:
+          type: number
+          format: float
+          nullable: true
+          description: Общая стоимость
+          example: 1055.25
+        completion_date:
+          type: string
+          format: date
+          description: Дата выполнения
+          example: '2023-10-26'
+        notes:
+          type: string
+          nullable: true
+          description: Примечания
+          example: 'Все работы выполнены в срок.'
+        status:
+          type: string
+          description: Статус выполненной работы
+          example: confirmed
+          enum: [draft, confirmed, cancelled]
+        additional_info:
+          type: object
+          nullable: true
+          description: Дополнительная информация (JSON)
+        created_at:
+          type: string
+          format: date-time
+          description: Дата создания
+        updated_at:
+          type: string
+          format: date-time
+          description: Дата обновления
+        files:
+          type: array
+          description: Список прикрепленных файлов
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/File'
+
+    CompletedWorkStoreRequest:
+      type: object
+      required:
+        - project_id
+        - work_type_id
+        - user_id
+        - quantity
+        - completion_date
+        - status
+      properties:
+        project_id:
+          type: integer
+          description: ID проекта
+          example: 1
+        contract_id:
+          type: integer
+          nullable: true
+          description: ID договора (необязательно)
+          example: 1
+        work_type_id:
+          type: integer
+          description: ID типа работ
+          example: 5
+        user_id:
+          type: integer
+          description: ID пользователя (исполнителя)
+          example: 10
+        quantity:
+          type: number
+          format: float
+          description: Объем выполненных работ (min: 0.001)
+          example: 12.75
+        price:
+          type: number
+          format: float
+          nullable: true
+          description: Цена за единицу (min: 0)
+          example: 150.00
+        total_amount:
+          type: number
+          format: float
+          nullable: true
+          description: Общая стоимость (min: 0)
+          example: 1912.50
+        completion_date:
+          type: string
+          format: date
+          description: Дата выполнения (YYYY-MM-DD)
+          example: '2024-01-15'
+        notes:
+          type: string
+          nullable: true
+          maxLength: 65535
+          description: Примечания
+        status:
+          type: string
+          description: Статус (draft, confirmed, cancelled)
+          enum: [draft, confirmed, cancelled]
+          example: confirmed
+        additional_info:
+          type: object
+          nullable: true
+          description: Дополнительная информация (JSON)
+
+    CompletedWorkUpdateRequest:
+      type: object
+      properties:
+        project_id:
+          type: integer
+          description: ID проекта
+          example: 1
+        contract_id:
+          type: integer
+          nullable: true
+          description: ID договора (необязательно)
+          example: 1
+        work_type_id:
+          type: integer
+          description: ID типа работ
+          example: 5
+        user_id:
+          type: integer
+          description: ID пользователя (исполнителя)
+          example: 10
+        quantity:
+          type: number
+          format: float
+          description: Объем выполненных работ (min: 0.001)
+          example: 12.75
+        price:
+          type: number
+          format: float
+          nullable: true
+          description: Цена за единицу (min: 0)
+          example: 150.00
+        total_amount:
+          type: number
+          format: float
+          nullable: true
+          description: Общая стоимость (min: 0)
+          example: 1912.50
+        completion_date:
+          type: string
+          format: date
+          description: Дата выполнения (YYYY-MM-DD)
+          example: '2024-01-15'
+        notes:
+          type: string
+          nullable: true
+          maxLength: 65535
+          description: Примечания
+        status:
+          type: string
+          description: Статус (draft, confirmed, cancelled)
+          enum: [draft, confirmed, cancelled]
+          example: confirmed
+        additional_info:
+          type: object
+          nullable: true
+          description: Дополнительная информация (JSON)
+
+    PaginationLinks:
+      type: object
+      properties:
+        first:
+          type: string
+          nullable: true
+          example: "http://localhost/api/v1/admin/completed-works?page=1"
+        last:
+          type: string
+          nullable: true
+          example: "http://localhost/api/v1/admin/completed-works?page=5"
+        prev:
+          type: string
+          nullable: true
+          example: null
+        next:
+          type: string
+          nullable: true
+          example: "http://localhost/api/v1/admin/completed-works?page=2"
+
+    PaginationMeta:
+      type: object
+      properties:
+        current_page:
+          type: integer
+          example: 1
+        from:
+          type: integer
+          nullable: true
+          example: 1
+        last_page:
+          type: integer
+          example: 5
+        links:
+          type: array
+          items:
+            type: object
+            properties:
+              url:
+                type: string
+                nullable: true
+                example: "http://localhost/api/v1/admin/completed-works?page=1"
+              label:
+                type: string
+                example: "1"
+              active:
+                type: boolean
+                example: true
+        path:
+          type: string
+          example: "http://localhost/api/v1/admin/completed-works"
+        per_page:
+          type: integer
+          example: 15
+        to:
+          type: integer
+          nullable: true
+          example: 15
+        total:
+          type: integer
+          example: 70
+
+    ValidationError:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "The given data was invalid."
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            project_id: ["The project id field is required."]
+
+    ProjectMini:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+
+    ContractMini:
+      type: object
+      properties:
+        id:
+          type: integer
+        number:
+          type: string
+
+    WorkType:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+
+    UserMini:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+
+    File:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID файла
+          example: 1
+          readOnly: true
+        name:
+          type: string
+          description: Имя файла на диске
+          example: 'document_xyz.pdf'
+          readOnly: true
+        original_name:
+          type: string
+          description: Оригинальное имя файла
+          example: 'My Contract.pdf'
+          readOnly: true
+        mime_type:
+          type: string
+          description: MIME-тип файла
+          example: 'application/pdf'
+          readOnly: true
+        size:
+          type: integer
+          description: Размер файла в байтах
+          example: 102400
+          readOnly: true
+        url:
+          type: string
+          format: url
+          description: URL для доступа к файлу
+          example: 'https://example.com/storage/files/document_xyz.pdf'
+          readOnly: true
+        thumbnails:
+          type: object
+          description: URL-ы миниатюр (ключ - суффикс, значение - URL)
+          additionalProperties:
+            type: string
+            format: url
+          example:
+            _thumb: 'https://example.com/storage/files/thumb_document_xyz.jpg'
+          readOnly: true
+        uploaded_at:
+          type: string
+          format: date-time
+          description: Дата и время загрузки файла
+          example: '2023-10-27T10:00:00Z'
+          readOnly: true
+      required:
+        - id
+        - name
+        - original_name
+        - mime_type
+        - size
+        - url
+        - uploaded_at
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

@@ -45,6 +45,7 @@ class RouteServiceProvider extends ServiceProvider
                             require base_path('routes/api/v1/admin/catalogs.php');
                             require base_path('routes/api/v1/admin/reports.php');
                             require base_path('routes/api/v1/admin/logs.php');
+                            require base_path('routes/api/v1/admin/advance_settings.php');
                             // TODO: Добавить файл для логов аудита, когда он будет
                         });
                 });

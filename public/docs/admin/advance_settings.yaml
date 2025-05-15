@@ -1,0 +1,179 @@
+openapi: 3.0.0
+info:
+  title: Advance Account Settings API
+  version: v1
+tags:
+  - name: AdvanceAccountSettings
+    description: Управление настройками подотчетных средств для организации
+
+paths:
+  /api/v1/admin/advance-settings:
+    get:
+      tags: [AdvanceAccountSettings]
+      summary: Получить настройки подотчетных средств
+      description: Получает текущие настройки подотчетных средств для организации аутентифицированного пользователя. Если настройки еще не созданы, вернутся значения по умолчанию.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Настройки подотчетных средств
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/AdvanceAccountSetting'
+        '400':
+          description: Ошибка (например, не найден контекст организации)
+          content:
+            application/json:
+              schema:
+                $ref: 'common_components.yaml#/components/schemas/ErrorResponse'
+        '401':
+          $ref: 'common_components.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common_components.yaml#/components/responses/Forbidden'
+        '500':
+          $ref: 'common_components.yaml#/components/responses/InternalError'
+    post:
+      tags: [AdvanceAccountSettings]
+      summary: Сохранить или обновить настройки подотчетных средств
+      description: Создает или обновляет настройки подотчетных средств для организации аутентифицированного пользователя.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreOrUpdateAdvanceSettingRequest'
+      responses:
+        '200':
+          description: Настройки успешно обновлены
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Advance account settings updated successfully."
+                  data:
+                    $ref: '#/components/schemas/AdvanceAccountSetting'
+        '400':
+          description: Ошибка (например, не найден контекст организации)
+          content:
+            application/json:
+              schema:
+                $ref: 'common_components.yaml#/components/schemas/ErrorResponse'
+        '401':
+          $ref: 'common_components.yaml#/components/responses/Unauthorized'
+        '403':
+          $ref: 'common_components.yaml#/components/responses/Forbidden'
+        '422':
+          $ref: 'common_components.yaml#/components/responses/ValidationError'
+        '500':
+          $ref: 'common_components.yaml#/components/responses/InternalError'
+
+components:
+  schemas:
+    AdvanceAccountSetting:
+      type: object
+      description: Настройки подотчетных средств для организации
+      properties:
+        id:
+          type: integer
+          format: int64
+          readOnly: true
+          nullable: true # Может быть null, если это значения по умолчанию до первого сохранения
+        organization_id:
+          type: integer
+          format: int64
+          readOnly: true
+        max_single_issue_amount:
+          type: number
+          format: float
+          description: Максимальная сумма для одной транзакции выдачи (например, 100000.00)
+          nullable: true
+          example: 50000.00
+        report_submission_deadline_days:
+          type: integer
+          description: Срок в днях для подачи отчета (например, 14)
+          nullable: true
+          example: 14
+        dual_authorization_threshold:
+          type: number
+          format: float
+          description: Порог для двойной авторизации транзакций (например, 25000.00)
+          nullable: true
+          example: 25000.00
+        require_project_for_expense:
+          type: boolean
+          description: Требовать указание проекта для расходов
+          example: false
+        notify_admin_on_overdue_report:
+          type: boolean
+          description: Уведомлять администратора о просроченных отчетах
+          example: true
+        notify_admin_on_high_value_transaction:
+          type: boolean
+          description: Уведомлять администратора о крупных транзакциях
+          example: true
+        high_value_notification_threshold:
+          type: number
+          format: float
+          description: Порог для уведомления о крупной транзакции (если notify_admin_on_high_value_transaction=true)
+          nullable: true
+          example: 10000.00
+        notify_user_on_transaction_approval:
+          type: boolean
+          description: Уведомлять пользователя об утверждении его транзакции/отчета
+          example: true
+        notify_user_on_transaction_rejection:
+          type: boolean
+          description: Уведомлять пользователя об отклонении его транзакции/отчета
+          example: true
+        send_report_reminder_days_before:
+          type: integer
+          description: За сколько дней до срока отправлять напоминание об отчете (например, 3)
+          nullable: true
+          example: 3
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      # required: поля не указываем, так как при GET могут быть значения по умолчанию
+      # а при POST/PUT валидация идет через StoreOrUpdateAdvanceSettingRequest
+
+    StoreOrUpdateAdvanceSettingRequest:
+      type: object
+      description: Данные для сохранения/обновления настроек подотчетных средств
+      # required поля не указываем здесь, т.к. все поля nullable или boolean c present в FormRequest
+      # Валидация required_if обрабатывается на сервере.
+      properties:
+        max_single_issue_amount: { $ref: '#/components/schemas/AdvanceAccountSetting/properties/max_single_issue_amount' }
+        report_submission_deadline_days: { $ref: '#/components/schemas/AdvanceAccountSetting/properties/report_submission_deadline_days' }
+        dual_authorization_threshold: { $ref: '#/components/schemas/AdvanceAccountSetting/properties/dual_authorization_threshold' }
+        require_project_for_expense: { $ref: '#/components/schemas/AdvanceAccountSetting/properties/require_project_for_expense' }
+        notify_admin_on_overdue_report: { $ref: '#/components/schemas/AdvanceAccountSetting/properties/notify_admin_on_overdue_report' }
+        notify_admin_on_high_value_transaction: { $ref: '#/components/schemas/AdvanceAccountSetting/properties/notify_admin_on_high_value_transaction' }
+        high_value_notification_threshold: { $ref: '#/components/schemas/AdvanceAccountSetting/properties/high_value_notification_threshold' } # required_if:notify_admin_on_high_value_transaction,true
+        notify_user_on_transaction_approval: { $ref: '#/components/schemas/AdvanceAccountSetting/properties/notify_user_on_transaction_approval' }
+        notify_user_on_transaction_rejection: { $ref: '#/components/schemas/AdvanceAccountSetting/properties/notify_user_on_transaction_rejection' }
+        send_report_reminder_days_before: { $ref: '#/components/schemas/AdvanceAccountSetting/properties/send_report_reminder_days_before' }
+
+  securitySchemes:
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' } 

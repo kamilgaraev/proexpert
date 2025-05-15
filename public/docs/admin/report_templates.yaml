@@ -1,0 +1,375 @@
+openapi: 3.0.0
+info:
+  title: Report Templates API
+  version: v1
+tags:
+  - name: ReportTemplates
+    description: Операции с шаблонами отчетов
+paths:
+  /api/v1/admin/report-templates:
+    get:
+      tags: [ReportTemplates]
+      summary: Получить список шаблонов отчетов
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: per_page
+          in: query
+          description: Количество элементов на странице
+          required: false
+          schema:
+            type: integer
+            default: 15
+        - name: page
+          in: query
+          description: Номер страницы
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: name
+          in: query
+          description: Фильтр по названию шаблона
+          required: false
+          schema:
+            type: string
+        - name: report_type
+          in: query
+          description: Фильтр по типу отчета
+          required: false
+          schema:
+            $ref: '#/components/schemas/ReportTypeEnum'
+        - name: sort_by
+          in: query
+          description: Поле для сортировки
+          required: false
+          schema:
+            type: string
+            default: name
+            enum: [id, name, report_type, is_default, created_at, updated_at]
+        - name: sort_direction
+          in: query
+          description: Направление сортировки
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+      responses:
+        '200':
+          description: Список шаблонов отчетов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ReportTemplate'
+                  links:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationMeta'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    post:
+      tags: [ReportTemplates]
+      summary: Создать новый шаблон отчета
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json: 
+            schema:
+              $ref: '#/components/schemas/StoreReportTemplateRequest'
+      responses:
+        '201':
+          description: Шаблон создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReportTemplate'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/report-templates/{report_template}:
+    get:
+      tags: [ReportTemplates]
+      summary: Получить информацию о шаблоне отчета
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: report_template
+          in: path
+          required: true
+          description: ID шаблона
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Информация о шаблоне отчета
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReportTemplate'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    put:
+      tags: [ReportTemplates]
+      summary: Обновить шаблон отчета
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: report_template
+          in: path
+          required: true
+          description: ID шаблона
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReportTemplateRequest'
+      responses:
+        '200':
+          description: Шаблон обновлен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReportTemplate'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [ReportTemplates]
+      summary: Удалить шаблон отчета
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: report_template
+          in: path
+          required: true
+          description: ID шаблона
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Шаблон успешно удален
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/report-templates/{report_template}/set-default:
+    post:
+      tags: [ReportTemplates]
+      summary: Установить шаблон отчета по умолчанию для его типа
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: report_template
+          in: path
+          required: true
+          description: ID шаблона, который нужно сделать по умолчанию
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Шаблон успешно установлен по умолчанию
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ReportTemplate'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+components:
+  schemas:
+    ReportTypeEnum:
+      type: string
+      description: Тип отчета
+      enum:
+        - material_usage
+        - work_completion
+        - foreman_activity
+        - project_status_summary
+      example: material_usage
+
+    ReportTemplateColumnConfig:
+      type: object
+      description: Конфигурация одной колонки в шаблоне отчета
+      required:
+        - header
+        - data_key
+        - order
+      properties:
+        header:
+          type: string
+          maxLength: 255
+          description: "Заголовок колонки в отчете"
+          example: "Название материала"
+        data_key:
+          type: string
+          maxLength: 255
+          description: "Ключ данных из источника данных (например, material.name, quantity)"
+          example: "material_name"
+        order:
+          type: integer
+          minimum: 1
+          description: "Порядковый номер колонки"
+          example: 1
+        format_options:
+          type: object
+          nullable: true
+          description: "Опции форматирования для колонки (например, {'type': 'date', 'format': 'Y-m-d'})"
+          additionalProperties: true
+
+    ReportTemplateBase:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          example: "Детальный отчет по материалам (мой)"
+        report_type:
+          $ref: '#/components/schemas/ReportTypeEnum'
+        columns_config:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportTemplateColumnConfig'
+          minItems: 1
+          description: Конфигурация колонок для отчета
+        is_default:
+          type: boolean
+          default: false
+          example: false
+          description: Является ли шаблон стандартным для своего типа
+
+    StoreReportTemplateRequest:
+      type: object
+      description: Данные для создания нового шаблона отчета
+      allOf: [{ $ref: '#/components/schemas/ReportTemplateBase' }]
+      required:
+        - name
+        - report_type
+        - columns_config
+      # is_default не в required, т.к. имеет default: false в ReportTemplateBase, 
+      # но может быть передано как true/false.
+
+    UpdateReportTemplateRequest: 
+      type: object
+      description: Данные для обновления шаблона отчета. Все поля опциональны.
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          nullable: true
+          example: "Обновленный детальный отчет по материалам"
+        report_type:
+          $ref: '#/components/schemas/ReportTypeEnum'
+          nullable: true
+        columns_config:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportTemplateColumnConfig'
+          minItems: 1
+          nullable: true
+          description: Конфигурация колонок для отчета
+        is_default:
+          type: boolean
+          nullable: true
+          example: true
+          description: Является ли шаблон стандартным для своего типа
+
+    ReportTemplate:
+      type: object
+      description: Шаблон отчета
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Уникальный идентификатор шаблона
+          readOnly: true
+        name:
+          type: string
+          maxLength: 255
+          description: Название шаблона
+        report_type:
+          $ref: '#/components/schemas/ReportTypeEnum'
+        organization_id:
+          type: integer
+          format: int64
+          description: ID организации (null для системных шаблонов)
+          nullable: true
+          readOnly: true
+        user_id:
+          type: integer
+          format: int64
+          description: ID пользователя-создателя (null для системных шаблонов)
+          nullable: true
+          readOnly: true
+        columns_config:
+          type: array
+          description: Конфигурация колонок отчета
+          items:
+            $ref: '#/components/schemas/ReportTemplateColumnConfig'
+        is_default:
+          type: boolean
+          description: Является ли шаблоном по умолчанию для своего типа в организации
+        created_at:
+          type: string
+          format: date-time
+          description: Дата и время создания
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          description: Дата и время последнего обновления
+          readOnly: true
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Дата и время мягкого удаления (если применимо)
+          readOnly: true
+      required:
+        - id
+        - name
+        - report_type
+        - columns_config
+        - is_default
+        - created_at
+        - updated_at
+
+  securitySchemes:
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' } 

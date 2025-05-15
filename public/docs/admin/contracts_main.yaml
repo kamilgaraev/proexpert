@@ -1,0 +1,384 @@
+openapi: 3.0.0
+info:
+  title: Contracts API - Main
+  version: v1
+tags:
+  - name: Contracts
+    description: Операции с контрактами
+paths:
+  /api/v1/admin/contracts:
+    get:
+      tags: [Contracts]
+      summary: Получить список контрактов
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: per_page
+          in: query
+          description: Количество элементов на странице
+          schema: { type: integer, default: 15 }
+        - name: page
+          in: query
+          description: Номер страницы
+          schema: { type: integer, default: 1 }
+        - name: contractor_id
+          in: query
+          description: ID контрагента для фильтрации
+          schema: { type: integer }
+        - name: project_id
+          in: query
+          description: ID проекта для фильтрации
+          schema: { type: integer }
+        - name: status
+          in: query
+          description: Статус контракта для фильтрации
+          schema:
+            type: string
+            enum: [draft, active, completed, on_hold, terminated]
+        - name: type
+          in: query
+          description: Тип контракта для фильтрации
+          schema:
+            type: string
+            enum: [contract, agreement, specification]
+        - name: number
+          in: query
+          description: Номер контракта для поиска (частичное совпадение)
+          schema: { type: string }
+        - name: date_from
+          in: query
+          description: "Фильтр по дате контракта (начало периода, YYYY-MM-DD)"
+          schema: { type: string, format: date }
+        - name: date_to
+          in: query
+          description: "Фильтр по дате контракта (конец периода, YYYY-MM-DD)"
+          schema: { type: string, format: date }
+        - name: sort_by
+          in: query
+          description: Поле для сортировки
+          schema: { type: string, default: "date", enum: [id, number, date, total_amount, status, type, contractor_id, project_id, created_at, updated_at] }
+        - name: sort_direction
+          in: query
+          description: Направление сортировки
+          schema: { type: string, enum: [asc, desc], default: "desc" }
+      responses:
+        '200':
+          description: Список контрактов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Contract'
+                  links:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationMeta'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Contracts]
+      summary: Создать новый контракт
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreContractRequest'
+      responses:
+        '201':
+          description: Контракт создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Contract'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/contracts/{contract}:
+    get:
+      tags: [Contracts]
+      summary: Получить информацию о контракте
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: contract
+          in: path
+          required: true
+          description: ID контракта
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Информация о контракте
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Contract'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    put:
+      tags: [Contracts]
+      summary: Обновить контракт
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: contract
+          in: path
+          required: true
+          description: ID контракта
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContractRequest'
+      responses:
+        '200':
+          description: Контракт обновлен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Contract'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [Contracts]
+      summary: Удалить контракт
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: contract
+          in: path
+          required: true
+          description: ID контракта
+          schema: { type: integer }
+      responses:
+        '204':
+          description: Контракт удален (No Content)
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+components:
+  schemas:
+    ContractBase:
+      type: object
+      properties:
+        project_id:
+          type: integer
+          nullable: true
+          description: "ID связанного проекта"
+        contractor_id:
+          type: integer
+          description: "ID подрядчика"
+        parent_contract_id:
+          type: integer
+          nullable: true
+          description: "ID родительского контракта (для доп. соглашений)"
+        number:
+          type: string
+          maxLength: 255
+          description: "Номер контракта"
+        date:
+          type: string
+          format: date
+          description: "Дата контракта (YYYY-MM-DD)"
+        type:
+          type: string
+          enum: [contract, agreement, specification]
+          description: "Тип: основной договор или доп. соглашение"
+        subject:
+          type: string
+          nullable: true
+          description: "Предмет контракта"
+        work_type_category:
+          type: string
+          nullable: true
+          # enum: [smr, supply, services, rent, other] # Use actual enums from your project
+          description: "Категория работ по контракту"
+        payment_terms:
+          type: string
+          nullable: true
+          description: "Условия оплаты"
+        total_amount:
+          type: number
+          format: float # decimal:2
+          minimum: 0
+          description: "Общая сумма по контракту"
+        gp_percentage:
+          type: number
+          format: float # decimal:2
+          minimum: 0
+          maximum: 100
+          nullable: true
+          description: "Процент генподряда"
+        planned_advance_amount:
+          type: number
+          format: float # decimal:2
+          minimum: 0
+          nullable: true
+          description: "Планируемая сумма аванса"
+        status:
+          type: string
+          enum: [draft, active, completed, on_hold, terminated]
+          description: "Статус контракта"
+        start_date:
+          type: string
+          format: date
+          nullable: true
+          description: "Дата начала работ (YYYY-MM-DD)"
+        end_date:
+          type: string
+          format: date
+          nullable: true
+          description: "Дата окончания работ (YYYY-MM-DD)"
+        notes:
+          type: string
+          nullable: true
+          description: "Примечания"
+
+    StoreContractRequest:
+      type: object
+      #allOf: [{ $ref: '#/components/schemas/ContractBase' }]
+      # Potentially add specific required fields for store if different from ContractBase general definition
+      required:
+        - project_id # Assuming project_id can be nullable based on ContractBase, but required for creation
+        - contractor_id
+        - number
+        - date
+        - type
+        - total_amount
+        - status
+      properties:
+        project_id: { type: integer, description: "ID связанного проекта" } # Overriding to make it non-nullable for request if needed, or keep as is if base is fine
+        contractor_id: { type: integer, description: "ID связанного контрагента" }
+        parent_contract_id: { type: integer, nullable: true, description: "ID родительского контракта (для доп. соглашений)"}
+        number: { type: string, description: "Номер контракта", maxLength: 255 }
+        date: { type: string, format: date, description: "Дата контракта (YYYY-MM-DD)" }
+        type:
+          type: string
+          description: "Тип документа (контракт, доп. соглашение, спецификация)"
+          enum: [contract, agreement, specification]
+        subject: { type: string, nullable: true, description: "Предмет контракта/описание" }
+        work_type_category:
+          type: string
+          nullable: true
+          description: "Категория вида работ (ПИР, СМР и т.д.)"
+          # enum: [PIR, SMR, EquipmentSupply, Other] # Example, уточнить по Enum
+        payment_terms: { type: string, nullable: true, description: "Условия оплаты" }
+        total_amount: { type: number, format: float, description: "Общая сумма по контракту", minimum: 0 }
+        gp_percentage: { type: number, format: float, nullable: true, description: "Процент ГП (Генерального подряда)", minimum: 0, maximum: 100 }
+        planned_advance_amount: { type: number, format: float, nullable: true, description: "Планируемая сумма аванса", minimum: 0 }
+        status:
+          type: string
+          description: "Статус контракта"
+          enum: [draft, active, completed, on_hold, terminated] # 'draft' может быть по умолчанию при создании
+        start_date: { type: string, format: date, nullable: true, description: "Дата начала действия контракта" }
+        end_date: { type: string, format: date, nullable: true, description: "Дата окончания действия контракта" }
+        notes: { type: string, nullable: true, description: "Примечания" }
+
+    UpdateContractRequest: 
+      type: object
+      # allOf: [{ $ref: '#/components/schemas/ContractBase' }]
+      # All fields are optional for update typically
+      properties:
+        project_id: { type: integer, description: "ID связанного проекта", nullable: true }
+        contractor_id: { type: integer, description: "ID связанного контрагента" , nullable: true}
+        parent_contract_id: { type: integer, nullable: true, description: "ID родительского контракта (для доп. соглашений)"}
+        number: { type: string, description: "Номер контракта", maxLength: 255, nullable: true }
+        date: { type: string, format: date, description: "Дата контракта (YYYY-MM-DD)", nullable: true }
+        type:
+          type: string
+          description: "Тип документа (контракт, доп. соглашение, спецификация)"
+          enum: [contract, agreement, specification]
+          nullable: true
+        subject: { type: string, nullable: true, description: "Предмет контракта/описание" }
+        work_type_category:
+          type: string
+          nullable: true
+          description: "Категория вида работ (ПИР, СМР и т.д.)"
+          # enum: [PIR, SMR, EquipmentSupply, Other]
+        payment_terms: { type: string, nullable: true, description: "Условия оплаты" }
+        total_amount: { type: number, format: float, description: "Общая сумма по контракту", minimum: 0, nullable: true }
+        gp_percentage: { type: number, format: float, nullable: true, description: "Процент ГП (Генерального подряда)", minimum: 0, maximum: 100 }
+        planned_advance_amount: { type: number, format: float, nullable: true, description: "Планируемая сумма аванса", minimum: 0 }
+        status:
+          type: string
+          description: "Статус контракта"
+          enum: [draft, active, completed, on_hold, terminated]
+          nullable: true
+        start_date: { type: string, format: date, nullable: true, description: "Дата начала действия контракта" }
+        end_date: { type: string, format: date, nullable: true, description: "Дата окончания действия контракта" }
+        notes: { type: string, nullable: true, description: "Примечания" }
+
+    Contract:
+      type: object
+      #allOf: [{ $ref: '#/components/schemas/ContractBase' }]
+      properties:
+        id: { type: integer, readOnly: true }
+        organization_id: { type: integer, readOnly: true, description: "ID организации (контекст)" } # Added as it's usually present in responses
+        project_id: { type: integer, description: "ID связанного проекта", nullable: true } # from ContractBase
+        project: { $ref: 'common_components.yaml#/components/schemas/ProjectMini', nullable: true } 
+        contractor_id: { type: integer, description: "ID связанного контрагента" } # from ContractBase
+        contractor: { $ref: 'common_components.yaml#/components/schemas/ContractorMini', nullable: true }
+        parent_contract_id: { type: integer, nullable: true, description: "ID родительского контракта (для доп. соглашений)"} # from ContractBase
+        parent_contract: { $ref: 'common_components.yaml#/components/schemas/ContractMini', nullable: true }
+        number: { type: string, description: "Номер контракта", maxLength: 255 } # from ContractBase
+        date: { type: string, format: date, description: "Дата контракта (YYYY-MM-DD)" } # from ContractBase
+        type:
+          type: string # from ContractBase
+          description: "Тип документа (контракт, доп. соглашение, спецификация)"
+          enum: [contract, agreement, specification]
+        # type_label: {type: string, readOnly: true, description: "Человекочитаемый тип"} # If your API provides this
+        subject: { type: string, nullable: true, description: "Предмет контракта/описание" } # from ContractBase
+        work_type_category:
+          type: string # from ContractBase
+          nullable: true
+          description: "Категория вида работ (ПИР, СМР и т.д.)"
+          # enum: [PIR, SMR, EquipmentSupply, Other]
+        # work_type_category_label: {type: string, readOnly: true, nullable: true, description: "Человекочитаемая категория работ"} # If API provides
+        payment_terms: { type: string, nullable: true, description: "Условия оплаты" } # from ContractBase
+        total_amount: { type: number, format: float, description: "Общая сумма по контракту" } # from ContractBase
+        gp_percentage: { type: number, format: float, nullable: true, description: "Процент ГП (Генерального подряда)" } # from ContractBase
+        gp_amount: { type: number, format: float, readOnly: true, description: "Сумма ГП (рассчитывается)" }
+        planned_advance_amount: { type: number, format: float, nullable: true, description: "Планируемая сумма аванса" } # from ContractBase
+        status:
+          type: string # from ContractBase
+          description: "Статус контракта"
+          enum: [draft, active, completed, on_hold, terminated]
+        # status_label: {type: string, readOnly: true, description: "Человекочитаемый статус"} # If API provides
+        start_date: { type: string, format: date, nullable: true, description: "Дата начала действия контракта" } # from ContractBase
+        end_date: { type: string, format: date, nullable: true, description: "Дата окончания действия контракта" } # from ContractBase
+        notes: { type: string, nullable: true, description: "Примечания" } # from ContractBase
+        created_at: { type: string, format: date-time, readOnly: true }
+        updated_at: { type: string, format: date-time, readOnly: true }
+        # Optional calculated fields or relations not in ContractBase
+        # total_performed_amount: { type: number, format: float, readOnly: true, description: "Общая сумма выполненных работ" }
+        # total_paid_amount: { type: number, format: float, readOnly: true, description: "Общая сумма оплаченных средств" }
+        # child_contracts: { type: array, items: { $ref: 'common_components.yaml#/components/schemas/ContractMini' }, readOnly: true }
+
+  securitySchemes:
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' } 

@@ -1,0 +1,285 @@
+openapi: 3.0.0
+info:
+  title: Work Type Materials API
+  description: API для управления материалами, привязанными к видам работ, и предложения материалов.
+  version: v1
+servers:
+  - url: /api/v1/admin
+paths:
+  /work-types/{work_type_id}/materials:
+    get:
+      summary: Получить список материалов для вида работ
+      operationId: getWorkTypeMaterials
+      security:
+        - bearerAuth: []
+      tags:
+        - WorkTypeMaterials
+      parameters:
+        - name: work_type_id
+          in: path
+          required: true
+          description: ID вида работ
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Список материалов, привязанных к виду работ.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkTypeMaterialItem' # Ссылка на схему с pivot данными
+        '403':
+          description: Доступ запрещен (например, вид работ не принадлежит организации)
+        '404':
+          description: Вид работ не найден
+    post:
+      summary: Привязать/обновить материалы для вида работ
+      description: Синхронизирует список материалов для вида работ. Принимает массив материалов с их нормами.
+      operationId: syncWorkTypeMaterials
+      security:
+        - bearerAuth: []
+      tags:
+        - WorkTypeMaterials
+      parameters:
+        - name: work_type_id
+          in: path
+          required: true
+          description: ID вида работ
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncWorkTypeMaterialsRequest'
+      responses:
+        '200':
+          description: Материалы успешно синхронизированы. Возвращает обновленный список.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkTypeMaterialItem'
+        '400':
+          description: Ошибка бизнес-логики (например, материал не найден в организации)
+        '403':
+          description: Доступ запрещен
+        '404':
+          description: Вид работ не найден
+        '422':
+          description: Ошибка валидации данных
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+
+  /work-types/{work_type_id}/materials/{material_id}:
+    delete:
+      summary: Отвязать материал от вида работ
+      operationId: removeMaterialFromWorkType
+      security:
+        - bearerAuth: []
+      tags:
+        - WorkTypeMaterials
+      parameters:
+        - name: work_type_id
+          in: path
+          required: true
+          description: ID вида работ
+          schema:
+            type: integer
+        - name: material_id
+          in: path
+          required: true
+          description: ID материала
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Материал успешно отвязан.
+        '400':
+          description: Ошибка бизнес-логики
+        '403':
+          description: Доступ запрещен (например, ресурс не принадлежит организации)
+        '404':
+          description: Вид работ или материал не найден
+
+  /work-types/{work_type_id}/suggest-materials:
+    get:
+      summary: Предложить материалы для вида работ
+      operationId: getSuggestedMaterialsForWorkType
+      security:
+        - bearerAuth: []
+      tags:
+        - WorkTypeMaterials
+      parameters:
+        - name: work_type_id
+          in: path
+          required: true
+          description: ID вида работ
+          schema:
+            type: integer
+        - name: quantity
+          in: query
+          required: true
+          description: Объем выполняемых работ (в единицах измерения вида работ)
+          schema:
+            type: number
+            format: float
+            minimum: 0.0001
+      responses:
+        '200':
+          description: Список предложенных материалов с рассчитанными количествами.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SuggestedMaterialItem'
+        '400':
+          description: Ошибка бизнес-логики (например, вид работ не найден)
+        '403':
+          description: Доступ запрещен
+        '404':
+          description: Вид работ не найден
+        '422':
+          description: Ошибка валидации (например, отсутствует параметр quantity)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+
+components:
+  schemas:
+    WorkTypeMaterialItem: # Представление материала с pivot данными для WorkType
+      allOf:
+        - $ref: '#/components/schemas/MaterialMini'
+        - type: object
+          properties:
+            pivot:
+              type: object
+              required:
+                - default_quantity
+              properties:
+                default_quantity:
+                  type: number
+                  format: float
+                  description: Норма материала на единицу вида работ
+                  example: 0.5
+                notes:
+                  type: string
+                  nullable: true
+                  description: Примечания к норме
+                  example: "Для кладки в полкирпича"
+            # organization_id и work_type_id не включаем, т.к. они контекстные
+
+    SyncWorkTypeMaterialsRequest:
+      type: object
+      required:
+        - materials
+      properties:
+        materials:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required:
+              - material_id
+              - default_quantity
+            properties:
+              material_id:
+                type: integer
+                description: ID материала
+                example: 101
+              default_quantity:
+                type: number
+                format: float
+                minimum: 0
+                description: Норма материала на единицу вида работ
+                example: 0.5
+              notes:
+                type: string
+                nullable: true
+                maxLength: 1000
+                description: Примечания к норме
+                example: "Расход может варьироваться"
+
+    SuggestedMaterialItem:
+      type: object
+      properties:
+        material:
+          $ref: '#/components/schemas/MaterialMini' # Ссылка на мини-схему материала
+        suggested_quantity:
+          type: number
+          format: float
+          description: Предложенное количество материала
+          example: 10.5
+        unit:
+          type: string
+          description: Единица измерения материала (например, кг, шт, м3)
+          example: "кг"
+
+    MaterialMini: # Заглушка, должна быть определена в catalogs.yaml или общем файле
+      type: object
+      required:
+        - id
+        - name
+        - measurement_unit
+      properties:
+        id:
+          type: integer
+          example: 101
+        name:
+          type: string
+          example: "Цемент М500"
+        measurement_unit:
+           type: object
+           required:
+             - id
+             - name
+             - short_name
+           properties:
+             id:
+               type: integer
+               description: ID единицы измерения
+               example: 1
+             name:
+               type: string
+               description: Полное название единицы измерения
+               example: "мешок"
+             short_name:
+               type: string
+               description: Краткое обозначение единицы измерения
+               example: "меш."
+
+    ValidationError:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "The given data was invalid."
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            materials.0.material_id: ["The selected materials.0.material_id is invalid."]
+            quantity: ["The quantity field is required."]
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT 

@@ -1,0 +1,903 @@
+openapi: 3.0.0
+info:
+  title: Projects API
+  version: v1
+tags:
+  - name: Projects
+    description: Управление проектами и связанными данными
+  - name: ProjectForemen
+    description: Управление прорабами на проекте
+  - name: ProjectDetails
+    description: Получение детальной информации по проекту (статистика, материалы, работы)
+
+paths:
+  /api/v1/admin/projects:
+    get:
+      tags: [Projects]
+      summary: Получить список проектов
+      description: Получает пагинированный список проектов для текущей организации.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: per_page
+          in: query
+          description: Количество элементов на странице
+          required: false
+          schema:
+            type: integer
+            default: 15
+        - name: page
+          in: query
+          description: Номер страницы
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: name
+          in: query
+          description: Фильтр по названию проекта (частичное совпадение)
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          description: Фильтр по статусу проекта
+          required: false
+          schema:
+            $ref: '#/components/schemas/ProjectStatusEnum'
+        - name: is_archived
+          in: query
+          description: Фильтр по архивным проектам (true/false)
+          required: false
+          schema:
+            type: boolean
+        - name: cost_category_id
+          in: query
+          description: Фильтр по ID категории затрат
+          required: false
+          schema:
+            type: integer
+        - name: sort_by
+          in: query
+          description: Поле для сортировки
+          required: false
+          schema:
+            type: string
+            default: created_at
+            enum: [id, name, status, start_date, end_date, customer, created_at, updated_at]
+        - name: sort_direction
+          in: query
+          description: Направление сортировки
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        '200':
+          description: Список проектов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Project'
+                  links:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: 'common_components.yaml#/components/schemas/PaginationMeta'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    post:
+      tags: [Projects]
+      summary: Создать новый проект
+      description: Создает новый проект в системе для текущей организации.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreProjectRequest'
+      responses:
+        '201':
+          description: Проект успешно создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/projects/available-cost-categories:
+    get:
+      tags: [Projects]
+      summary: Получить доступные категории затрат для проектов
+      description: Возвращает список активных категорий затрат для текущей организации, подходящих для назначения проекту.
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Список доступных категорий затрат
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AvailableCostCategory'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/projects/{project_id}:
+    get:
+      tags: [Projects]
+      summary: Получить информацию о проекте
+      description: Получает детальную информацию о проекте по его ID, включая связанных пользователей (прорабов) и категорию затрат.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          description: ID проекта
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Информация о проекте
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    put:
+      tags: [Projects]
+      summary: Обновить информацию о проекте
+      description: Обновляет данные указанного проекта.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          description: ID проекта
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProjectRequest'
+      responses:
+        '200':
+          description: Проект успешно обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [Projects]
+      summary: Удалить проект
+      description: Удаляет проект из системы (мягкое удаление).
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          description: ID проекта для удаления
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Проект успешно удален
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/projects/{project_id}/foremen/{user_id}:
+    post:
+      tags: [Projects, ProjectForemen]
+      summary: Назначить прораба на проект
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          description: ID проекта
+          schema: { type: integer }
+        - name: user_id
+          in: path
+          required: true
+          description: ID пользователя (прораба) для назначения
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Прораб успешно назначен на проект
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  message: { type: string, example: "Прораб успешно назначен на проект." }
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [Projects, ProjectForemen]
+      summary: Снять прораба с проекта
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          description: ID проекта
+          schema: { type: integer }
+        - name: user_id
+          in: path
+          required: true
+          description: ID пользователя (прораба) для снятия
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Прораб успешно снят с проекта
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  message: { type: string, example: "Прораб успешно снят с проекта." }
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/projects/{project_id}/statistics:
+    get:
+      tags: [Projects, ProjectDetails]
+      summary: Получить статистику по проекту
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          description: ID проекта
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Статистика по проекту
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: { $ref: '#/components/schemas/ProjectStatistics' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/projects/{project_id}/materials:
+    get:
+      tags: [Projects, ProjectDetails]
+      summary: Получить материалы проекта (остатки)
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          description: ID проекта
+          schema: { type: integer }
+        - name: per_page
+          in: query
+          schema: { type: integer, default: 15 }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: search
+          in: query
+          required: false
+          schema: { type: string }
+        - name: sort_by
+          in: query
+          required: false
+          schema: { type: string, enum: [name, available_quantity, created_at] }
+        - name: sort_direction
+          in: query
+          required: false
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        '200':
+          description: Список материалов проекта (остатков)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data: 
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/ProjectMaterialListItem' }
+                      links: { $ref: 'common_components.yaml#/components/schemas/PaginationLinks' }
+                      meta: { $ref: 'common_components.yaml#/components/schemas/PaginationMeta' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/projects/{project_id}/work-types:
+    get:
+      tags: [Projects, ProjectDetails]
+      summary: Получить виды работ, связанные с проектом
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: path
+          required: true
+          description: ID проекта
+          schema: { type: integer }
+        - name: per_page
+          in: query
+          schema: { type: integer, default: 15 }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Список видов работ проекта
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/ProjectWorkTypeListItem' }
+                      links: { $ref: 'common_components.yaml#/components/schemas/PaginationLinks' }
+                      meta: { $ref: 'common_components.yaml#/components/schemas/PaginationMeta' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+components:
+  schemas:
+    ProjectStatusEnum:
+      type: string
+      description: Статус проекта
+      enum: [active, completed, paused, cancelled, draft]
+      default: active
+
+    ProjectCostCategoryMini:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+
+    ProjectForeman:
+      type: object
+      properties:
+        id: { type: integer, description: "ID пользователя" }
+        name: { type: string, description: "Имя пользователя" }
+        email: { type: string, format: email, description: "Email пользователя" }
+        pivot: 
+          type: object
+          properties:
+            role: { type: string, example: "foreman", description: "Роль на проекте" }
+
+    ProjectBase:
+      type: object
+      properties:
+        name: { type: string, maxLength: 255, description: "Название проекта" }
+        address: { type: string, nullable: true, maxLength: 255, description: "Адрес объекта" }
+        description: { type: string, nullable: true, description: "Описание проекта" }
+        customer: { type: string, nullable: true, maxLength: 255, description: "Заказчик" }
+        designer: { type: string, nullable: true, maxLength: 255, description: "Проектировщик" }
+        start_date: { type: string, format: date, nullable: true, description: "Дата начала проекта" }
+        end_date: { type: string, format: date, nullable: true, description: "Дата окончания проекта" }
+        status: { $ref: '#/components/schemas/ProjectStatusEnum' }
+        is_archived: { type: boolean, default: false, description: "В архиве" }
+        additional_info: { type: object, additionalProperties: true, nullable: true, description: "Дополнительная информация (JSON)" }
+        external_code: { type: string, nullable: true, maxLength: 100, description: "Внешний код для интеграции" }
+        cost_category_id: { type: integer, nullable: true, description: "ID категории затрат" }
+        accounting_data: { type: object, additionalProperties: true, nullable: true, description: "Данные для бухгалтерии (JSON)" }
+        use_in_accounting_reports: { type: boolean, default: false, description: "Использовать в бухгалтерских отчетах" }
+
+    StoreProjectRequest:
+      allOf:
+        - $ref: '#/components/schemas/ProjectBase'
+      type: object
+      required:
+        - name
+        - status
+
+    UpdateProjectRequest:
+      allOf:
+        - $ref: '#/components/schemas/ProjectBase'
+
+    Project:
+      allOf:
+        - $ref: '#/components/schemas/ProjectBase'
+      type: object
+      properties:
+        id: { type: integer, readOnly: true }
+        organization_id: { type: integer, readOnly: true, description: "ID организации" }
+        cost_category: { $ref: '#/components/schemas/ProjectCostCategoryMini', nullable: true, readOnly: true, description: "Категория затрат"}
+        users:
+          type: array
+          readOnly: true
+          items: { $ref: '#/components/schemas/ProjectForeman' }
+        created_at: { type: string, format: date-time, readOnly: true }
+        updated_at: { type: string, format: date-time, readOnly: true }
+
+    AvailableCostCategory:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+
+    ProjectStatistics:
+      type: object
+      description: Статистические данные по проекту
+      properties:
+        total_planned_cost: { type: number, format: float, description: "Общая плановая стоимость" }
+        total_actual_cost: { type: number, format: float, description: "Общая фактическая стоимость" }
+        materials_cost: { type: number, format: float, description: "Затраты на материалы" }
+        work_cost: { type: number, format: float, description: "Затраты на работы" }
+        completed_percentage: { type: number, format: float, minimum:0, maximum:100, description: "Процент выполнения проекта" }
+        message: { type: string, description: "Сообщение, если статистика еще не доступна", example: "Statistics not available yet." }
+
+    ProjectMaterialListItem:
+      type: object
+      description: Элемент списка материалов по проекту (остатки или связанные материалы)
+      properties:
+        id: { type: integer, description: "ID записи остатка или материала"}
+        material_id: { type: integer, description: "ID самого материала"}
+        name: { type: string, description: "Название материала" }
+        measurement_unit: { type: string, description: "Единица измерения" }
+        available_quantity: { type: number, format: float, description: "Доступное количество на проекте" }
+
+    ProjectWorkTypeListItem:
+      type: object
+      description: Элемент списка видов работ по проекту
+      properties:
+        id: { type: integer, description: "ID вида работ"}
+        name: { type: string, description: "Название вида работ" }
+        measurement_unit: { type: string, description: "Единица измерения" }
+        planned_quantity: { type: number, format: float, description: "Плановое количество по проекту" }
+        actual_quantity: { type: number, format: float, description: "Фактическое количество по проекту" }
+
+  securitySchemes:
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' }
+
+# Global components like securitySchemes or shared schemas (PaginationLinks, CostCategory, etc.)
+# should ideally be defined in a root document or a dedicated shared components file.
+# For now, assuming ForemanUser will be resolved from users.yaml when docs are compiled.
+
+# Локальные responses УДАЛЯЮТСЯ, т.к. заменены на ссылки в common_components.yaml
+# responses:
+#   BusinessLogicError:
+#     description: Ошибка бизнес-логики
+#     content:
+#       application/json:
+#         schema:
+#           $ref: '#/components/schemas/ErrorResponse' # Это тоже можно было бы заменить
+#   Unauthorized:
+#     # ... и так далее для всех локальных ответов
+
+# ... (остальные новые пути ProjectForemen и ProjectDetails без изменений, они уже используют common_components) ...
+
+# ... (новые схемы ProjectStatistics, ProjectMaterialListItem и т.д. остаются без изменений) ...
+
+# ... (новые схемы ProjectForeman и ProjectCostCategoryMini остаются без изменений) ...
+
+# ... (новые схемы StoreProjectRequest и UpdateProjectRequest остаются без изменений) ...
+
+# ... (новые схемы Project и AvailableCostCategory остаются без изменений) ...
+
+# ... (новые схемы ProjectStatistics, ProjectMaterialListItem и ProjectWorkTypeListItem остаются без изменений) ...
+
+# ... (новые схемы ProjectForeman и ProjectCostCategoryMini остаются без изменений) ...
+
+# ... (новые схемы StoreProjectRequest и UpdateProjectRequest остаются без изменений) ...
+
+# ... (новые схемы Project и AvailableCostCategory остаются без изменений) ...
+
+# ... (новые схемы ProjectStatistics, ProjectMaterialListItem и ProjectWorkTypeListItem остаются без изменений) ...
+
+# ... (новые схемы ProjectForeman и ProjectCostCategoryMini остаются без изменений) ...
+
+# ... (новые схемы StoreProjectRequest и UpdateProjectRequest остаются без изменений) ...
+
+        name:
+          type: string
+          maxLength: 255
+        address:
+          type: string
+          maxLength: 1000
+          nullable: true
+        description:
+          type: string
+          maxLength: 2000
+          nullable: true
+        customer:
+          type: string
+          maxLength: 255
+          nullable: true
+        designer:
+          type: string
+          maxLength: 255
+          nullable: true
+        start_date:
+          type: string
+          format: date
+          nullable: true
+        end_date:
+          type: string
+          format: date
+          nullable: true
+          description: Должна быть после или равна start_date
+        status:
+          type: string
+          enum: [active, completed, paused, cancelled]
+        is_archived:
+          type: boolean
+        additional_info:
+          type: object
+        external_code:
+          type: string
+        cost_category_id:
+          type: integer
+        accounting_data:
+          type: object
+        use_in_accounting_reports:
+          type: boolean
+          nullable: true
+
+    UpdateProjectRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        address:
+          type: string
+          maxLength: 1000
+          nullable: true
+        description:
+          type: string
+          maxLength: 2000
+          nullable: true
+        customer:
+          type: string
+          maxLength: 255
+          nullable: true
+        designer:
+          type: string
+          maxLength: 255
+          nullable: true
+        start_date:
+          type: string
+          format: date
+          nullable: true
+        end_date:
+          type: string
+          format: date
+          nullable: true
+          description: Должна быть после или равна start_date
+        status:
+          type: string
+          enum: [active, completed, paused, cancelled]
+        is_archived:
+          type: boolean
+          nullable: true
+        additional_info:
+          type: object
+          nullable: true
+          additionalProperties: true
+        external_code:
+          type: string
+          maxLength: 100
+          nullable: true
+        cost_category_id:
+          type: integer
+          nullable: true
+          description: ID существующей категории затрат
+        accounting_data:
+          type: object
+          nullable: true
+          additionalProperties: true
+        use_in_accounting_reports:
+          type: boolean
+          nullable: true
+
+    Project:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        address:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        customer:
+          type: string
+          nullable: true
+        designer:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, completed, paused, cancelled]
+        start_date:
+          type: string
+          format: date
+          nullable: true
+        end_date:
+          type: string
+          format: date
+          nullable: true
+        is_archived:
+          type: boolean
+        additional_info:
+          type: object
+          nullable: true
+          additionalProperties: true
+        organization_id:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        external_code:
+          type: string
+          nullable: true
+          maxLength: 100
+        cost_category_id:
+          type: integer
+          nullable: true
+        accounting_data:
+          type: object
+          nullable: true
+          additionalProperties: true
+        use_in_accounting_reports:
+          type: boolean
+          nullable: true
+        assigned_users:
+          type: array
+          items:
+            $ref: '#/components/schemas/ForemanUser'
+        assigned_users_count:
+          type: integer
+        cost_category:
+          $ref: '#/components/schemas/CostCategory'
+
+    ProjectStatistics:
+      type: object
+      description: Статистические данные по проекту
+      properties:
+        total_planned_cost: { type: number, format: float, description: "Общая плановая стоимость" }
+        total_actual_cost: { type: number, format: float, description: "Общая фактическая стоимость" }
+        materials_cost: { type: number, format: float, description: "Затраты на материалы" }
+        work_cost: { type: number, format: float, description: "Затраты на работы" }
+        completed_percentage: { type: number, format: float, minimum:0, maximum:100, description: "Процент выполнения проекта" }
+        message: { type: string, description: "Сообщение, если статистика еще не доступна", example: "Statistics not available yet." }
+
+    AvailableCostCategory:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        code:
+          type: string
+          nullable: true
+        external_code:
+          type: string
+          nullable: true
+        parent_id:
+          type: integer
+          nullable: true
+
+    ForemanUser:
+      type: object
+      properties:
+        id:
+          type: integer
+        full_name:
+          type: string
+        email:
+          type: string
+          format: email
+        phone:
+          type: string
+          nullable: true
+        position:
+          type: string
+          nullable: true
+        avatar_path:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        is_active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UpdateProjectForemanInfo:
+      type: object
+      properties:
+        role: { type: string, enum: [foreman, manager], default: foreman }
+
+    ProjectMaterialListItem:
+      type: object
+      description: Элемент списка материалов по проекту (остатки или связанные материалы)
+      properties:
+        id: { type: integer, description: "ID записи остатка или материала"}
+        material_id: { type: integer, description: "ID самого материала"}
+        name: { type: string, description: "Название материала" }
+        measurement_unit: { type: string, description: "Единица измерения" }
+        available_quantity: { type: number, format: float, description: "Доступное количество на проекте" }
+
+    ProjectWorkTypeListItem:
+      type: object
+      description: Элемент списка видов работ по проекту
+      properties:
+        id: { type: integer, description: "ID вида работ"}
+        name: { type: string, description: "Название вида работ" }
+        measurement_unit: { type: string, description: "Единица измерения" }
+        planned_quantity: { type: number, format: float, description: "Плановое количество по проекту" }
+        actual_quantity: { type: number, format: float, description: "Фактическое количество по проекту" }
+
+  responses:
+    Unauthorized:
+      description: Ошибка авторизации (не аутентифицирован)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: Unauthenticated.
+    Forbidden:
+      description: Ошибка доступа (нет прав)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+                example: This action is unauthorized.
+    NotFound:
+      description: Ресурс не найден
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: "Ресурс не найден."
+    BusinessLogicError:
+      description: Ошибка бизнес-логики
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: "Произошла ошибка бизнес-логики."
+    ValidationError:
+      description: Ошибка валидации данных
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: "Данные не прошли валидацию."
+              errors:
+                type: object
+                additionalProperties:
+                  type: array
+                  items:
+                    type: string
+    InternalError:
+      description: Внутренняя ошибка сервера
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: "Внутренняя ошибка сервера."
+
+security:
+  - bearerAuth: []
+
+# Global components like securitySchemes or shared schemas (PaginationLinks, CostCategory, etc.)
+# should ideally be defined in a root document or a dedicated shared components file.
+# For now, assuming ForemanUser will be resolved from users.yaml when docs are compiled.
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT 

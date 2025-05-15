@@ -1,0 +1,305 @@
+openapi: 3.0.0
+info:
+  title: Contracts API - Payments
+  version: v1
+tags:
+  - name: ContractPayments
+    description: Операции с платежами по контрактам
+paths:
+  /api/v1/admin/contracts/{contract}/payments:
+    get:
+      tags: [ContractPayments]
+      summary: Список платежей для контракта
+      description: Получает все платежи, связанные с указанным контрактом.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: contract
+          in: path
+          required: true
+          description: ID контракта
+          schema: { type: integer }
+        # Add query params for filtering/sorting if available (e.g., payment_type, date_from, date_to)
+        # - name: per_page
+        #   in: query
+        #   schema: { type: integer, default: 15 }
+        # - name: page
+        #   in: query
+        #   schema: { type: integer, default: 1 }
+      responses:
+        '200':
+          description: Список платежей
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ContractPayment'
+                  # links: { $ref: 'common_components.yaml#/components/schemas/PaginationLinks' } # If paginated
+                  # meta: { $ref: 'common_components.yaml#/components/schemas/PaginationMeta' } # If paginated
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' } # Contract not found
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    post:
+      tags: [ContractPayments]
+      summary: Создать новый платеж для контракта
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: contract
+          in: path
+          required: true
+          description: ID контракта
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreContractPaymentRequest'
+      responses:
+        '201':
+          description: Платеж создан успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContractPayment'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' } # Contract not found
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/payments/{payment}:
+    get:
+      tags: [ContractPayments]
+      summary: Получить информацию о платеже
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: payment
+          in: path
+          required: true
+          description: ID платежа
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Информация о платеже
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContractPayment'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    put:
+      tags: [ContractPayments]
+      summary: Обновить платеж
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: payment
+          in: path
+          required: true
+          description: ID платежа
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContractPaymentRequest'
+      responses:
+        '200':
+          description: Платеж обновлен успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContractPayment'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    patch: # Typically mirrors PUT for partial updates
+      tags: [ContractPayments]
+      summary: Частично обновить платеж
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: payment
+          in: path
+          required: true
+          description: ID платежа
+          schema: { type: integer }
+      requestBody:
+        required: true # Or false if all fields in schema are optional
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContractPaymentRequest' # Often reuses Update schema
+      responses:
+        '200':
+          description: Платеж обновлен успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContractPayment'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '422': { $ref: 'common_components.yaml#/components/responses/ValidationError' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+    delete:
+      tags: [ContractPayments]
+      summary: Удалить платеж
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: payment
+          in: path
+          required: true
+          description: ID платежа
+          schema: { type: integer }
+      responses:
+        '204':
+          description: Платеж удален успешно (No Content)
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+components:
+  schemas:
+    StoreContractPaymentRequest:
+      type: object
+      description: Данные для создания нового платежа по контракту
+      required:
+        - payment_date
+        - amount
+        - payment_type
+      properties:
+        payment_date:
+          type: string
+          format: date
+          description: Дата платежа (YYYY-MM-DD)
+        amount:
+          type: number
+          format: float
+          minimum: 0
+          description: Сумма платежа
+        payment_type:
+          type: string
+          description: Тип платежа
+          enum: [advance, fact_payment, deferred_payment, other] # Enum based on your system
+        reference_document_number:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Номер документа основания (например, счет)
+        description:
+          type: string
+          nullable: true
+          description: Описание/примечание к платежу
+
+    UpdateContractPaymentRequest:
+      type: object
+      description: Данные для обновления платежа по контракту
+      properties: # All fields are optional for update
+        payment_date:
+          type: string
+          format: date
+          description: "Дата платежа (YYYY-MM-DD)"
+        amount:
+          type: number
+          format: float
+          minimum: 0
+          description: "Сумма платежа"
+        payment_type:
+          type: string
+          description: "Тип платежа"
+          enum: [advance, fact_payment, deferred_payment, other] # Enum based on your system
+        reference_document_number:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Номер документа основания
+        description:
+          type: string
+          nullable: true
+          description: Описание/примечание к платежу
+
+    ContractPayment:
+      type: object
+      description: Платеж по контракту
+      required:
+        - id
+        - contract_id
+        - payment_date
+        - amount
+        - payment_type
+        # - payment_type_label # If it's always returned
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: integer
+          readOnly: true
+          description: ID платежа
+        contract_id:
+          type: integer
+          readOnly: true
+          description: ID контракта, к которому относится платеж
+        payment_date:
+          type: string
+          format: date
+          description: Дата платежа (YYYY-MM-DD)
+        amount:
+          type: number
+          format: float
+          description: Сумма платежа
+        payment_type:
+          type: string
+          description: Тип платежа
+          enum: [advance, fact_payment, deferred_payment, other] # Enum based on your system
+        payment_type_label: # If your API provides a human-readable label
+          type: string
+          readOnly: true
+          nullable: true
+          description: Наименование типа платежа
+        reference_document_number:
+          type: string
+          maxLength: 255
+          nullable: true
+          description: Номер документа основания
+        description:
+          type: string
+          nullable: true
+          description: Описание/примечание к платежу
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Дата создания записи о платеже
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Дата последнего обновления записи о платеже
+  
+  securitySchemes:
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' } 

@@ -1,0 +1,1779 @@
+openapi: 3.0.0
+info:
+  title: Catalogs API
+  version: v1
+paths:
+  # Materials
+  /api/v1/admin/materials/measurement-units:
+    get:
+      summary: Получить все единицы измерения
+      tags:
+        - Materials
+      security:
+        - bearerAuth: []
+      parameters:
+        # Можно добавить параметры фильтрации, если сервис их поддерживает (например, по organization_id, если они не глобальные)
+        - name: perPage
+          in: query
+          description: Количество на страницу
+          schema:
+            type: integer
+            default: 100 # Обычно справочники возвращают много записей
+        - name: page
+          in: query
+          description: Номер страницы
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Список единиц измерения
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MeasurementUnit'
+                  # Добавить links и meta для пагинации, если сервис их возвращает
+  /api/v1/admin/materials/{material_id}/balances:
+    get:
+      summary: Получить остатки по материалу на проектах
+      tags:
+        - Materials
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: material_id
+          in: path
+          required: true
+          description: ID материала
+          schema:
+            type: integer
+        # Можно добавить параметры фильтрации (например, project_id)
+      responses:
+        '200':
+          description: Остатки материала по проектам
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MaterialBalanceItem'
+        '404':
+          description: Материал не найден
+  /api/v1/admin/materials/import:
+    post:
+      summary: Импорт материалов из файла
+      tags:
+        - Materials
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Файл для импорта (CSV, Excel)
+                format: # Дополнительный параметр для указания формата, если поддерживается
+                  type: string
+                  enum: [csv, xlsx, simple, sbis, onec] # Объединил варианты
+                  description: Формат файла (если не определяется автоматически)
+                options: # Добавлено из MaterialController
+                  type: object
+                  nullable: true
+                  description: Дополнительные опции импорта (например, разделитель для CSV)
+                  additionalProperties: true
+      responses:
+        '200':
+          description: Результат импорта
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportMaterialsResponse' # Уточнено
+        '400':
+          description: Ошибка бизнес-логики или неверный формат файла
+        '422':
+          description: Ошибка валидации файла
+  /api/v1/admin/materials/{material_id}/consumption-rates:
+    get:
+      summary: Получить нормы списания материала по видам работ
+      tags:
+        - Materials
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: material_id
+          in: path
+          required: true
+          description: ID материала
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Нормы списания материала
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      material_id:
+                        type: integer
+                      material_name:
+                        type: string
+                      consumption_rates:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ConsumptionRateItem'
+        '404':
+          description: Материал не найден
+    put:
+      summary: Обновить нормы списания материала по видам работ
+      tags:
+        - Materials
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: material_id
+          in: path
+          required: true
+          description: ID материала
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateConsumptionRatesRequest'
+      responses:
+        '200':
+          description: Нормы списания успешно обновлены
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      material_id:
+                        type: integer
+                      material_name:
+                        type: string
+                      consumption_rates:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ConsumptionRateItem'
+        '404':
+          description: Материал не найден
+        '422':
+          description: Ошибка валидации (например, вид работ не найден или неверные данные)
+  /api/v1/admin/materials/{material_id}/validate-for-accounting:
+    get:
+      summary: Валидация материала для интеграции с СБИС/1С
+      tags:
+        - Materials
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: material_id
+          in: path
+          required: true
+          description: ID материала
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Результат валидации
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/ValidateForAccountingResponse'
+        '404':
+          description: Материал не найден
+  /api/v1/admin/materials:
+    get:
+      summary: Получить список материалов
+      tags:
+        - Materials
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 15
+        - name: page
+          in: query
+          schema:
+            type: integer
+        # Другие параметры фильтрации и сортировки из MaterialService->getMaterialsPaginated
+        - name: name
+          in: query
+          description: Фильтр по названию (частичное совпадение)
+          schema:
+            type: string
+        - name: code
+          in: query
+          description: Фильтр по артикулу
+          schema:
+            type: string
+        - name: category
+          in: query
+          description: Фильтр по категории
+          schema:
+            type: string
+        - name: is_active
+          in: query
+          description: Фильтр по статусу активности (true/false)
+          schema:
+            type: boolean # В контроллере обрабатывается как boolean
+        - name: sortBy
+          in: query
+          description: Поле для сортировки
+          schema:
+            type: string
+            default: name # Уточнено
+            enum: [name, category, created_at, updated_at] # Уточнено
+        - name: sortDirection
+          in: query
+          description: Направление сортировки (asc, desc)
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        '200':
+          description: Список материалов
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Material'
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+    post:
+      summary: Создать новый материал
+      tags:
+        - Materials
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MaterialStoreRequest'
+      responses:
+        '201':
+          description: Материал создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Material' # MaterialResource возвращается
+        '400':
+          description: Ошибка бизнес-логики
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+  /api/v1/admin/materials/{material_id}:
+    get:
+      summary: Получить информацию о материале
+      tags:
+        - Materials
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: material_id
+          in: path
+          required: true
+          description: ID материала
+          schema:
+            type: integer
+        - name: include_consumption_rates
+          in: query
+          description: Включить нормы списания в ответ
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Информация о материале
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Material' # MaterialResource
+        '404':
+          description: Материал не найден
+    put:
+      summary: Обновить материал
+      tags:
+        - Materials
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: material_id
+          in: path
+          required: true
+          description: ID материала
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MaterialUpdateRequest'
+      responses:
+        '200':
+          description: Материал обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Material' # MaterialResource
+        '404':
+          description: Материал не найден или не удалось обновить
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+    delete:
+      summary: Удалить материал
+      tags:
+        - Materials
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: material_id
+          in: path
+          required: true
+          description: ID материала
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Материал удален
+        '403':
+          description: Ошибка (например, материал используется и не может быть удален)
+        '404':
+          description: Материал не найден
+
+  # Suppliers
+  /api/v1/admin/suppliers:
+    get:
+      summary: Получить список поставщиков
+      tags:
+        - Suppliers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 15
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: name
+          in: query
+          description: Фильтр по названию (частичное совпадение ilike)
+          schema:
+            type: string
+        - name: is_active
+          in: query
+          description: Фильтр по статусу активности
+          schema:
+            type: boolean
+        - name: sort_by
+          in: query
+          description: Поле для сортировки (name, created_at, updated_at)
+          schema:
+            type: string
+            default: name
+            enum: [name, created_at, updated_at]
+        - name: sort_direction
+          in: query
+          description: Направление сортировки (asc, desc)
+          schema:
+            type: string
+            default: asc
+            enum: [asc, desc]
+      responses:
+        '200':
+          description: Список поставщиков
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Supplier'
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+    post:
+      summary: Создать нового поставщика
+      tags:
+        - Suppliers
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupplierStoreRequest'
+      responses:
+        '201':
+          description: Поставщик создан
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+  /api/v1/admin/suppliers/{supplier_id}:
+    get:
+      summary: Получить информацию о поставщике
+      tags:
+        - Suppliers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: supplier_id
+          in: path
+          required: true
+          description: ID поставщика
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Информация о поставщике
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '404':
+          description: Поставщик не найден
+    put:
+      summary: Обновить поставщика
+      tags:
+        - Suppliers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: supplier_id
+          in: path
+          required: true
+          description: ID поставщика
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SupplierUpdateRequest' # Будет добавлена схема SupplierUpdateRequest
+      responses:
+        '200':
+          description: Поставщик обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Supplier'
+        '404':
+          description: Поставщик не найден или не удалось обновить
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+    delete:
+      summary: Удалить поставщика
+      tags:
+        - Suppliers
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: supplier_id
+          in: path
+          required: true
+          description: ID поставщика
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Поставщик удален
+        '404':
+          description: Поставщик не найден
+
+  # Work Types
+  /api/v1/admin/work-types:
+    get:
+      summary: Получить список видов работ
+      tags:
+        - WorkTypes
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: per_page # Название параметра из WorkTypeController
+          in: query
+          schema:
+            type: integer
+            default: 15
+        - name: page
+          in: query
+          schema:
+            type: integer
+        # Добавить другие параметры фильтрации и сортировки из WorkTypeService->getWorkTypesPaginated, если они есть
+        # Например: name, category, is_active, sortBy, sortDirection
+        - name: name
+          in: query
+          schema:
+            type: string
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+        - name: sortBy # Уточнить поля для сортировки
+          in: query
+          schema:
+            type: string
+            default: name # Добавлено для ясности
+            enum: [name, category, created_at, updated_at] # Уточнено
+        - name: sortDirection
+          in: query
+          description: Направление сортировки (asc, desc)
+          schema:
+            type: string
+            enum: [asc, desc]
+      responses:
+        '200':
+          description: Список видов работ (пагинированный)
+          content:
+            application/json:
+              schema:
+                # WorkTypeController->index возвращает response()->json($workTypes), где $workTypes это LengthAwarePaginator
+                # Это значит, что структура ответа будет как у стандартной пагинации Laravel
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WorkType'
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+    post:
+      summary: Создать новый вид работ
+      tags:
+        - WorkTypes
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkTypeStoreRequest'
+      responses:
+        '201': # WorkTypeController->store возвращает 201 и JSON с success, message, data
+          description: Вид работ создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Work Type created successfully (raw response)"
+                  data:
+                    $ref: '#/components/schemas/WorkType'
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+        '400':
+          description: Ошибка бизнес-логики
+        '500':
+          description: Внутренняя ошибка сервера
+  /api/v1/admin/work-types/{work_type_id}:
+    get:
+      summary: Получить вид работ по ID
+      tags:
+        - WorkTypes
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: work_type_id
+          in: path
+          required: true
+          description: ID вида работ
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                # WorkTypeController->show возвращает new WorkTypeResource($workType), где $workType это модель
+                $ref: '#/components/schemas/WorkType'
+        '404':
+          description: Вид работ не найден
+    put:
+      summary: Обновить вид работ
+      tags:
+        - WorkTypes
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: work_type_id
+          in: path
+          required: true
+          description: ID вида работ
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkTypeUpdateRequest'
+      responses:
+        '200':
+          description: Вид работ обновлен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Work Type updated successfully (raw response)" # Уточнить по факту
+                  data:
+                    $ref: '#/components/schemas/WorkType'
+        '404':
+          description: Вид работ не найден
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+        '400':
+          description: Ошибка бизнес-логики
+        '500':
+          description: Внутренняя ошибка сервера
+    delete:
+      summary: Удалить вид работ
+      tags:
+        - WorkTypes
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: work_type_id
+          in: path
+          required: true
+          description: ID вида работ
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: Вид работ успешно удален (стандартный ответ для DELETE)
+        '404':
+          description: Вид работ не найден
+        '400': # WorkTypeService->deleteWorkType может бросать BusinessLogicException
+          description: Ошибка бизнес-логики (например, вид работ используется)
+
+  # Cost Categories
+  /api/v1/admin/cost-categories:
+    get:
+      summary: Получить список категорий затрат
+      tags:
+        - CostCategories
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: per_page
+          in: query
+          description: Количество элементов на странице
+          schema:
+            type: integer
+            default: 15
+        - name: page
+          in: query
+          description: Номер страницы
+          schema:
+            type: integer
+        - name: search
+          in: query
+          description: Поиск по названию, коду, внешнему коду
+          schema:
+            type: string
+        - name: is_active
+          in: query
+          description: Фильтр по активности (true/false или 1/0)
+          schema:
+            type: string # Приходит как строка, обрабатывается в сервисе
+        - name: parent_id
+          in: query
+          description: ID родительской категории (или "null", "0" для корневых)
+          schema:
+            type: string # Приходит как строка
+        - name: sort_by
+          in: query
+          description: Поле для сортировки
+          schema:
+            type: string
+            default: 'sort_order'
+            enum: [id, name, code, external_code, sort_order, created_at] # Уточнить по модели/сервису
+        - name: sort_direction
+          in: query
+          description: Направление сортировки
+          schema:
+            type: string
+            default: 'asc'
+            enum: [asc, desc]
+      responses:
+        '200':
+          description: Список категорий затрат (пагинированный)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CostCategory'
+                  links:
+                    $ref: '#/components/schemas/PaginationLinks'
+                  meta:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '400':
+          description: Ошибка в параметрах запроса
+        '500':
+          description: Внутренняя ошибка сервера
+    post:
+      summary: Создать новую категорию затрат
+      tags:
+        - CostCategories
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CostCategoryStoreRequest'
+      responses:
+        '201':
+          description: Категория затрат создана
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostCategory' # CostCategoryController->store возвращает new CostCategoryResource
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+        '400':
+          description: Ошибка бизнес-логики (например, родительская категория не найдена)
+        '500':
+          description: Внутренняя ошибка сервера
+
+  /api/v1/admin/cost-categories/import:
+    post:
+      summary: Импортировать категории затрат из файла
+      tags:
+        - CostCategories
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Файл для импорта (xlsx, xls, csv)
+                format:
+                  type: string
+                  nullable: true
+                  enum: [simple, sbis, onec] # Уточнить доступные форматы
+                  description: Формат файла импорта
+      responses:
+        '200':
+          description: Результат импорта
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  imported:
+                    type: integer
+                    description: Количество импортированных категорий
+                  updated:
+                    type: integer
+                    description: Количество обновленных категорий
+                  errors:
+                    type: array
+                    items:
+                      type: string
+                    description: Список ошибок импорта
+        '422':
+          description: Ошибка валидации файла или формата
+        '500':
+          description: Внутренняя ошибка сервера
+
+  /api/v1/admin/cost-categories/{cost_category_id}:
+    get:
+      summary: Получить категорию затрат по ID
+      tags:
+        - CostCategories
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cost_category_id
+          in: path
+          required: true
+          description: ID категории затрат
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostCategory' # CostCategoryController->show возвращает new CostCategoryResource
+        '404':
+          description: Категория затрат не найдена
+        '500':
+          description: Внутренняя ошибка сервера
+    put:
+      summary: Обновить категорию затрат
+      tags:
+        - CostCategories
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cost_category_id
+          in: path
+          required: true
+          description: ID категории затрат
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CostCategoryUpdateRequest'
+      responses:
+        '200':
+          description: Категория затрат обновлена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CostCategory' # CostCategoryController->update возвращает new CostCategoryResource
+        '404':
+          description: Категория затрат не найдена
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationError'
+        '400':
+          description: Ошибка бизнес-логики (например, попытка сделать категорию родителем самой себе)
+        '500':
+          description: Внутренняя ошибка сервера
+    delete:
+      summary: Удалить категорию затрат
+      tags:
+        - CostCategories
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: cost_category_id
+          in: path
+          required: true
+          description: ID категории затрат
+          schema:
+            type: integer
+      responses:
+        '200': # CostCategoryController->destroy возвращает JSON с success и message
+          description: Категория затрат успешно удалена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+        '404':
+          description: Категория затрат не найдена
+        '400': # CostCategoryService->deleteCostCategory может бросать BusinessLogicException
+          description: Ошибка бизнес-логики (например, есть дочерние категории или связанные проекты)
+        '500':
+          description: Внутренняя ошибка сервера
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    # Schemas for Materials
+    Material:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID материала
+          example: 1
+        name:
+          type: string
+          description: Название материала
+          example: "Цемент М500"
+        code:
+          type: string
+          nullable: true
+          description: Артикул или код материала
+          example: "C001"
+        description:
+          type: string
+          nullable: true
+          description: Описание материала
+        category:
+          type: string
+          nullable: true
+          description: Категория материала
+          example: "Строительные смеси"
+        default_price:
+          type: number
+          format: double # decimal(15,2)
+          nullable: true
+          description: Цена по умолчанию
+          example: 350.99
+        is_active:
+          type: boolean
+          description: Активен ли материал
+          example: true
+        additional_properties:
+          type: object # Casts to array in model, but represents key-value
+          nullable: true
+          additionalProperties: true
+          description: Дополнительные произвольные свойства
+          example: {"manufacturer": "Lafarge", "package_weight_kg": 25}
+        external_code:
+          type: string
+          nullable: true
+          description: Внешний код для интеграций (например, 1С)
+        sbis_nomenclature_code:
+          type: string
+          nullable: true
+          description: Код номенклатуры СБИС
+        sbis_unit_code:
+          type: string
+          nullable: true
+          description: Код единицы измерения СБИС
+        consumption_rates: # Generic JSON field from model
+          type: object # Casts to array in model, but can be object
+          additionalProperties: true
+          nullable: true
+          description: Общие нормы списания (JSON поле, для детальных норм по видам работ см. отдельный эндпоинт)
+        accounting_data:
+          type: object # Casts to array in model
+          additionalProperties: true
+          nullable: true
+          description: Данные бухгалтерского учета (JSON)
+        use_in_accounting_reports:
+          type: boolean
+          nullable: true
+          description: Использовать в бухгалтерских отчетах
+        accounting_account:
+          type: string
+          nullable: true
+          description: Счет бухгалтерского учета
+        measurement_unit:
+          $ref: '#/components/schemas/MeasurementUnit'
+        consumption_rates_with_work_types: # Returned by GET /consumption-rates and conditionally in MaterialResource
+          type: array
+          items:
+            $ref: '#/components/schemas/ConsumptionRateItem'
+          nullable: true
+          description: Нормы списания по видам работ (если запрошено)
+        organization_id:
+          type: integer
+          description: ID организации
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    MaterialStoreRequest:
+      type: object
+      required:
+        - name
+        - measurement_unit_id
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Название материала (уникальное в рамках организации)
+        code:
+          type: string
+          maxLength: 50
+          nullable: true
+          description: Артикул
+        measurement_unit_id:
+          type: integer
+          description: ID единицы измерения
+        description:
+          type: string
+          maxLength: 1000
+          nullable: true
+        category:
+          type: string
+          maxLength: 100
+          nullable: true
+        default_price:
+          type: number
+          format: double
+          minimum: 0
+          nullable: true
+        additional_properties:
+          type: object # В StoreRequest 'array', но логичнее как object для key-value
+          additionalProperties: true
+          nullable: true
+        is_active:
+          type: boolean
+          default: true
+        external_code:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Внешний код (уникальный в рамках организации)
+        sbis_nomenclature_code:
+          type: string
+          maxLength: 100
+          nullable: true
+        sbis_unit_code:
+          type: string
+          maxLength: 100
+          nullable: true
+        consumption_rates: # General purpose JSON field
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Общие нормы списания (JSON поле)
+        accounting_data:
+          type: object # В StoreRequest 'array'
+          additionalProperties: true
+          nullable: true
+        use_in_accounting_reports:
+          type: boolean
+          nullable: true
+        accounting_account:
+          type: string
+          maxLength: 50
+          nullable: true
+
+    MaterialUpdateRequest:
+      type: object
+      # All fields are optional on update
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Название материала (уникальное в рамках организации)
+        code:
+          type: string
+          maxLength: 50
+          nullable: true
+          description: Артикул
+        measurement_unit_id:
+          type: integer
+          description: ID единицы измерения
+        description:
+          type: string
+          maxLength: 1000
+          nullable: true
+        category:
+          type: string
+          maxLength: 100
+          nullable: true
+        default_price:
+          type: number
+          format: double
+          minimum: 0
+          nullable: true
+        additional_properties:
+          type: object
+          additionalProperties: true
+          nullable: true
+        is_active:
+          type: boolean
+        external_code:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Внешний код (уникальный в рамках организации)
+        sbis_nomenclature_code:
+          type: string
+          maxLength: 100
+          nullable: true
+        sbis_unit_code:
+          type: string
+          maxLength: 100
+          nullable: true
+        consumption_rates:
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Общие нормы списания (JSON поле)
+        accounting_data:
+          type: object
+          additionalProperties: true
+          nullable: true
+        use_in_accounting_reports:
+          type: boolean
+          nullable: true
+        accounting_account:
+          type: string
+          maxLength: 50
+          nullable: true
+
+    MeasurementUnit:
+      type: object
+      required: # Добавил required для полноты
+        - id
+        - name
+        - short_name
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          description: Полное название единицы измерения
+          example: "Килограмм"
+        short_name: # Переименовано с code
+          type: string
+          nullable: true
+          description: Краткое обозначение (например, кг, шт, м3)
+          example: "кг"
+        type: # Добавлено
+          type: string
+          nullable: true
+          description: Тип единицы измерения (например, масса, длина, объем, штучные)
+          example: "масса"
+        description: # Добавлено
+          type: string
+          nullable: true
+          description: Полное описание единицы измерения
+        is_default: # Добавлено
+          type: boolean
+          nullable: true # В модели nullable, ресурс не указывает nullable, но безопаснее так
+          description: Является ли единицей измерения по умолчанию (для своего типа)
+        is_system: # Добавлено
+          type: boolean
+          nullable: true # В модели nullable
+          description: Является ли системной записью (нельзя удалить/изменить пользователю)
+        organization_id: 
+          type: integer
+          nullable: true 
+          description: ID организации (если специфично для организации)
+        created_at: # Опционально, но полезно
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at: # Опционально, но полезно
+          type: string
+          format: date-time
+          readOnly: true
+
+    ConsumptionRateItem: # Элемент для consumption_rates_with_work_types
+      type: object
+      properties:
+        work_type_id:
+          type: integer
+          description: ID вида работ
+          example: 15
+        work_type_name:
+          type: string
+          description: Название вида работ
+          example: "Кладка кирпича"
+        rate:
+          type: number
+          format: double
+          description: Норма списания материала для данного вида работ
+          example: 2.5
+        # Можно добавить единицу измерения вида работ, если необходимо
+
+    UpdateConsumptionRatesRequest:
+      type: object
+      properties:
+        consumption_rates:
+          type: object
+          additionalProperties: # work_type_id (string)
+            type: object
+            properties:
+              rate:
+                type: number
+                format: float
+              unit:
+                type: string
+
+    MaterialBalanceItem:
+      type: object
+      required: # Добавил required для полноты
+        - material_id
+        - project_id
+        - available_quantity
+      properties:
+        material_id: # Добавлено
+          type: integer
+          description: ID материала
+          example: 101
+        project_id:
+          type: integer
+          example: 1
+        project_name:
+          type: string
+          example: "ЖК Солнечный"
+        available_quantity: # Переименовано с quantity и уточнено
+          type: number
+          format: double # В модели decimal:3
+          description: Доступное количество
+          example: 120.555
+        reserved_quantity: # Добавлено
+          type: number
+          format: double # В модели decimal:3
+          nullable: true
+          description: Зарезервированное количество
+          example: 10.000
+        average_price: # Добавлено
+          type: number
+          format: double # В модели decimal:2
+          nullable: true
+          description: Средняя цена
+          example: 345.67
+        last_update_date: # Добавлено
+          type: string
+          format: date
+          nullable: true
+          description: Дата последнего обновления остатка
+          example: "2023-12-01"
+        additional_info: # Добавлено
+          type: object
+          additionalProperties: true
+          nullable: true
+          description: Дополнительная информация
+
+    ValidateForAccountingResponse:
+      type: object
+      properties:
+        material_id:
+          type: integer
+        material_name:
+          type: string
+        is_valid:
+          type: boolean
+        validation_errors:
+          type: array
+          items:
+            type: string
+        accounting_data:
+          type: object
+          properties:
+            external_code:
+              type: string
+              nullable: true
+            sbis_nomenclature_code:
+              type: string
+              nullable: true
+            sbis_unit_code:
+              type: string
+              nullable: true
+            accounting_account:
+              type: string
+              nullable: true
+            use_in_accounting_reports:
+              type: boolean
+              nullable: true
+
+    # Schemas for Suppliers
+    Supplier:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "ООО ПоставщикСтрой"
+        contactPerson: # Переименовано из contact_person
+          type: string
+          nullable: true
+          example: "Иван Иванов"
+        phone:
+          type: string
+          nullable: true
+          example: "+79001234567"
+        email:
+          type: string
+          format: email
+          nullable: true
+          example: "ivan@supplier.com"
+        address:
+          type: string
+          nullable: true
+          example: "г. Москва, ул. Строителей, д. 1"
+        isActive: # Переименовано из is_active
+          type: boolean
+          example: true
+        organizationId: # Переименовано из organization_id
+          type: integer
+          example: 1
+        createdAt: # Переименовано из created_at
+          type: string
+          format: date-time
+        updatedAt: # Переименовано из updated_at
+          type: string
+          format: date-time
+
+    SupplierStoreRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Название поставщика (уникальное в рамках организации)
+        contact_person: # Оставляем snake_case как в Request классе (PHP массив)
+          type: string
+          maxLength: 255
+          nullable: true
+        phone:
+          type: string
+          maxLength: 50
+          nullable: true
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          nullable: true
+        address:
+          type: string
+          maxLength: 1000
+          nullable: true
+        is_active: # Оставляем snake_case как в Request классе
+          type: boolean
+          default: true 
+        # Удалены поля code, tax_number, description, additional_info (не валидируются в StoreSupplierRequest)
+          
+    SupplierUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        contact_person: # Оставляем snake_case как в Request классе
+          type: string
+          maxLength: 255
+          nullable: true
+        phone:
+          type: string
+          maxLength: 50
+          nullable: true
+        email:
+          type: string
+          format: email
+          maxLength: 255
+          nullable: true
+        address:
+          type: string
+          maxLength: 1000
+          nullable: true
+        is_active: # Оставляем snake_case как в Request классе
+          type: boolean
+          nullable: true # Добавил nullable т.к. все поля опциональны
+        # Удалены поля code, tax_number, description, additional_info (не валидируются в UpdateSupplierRequest)
+
+    # Schemas for WorkTypes
+    WorkType:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Кладка наружных стен"
+        category:
+          type: string
+          nullable: true
+          example: "Общестроительные работы"
+        isActive: # Переименовано из is_active
+          type: boolean
+          example: true
+        measurementUnit: # Переименовано из measurement_unit и тип изменен на $ref
+          $ref: '#/components/schemas/MeasurementUnit'
+        organizationId: # Переименовано из organization_id
+          type: integer
+          example: 1
+        createdAt: # Переименовано из created_at
+          type: string
+          format: date-time
+        updatedAt: # Переименовано из updated_at
+          type: string
+          format: date-time
+
+    WorkTypeStoreRequest:
+      type: object
+      required:
+        - name
+        - measurement_unit_id
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: Название (уникальное в организации)
+        measurement_unit_id:
+          type: integer
+          description: ID единицы измерения
+        category:
+          type: string
+          maxLength: 100
+          nullable: true
+        is_active:
+          type: boolean
+          default: true
+        code:
+          type: string
+          maxLength: 100
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        default_price:
+          type: number
+          format: double
+          minimum: 0
+          nullable: true
+        additional_properties:
+          type: object 
+          additionalProperties: true
+          nullable: true
+        external_code:
+          type: string
+          maxLength: 255
+          nullable: true
+          
+    WorkTypeUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          nullable: true # Все поля опциональны в Update
+        measurement_unit_id: # Исправлено имя и тип
+          type: integer
+          nullable: true 
+          description: ID единицы измерения
+        category: 
+          type: string
+          maxLength: 100
+          nullable: true
+        is_active:
+          type: boolean
+          nullable: true
+        # Удалены: unit_of_measurement, price_per_unit, description
+        # Поля code, default_price, additional_properties, external_code не валидируются в UpdateWorkTypeRequest
+
+    # Schemas for CostCategories
+    CostCategory:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID категории затрат
+        name:
+          type: string
+          description: Наименование
+        code:
+          type: string
+          nullable: true
+          description: Внутренний код
+        external_code:
+          type: string
+          nullable: true
+          description: Внешний код (например, из 1С)
+        description:
+          type: string
+          nullable: true
+          description: Описание
+        organization_id:
+          type: integer
+          description: ID организации
+        parent_id:
+          type: integer
+          nullable: true
+          description: ID родительской категории
+        is_active:
+          type: boolean
+          default: true
+        sort_order:
+          type: integer
+          default: 0
+        additional_attributes:
+          type: object # В Laravel это будет массив PHP
+          nullable: true
+          description: Дополнительные атрибуты (JSON)
+          additionalProperties: true # Позволяет любые свойства
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        parent: # Связь с родительской категорией
+          $ref: '#/components/schemas/CostCategory' # Изменено для полного представления
+          nullable: true
+        children: # Связь с дочерними категориями
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/CostCategory' # Изменено для полного представления
+        projects_count:
+          type: integer
+          description: Количество связанных проектов (если загружено)
+        path:
+          type: array
+          description: Путь категории (иерархия родительских категорий)
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+              name:
+                type: string
+
+    CostCategoryStoreRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        code:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Уникален в рамках организации
+        external_code:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Уникален в рамках организации
+        description:
+          type: string
+          nullable: true
+        parent_id:
+          type: integer
+          nullable: true
+          description: Должен существовать ID из cost_categories
+        is_active:
+          type: boolean
+          nullable: true
+          default: true
+        sort_order:
+          type: integer
+          nullable: true
+          default: 0
+        additional_attributes:
+          type: object # Laravel кастует в array
+          nullable: true
+          additionalProperties: true
+
+    CostCategoryUpdateRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        code:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Уникален в рамках организации (кроме текущей записи)
+        external_code:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Уникален в рамках организации (кроме текущей записи)
+        description:
+          type: string
+          nullable: true
+        parent_id:
+          type: integer
+          nullable: true
+          description: Должен существовать ID из cost_categories и не быть ID самой категории
+        is_active:
+          type: boolean
+          nullable: true
+        sort_order:
+          type: integer
+          nullable: true
+        additional_attributes:
+          type: object # Laravel кастует в array
+          nullable: true
+          additionalProperties: true
+
+    # Common Schemas
+    PaginationLinks:
+      type: object
+      properties:
+        first: { type: string, nullable: true }
+        last: { type: string, nullable: true }
+        prev: { type: string, nullable: true }
+        next: { type: string, nullable: true }
+
+    PaginationMeta:
+      type: object
+      properties:
+        current_page: { type: integer }
+        from: { type: integer, nullable: true }
+        last_page: { type: integer }
+        # links array structure can be detailed if needed
+        path: { type: string }
+        per_page: { type: integer }
+        to: { type: integer, nullable: true }
+        total: { type: integer }
+
+    ValidationError:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "The given data was invalid."
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            name: ["The name field is required."]
+            
+    ImportMaterialsResponse: # Добавлена новая схема
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Статус успешности операции
+        message:
+          type: string
+          description: Сообщение о результате операции
+        imported_count:
+          type: integer
+          description: Количество успешно импортированных материалов
+          example: 0
+        errors_count:
+          type: integer
+          description: Количество материалов с ошибками при импорте
+          example: 0
+        errors_list:
+          type: array
+          description: Список ошибок (если errors_count > 0)
+          items:
+            type: object
+            properties:
+              row_number:
+                type: integer
+                nullable: true
+                description: Номер строки в файле (если применимо)
+              error_message:
+                type: string
+                description: Текст ошибки
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT 

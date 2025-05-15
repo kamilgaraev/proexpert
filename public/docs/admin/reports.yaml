@@ -1,0 +1,917 @@
+openapi: 3.0.0
+info:
+  title: Reports API (Основные и Подотчетные средства)
+  version: v1
+tags:
+  - name: StandardReports
+    description: Стандартные отчеты (использование материалов, выполнение работ и т.д.)
+  - name: AdvanceAccountReports
+    description: Отчеты по подотчетным средствам
+
+paths:
+  # Standard Reports
+  /api/v1/admin/reports/material-usage:
+    get:
+      tags: [StandardReports]
+      summary: Отчет об использовании материалов
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: query
+          required: false
+          description: ID проекта
+          schema:
+            type: integer
+            format: int64
+        - name: material_id
+          in: query
+          required: false
+          description: ID материала
+          schema:
+            type: integer
+            format: int64
+        - name: user_id # foreman
+          in: query
+          required: false
+          description: ID пользователя (прораба)
+          schema:
+            type: integer
+            format: int64
+        - name: operation_type
+          in: query
+          required: false
+          description: "Тип операции (например, 'receipt', 'write_off')"
+          schema:
+            type: string
+            enum: [receipt, write_off]
+        - name: date_from
+          in: query
+          required: false
+          description: Дата начала периода (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          description: Дата окончания периода (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: template_id
+          in: query
+          required: false
+          description: ID шаблона отчета для форматирования (влияет на экспорт)
+          schema:
+            type: integer
+            format: int64
+        - name: per_page
+          in: query
+          required: false
+          description: Количество записей на страницу (для JSON ответа с пагинацией сырых логов)
+          schema:
+            type: integer
+            default: 15
+        - name: page
+          in: query
+          required: false
+          description: Номер страницы (для JSON ответа с пагинацией сырых логов)
+          schema:
+            type: integer
+            default: 1
+        - name: sort_by
+          in: query
+          description: Поле для сортировки сырых логов
+          required: false
+          schema:
+            type: string
+            default: usage_date
+            enum: [id, usage_date, project_id, material_id, user_id, operation_type, quantity, created_at]
+        - name: sort_direction
+          in: query
+          description: Направление сортировки сырых логов
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: format
+          in: query
+          required: false
+          description: Формат отчета (json для данных, csv/xlsx для файла)
+          schema:
+            type: string
+            enum: [json, csv, xlsx]
+            default: json
+      responses:
+        '200':
+          description: Отчет об использовании материалов. В зависимости от параметра format, может быть JSON или файл.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponseMaterialUsage'
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' } # Если, например, шаблон не найден
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/reports/work-completion:
+    get:
+      tags: [StandardReports]
+      summary: Отчет о выполнении работ
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: query
+          required: false
+          description: ID проекта
+          schema:
+            type: integer
+            format: int64
+        - name: work_type_id
+          in: query
+          required: false
+          description: ID вида работ
+          schema:
+            type: integer
+            format: int64
+        - name: user_id # foreman
+          in: query
+          required: false
+          description: ID пользователя (прораба)
+          schema:
+            type: integer
+            format: int64
+        - name: date_from
+          in: query
+          required: false
+          description: Дата начала периода (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          description: Дата окончания периода (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: template_id
+          in: query
+          required: false
+          description: ID шаблона отчета для форматирования (влияет на экспорт)
+          schema:
+            type: integer
+            format: int64
+        - name: per_page
+          in: query
+          required: false
+          description: Количество записей на страницу (для JSON)
+          schema:
+            type: integer
+            default: 15
+        - name: page
+          in: query
+          required: false
+          description: Номер страницы (для JSON)
+          schema:
+            type: integer
+            default: 1
+        - name: sort_by
+          in: query
+          description: Поле для сортировки сырых логов
+          required: false
+          schema:
+            type: string
+            default: completion_date
+            enum: [id, completion_date, project_id, work_type_id, user_id, quantity, created_at]
+        - name: sort_direction
+          in: query
+          description: Направление сортировки сырых логов
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: format
+          in: query
+          required: false
+          description: Формат отчета (json для данных, csv/xlsx для файла)
+          schema:
+            type: string
+            enum: [json, csv, xlsx]
+            default: json
+      responses:
+        '200':
+          description: Отчет о выполнении работ. В зависимости от параметра format, может быть JSON или файл.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponseWorkCompletion'
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/reports/foreman-activity:
+    get:
+      tags: [StandardReports]
+      summary: Отчет об активности прорабов
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: query
+          required: false
+          description: ID проекта (опционально, для фильтрации по конкретному проекту)
+          schema:
+            type: integer
+            format: int64
+        - name: user_id # foreman
+          in: query
+          required: false
+          description: ID пользователя (прораба) (опционально, для конкретного прораба)
+          schema:
+            type: integer
+            format: int64
+        - name: date_from
+          in: query
+          required: false
+          description: Дата начала периода (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          description: Дата окончания периода (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        # template_id здесь не используется для JSON, т.к. структура фиксирована сервисом
+      responses:
+        '200':
+          description: Отчет об активности прорабов (JSON)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponseForemanActivity'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/reports/project-status-summary:
+    get:
+      tags: [StandardReports]
+      summary: Сводный отчет о состоянии проектов
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Фильтр по статусу проекта
+          schema:
+            type: string
+            # enum: [active, completed, planned, on_hold] # Уточнить актуальные статусы из модели Project
+        - name: is_archived
+          in: query
+          required: false
+          description: Фильтр по архивным проектам (true/false/all)
+          schema:
+            type: string # Может быть boolean или string 'all'
+            enum: [true, false, all]
+      responses:
+        '200':
+          description: Сводный отчет о состоянии проектов (JSON)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponseProjectStatusSummary'
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  # Advance Account Reports
+  /api/v1/admin/advance-reports/summary: # Путь исправлен
+    get:
+      tags: [AdvanceAccountReports] 
+      summary: Сводный отчет по подотчетным средствам
+      description: Получает сводный отчет по балансам и оборотам подотчетных средств по всем пользователям за период.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: date_from
+          in: query
+          required: false
+          description: Дата начала периода (YYYY-MM-DD), по умолчанию -30 дней от текущей
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          description: Дата окончания периода (YYYY-MM-DD), по умолчанию текущая дата
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Сводный отчет по подотчетным средствам
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdvanceAccountSummaryReport'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/advance-reports/users/{user}: # Путь исправлен, параметр {user}
+    get:
+      tags: [AdvanceAccountReports]
+      summary: Отчет по подотчетным средствам для конкретного пользователя
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: user # Изменен с userId на user
+          in: path
+          required: true
+          description: ID пользователя
+          schema:
+            type: integer
+            format: int64
+        - name: date_from
+          in: query
+          required: false
+          description: Дата начала периода (YYYY-MM-DD), по умолчанию -30 дней
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          description: Дата окончания периода (YYYY-MM-DD), по умолчанию текущая дата
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Отчет по подотчетным средствам пользователя
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdvanceAccountUserReport'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' } # Пользователь не найден
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/advance-reports/projects/{project}: # Путь исправлен, параметр {project}
+    get:
+      tags: [AdvanceAccountReports]
+      summary: Отчет по подотчетным средствам для конкретного проекта
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project # Изменен с projectId на project
+          in: path
+          required: true
+          description: ID проекта
+          schema:
+            type: integer
+            format: int64
+        - name: date_from
+          in: query
+          required: false
+          description: Дата начала периода (YYYY-MM-DD), по умолчанию -30 дней
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          description: Дата окончания периода (YYYY-MM-DD), по умолчанию текущая дата
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Отчет по подотчетным средствам проекта
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdvanceAccountProjectReport'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '404': { $ref: 'common_components.yaml#/components/responses/NotFound' } # Проект не найден
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/advance-reports/overdue: # Путь исправлен
+    get:
+      tags: [AdvanceAccountReports]
+      summary: Отчет о просроченных подотчетных средствах
+      description: Получает список пользователей с просроченной задолженностью по подотчетным средствам.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: overdue_days
+          in: query
+          required: false
+          description: Количество дней просрочки для отчета (по умолчанию 30)
+          schema:
+            type: integer
+            default: 30
+      responses:
+        '200':
+          description: Отчет о просроченных подотчетных средствах
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdvanceAccountOverdueReport'
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+  /api/v1/admin/advance-reports/export: # Путь исправлен, убрал {format} из пути, format будет query param
+    get:
+      tags: [AdvanceAccountReports]
+      summary: Экспорт отчета по подотчетным средствам
+      description: Экспортирует данные отчета в указанном формате.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: report_type
+          in: query
+          required: true
+          description: Тип экспортируемого отчета
+          schema:
+            type: string
+            enum: [summary, user, project, overdue]
+        - name: format
+          in: query
+          required: true
+          description: Формат экспорта
+          schema:
+            type: string
+            enum: [json, csv, xlsx] # Уточнено, pdf пока не реализован
+        - name: date_from
+          in: query
+          required: false
+          description: Дата начала периода (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          description: Дата окончания периода (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: user_id
+          in: query
+          required: false
+          description: ID пользователя (для report_type=user)
+          schema:
+            type: integer
+            format: int64
+        - name: project_id
+          in: query
+          required: false
+          description: ID проекта (для report_type=project)
+          schema:
+            type: integer
+            format: int64
+        - name: overdue_days
+          in: query
+          required: false
+          description: Количество дней просрочки (для report_type=overdue, по умолчанию 30)
+          schema:
+            type: integer
+            default: 30
+      responses:
+        '200': 
+          description: Файл отчета или JSON данные. Content-Type зависит от параметра format.
+          content:
+            application/json: # Для format=json
+              schema:
+                oneOf: # В зависимости от report_type, возвращается соответствующая структура
+                  - $ref: '#/components/schemas/AdvanceAccountSummaryReport'
+                  - $ref: '#/components/schemas/AdvanceAccountUserReport'
+                  - $ref: '#/components/schemas/AdvanceAccountProjectReport'
+                  - $ref: '#/components/schemas/AdvanceAccountOverdueReport'
+            text/csv:
+              schema:
+                type: string
+                format: binary
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' } 
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
+components:
+  schemas:
+    ReportFilters: # Локальная схема для фильтров стандартных отчетов
+      type: object
+      description: Примененные фильтры к стандартному отчету
+      properties:
+        project_id:
+          type: integer
+          format: int64
+          nullable: true
+        material_id:
+          type: integer
+          format: int64
+          nullable: true
+        user_id:
+          type: integer
+          format: int64
+          nullable: true
+        work_type_id:
+          type: integer
+          format: int64
+          nullable: true
+        operation_type:
+          type: string
+          enum: [receipt, write_off]
+          nullable: true
+        date_from:
+          type: string
+          format: date
+          nullable: true
+        date_to:
+          type: string
+          format: date
+          nullable: true
+        status:
+          type: string
+          nullable: true
+        is_archived:
+          type: string 
+          enum: [true, false, all]
+          nullable: true
+        format:
+          type: string
+          enum: [json, csv, xlsx]
+          nullable: true
+        template_id:
+          type: integer
+          format: int64
+          nullable: true
+        # Pagination params (per_page, page, sort_by, sort_direction) не включаются сюда, т.к. они часть запроса, а не "фильтры данных"
+
+    ReportResponseMaterialUsage:
+      type: object
+      properties:
+        title:
+          type: string
+          example: Отчет по расходу материалов
+        filters:
+          $ref: '#/components/schemas/ReportFilters'
+        data: # Для JSON ответа - это агрегированные данные
+          type: array
+          items:
+            type: object # Структура зависит от агрегации в materialLogRepo->getAggregatedUsage()
+            additionalProperties: true 
+        pagination: # Относится к пагинации сырых логов, которые легли в основу агрегации
+          $ref: 'common_components.yaml#/components/schemas/PaginationMeta' 
+        generated_at:
+          type: string
+          format: date-time
+
+    ReportResponseWorkCompletion:
+      type: object
+      properties:
+        title:
+          type: string
+          example: Отчет по выполненным работам
+        filters:
+          $ref: '#/components/schemas/ReportFilters'
+        data: # Для JSON ответа - это агрегированные данные
+          type: array
+          items:
+            type: object # Структура зависит от агрегации в workLogRepo->getAggregatedUsage()
+            additionalProperties: true
+        pagination: # Относится к пагинации сырых логов
+          $ref: 'common_components.yaml#/components/schemas/PaginationMeta'
+        generated_at:
+          type: string
+          format: date-time
+
+    ReportResponseForemanActivity:
+      type: object
+      properties:
+        title:
+          type: string
+          example: Отчет по активности прорабов
+        filters:
+          $ref: '#/components/schemas/ReportFilters' # Упрощенный набор фильтров для этого отчета
+        data:
+          type: array 
+          items:
+            type: object # Структура зависит от userRepo->getForemanActivity()
+            additionalProperties: true
+        generated_at:
+          type: string
+          format: date-time
+
+    ReportResponseProjectStatusSummary:
+      type: object
+      properties:
+        title:
+          type: string
+          example: Сводный отчет по статусам проектов
+        filters:
+          $ref: '#/components/schemas/ReportFilters' # Упрощенный набор фильтров
+        data:
+          type: object 
+          description: Ключи - статусы проектов, значения - количество проектов.
+          additionalProperties:
+            type: integer
+          example:
+            active: 10
+            completed: 5
+            on_hold: 2
+        generated_at:
+          type: string
+          format: date-time
+
+    # Schemas for Advance Account Reports
+    AdvanceAccountReportPeriod:
+      type: object
+      properties:
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+
+    AdvanceAccountSummaryReport:
+      type: object
+      description: Сводный отчет по подотчетным средствам.
+      properties:
+        title:
+          type: string
+          example: Сводный отчет по подотчетным средствам
+        period:
+          $ref: '#/components/schemas/AdvanceAccountReportPeriod'
+        transaction_summary:
+          type: object
+          description: Сводка по транзакциям (группировка по типу, затем по статусу отчетности)
+          additionalProperties: # Ключ - тип транзакции (issue, expense, return)
+            type: object
+            additionalProperties: # Ключ - статус отчетности (pending, reported, approved)
+              type: object
+              properties:
+                count:
+                  type: integer
+                total_amount:
+                  type: number
+                  format: float
+          example:
+            issue:
+              pending:
+                count: 5
+                total_amount: 15000.00
+              reported:
+                count: 2
+                total_amount: 7000.00
+        top_users:
+          type: array
+          description: Топ пользователей по текущему балансу (макс. 10)
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                format: int64
+              name:
+                type: string
+              current_balance:
+                type: number
+                format: float
+              total_issued:
+                type: number
+                format: float
+              total_reported:
+                type: number
+                format: float
+              has_overdue_balance:
+                type: boolean
+        generated_at:
+          type: string
+          format: date-time
+      required: [title, period, transaction_summary, top_users, generated_at]
+
+    AdvanceAccountUserReport:
+      type: object
+      description: Отчет по подотчетным средствам для конкретного пользователя.
+      properties:
+        title:
+          type: string
+          example: Отчет по подотчетным средствам пользователя
+        user:
+          type: object # Сокращенная информация о пользователе
+          properties:
+            id:
+              type: integer
+              format: int64
+            name:
+              type: string
+            current_balance:
+              type: number
+              format: float
+            total_issued:
+              type: number
+              format: float
+            total_reported:
+              type: number
+              format: float
+        period:
+          $ref: '#/components/schemas/AdvanceAccountReportPeriod'
+        summary:
+          type: object
+          description: Сводка по транзакциям этого пользователя за период
+          properties:
+            total_issued:
+              type: number
+              format: float
+            total_expense:
+              type: number
+              format: float
+            total_returned:
+              type: number
+              format: float
+            current_balance:
+              type: number
+              format: float # Это текущий баланс пользователя на момент генерации отчета
+        transactions:
+          type: array
+          description: Список транзакций пользователя за период (полные данные)
+          items:
+            $ref: 'advance_transactions.yaml#/components/schemas/AdvanceTransaction'
+        project_summary:
+          type: array
+          description: Сводка по проектам, по которым были транзакции пользователя за период
+          items:
+            type: object
+            properties:
+              project_id:
+                type: integer
+                format: int64
+                nullable: true
+              project_name:
+                type: string
+                nullable: true # Может быть 'Без проекта'
+              total_amount:
+                type: number
+                format: float
+              transaction_count:
+                type: integer
+        generated_at:
+          type: string
+          format: date-time
+      required: [title, user, period, summary, transactions, project_summary, generated_at]
+
+    AdvanceAccountProjectReport:
+      type: object
+      description: Отчет по подотчетным средствам для конкретного проекта.
+      properties:
+        title:
+          type: string
+          example: Отчет по подотчетным средствам проекта
+        project:
+          type: object # Сокращенная информация о проекте
+          properties:
+            id:
+              type: integer
+              format: int64
+            name:
+              type: string
+            external_code:
+              type: string
+              nullable: true
+        period:
+          $ref: '#/components/schemas/AdvanceAccountReportPeriod'
+        summary:
+          type: object
+          description: Сводка по типам транзакций в рамках проекта за период
+          properties:
+            total_issued:
+              type: number
+              format: float
+            total_expense:
+              type: number
+              format: float
+            total_returned:
+              type: number
+              format: float
+        transactions:
+          type: array
+          description: Список транзакций по проекту за период (полные данные)
+          items:
+            $ref: 'advance_transactions.yaml#/components/schemas/AdvanceTransaction'
+        user_summary:
+          type: array
+          description: Сводка по пользователям, совершавшим транзакции в рамках проекта за период
+          items:
+            type: object
+            properties:
+              user_id:
+                type: integer
+                format: int64
+              user_name:
+                type: string
+              total_amount:
+                type: number
+                format: float
+              transaction_count:
+                type: integer
+        generated_at:
+          type: string
+          format: date-time
+      required: [title, project, period, summary, transactions, user_summary, generated_at]
+
+    AdvanceAccountOverdueReport:
+      type: object
+      description: Отчет о просроченных подотчетных средствах.
+      properties:
+        title:
+          type: string
+          example: Отчет по просроченным подотчетным средствам
+        cutoff_date:
+          type: string
+          format: date
+          description: Дата, на которую определена просрочка
+        overdue_days:
+          type: integer
+          description: Порог просрочки в днях
+        users_with_overdue_balance:
+          type: array
+          description: Пользователи с просроченной общей задолженностью
+          items:
+            # $ref: 'users.yaml#/components/schemas/ForemanUser' # Можно использовать полную, но сервис возвращает меньше полей
+            type: object
+            properties:
+              id:
+                type: integer
+                format: int64
+              name:
+                type: string
+              current_balance:
+                type: number
+                format: float
+              last_transaction_at:
+                type: string
+                format: date-time
+                nullable: true
+        overdue_transactions:
+          type: array
+          description: Список конкретных просроченных транзакций типа 'выдача' в статусе 'pending'
+          items:
+            $ref: 'advance_transactions.yaml#/components/schemas/AdvanceTransaction'
+        summary:
+          type: object
+          description: Общая сводка по просрочке
+          properties:
+            user_count:
+              type: integer
+            transaction_count:
+              type: integer
+            total_overdue_amount:
+              type: number
+              format: float # Сумма current_balance пользователей из users_with_overdue_balance
+        generated_at:
+          type: string
+          format: date-time
+      required: [title, cutoff_date, overdue_days, users_with_overdue_balance, overdue_transactions, summary, generated_at]
+
+  securitySchemes:
+    bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' } 
