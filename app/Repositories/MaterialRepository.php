@@ -93,7 +93,8 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
         string $sortDirection = 'asc'
     ): \Illuminate\Contracts\Pagination\LengthAwarePaginator
     {
-        $query = $this->model->where('organization_id', $organizationId);
+        $query = $this->model->where('organization_id', $organizationId)
+                             ->with('measurementUnit');
 
         // Применяем фильтры
         if (!empty($filters['name'])) {
