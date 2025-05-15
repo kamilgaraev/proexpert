@@ -16,6 +16,7 @@ use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use App\Exceptions\BusinessLogicException;
+use App\DTOs\Project\ProjectDTO;
 
 class ProjectController extends Controller
 {
@@ -58,7 +59,10 @@ class ProjectController extends Controller
     public function store(StoreProjectRequest $request): ProjectResource | JsonResponse
     {
         try {
-            $project = $this->projectService->createProject($request->validated(), $request);
+            $validatedData = $request->validated();
+            $projectDTO = new ProjectDTO(...$validatedData);
+
+            $project = $this->projectService->createProject($projectDTO, $request);
             return new ProjectResource($project);
         } catch (BusinessLogicException $e) {
             return response()->json([
