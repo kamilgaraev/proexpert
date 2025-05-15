@@ -238,15 +238,25 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
                 $q->where('role_user.organization_id', $organizationId);
             });
 
-        // Применяем фильтры (пример)
         if (!empty($filters['name'])) {
             $query->where('name', 'like', '%' . $filters['name'] . '%');
         }
         if (isset($filters['is_active'])) {
-            $query->where('is_active', $filters['is_active']);
+            $isActiveFilter = $filters['is_active'];
+            if (is_string($isActiveFilter)) {
+                if (strtolower($isActiveFilter) === 'true') $isActiveFilter = true;
+                elseif (strtolower($isActiveFilter) === 'false') $isActiveFilter = false;
+            }
+            if (is_bool($isActiveFilter)) { 
+                 $query->where('is_active', $isActiveFilter);
+            }
         }
+        
+        $allowedSortBy = ['id', 'name', 'email', 'created_at', 'is_active']; 
+        $validatedSortBy = in_array($sortBy, $allowedSortBy) ? $sortBy : 'created_at'; 
+        $validatedSortDirection = strtolower($sortDirection) === 'desc' ? 'desc' : 'asc';
 
-        $query->orderBy($sortBy, $sortDirection);
+        $query->orderBy($validatedSortBy, $validatedSortDirection);
 
         return $query->paginate($perPage);
     }
