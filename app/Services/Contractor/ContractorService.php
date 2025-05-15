@@ -44,11 +44,23 @@ class ContractorService
         $contractorData['organization_id'] = $organizationId;
         
         // Проверка на уникальность ИНН/email в пределах организации
-        if ($contractorDTO->inn && $this->contractorRepository->findByFilters(['inn' => $contractorDTO->inn, 'organization_id' => $organizationId])) {
-            throw new Exception('Contractor with this INN already exists in the organization.');
+        if ($contractorDTO->inn) {
+            $existingByInn = $this->contractorRepository->getAllPaginated([
+                ['inn', '=', $contractorDTO->inn],
+                ['organization_id', '=', $organizationId]
+            ], 1, 'id', 'asc');
+            if ($existingByInn->isNotEmpty()) {
+                throw new Exception('Contractor with this INN already exists in the organization.');
+            }
         }
-        if ($contractorDTO->email && $this->contractorRepository->findByFilters(['email' => $contractorDTO->email, 'organization_id' => $organizationId])) {
-            throw new Exception('Contractor with this email already exists in the organization.');
+        if ($contractorDTO->email) {
+            $existingByEmail = $this->contractorRepository->getAllPaginated([
+                ['email', '=', $contractorDTO->email],
+                ['organization_id', '=', $organizationId]
+            ], 1, 'id', 'asc');
+            if ($existingByEmail->isNotEmpty()) {
+                throw new Exception('Contractor with this email already exists in the organization.');
+            }
         }
 
         return $this->contractorRepository->create($contractorData);
@@ -73,15 +85,25 @@ class ContractorService
         $updateData = $contractorDTO->toArray();
         
         // Проверка на уникальность ИНН/email при изменении, исключая текущего подрядчика
-        if ($contractorDTO->inn && 
-            $this->contractorRepository->findByFilters(['inn' => $contractorDTO->inn, 'organization_id' => $organizationId, ['id', '!=', $contractorId]])
-           ) {
-            throw new Exception('Another contractor with this INN already exists in the organization.');
+        if ($contractorDTO->inn) {
+            $existingByInn = $this->contractorRepository->getAllPaginated([
+                ['inn', '=', $contractorDTO->inn],
+                ['organization_id', '=', $organizationId],
+                ['id', '!=', $contractorId]
+            ], 1, 'id', 'asc');
+            if ($existingByInn->isNotEmpty()) {
+                throw new Exception('Another contractor with this INN already exists in the organization.');
+            }
         }
-        if ($contractorDTO->email && 
-            $this->contractorRepository->findByFilters(['email' => $contractorDTO->email, 'organization_id' => $organizationId, ['id', '!=', $contractorId]])
-           ) {
-            throw new Exception('Another contractor with this email already exists in the organization.');
+        if ($contractorDTO->email) {
+            $existingByEmail = $this->contractorRepository->getAllPaginated([
+                ['email', '=', $contractorDTO->email],
+                ['organization_id', '=', $organizationId],
+                ['id', '!=', $contractorId]
+            ], 1, 'id', 'asc');
+            if ($existingByEmail->isNotEmpty()) {
+                throw new Exception('Another contractor with this email already exists in the organization.');
+            }
         }
 
         $updated = $this->contractorRepository->update($contractorId, $updateData);
