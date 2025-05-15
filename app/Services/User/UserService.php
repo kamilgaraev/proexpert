@@ -67,9 +67,16 @@ class UserService
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id');
 
-        // Allow system admins as well
-        if (!$user || !$organizationId || (!$user->isOrganizationAdmin($organizationId) && !$user->isSystemAdmin())) {
-             throw new BusinessLogicException('Действие доступно только администратору организации.', 403);
+        if (!$user || !$organizationId) { // Базовые проверки
+            throw new BusinessLogicException('Действие доступно только авторизованному пользователю в контексте организации.', 403);
+        }
+
+        // Проверяем, является ли пользователь системным админом, админом организации ИЛИ веб-админом
+        // Роль веб-админа (Role::ROLE_WEB_ADMIN) теперь также дает доступ
+        if (!($user->isSystemAdmin() || 
+              $user->isOrganizationAdmin($organizationId) || 
+              $user->hasRole(Role::ROLE_WEB_ADMIN, $organizationId))) {
+            throw new BusinessLogicException('Действие доступно только администратору организации или веб-администратору.', 403);
         }
     }
 
