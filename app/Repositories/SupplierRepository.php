@@ -66,9 +66,9 @@ class SupplierRepository extends BaseRepository implements SupplierRepositoryInt
         return parent::getAll($columns);
     }
 
-    public function find(int $id, array $columns = ['*']): ?Supplier
+    public function find(int $modelId, array $columns = ['*'], array $relations = [], array $appends = []): ?Supplier
     {
-        return parent::findById($id, $columns);
+        return parent::find($modelId, $columns, $relations, $appends);
     }
 
     public function findBy(string $field, mixed $value, array $columns = ['*']): Collection
@@ -78,7 +78,7 @@ class SupplierRepository extends BaseRepository implements SupplierRepositoryInt
 
     public function delete(int $id): bool
     {
-        return parent::deleteById($id);
+        return parent::delete($id);
     }
     // End of RepositoryInterface methods
 } 

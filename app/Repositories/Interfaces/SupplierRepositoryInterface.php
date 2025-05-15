@@ -2,9 +2,9 @@
 
 namespace App\Repositories\Interfaces;
 
-use App\Repositories\RepositoryInterface;
+use App\Repositories\Interfaces\BaseRepositoryInterface;
 
-interface SupplierRepositoryInterface extends RepositoryInterface
+interface SupplierRepositoryInterface extends BaseRepositoryInterface
 {
     /**
      * Получить активных поставщиков для организации

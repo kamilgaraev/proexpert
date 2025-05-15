@@ -3,6 +3,7 @@
 namespace App\Providers;
 
 use App\Repositories\BaseRepository;
+use App\Repositories\Interfaces\BaseRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Repositories\Interfaces\OrganizationRepositoryInterface;
 use App\Repositories\Interfaces\ProjectRepositoryInterface;
@@ -14,10 +15,10 @@ use App\Repositories\Interfaces\Log\MaterialUsageLogRepositoryInterface;
 use App\Repositories\Interfaces\Log\WorkCompletionLogRepositoryInterface;
 use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
 use App\Repositories\Interfaces\ReportTemplateRepositoryInterface;
+use App\Repositories\Interfaces\RateCoefficientRepositoryInterface;
 use App\Repositories\MaterialRepository;
 use App\Repositories\OrganizationRepository;
 use App\Repositories\ProjectRepository;
-use App\Repositories\RepositoryInterface;
 use App\Repositories\RoleRepository;
 use App\Repositories\SupplierRepository;
 use App\Repositories\UserRepository;
@@ -25,6 +26,7 @@ use App\Repositories\WorkTypeRepository;
 use App\Repositories\Log\MaterialUsageLogRepository;
 use App\Repositories\Log\WorkCompletionLogRepository;
 use App\Repositories\ReportTemplateRepository;
+use App\Repositories\RateCoefficient\RateCoefficientRepository;
 use App\Repositories\Eloquent\EloquentMeasurementUnitRepository;
 use Illuminate\Support\ServiceProvider;
 use App\Repositories\Interfaces\ContractorRepositoryInterface;
@@ -60,6 +62,7 @@ class RepositoryServiceProvider extends ServiceProvider
         $this->app->bind(MaterialUsageLogRepositoryInterface::class, MaterialUsageLogRepository::class);
         $this->app->bind(WorkCompletionLogRepositoryInterface::class, WorkCompletionLogRepository::class);
         $this->app->bind(ReportTemplateRepositoryInterface::class, ReportTemplateRepository::class);
+        $this->app->bind(RateCoefficientRepositoryInterface::class, RateCoefficientRepository::class);
         
         // Привязка для MeasurementUnitRepository
         $this->app->bind(MeasurementUnitRepositoryInterface::class, EloquentMeasurementUnitRepository::class);

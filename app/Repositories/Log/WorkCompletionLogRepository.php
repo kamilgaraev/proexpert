@@ -25,9 +25,9 @@ class WorkCompletionLogRepository extends BaseRepository implements WorkCompleti
         return parent::getAll($columns);
     }
 
-    public function find(int $id, array $columns = ['*']): ?WorkCompletionLog // Уточняем тип
+    public function find(int $modelId, array $columns = ['*'], array $relations = [], array $appends = []): ?WorkCompletionLog
     {
-        return parent::findById($id, $columns);
+        return parent::find($modelId, $columns, $relations, $appends);
     }
 
     public function findBy(string $field, mixed $value, array $columns = ['*']): Collection
@@ -37,7 +37,7 @@ class WorkCompletionLogRepository extends BaseRepository implements WorkCompleti
 
     public function delete(int $id): bool
     {
-        return parent::deleteById($id);
+        return parent::delete($id);
     }
     // End of RepositoryInterface methods
 

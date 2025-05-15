@@ -49,7 +49,7 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
      * @param int $organizationId
      * @return \Illuminate\Database\Eloquent\Collection
      */
-    public function getActiveMaterials(int $organizationId)
+    public function getActiveMaterials(int $organizationId): Collection
     {
         return $this->model->where('organization_id', $organizationId)
             ->where('is_active', true)
@@ -119,9 +119,9 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
         return parent::getAll($columns);
     }
 
-    public function find(int $id, array $columns = ['*']): ?Material
+    public function find(int $modelId, array $columns = ['*'], array $relations = [], array $appends = []): ?Material
     {
-        return parent::findById($id, $columns);
+        return parent::find($modelId, $columns, $relations, $appends);
     }
 
     public function findBy(string $field, mixed $value, array $columns = ['*']): Collection
@@ -131,7 +131,117 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
 
     public function delete(int $id): bool
     {
-        return parent::deleteById($id);
+        return parent::delete($id);
     }
     // End of RepositoryInterface methods
+
+    // Заглушки для методов интерфейса MaterialRepositoryInterface
+    public function findByExternalCode(string $externalCode, int $organizationId): ?Material
+    {
+        // TODO: Implement findByExternalCode() method.
+        return null;
+    }
+
+    public function findByNameAndOrganization(string $name, int $organizationId): ?Material
+    {
+        // TODO: Implement findByNameAndOrganization() method.
+        return null;
+    }
+
+    public function getMaterialUsageByProjects(int $organizationId, array $projectIds, ?string $dateFrom, ?string $dateTo): Collection
+    {
+        // TODO: Implement getMaterialUsageByProjects() method.
+        return new \Illuminate\Support\Collection();
+    }
+
+    public function getMaterialUsageBySuppliers(int $organizationId, array $supplierIds, ?string $dateFrom, ?string $dateTo): Collection
+    {
+        // TODO: Implement getMaterialUsageBySuppliers() method.
+        return new \Illuminate\Support\Collection();
+    }
+
+    public function getMaterialUsageSummary(int $organizationId, ?string $dateFrom, ?string $dateTo): Collection
+    {
+        // TODO: Implement getMaterialUsageSummary() method.
+        return new \Illuminate\Support\Collection();
+    }
+
+    public function searchByNameOrCode(int $organizationId, string $searchTerm): Collection
+    {
+        // TODO: Implement searchByNameOrCode() method.
+        return new \Illuminate\Support\Collection();
+    }
+
+    public function findByIds(array $ids, int $organizationId): Collection
+    {
+        // TODO: Implement findByIds() method.
+        return new \Illuminate\Support\Collection();
+    }
+
+    public function getMaterialsWithLowStock(int $organizationId, int $threshold): Collection
+    {
+        // TODO: Implement getMaterialsWithLowStock() method.
+        return new \Illuminate\Support\Collection();
+    }
+
+    public function getMostUsedMaterials(int $organizationId, int $limit = 10, ?string $dateFrom = null, ?string $dateTo = null): Collection
+    {
+        // TODO: Implement getMostUsedMaterials() method.
+        return new \Illuminate\Support\Collection();
+    }
+
+    public function getMaterialReceiptsHistory(int $materialId, int $perPage = 15): LengthAwarePaginator
+    {
+        // TODO: Implement getMaterialReceiptsHistory() method.
+        // Временная заглушка, реальная пагинация сложнее
+        return new \Illuminate\Pagination\LengthAwarePaginator([], 0, $perPage);
+    }
+
+    public function getMaterialWriteOffsHistory(int $materialId, int $perPage = 15): LengthAwarePaginator
+    {
+        // TODO: Implement getMaterialWriteOffsHistory() method.
+        return new \Illuminate\Pagination\LengthAwarePaginator([], 0, $perPage);
+    }
+
+    public function updateOrCreateFromAccounting(array $data, int $organizationId): ?Material
+    {
+        // TODO: Implement updateOrCreateFromAccounting() method.
+        return null;
+    }
+
+    public function getAllMaterialNames(int $organizationId): Collection
+    {
+        // TODO: Implement getAllMaterialNames() method.
+        return new \Illuminate\Support\Collection();
+    }
+
+    public function getMaterialCostHistory(int $materialId, int $limit = 10): Collection
+    {
+        // TODO: Implement getMaterialCostHistory() method.
+        return new \Illuminate\Support\Collection();
+    }
+
+    public function getAverageMaterialCost(int $materialId): ?float
+    {
+        // TODO: Implement getAverageMaterialCost() method.
+        return null;
+    }
+
+    public function getMaterialMovementReport(int $organizationId, array $filters): Collection
+    {
+        // TODO: Implement getMaterialMovementReport() method.
+        return new \Illuminate\Support\Collection();
+    }
+
+    public function getInventoryReport(int $organizationId, array $filters): Collection
+    {
+        // TODO: Implement getInventoryReport() method.
+        return new \Illuminate\Support\Collection();
+    }
+
+    public function getMaterialCostDynamicsReport(int $organizationId, array $filters): Collection
+    { 
+        // TODO: Implement getMaterialCostDynamicsReport() method.
+        return new \Illuminate\Support\Collection();
+    }
 } 

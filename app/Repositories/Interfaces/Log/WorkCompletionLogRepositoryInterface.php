@@ -2,11 +2,11 @@
 
 namespace App\Repositories\Interfaces\Log;
 
-use App\Repositories\RepositoryInterface;
+use App\Repositories\Interfaces\BaseRepositoryInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
  
-interface WorkCompletionLogRepositoryInterface extends RepositoryInterface
+interface WorkCompletionLogRepositoryInterface extends BaseRepositoryInterface
 {
     /**
      * Получить агрегированные данные по выполненным работам.

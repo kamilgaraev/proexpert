@@ -2,9 +2,9 @@
 
 namespace App\Repositories\Interfaces;
 
-use App\Repositories\RepositoryInterface;
+use App\Repositories\Interfaces\BaseRepositoryInterface;
 
-interface WorkTypeRepositoryInterface extends RepositoryInterface
+interface WorkTypeRepositoryInterface extends BaseRepositoryInterface
 {
     /**
      * Получить активные виды работ для организации
