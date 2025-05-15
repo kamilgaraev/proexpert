@@ -253,10 +253,11 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         }
         
         $allowedSortBy = ['id', 'name', 'email', 'created_at', 'is_active']; 
+        $tableName = $this->model->getTable();
         $validatedSortBy = in_array($sortBy, $allowedSortBy) ? $sortBy : 'created_at'; 
         $validatedSortDirection = strtolower($sortDirection) === 'desc' ? 'desc' : 'asc';
 
-        $query->orderBy($validatedSortBy, $validatedSortDirection);
+        $query->orderBy($tableName . '.' . $validatedSortBy, $validatedSortDirection);
 
         return $query->paginate($perPage);
     }
