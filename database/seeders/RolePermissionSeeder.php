@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use App\Models\Role; // Импортируем модель
+use App\Models\Permission; // Импортируем модель Permission
 use Illuminate\Support\Facades\DB; // Для вывода информации
 
 class RolePermissionSeeder extends Seeder
@@ -14,51 +15,119 @@ class RolePermissionSeeder extends Seeder
      */
     public function run(): void
     {
-        // Используем DB::table для надежности, если модель использует firstOrCreate с багами или кастомной логикой
-        // Очистка таблицы для идемпотентности (опционально, если нужно чистое состояние)
-        // DB::table('permissions')->truncate(); // Если есть таблица разрешений
-        // DB::table('roles')->truncate(); // Осторожно! Удалит все роли
-        // DB::table('role_user')->truncate(); // Осторожно! Удалит все назначения ролей
-        // DB::table('permission_role')->truncate(); // Если есть таблица связи разрешений и ролей
+        // Очистка таблиц для идемпотентности (осторожно!)
+        // DB::statement('SET FOREIGN_KEY_CHECKS=0;'); // Отключаем проверку внешних ключей
+        // DB::table('permission_role')->truncate();
+        // DB::table('permissions')->truncate();
+        // DB::table('roles')->truncate();
+        // DB::statement('SET FOREIGN_KEY_CHECKS=1;'); // Включаем обратно
 
         $this->command->info('Creating roles...');
 
-        $roles = [
-            ['slug' => Role::ROLE_SYSTEM_ADMIN, 'name' => 'Системный администратор',    'type' => Role::TYPE_SYSTEM],
-            ['slug' => Role::ROLE_OWNER,        'name' => 'Владелец организации',       'type' => Role::TYPE_SYSTEM],
-            ['slug' => Role::ROLE_ADMIN,        'name' => 'Администратор организации',  'type' => Role::TYPE_SYSTEM],
-            ['slug' => Role::ROLE_FOREMAN,      'name' => 'Прораб',                     'type' => Role::TYPE_SYSTEM],
-            // --- Добавляем новые роли для админ-панели ---
-            ['slug' => 'web_admin',           'name' => 'Администратор Панели',     'type' => Role::TYPE_SYSTEM],
-            ['slug' => 'accountant',          'name' => 'Бухгалтер',                'type' => Role::TYPE_SYSTEM],
-            // ----------------------------------------------
+        $rolesData = [
+            ['slug' => Role::ROLE_SYSTEM_ADMIN, 'name' => 'Системный администратор',    'type' => Role::TYPE_SYSTEM, 'description' => 'Полный доступ ко всей системе.'],
+            ['slug' => Role::ROLE_OWNER,        'name' => 'Владелец организации',       'type' => Role::TYPE_SYSTEM, 'description' => 'Полный доступ к своей организации.'],
+            ['slug' => Role::ROLE_ADMIN,        'name' => 'Администратор организации',  'type' => Role::TYPE_SYSTEM, 'description' => 'Управление пользователями и настройками организации.'],
+            ['slug' => Role::ROLE_FOREMAN,      'name' => 'Прораб',                     'type' => Role::TYPE_SYSTEM, 'description' => 'Пользователь мобильного приложения, управляет работами на объектах.'],
+            ['slug' => 'web_admin',           'name' => 'Администратор Панели',     'type' => Role::TYPE_SYSTEM, 'description' => 'Управление контентом и пользователями через веб-панель.'],
+            ['slug' => 'accountant',          'name' => 'Бухгалтер',                'type' => Role::TYPE_SYSTEM, 'description' => 'Доступ к финансовым отчетам и операциям.'],
         ];
 
-        foreach ($roles as $roleData) {
-            // Добавляем 'description', если нужно
-            $roleData['description'] = $roleData['description'] ?? 'Системная роль';
-            Role::updateOrCreate(
-                ['slug' => $roleData['slug']], // Поиск по уникальному slug
-                $roleData // Данные для создания или обновления
-            );
-            $this->command->line('Created/Updated role: ' . $roleData['name']);
+        foreach ($rolesData as $roleItem) {
+            Role::updateOrCreate(['slug' => $roleItem['slug']], $roleItem);
+            $this->command->line('Created/Updated role: ' . $roleItem['name']);
         }
-
         $this->command->info('Roles seeded.');
 
-        // TODO: Добавить создание разрешений (Permissions) и привязку их к ролям
-        // Например:
-        // $this->command->info('Creating permissions...');
-        // $permissions = [ ... ];
-        // foreach ($permissions as $permData) { Permission::updateOrCreate(...); }
-        // $this->command->info('Permissions seeded.');
-        //
-        // $this->command->info('Attaching permissions to roles...');
-        // $adminRole = Role::where('slug', Role::ROLE_ADMIN)->first();
-        // $ownerRole = Role::where('slug', Role::ROLE_OWNER)->first();
-        // ... найти нужные permissions ...
-        // $adminRole->permissions()->syncWithoutDetaching([...]);
-        // $ownerRole->permissions()->syncWithoutDetaching([...]);
-        // $this->command->info('Permissions attached.');
+        $this->command->info('Creating permissions...');
+        $permissionsData = [
+            // General Admin Access
+            ['slug' => 'admin.access', 'name' => 'Доступ к Админ-панели', 'description' => 'Общее право доступа к административной части портала.'],
+            
+            // Foreman Management
+            ['slug' => 'admin.users.foremen.view', 'name' => 'Просмотр Прорабов', 'description' => 'Просмотр списка прорабов и их данных.'],
+            ['slug' => 'admin.users.foremen.manage', 'name' => 'Управление Прорабами', 'description' => 'Создание, редактирование, удаление, блокировка/разблокировка прорабов.'],
+            
+            // Organization Admin Management (limited to avoid self-management issues by non-owners)
+            ['slug' => 'admin.users.org_admins.view', 'name' => 'Просмотр Администраторов Организации', 'description' => 'Просмотр администраторов организации.'],
+            // ['slug' => 'admin.users.org_admins.manage', 'name' => 'Управление Администраторами Организации', 'description' => 'Создание, редактирование администраторов организации (кроме владельца).'],
+
+            // Web Admin Management
+            ['slug' => 'admin.users.web_admins.view', 'name' => 'Просмотр Администраторов Панели', 'description' => 'Просмотр пользователей с ролью "Администратор Панели".'],
+            ['slug' => 'admin.users.web_admins.manage', 'name' => 'Управление Администраторами Панели', 'description' => 'Управление пользователями с ролью "Администратор Панели".'],
+
+            // Accountant Management
+            ['slug' => 'admin.users.accountants.view', 'name' => 'Просмотр Бухгалтеров', 'description' => 'Просмотр пользователей с ролью "Бухгалтер".'],
+            ['slug' => 'admin.users.accountants.manage', 'name' => 'Управление Бухгалтерами', 'description' => 'Управление пользователями с ролью "Бухгалтер".'],
+            
+            // Advance Accounting
+            ['slug' => 'admin.advance_accounting.view', 'name' => 'Просмотр Подотчетных Средств', 'description' => 'Просмотр балансов и транзакций подотчетных средств пользователей.'],
+            ['slug' => 'admin.advance_accounting.manage', 'name' => 'Управление Подотчетными Средствами', 'description' => 'Выдача и возврат подотчетных средств.'],
+        ];
+
+        foreach ($permissionsData as $permissionItem) {
+            Permission::updateOrCreate(['slug' => $permissionItem['slug']], $permissionItem);
+            $this->command->line('Created/Updated permission: ' . $permissionItem['name']);
+        }
+        $this->command->info('Permissions seeded.');
+
+        $this->command->info('Attaching permissions to roles...');
+
+        // Define permissions for each role
+        $systemAdminPermissions = Permission::pluck('slug')->toArray(); // Sys admin gets all
+        $ownerPermissions = $systemAdminPermissions; // Owner also gets all within their org context implicitly
+
+        $adminPermissions = [
+            'admin.access',
+            'admin.users.foremen.view',
+            'admin.users.foremen.manage',
+            'admin.users.org_admins.view', // Can view other admins
+            // 'admin.users.org_admins.manage', // Can manage other admins (excluding owner)
+            'admin.users.web_admins.view',
+            'admin.users.web_admins.manage',
+            'admin.users.accountants.view',
+            'admin.users.accountants.manage',
+            'admin.advance_accounting.view',
+            'admin.advance_accounting.manage',
+        ];
+
+        $webAdminPermissions = [
+            'admin.access',
+            'admin.users.foremen.view',
+            'admin.users.foremen.manage', 
+            'admin.users.web_admins.view', // Can view other web_admins
+            'admin.users.web_admins.manage', // Decide if web_admins can manage other web_admins
+            'admin.users.accountants.view',
+            'admin.advance_accounting.view', // View only for finance
+        ];
+
+        $accountantPermissions = [
+            'admin.access',
+            'admin.users.accountants.view', // Can view other accountants
+            'admin.advance_accounting.view',
+            'admin.advance_accounting.manage',
+        ];
+        
+        $rolePermissionsMap = [
+            Role::ROLE_SYSTEM_ADMIN => $systemAdminPermissions,
+            Role::ROLE_OWNER => $ownerPermissions,
+            Role::ROLE_ADMIN => $adminPermissions,
+            'web_admin' => $webAdminPermissions,
+            'accountant' => $accountantPermissions,
+            Role::ROLE_FOREMAN => [], // Foreman has no admin panel permissions
+        ];
+
+        foreach ($rolePermissionsMap as $roleSlug => $permissionSlugs) {
+            $role = Role::where('slug', $roleSlug)->first();
+            if ($role) {
+                $permissionIds = Permission::whereIn('slug', $permissionSlugs)->pluck('id')->toArray();
+                $role->permissions()->sync($permissionIds);
+                $this->command->line("Synced permissions for role: {$role->name}");
+            } else {
+                $this->command->error("Role with slug '{$roleSlug}' not found. Skipping permission sync.");
+            }
+        }
+
+        $this->command->info('Permissions attached to roles.');
     }
 }
