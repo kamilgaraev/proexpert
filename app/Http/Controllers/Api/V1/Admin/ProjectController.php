@@ -59,8 +59,7 @@ class ProjectController extends Controller
     public function store(StoreProjectRequest $request): ProjectResource | JsonResponse
     {
         try {
-            $validatedData = $request->validated();
-            $projectDTO = new ProjectDTO(...$validatedData);
+            $projectDTO = $request->toDto();
 
             $project = $this->projectService->createProject($projectDTO, $request);
             return new ProjectResource($project);
