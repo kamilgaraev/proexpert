@@ -524,19 +524,25 @@ components:
           type: string
           nullable: true
           readOnly: true
+        avatar_path:
+          type: string
+          nullable: true
+          readOnly: true
+          description: Относительный путь к файлу аватара в хранилище
         avatar_url:
           type: string
           format: uri
           nullable: true
           readOnly: true
+          description: Полный URL для доступа к аватару
         is_active:
           type: boolean
           readOnly: true
-        created_at:
+        createdAt:
           type: string
           format: date-time
           readOnly: true
-        updated_at:
+        updatedAt:
           type: string
           format: date-time
           readOnly: true
@@ -545,8 +551,8 @@ components:
         - name
         - email
         - is_active
-        - created_at
-        - updated_at
+        - createdAt
+        - updatedAt
 
     UserAdvanceBalance:
       type: object
@@ -597,7 +603,6 @@ components:
       description: Данные для запроса на выдачу или возврат подотчетных средств.
       required:
         - amount
-        - document_date
       properties:
         amount:
           type: number
@@ -607,17 +612,22 @@ components:
         document_date:
           type: string
           format: date
+          nullable: true
           description: Дата операции (документа)
         description:
           type: string
-          maxLength: 1000
+          maxLength: 255
           nullable: true
           description: Комментарий/описание операции
         project_id:
           type: integer
-          format: int64
           nullable: true
-          description: ID связанного проекта (опционально)
+          description: ID связанного проекта (опционально). Должен существовать в таблице проектов.
+        document_number:
+          type: string
+          maxLength: 100
+          nullable: true
+          description: Номер документа основания (опционально)
 
   securitySchemes:
     bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' }
