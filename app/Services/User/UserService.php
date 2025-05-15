@@ -353,6 +353,10 @@ class UserService
         // Убираем null значения из фильтров
         $filters = array_filter($filters, fn($value) => !is_null($value) && $value !== '');
 
+        // Параметры сортировки из запроса
+        $sortBy = $request->query('sort_by', 'created_at'); // Значение по умолчанию 'created_at'
+        $sortDirection = $request->query('sort_direction', 'desc'); // Значение по умолчанию 'desc'
+
         $foremanRoleSlug = Role::ROLE_FOREMAN;
 
         // Используем метод репозитория, который поддерживает фильтрацию и пагинацию
@@ -360,7 +364,9 @@ class UserService
             $foremanRoleSlug,
             $intOrganizationId,
             $perPage,
-            $filters
+            $filters,
+            $sortBy,             // Передаем sortBy
+            $sortDirection       // Передаем sortDirection
         );
     }
 
