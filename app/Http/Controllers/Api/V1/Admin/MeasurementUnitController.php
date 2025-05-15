@@ -39,7 +39,12 @@ class MeasurementUnitController extends Controller
      */
     public function index(Request $request)
     {
-        $organizationId = Auth::user()->organization_id;
+        $user = Auth::user();
+        if (!$user || !$user->organization_id) {
+            return response()->json(['message' => 'Organization ID not found for current user.'], Response::HTTP_BAD_REQUEST);
+        }
+        $organizationId = $user->organization_id;
+
         $perPage = $request->input('per_page', 15);
         $filters = $request->only(['type']); // Добавляем фильтры, которые может поддерживать getAllPaginated
         $filters['organization_id'] = $organizationId; // Добавляем organization_id в фильтры для репозитория
@@ -62,7 +67,12 @@ class MeasurementUnitController extends Controller
      */
     public function store(StoreMeasurementUnitRequest $request)
     {
-        $organizationId = Auth::user()->organization_id;
+        $user = Auth::user();
+        if (!$user || !$user->organization_id) {
+            return response()->json(['message' => 'Organization ID not found for current user.'], Response::HTTP_BAD_REQUEST);
+        }
+        $organizationId = $user->organization_id;
+
         try {
             $dto = $request->toDto();
             $measurementUnit = $this->measurementUnitService->createMeasurementUnit($dto, $organizationId);
@@ -88,7 +98,11 @@ class MeasurementUnitController extends Controller
      */
     public function show(int $id)
     {
-        $organizationId = Auth::user()->organization_id;
+        $user = Auth::user();
+        if (!$user || !$user->organization_id) {
+            return response()->json(['message' => 'Organization ID not found for current user.'], Response::HTTP_BAD_REQUEST);
+        }
+        $organizationId = $user->organization_id;
         $measurementUnit = $this->measurementUnitService->getMeasurementUnitById($id, $organizationId);
 
         if (!$measurementUnit) {
@@ -113,7 +127,11 @@ class MeasurementUnitController extends Controller
      */
     public function update(UpdateMeasurementUnitRequest $request, int $id)
     {
-        $organizationId = Auth::user()->organization_id;
+        $user = Auth::user();
+        if (!$user || !$user->organization_id) {
+            return response()->json(['message' => 'Organization ID not found for current user.'], Response::HTTP_BAD_REQUEST);
+        }
+        $organizationId = $user->organization_id;
         try {
             $dto = $request->toDto();
             $measurementUnit = $this->measurementUnitService->updateMeasurementUnit($id, $dto, $organizationId);
@@ -141,7 +159,11 @@ class MeasurementUnitController extends Controller
      */
     public function destroy(int $id)
     {
-        $organizationId = Auth::user()->organization_id;
+        $user = Auth::user();
+        if (!$user || !$user->organization_id) {
+            return response()->json(['message' => 'Organization ID not found for current user.'], Response::HTTP_BAD_REQUEST);
+        }
+        $organizationId = $user->organization_id;
         try {
             $deleted = $this->measurementUnitService->deleteMeasurementUnit($id, $organizationId);
             if (!$deleted) {
@@ -166,7 +188,11 @@ class MeasurementUnitController extends Controller
      */
     public function getMaterialUnits(Request $request)
     {
-        $organizationId = Auth::user()->organization_id;
+        $user = Auth::user();
+        if (!$user || !$user->organization_id) {
+            return response()->json(['message' => 'Organization ID not found for current user.'], Response::HTTP_BAD_REQUEST);
+        }
+        $organizationId = $user->organization_id;
         $units = $this->measurementUnitService->getMaterialMeasurementUnits($organizationId);
         return MeasurementUnitResource::collection($units);
     }
