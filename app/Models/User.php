@@ -85,6 +85,7 @@ class User extends Authenticatable implements JWTSubject
             'is_active' => 'boolean',
             'settings' => 'json',
             'last_login_at' => 'datetime',
+            'last_transaction_at' => 'datetime',
         ];
     }
 
