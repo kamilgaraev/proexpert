@@ -47,12 +47,6 @@ class MaterialUsageLogResource extends JsonResource
         ];
     }
 
-    /**
-     * Get a human-readable operation type.
-     *
-     * @param string|null $type
-     * @return string|null
-     */
     protected function getReadableOperationType(?string $type): ?string
     {
         if ($type === 'receipt') {

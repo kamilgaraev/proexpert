@@ -27,11 +27,9 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         return parent::getAll($columns);
     }
 
-    public function find(int $id, array $columns = ['*']): ?User // Type hint to User for clarity
+    public function find(int $modelId, array $columns = ['*'], array $relations = [], array $appends = []): ?User
     {
-        // BaseRepository::findById returns ?Model, which is compatible.
-        // We cast to ?User for stricter type hinting if desired, or leave as ?Model.
-        return parent::findById($id, $columns);
+        return parent::find($modelId, $columns, $relations, $appends);
     }
 
     public function findBy(string $field, mixed $value, array $columns = ['*']): Collection
@@ -45,9 +43,9 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     // update(int $id, array $data) - parent::update(int $modelId, array $payload) has same name, different signature.
     // Assuming it's not one of the 4.
 
-    public function delete(int $id): bool
+    public function delete(int $modelId): bool
     {
-        return parent::deleteById($id);
+        return parent::delete($modelId);
     }
     // End of RepositoryInterface methods
 

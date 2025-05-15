@@ -9,6 +9,7 @@ use Illuminate\Routing\Router;
 use App\Services\Organization\OrganizationContext;
 use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
 use App\Repositories\MeasurementUnitRepository;
+use App\Services\FileService;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -22,6 +23,11 @@ class AppServiceProvider extends ServiceProvider
             MeasurementUnitRepositoryInterface::class,
             MeasurementUnitRepository::class
         );
+        
+        // Регистрируем FileService как singleton
+        $this->app->singleton(FileService::class, function ($app) {
+            return new FileService($app->make(\Illuminate\Contracts\Filesystem\Factory::class));
+        });
         
         // Здесь могут быть другие связывания
     }

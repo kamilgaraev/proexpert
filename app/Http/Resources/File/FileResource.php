@@ -3,7 +3,7 @@
 namespace App\Http\Resources\File;
 
 use Illuminate\Http\Resources\Json\JsonResource;
-use Illuminate\Support\Facades\Storage;
+// Storage не используется напрямую, если модель сама генерирует URL
 
 class FileResource extends JsonResource
 {
@@ -13,17 +13,37 @@ class FileResource extends JsonResource
      * @param  \Illuminate\Http\Request  $request
      * @return array
      */
-    public function toArray($request)
+    public function toArray($request): array
     {
+        $thumbnails = [];
+        // Доступ к "raw" данным миниатюр через аксессор getThumbnailsAttribute (->thumbnails)
+        foreach ($this->thumbnails as $suffix => $thumbData) {
+            if (isset($thumbData['url'])) {
+                $thumbnails[$suffix] = $thumbData['url'];
+            } elseif (isset($thumbData['path']) && isset($thumbData['disk'])) {
+                // Если URL не был сохранен напрямую, генерируем его
+                $thumbnails[$suffix] = $this->getThumbnailUrl($suffix);
+            }
+        }
+
         return [
             'id' => $this->id,
-            'filename' => $this->filename,
-            'original_filename' => $this->original_filename,
+            'name' => $this->name, // Имя файла на диске (сгенерированное или кастомное)
+            'original_name' => $this->original_name, // Оригинальное имя файла от клиента
             'mime_type' => $this->mime_type,
             'size' => $this->size,
-            'url' => $this->getFileUrl(),
+            'disk' => $this->disk,
+            'url' => $this->url, // Аксессор из модели File
+            'thumbnails' => $thumbnails, // Массив URL-ов миниатюр ['suffix' => 'url']
+            // Показываем additional_info только админам для отладки или если есть специальный запрос
+            'additional_info' => $this->when(
+                $this->additional_info && $request->user() && method_exists($request->user(), 'isAdmin') && $request->user()->isAdmin(), 
+                $this->additional_info
+            ), 
             'uploaded_at' => $this->created_at->format('Y-m-d H:i:s'),
-            'uploaded_by' => $this->user_id,
+            'user_id' => $this->user_id, // Оставляем для информации, кто загрузил
+            // Можно добавить ресурс пользователя, если нужно больше деталей о нем
+            // 'uploaded_by' => new UserMiniResource($this->whenLoaded('user')),
         ];
     }
 

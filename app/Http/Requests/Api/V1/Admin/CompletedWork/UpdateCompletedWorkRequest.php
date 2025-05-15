@@ -1,0 +1,73 @@
+<?php
+
+namespace App\Http\Requests\Api\V1\Admin\CompletedWork;
+
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Auth;
+use App\DTOs\CompletedWork\CompletedWorkDTO;
+use Carbon\Carbon;
+use App\Models\Contract; // Для проверки принадлежности контракта организации и проекту
+use Illuminate\Validation\Rule;
+
+class UpdateCompletedWorkRequest extends FormRequest
+{
+    public function authorize(): bool
+    {
+        return Auth::check();
+    }
+
+    public function rules(): array
+    {
+        $organizationId = $this->route('completed_work')->organization_id; // Получаем ID организации из существующей записи
+        $projectId = $this->input('project_id', $this->route('completed_work')->project_id);
+
+        return [
+            'project_id' => ['sometimes', 'required', 'integer', Rule::exists('projects', 'id')->where('organization_id', $organizationId)],
+            'contract_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('contracts', 'id')->where('organization_id', $organizationId),
+                function ($attribute, $value, $fail) use ($projectId) {
+                    if ($value && $projectId) {
+                        $contract = Contract::find($value);
+                        if ($contract && $contract->project_id != $projectId) {
+                            $fail('Указанный договор не относится к выбранному проекту.');
+                        }
+                    }
+                },
+            ],
+            'work_type_id' => ['sometimes', 'required', 'integer', Rule::exists('work_types', 'id')->where('organization_id', $organizationId)],
+            'user_id' => ['sometimes', 'required', 'integer', Rule::exists('users', 'id')],
+            'quantity' => 'sometimes|required|numeric|min:0.001',
+            'price' => 'sometimes|nullable|numeric|min:0',
+            'total_amount' => 'sometimes|nullable|numeric|min:0',
+            'completion_date' => 'sometimes|required|date_format:Y-m-d',
+            'notes' => 'sometimes|nullable|string|max:65535',
+            'status' => 'sometimes|required|string|in:draft,confirmed,cancelled',
+            'additional_info' => 'sometimes|nullable|array',
+        ];
+    }
+
+    public function toDto(): CompletedWorkDTO
+    {
+        $validatedData = $this->validated();
+        $completedWork = $this->route('completed_work'); // Получаем модель из роута
+
+        return new CompletedWorkDTO(
+            id: $completedWork->id,
+            organization_id: $completedWork->organization_id, // Не меняется при обновлении
+            project_id: $validatedData['project_id'] ?? $completedWork->project_id,
+            contract_id: array_key_exists('contract_id', $validatedData) ? ($validatedData['contract_id'] ?? null) : $completedWork->contract_id,
+            work_type_id: $validatedData['work_type_id'] ?? $completedWork->work_type_id,
+            user_id: $validatedData['user_id'] ?? $completedWork->user_id,
+            quantity: isset($validatedData['quantity']) ? (float)$validatedData['quantity'] : (float)$completedWork->quantity,
+            price: isset($validatedData['price']) ? (float)$validatedData['price'] : (isset($completedWork->price) ? (float)$completedWork->price : null),
+            total_amount: isset($validatedData['total_amount']) ? (float)$validatedData['total_amount'] : (isset($completedWork->total_amount) ? (float)$completedWork->total_amount : null),
+            completion_date: isset($validatedData['completion_date']) ? Carbon::parse($validatedData['completion_date']) : $completedWork->completion_date,
+            notes: $validatedData['notes'] ?? $completedWork->notes,
+            status: $validatedData['status'] ?? $completedWork->status,
+            additional_info: $validatedData['additional_info'] ?? $completedWork->additional_info
+        );
+    }
+} 

@@ -24,7 +24,8 @@ class RoleRepository extends BaseRepository implements RoleRepositoryInterface
      */
     public function findByName(string $roleName)
     {
-        return $this->findOneBy('name', $roleName);
+        // return $this->findOneBy('name', $roleName); // Старый вызов
+        return $this->firstByFilters(['name' => $roleName]);
     }
 
     /**
@@ -45,9 +46,9 @@ class RoleRepository extends BaseRepository implements RoleRepositoryInterface
         return parent::getAll($columns);
     }
 
-    public function find(int $id, array $columns = ['*']): ?Role
+    public function find(int $modelId, array $columns = ['*'], array $relations = [], array $appends = []): ?Role
     {
-        return parent::findById($id, $columns);
+        return parent::find($modelId, $columns, $relations, $appends);
     }
 
     public function findBy(string $field, mixed $value, array $columns = ['*']): Collection
@@ -55,9 +56,9 @@ class RoleRepository extends BaseRepository implements RoleRepositoryInterface
         return $this->model->where($field, $value)->get($columns);
     }
 
-    public function delete(int $id): bool
+    public function delete(int $modelId): bool
     {
-        return parent::deleteById($id);
+        return parent::delete($modelId);
     }
     // End of RepositoryInterface methods
 } 

@@ -2,14 +2,18 @@
 
 namespace App\Repositories\Interfaces;
 
-use App\Repositories\RepositoryInterface;
+// use App\Repositories\RepositoryInterface; // Старое наследование
+use App\Repositories\Interfaces\BaseRepositoryInterface; // Новое наследование
 use Illuminate\Support\Collection;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use App\Models\User;
 
-interface UserRepositoryInterface extends RepositoryInterface
+// interface UserRepositoryInterface extends RepositoryInterface // Старое наследование
+interface UserRepositoryInterface extends BaseRepositoryInterface // Новое наследование
 {
-    // ... другие методы ...
+    // Методы all, find, create, update, delete теперь будут наследоваться от BaseRepositoryInterface
+    // findBy остается, так как его нет в BaseRepositoryInterface
+    public function findBy(string $field, mixed $value, array $columns = ['*']); // Этот метод специфичен и может остаться или быть пересмотрен
 
     /**
      * Найти пользователя по ID вместе с его ролями.

@@ -14,6 +14,7 @@ class CompletedWork extends Model
     protected $fillable = [
         'organization_id',
         'project_id',
+        'contract_id',
         'work_type_id',
         'user_id',
         'quantity',
@@ -63,6 +64,14 @@ class CompletedWork extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Получить договор, к которому относится выполненная работа.
+     */
+    public function contract(): BelongsTo
+    {
+        return $this->belongsTo(Contract::class);
     }
 
     /**

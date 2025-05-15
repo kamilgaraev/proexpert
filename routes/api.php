@@ -165,12 +165,43 @@ Route::prefix('admin')->name('admin.')->group(function () {
         if (file_exists(__DIR__ . '/api/v1/admin/advance_transactions.php')) {
             require __DIR__ . '/api/v1/admin/advance_transactions.php';
         }
+        // Подключаем маршруты для коэффициентов норм расхода
+        if (file_exists(__DIR__ . '/api/v1/admin/rate_coefficients.php')) {
+            require __DIR__ . '/api/v1/admin/rate_coefficients.php';
+        }
+        // Подключаем маршруты для выполненных работ
+        if (file_exists(__DIR__ . '/api/v1/admin/completed_works.php')) {
+            require __DIR__ . '/api/v1/admin/completed_works.php';
+        }
         // Сюда можно будет добавлять require для новых файлов маршрутов админки
     });
 });
 
-// Опционально, если есть Mobile App API, его конфигурация может идти дальше
 // --- Mobile App API ---
-// Route::prefix('mobile')->name('mobile.')->group(function () { ... });
+Route::prefix('mobile')->name('mobile.')->group(function () {
+    // Публичные маршруты Mobile App (Auth)
+    // Убедитесь, что файл auth.php для мобильного API существует или создайте его
+    if (file_exists(__DIR__ . '/api/v1/mobile/auth.php')) {
+        require __DIR__ . '/api/v1/mobile/auth.php';
+    }
+
+    // Защищенные маршруты Mobile App (требуют токен mobile + контекст организации)
+    Route::middleware(['auth:api_mobile', 'jwt.auth', 'organization.context', 'can:access-mobile-app'])->group(function() {
+        if (file_exists(__DIR__ . '/api/v1/mobile/projects.php')) {
+            require __DIR__ . '/api/v1/mobile/projects.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/mobile/log.php')) {
+            require __DIR__ . '/api/v1/mobile/log.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/mobile/catalogs.php')) {
+            require __DIR__ . '/api/v1/mobile/catalogs.php';
+        }
+        // Подключаем маршруты для заявок с объекта
+        if (file_exists(__DIR__ . '/api/v1/mobile/site_requests.php')) {
+            require __DIR__ . '/api/v1/mobile/site_requests.php';
+        }
+        // Добавить другие защищенные маршруты мобильного приложения
+    });
+});
 
 // Все маршруты API для подотчетных средств перенесены в файл routes/api/v1/admin/advance_transactions.php

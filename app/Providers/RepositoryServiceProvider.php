@@ -27,6 +27,18 @@ use App\Repositories\Log\WorkCompletionLogRepository;
 use App\Repositories\ReportTemplateRepository;
 use App\Repositories\Eloquent\EloquentMeasurementUnitRepository;
 use Illuminate\Support\ServiceProvider;
+use App\Repositories\Interfaces\ContractorRepositoryInterface;
+use App\Repositories\ContractorRepository;
+use App\Repositories\Interfaces\ContractRepositoryInterface;
+use App\Repositories\ContractRepository;
+use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
+use App\Repositories\ContractPerformanceActRepository;
+use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
+use App\Repositories\ContractPaymentRepository;
+use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
+use App\Repositories\CompletedWork\CompletedWorkRepository;
+use App\Repositories\Interfaces\SiteRequestRepositoryInterface;
+use App\Repositories\SiteRequest\SiteRequestRepository;
 
 class RepositoryServiceProvider extends ServiceProvider
 {
@@ -51,6 +63,18 @@ class RepositoryServiceProvider extends ServiceProvider
         
         // Привязка для MeasurementUnitRepository
         $this->app->bind(MeasurementUnitRepositoryInterface::class, EloquentMeasurementUnitRepository::class);
+        
+        // Биндинги для управления договорами
+        $this->app->bind(ContractorRepositoryInterface::class, ContractorRepository::class);
+        $this->app->bind(ContractRepositoryInterface::class, ContractRepository::class);
+        $this->app->bind(ContractPerformanceActRepositoryInterface::class, ContractPerformanceActRepository::class);
+        $this->app->bind(ContractPaymentRepositoryInterface::class, ContractPaymentRepository::class);
+        
+        // Привязка для выполненных работ
+        $this->app->bind(CompletedWorkRepositoryInterface::class, CompletedWorkRepository::class);
+        
+        // Привязка для заявок с объекта
+        $this->app->bind(SiteRequestRepositoryInterface::class, SiteRequestRepository::class);
         
         // Добавить другие репозитории по мере необходимости
     }

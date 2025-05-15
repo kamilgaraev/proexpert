@@ -17,6 +17,8 @@ class Project extends Model
         'name',
         'address',
         'description',
+        'customer',
+        'designer',
         'start_date',
         'end_date',
         'status',

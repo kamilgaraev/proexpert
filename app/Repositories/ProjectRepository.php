@@ -24,9 +24,9 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
         return parent::getAll($columns);
     }
 
-    public function find(int $id, array $columns = ['*']): ?Project // Уточняем тип
+    public function find(int $modelId, array $columns = ['*'], array $relations = [], array $appends = []): ?Project
     {
-        return parent::findById($id, $columns);
+        return parent::find($modelId, $columns, $relations, $appends);
     }
 
     public function findBy(string $field, mixed $value, array $columns = ['*']): Collection
@@ -34,9 +34,9 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
         return $this->model->where($field, $value)->get($columns);
     }
 
-    public function delete(int $id): bool
+    public function delete(int $modelId): bool
     {
-        return parent::deleteById($id);
+        return parent::delete($modelId);
     }
     // End of RepositoryInterface methods
 

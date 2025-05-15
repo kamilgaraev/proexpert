@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Collection;
 use App\Exceptions\BusinessLogicException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
+use App\DTOs\Project\ProjectDTO;
 
 class ProjectService
 {
@@ -89,11 +90,22 @@ class ProjectService
         );
     }
 
-    public function createProject(array $data, Request $request): Project
+    /**
+     * Создать новый проект.
+     *
+     * @param ProjectDTO $projectDTO
+     * @param Request $request // Для получения organization_id
+     * @return Project
+     * @throws BusinessLogicException
+     */
+    public function createProject(ProjectDTO $projectDTO, Request $request): Project
     {
         $organizationId = $this->getCurrentOrgId($request);
-        $data['organization_id'] = $organizationId;
-        return $this->projectRepository->create($data);
+        
+        $dataToCreate = $projectDTO->toArray();
+        $dataToCreate['organization_id'] = $organizationId;
+        
+        return $this->projectRepository->create($dataToCreate);
     }
 
     public function findProjectByIdForCurrentOrg(int $id, Request $request): ?Project
@@ -107,14 +119,23 @@ class ProjectService
         return $project;
     }
 
-    public function updateProject(int $id, array $data, Request $request): ?Project
+    /**
+     * Обновить существующий проект.
+     *
+     * @param int $id ID проекта
+     * @param ProjectDTO $projectDTO
+     * @param Request $request // Для проверки организации
+     * @return Project|null
+     * @throws BusinessLogicException
+     */
+    public function updateProject(int $id, ProjectDTO $projectDTO, Request $request): ?Project
     {
         $project = $this->findProjectByIdForCurrentOrg($id, $request);
         if (!$project) {
-            throw new BusinessLogicException('Project not found in your organization', 404);
+            throw new BusinessLogicException('Project not found in your organization or you do not have permission.', 404);
         }
-        unset($data['organization_id']); 
-        $updated = $this->projectRepository->update($id, $data);
+
+        $updated = $this->projectRepository->update($id, $projectDTO->toArray());
         return $updated ? $this->projectRepository->find($id) : null;
     }
 

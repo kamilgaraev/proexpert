@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class WorkType extends Model
 {
@@ -60,5 +61,16 @@ class WorkType extends Model
     public function materialWriteOffs(): HasMany
     {
         return $this->hasMany(MaterialWriteOff::class);
+    }
+
+    /**
+     * Материалы, используемые для данного вида работ (с нормами по умолчанию).
+     */
+    public function materials(): BelongsToMany
+    {
+        return $this->belongsToMany(Material::class, 'work_type_materials')
+            ->using(WorkTypeMaterial::class)
+            ->withPivot(['organization_id', 'default_quantity', 'notes'])
+            ->withTimestamps();
     }
 }

@@ -38,8 +38,17 @@ Route::get('/materials/{id}/validate-for-accounting', [MaterialController::class
     ->name('materials.validate-for-accounting');
 
 Route::apiResource('materials', MaterialController::class);
-Route::apiResource('work-types', WorkTypeController::class);
+
 Route::apiResource('suppliers', SupplierController::class);
+
+// Группа для видов работ и связанных с ними материалов
+Route::apiresource('work-types', WorkTypeController::class)->except([]); // Оставляем все стандартные CRUD для WorkType
+Route::prefix('work-types/{work_type}')->name('work-types.')->group(function () {
+    // Подключаем маршруты для управления материалами, привязанными к виду работ
+    if (file_exists(__DIR__ . '/work_type_materials.php')) {
+        require __DIR__ . '/work_type_materials.php';
+    }
+});
 
 // Маршруты для категорий затрат
 Route::post('/cost-categories/import', [CostCategoryController::class, 'import'])->name('cost-categories.import');

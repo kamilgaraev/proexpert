@@ -22,9 +22,9 @@ class OrganizationRepository extends BaseRepository implements OrganizationRepos
         return parent::getAll($columns);
     }
 
-    public function find(int $id, array $columns = ['*']): ?Organization
+    public function find(int $modelId, array $columns = ['*'], array $relations = [], array $appends = []): ?Organization
     {
-        return parent::findById($id, $columns);
+        return parent::find($modelId, $columns, $relations, $appends);
     }
 
     public function findBy(string $field, mixed $value, array $columns = ['*']): Collection
@@ -35,9 +35,9 @@ class OrganizationRepository extends BaseRepository implements OrganizationRepos
     // create(array $data) - предполагаем, что не входит в "4 abstract methods" из-за совпадения имени с parent::create
     // update(int $id, array $data) - предполагаем, что не входит в "4 abstract methods"
 
-    public function delete(int $id): bool
+    public function delete(int $modelId): bool
     {
-        return parent::deleteById($id);
+        return parent::delete($modelId);
     }
     // End of RepositoryInterface methods
 

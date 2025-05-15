@@ -1,0 +1,1440 @@
+openapi: 3.0.0
+info:
+  title: Admin API
+  version: v1
+  description: Документация для административной панели API.
+paths:
+  /admin/completed-works:
+    summary: Операции, связанные с выполненными работами.
+    get:
+      summary: Получить список выполненных работ
+      tags:
+        - CompletedWorks
+      responses:
+        '200':
+          description: Список выполненных работ.
+    post:
+      summary: Создать новую запись о выполненной работе
+      tags:
+        - CompletedWorks
+      responses:
+        '201':
+          description: Запись создана.
+  /admin/completed-works/{id}:
+    summary: Операции с конкретной выполненной работой.
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Идентификатор выполненной работы
+        schema:
+          type: integer # или string, в зависимости от вашего ID
+    get:
+      summary: Получить информацию о выполненной работе
+      tags:
+        - CompletedWorks
+      responses:
+        '200':
+          description: Информация о выполненной работе.
+        '404':
+          description: Выполненная работа не найдена.
+    put:
+      summary: Обновить информацию о выполненной работе
+      tags:
+        - CompletedWorks
+      responses:
+        '200':
+          description: Информация обновлена.
+        '404':
+          description: Выполненная работа не найдена.
+    patch:
+      summary: Частично обновить информацию о выполненной работе
+      tags:
+        - CompletedWorks
+      responses:
+        '200':
+          description: Информация обновлена.
+        '404':
+          description: Выполненная работа не найдена.
+    delete:
+      summary: Удалить выполненную работу
+      tags:
+        - CompletedWorks
+      responses:
+        '204':
+          description: Работа удалена.
+        '404':
+          description: Выполненная работа не найдена.
+  # /admin/work-type-materials:
+  #   summary: Операции с материалами по типам работ. # Этот путь уточнен и перенесен
+  /admin/work-types/{work_type_id}/materials:
+    summary: Операции с материалами для указанного типа работ.
+    parameters:
+      - name: work_type_id
+        in: path
+        required: true
+        description: Идентификатор типа работ
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить список материалов для типа работ.
+      tags:
+        - WorkTypeMaterials
+      responses:
+        '200':
+          description: Список материалов.
+    post:
+      summary: Создать или обновить материалы для типа работ.
+      tags:
+        - WorkTypeMaterials
+      responses:
+        '200':
+          description: Материалы созданы/обновлены.
+        '201':
+          description: Материалы созданы.
+  /admin/work-types/{work_type_id}/materials/{material_id}:
+    summary: Операции с конкретным материалом для указанного типа работ.
+    parameters:
+      - name: work_type_id
+        in: path
+        required: true
+        description: Идентификатор типа работ
+        schema:
+          type: integer # или string
+      - name: material_id
+        in: path
+        required: true
+        description: Идентификатор материала
+        schema:
+          type: integer # или string
+    delete:
+      summary: Удалить материал для типа работ.
+      tags:
+        - WorkTypeMaterials
+      responses:
+        '204':
+          description: Материал удален.
+        '404':
+          description: Тип работ или материал не найден.
+  /admin/work-types/{work_type_id}/suggest-materials:
+    summary: Предложить материалы для указанного типа работ.
+    parameters:
+      - name: work_type_id
+        in: path
+        required: true
+        description: Идентификатор типа работ
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить предложенные материалы для типа работ.
+      tags:
+        - WorkTypeMaterials
+      responses:
+        '200':
+          description: Список предложенных материалов.
+  # /admin/catalogs:
+  #  summary: Операции с каталогами. # Заменен более специфичными путями
+  /admin/materials:
+    summary: Операции с материалами.
+    get:
+      summary: Получить список материалов.
+      tags:
+        - Materials
+      responses:
+        '200':
+          description: Список материалов.
+    post:
+      summary: Создать новый материал.
+      tags:
+        - Materials
+      responses:
+        '201':
+          description: Материал создан.
+  /admin/materials/measurement-units:
+    get:
+      summary: Получить список единиц измерения для материалов.
+      tags:
+        - Materials
+      responses:
+        '200':
+          description: Список единиц измерения.
+  /admin/materials/import:
+    post:
+      summary: Импортировать материалы.
+      tags:
+        - Materials
+      responses:
+        '200':
+          description: Материалы импортированы.
+        '422':
+          description: Ошибка валидации данных.
+  /admin/materials/{id}:
+    summary: Операции с конкретным материалом.
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Идентификатор материала.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить информацию о материале.
+      tags:
+        - Materials
+      responses:
+        '200':
+          description: Информация о материале.
+        '404':
+          description: Материал не найден.
+    put:
+      summary: Обновить информацию о материале.
+      tags:
+        - Materials
+      responses:
+        '200':
+          description: Материал обновлен.
+        '404':
+          description: Материал не найден.
+    patch:
+      summary: Частично обновить информацию о материале.
+      tags:
+        - Materials
+      responses:
+        '200':
+          description: Материал обновлен.
+        '404':
+          description: Материал не найден.
+    delete:
+      summary: Удалить материал.
+      tags:
+        - Materials
+      responses:
+        '204':
+          description: Материал удален.
+        '404':
+          description: Материал не найден.
+  /admin/materials/{id}/balances:
+    summary: Балансы для конкретного материала.
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Идентификатор материала.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить балансы материала.
+      tags:
+        - Materials
+      responses:
+        '200':
+          description: Балансы материала.
+        '404':
+          description: Материал не найден.
+  /admin/materials/{id}/consumption-rates:
+    summary: Нормы списания для конкретного материала.
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Идентификатор материала.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить нормы списания материала.
+      tags:
+        - Materials
+      responses:
+        '200':
+          description: Нормы списания материала.
+        '404':
+          description: Материал не найден.
+    put:
+      summary: Обновить нормы списания материала.
+      tags:
+        - Materials
+      responses:
+        '200':
+          description: Нормы списания обновлены.
+        '404':
+          description: Материал не найден.
+  /admin/materials/{id}/validate-for-accounting:
+    summary: Валидация материала для интеграции с СБИС/1С.
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Идентификатор материала.
+        schema:
+          type: integer # или string
+    get:
+      summary: Проверить валидность материала для интеграции.
+      tags:
+        - Materials
+      responses:
+        '200':
+          description: Результат валидации.
+        '404':
+          description: Материал не найден.
+  /admin/suppliers:
+    summary: Операции с поставщиками.
+    get:
+      summary: Получить список поставщиков.
+      tags:
+        - Suppliers
+      responses:
+        '200':
+          description: Список поставщиков.
+    post:
+      summary: Создать нового поставщика.
+      tags:
+        - Suppliers
+      responses:
+        '201':
+          description: Поставщик создан.
+  /admin/suppliers/{id}:
+    summary: Операции с конкретным поставщиком.
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Идентификатор поставщика.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить информацию о поставщике.
+      tags:
+        - Suppliers
+      responses:
+        '200':
+          description: Информация о поставщике.
+        '404':
+          description: Поставщик не найден.
+    put:
+      summary: Обновить информацию о поставщике.
+      tags:
+        - Suppliers
+      responses:
+        '200':
+          description: Поставщик обновлен.
+        '404':
+          description: Поставщик не найден.
+    patch:
+      summary: Частично обновить информацию о поставщике.
+      tags:
+        - Suppliers
+      responses:
+        '200':
+          description: Поставщик обновлен.
+        '404':
+          description: Поставщик не найден.
+    delete:
+      summary: Удалить поставщика.
+      tags:
+        - Suppliers
+      responses:
+        '204':
+          description: Поставщик удален.
+        '404':
+          description: Поставщик не найден.
+  /admin/work-types:
+    summary: Операции с типами работ.
+    get:
+      summary: Получить список типов работ.
+      tags:
+        - WorkTypes
+      responses:
+        '200':
+          description: Список типов работ.
+    post:
+      summary: Создать новый тип работ.
+      tags:
+        - WorkTypes
+      responses:
+        '201':
+          description: Тип работ создан.
+  /admin/work-types/{work_type_id}:
+    summary: Операции с конкретным типом работ. Параметр work_type_id используется также для вложенных маршрутов материалов.
+    parameters:
+      - name: work_type_id
+        in: path
+        required: true
+        description: Идентификатор типа работ.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить информацию о типе работ.
+      tags:
+        - WorkTypes
+      responses:
+        '200':
+          description: Информация о типе работ.
+        '404':
+          description: Тип работ не найден.
+    put:
+      summary: Обновить информацию о типе работ.
+      tags:
+        - WorkTypes
+      responses:
+        '200':
+          description: Тип работ обновлен.
+        '404':
+          description: Тип работ не найден.
+    patch:
+      summary: Частично обновить информацию о типе работ.
+      tags:
+        - WorkTypes
+      responses:
+        '200':
+          description: Тип работ обновлен.
+        '404':
+          description: Тип работ не найден.
+    delete:
+      summary: Удалить тип работ.
+      tags:
+        - WorkTypes
+      responses:
+        '204':
+          description: Тип работ удален.
+        '404':
+          description: Тип работ не найден.
+  /admin/cost-categories:
+    summary: Операции с категориями затрат.
+    get:
+      summary: Получить список категорий затрат.
+      tags:
+        - CostCategories
+      responses:
+        '200':
+          description: Список категорий затрат.
+    post:
+      summary: Создать новую категорию затрат.
+      tags:
+        - CostCategories
+      responses:
+        '201':
+          description: Категория затрат создана.
+  /admin/cost-categories/import:
+    post:
+      summary: Импортировать категории затрат.
+      tags:
+        - CostCategories
+      responses:
+        '200':
+          description: Категории затрат импортированы.
+        '422':
+          description: Ошибка валидации данных.
+  /admin/cost-categories/{id}:
+    summary: Операции с конкретной категорией затрат.
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Идентификатор категории затрат.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить информацию о категории затрат.
+      tags:
+        - CostCategories
+      responses:
+        '200':
+          description: Информация о категории затрат.
+        '404':
+          description: Категория затрат не найдена.
+    put:
+      summary: Обновить информацию о категории затрат.
+      tags:
+        - CostCategories
+      responses:
+        '200':
+          description: Категория затрат обновлена.
+        '404':
+          description: Категория затрат не найдена.
+    patch:
+      summary: Частично обновить информацию о категории затрат.
+      tags:
+        - CostCategories
+      responses:
+        '200':
+          description: Категория затрат обновлена.
+        '404':
+          description: Категория затрат не найдена.
+    delete:
+      summary: Удалить категорию затрат.
+      tags:
+        - CostCategories
+      responses:
+        '204':
+          description: Категория затрат удалена.
+        '404':
+          description: Категория затрат не найдена.
+  /admin/rate-coefficients:
+    summary: Операции с коэффициентами ставок.
+    get:
+      summary: Получить список коэффициентов ставок.
+      tags:
+        - RateCoefficients
+      responses:
+        '200':
+          description: Список коэффициентов.
+    post:
+      summary: Создать новый коэффициент ставки.
+      tags:
+        - RateCoefficients
+      responses:
+        '201':
+          description: Коэффициент создан.
+  /admin/rate-coefficients/{id}:
+    summary: Операции с конкретным коэффициентом ставки.
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Идентификатор коэффициента.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить информацию о коэффициенте.
+      tags:
+        - RateCoefficients
+      responses:
+        '200':
+          description: Информация о коэффициенте.
+        '404':
+          description: Коэффициент не найден.
+    put:
+      summary: Обновить коэффициент ставки.
+      tags:
+        - RateCoefficients
+      responses:
+        '200':
+          description: Коэффициент обновлен.
+        '404':
+          description: Коэффициент не найден.
+    patch:
+      summary: Частично обновить коэффициент ставки.
+      tags:
+        - RateCoefficients
+      responses:
+        '200':
+          description: Коэффициент обновлен.
+        '404':
+          description: Коэффициент не найден.
+    delete:
+      summary: Удалить коэффициент ставки.
+      tags:
+        - RateCoefficients
+      responses:
+        '204':
+          description: Коэффициент удален.
+        '404':
+          description: Коэффициент не найден.
+  /admin/contracts:
+    summary: Операции с контрактами.
+    get:
+      summary: Получить список контрактов.
+      tags:
+        - Contracts
+      responses:
+        '200':
+          description: Список контрактов.
+    post:
+      summary: Создать новый контракт.
+      tags:
+        - Contracts
+      responses:
+        '201':
+          description: Контракт создан.
+  /admin/contracts/{contract_id}:
+    summary: Операции с конкретным контрактом.
+    parameters:
+      - name: contract_id
+        in: path
+        required: true
+        description: Идентификатор контракта.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить информацию о контракте.
+      tags:
+        - Contracts
+      responses:
+        '200':
+          description: Информация о контракте.
+        '404':
+          description: Контракт не найден.
+    put:
+      summary: Обновить информацию о контракте.
+      tags:
+        - Contracts
+      responses:
+        '200':
+          description: Контракт обновлен.
+        '404':
+          description: Контракт не найден.
+    patch:
+      summary: Частично обновить информацию о контракте.
+      tags:
+        - Contracts
+      responses:
+        '200':
+          description: Контракт обновлен.
+        '404':
+          description: Контракт не найден.
+    delete:
+      summary: Удалить контракт.
+      tags:
+        - Contracts
+      responses:
+        '204':
+          description: Контракт удален.
+        '404':
+          description: Контракт не найден.
+  /admin/contracts/{contract_id}/performance-acts:
+    summary: Операции с актами выполненных работ для контракта.
+    parameters:
+      - name: contract_id
+        in: path
+        required: true
+        description: Идентификатор контракта.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить список актов выполненных работ для контракта.
+      tags:
+        - Contracts
+        - PerformanceActs
+      responses:
+        '200':
+          description: Список актов.
+    post:
+      summary: Создать новый акт выполненных работ для контракта.
+      tags:
+        - Contracts
+        - PerformanceActs
+      responses:
+        '201':
+          description: Акт создан.
+  /admin/performance-acts/{performance_act_id}:
+    summary: Операции с конкретным актом выполненных работ.
+    parameters:
+      - name: performance_act_id
+        in: path
+        required: true
+        description: Идентификатор акта выполненных работ.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить информацию об акте.
+      tags:
+        - PerformanceActs
+      responses:
+        '200':
+          description: Информация об акте.
+        '404':
+          description: Акт не найден.
+    put:
+      summary: Обновить информацию об акте.
+      tags:
+        - PerformanceActs
+      responses:
+        '200':
+          description: Акт обновлен.
+        '404':
+          description: Акт не найден.
+    patch:
+      summary: Частично обновить информацию об акте.
+      tags:
+        - PerformanceActs
+      responses:
+        '200':
+          description: Акт обновлен.
+        '404':
+          description: Акт не найден.
+    delete:
+      summary: Удалить акт.
+      tags:
+        - PerformanceActs
+      responses:
+        '204':
+          description: Акт удален.
+        '404':
+          description: Акт не найден.
+  /admin/contracts/{contract_id}/payments:
+    summary: Операции с платежами для контракта.
+    parameters:
+      - name: contract_id
+        in: path
+        required: true
+        description: Идентификатор контракта.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить список платежей для контракта.
+      tags:
+        - Contracts
+        - Payments
+      responses:
+        '200':
+          description: Список платежей.
+    post:
+      summary: Создать новый платеж для контракта.
+      tags:
+        - Contracts
+        - Payments
+      responses:
+        '201':
+          description: Платеж создан.
+  /admin/payments/{payment_id}:
+    summary: Операции с конкретным платежом.
+    parameters:
+      - name: payment_id
+        in: path
+        required: true
+        description: Идентификатор платежа.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить информацию о платеже.
+      tags:
+        - Payments
+      responses:
+        '200':
+          description: Информация о платеже.
+        '404':
+          description: Платеж не найден.
+    put:
+      summary: Обновить информацию о платеже.
+      tags:
+        - Payments
+      responses:
+        '200':
+          description: Платеж обновлен.
+        '404':
+          description: Платеж не найден.
+    patch:
+      summary: Частично обновить информацию о платеже.
+      tags:
+        - Payments
+      responses:
+        '200':
+          description: Платеж обновлен.
+        '404':
+          description: Платеж не найден.
+    delete:
+      summary: Удалить платеж.
+      tags:
+        - Payments
+      responses:
+        '204':
+          description: Платеж удален.
+        '404':
+          description: Платеж не найден.
+  /admin/contractors:
+    summary: Операции с подрядчиками.
+    get:
+      summary: Получить список подрядчиков.
+      tags:
+        - Contractors
+      responses:
+        '200':
+          description: Список подрядчиков.
+    post:
+      summary: Создать нового подрядчика.
+      tags:
+        - Contractors
+      responses:
+        '201':
+          description: Подрядчик создан.
+  /admin/contractors/{id}:
+    summary: Операции с конкретным подрядчиком.
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Идентификатор подрядчика.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить информацию о подрядчике.
+      tags:
+        - Contractors
+      responses:
+        '200':
+          description: Информация о подрядчике.
+        '404':
+          description: Подрядчик не найден.
+    put:
+      summary: Обновить информацию о подрядчике.
+      tags:
+        - Contractors
+      responses:
+        '200':
+          description: Подрядчик обновлен.
+        '404':
+          description: Подрядчик не найден.
+    patch:
+      summary: Частично обновить информацию о подрядчике.
+      tags:
+        - Contractors
+      responses:
+        '200':
+          description: Подрядчик обновлен.
+        '404':
+          description: Подрядчик не найден.
+    delete:
+      summary: Удалить подрядчика.
+      tags:
+        - Contractors
+      responses:
+        '204':
+          description: Подрядчик удален.
+        '404':
+          description: Подрядчик не найден.
+  /admin/report-templates:
+    summary: Операции с шаблонами отчетов.
+    get:
+      summary: Получить список шаблонов отчетов.
+      tags:
+        - ReportTemplates
+      responses:
+        '200':
+          description: Список шаблонов.
+    post:
+      summary: Создать новый шаблон отчета.
+      tags:
+        - ReportTemplates
+      responses:
+        '201':
+          description: Шаблон создан.
+  /admin/report-templates/{template_id}:
+    summary: Операции с конкретным шаблоном отчета.
+    parameters:
+      - name: template_id
+        in: path
+        required: true
+        description: Идентификатор шаблона.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить информацию о шаблоне.
+      tags:
+        - ReportTemplates
+      responses:
+        '200':
+          description: Информация о шаблоне.
+        '404':
+          description: Шаблон не найден.
+    put:
+      summary: Обновить шаблон отчета.
+      tags:
+        - ReportTemplates
+      responses:
+        '200':
+          description: Шаблон обновлен.
+        '404':
+          description: Шаблон не найден.
+    patch:
+      summary: Частично обновить шаблон отчета.
+      tags:
+        - ReportTemplates
+      responses:
+        '200':
+          description: Шаблон обновлен.
+        '404':
+          description: Шаблон не найден.
+    delete:
+      summary: Удалить шаблон отчета.
+      tags:
+        - ReportTemplates
+      responses:
+        '204':
+          description: Шаблон удален.
+        '404':
+          description: Шаблон не найден.
+  /admin/report-templates/{template_id}/set-default:
+    summary: Установить шаблон отчета по умолчанию.
+    parameters:
+      - name: template_id
+        in: path
+        required: true
+        description: Идентификатор шаблона для установки по умолчанию.
+        schema:
+          type: integer # или string
+    post:
+      summary: Сделать шаблон отчета стандартным.
+      tags:
+        - ReportTemplates
+      responses:
+        '200':
+          description: Шаблон установлен по умолчанию.
+        '404':
+          description: Шаблон не найден.
+  /admin/advance-transactions:
+    summary: Операции с авансовыми транзакциями.
+    get:
+      summary: Получить список авансовых транзакций.
+      tags:
+        - AdvanceTransactions
+      responses:
+        '200':
+          description: Список транзакций.
+    post:
+      summary: Создать новую авансовую транзакцию.
+      tags:
+        - AdvanceTransactions
+      responses:
+        '201':
+          description: Транзакция создана.
+  /admin/advance-transactions/available-users:
+    get:
+      summary: Получить список доступных пользователей для авансовых транзакций.
+      tags:
+        - AdvanceTransactions
+        - Users
+      responses:
+        '200':
+          description: Список пользователей.
+  /admin/advance-transactions/available-projects:
+    get:
+      summary: Получить список доступных проектов для авансовых транзакций.
+      tags:
+        - AdvanceTransactions
+        - Projects
+      responses:
+        '200':
+          description: Список проектов.
+  /admin/advance-transactions/{transaction_id}:
+    summary: Операции с конкретной авансовой транзакцией.
+    parameters:
+      - name: transaction_id
+        in: path
+        required: true
+        description: Идентификатор транзакции.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить информацию о транзакции.
+      tags:
+        - AdvanceTransactions
+      responses:
+        '200':
+          description: Информация о транзакции.
+        '404':
+          description: Транзакция не найдена.
+    put:
+      summary: Обновить авансовую транзакцию.
+      tags:
+        - AdvanceTransactions
+      responses:
+        '200':
+          description: Транзакция обновлена.
+        '404':
+          description: Транзакция не найдена.
+    delete:
+      summary: Удалить авансовую транзакцию.
+      tags:
+        - AdvanceTransactions
+      responses:
+        '204':
+          description: Транзакция удалена.
+        '404':
+          description: Транзакция не найдена.
+  /admin/advance-transactions/{transaction_id}/report:
+    summary: Отчитаться по авансовой транзакции.
+    parameters:
+      - name: transaction_id
+        in: path
+        required: true
+        description: Идентификатор транзакции.
+        schema:
+          type: integer # или string
+    post:
+      summary: Создать отчет по транзакции.
+      tags:
+        - AdvanceTransactions
+      responses:
+        '200':
+          description: Отчет создан.
+        '404':
+          description: Транзакция не найдена.
+  /admin/advance-transactions/{transaction_id}/approve:
+    summary: Утвердить авансовую транзакцию.
+    parameters:
+      - name: transaction_id
+        in: path
+        required: true
+        description: Идентификатор транзакции.
+        schema:
+          type: integer # или string
+    post:
+      summary: Утвердить транзакцию.
+      tags:
+        - AdvanceTransactions
+      responses:
+        '200':
+          description: Транзакция утверждена.
+        '404':
+          description: Транзакция не найдена.
+  /admin/advance-transactions/{transaction_id}/attachments:
+    summary: Прикрепить файлы к авансовой транзакции.
+    parameters:
+      - name: transaction_id
+        in: path
+        required: true
+        description: Идентификатор транзакции.
+        schema:
+          type: integer # или string
+    post:
+      summary: Прикрепить файлы.
+      tags:
+        - AdvanceTransactions
+      responses:
+        '200':
+          description: Файлы прикреплены.
+        '404':
+          description: Транзакция не найдена.
+  /admin/advance-transactions/{transaction_id}/attachments/{file_id}:
+    summary: Удалить прикрепленный файл из авансовой транзакции.
+    parameters:
+      - name: transaction_id
+        in: path
+        required: true
+        description: Идентификатор транзакции.
+        schema:
+          type: integer # или string
+      - name: file_id
+        in: path
+        required: true
+        description: Идентификатор файла.
+        schema:
+          type: integer # или string
+    delete:
+      summary: Удалить прикрепленный файл.
+      tags:
+        - AdvanceTransactions
+      responses:
+        '204':
+          description: Файл удален.
+        '404':
+          description: Транзакция или файл не найдены.
+  /admin/projects:
+    summary: Операции с проектами.
+    get:
+      summary: Получить список проектов.
+      tags:
+        - Projects
+      responses:
+        '200':
+          description: Список проектов.
+    post:
+      summary: Создать новый проект.
+      tags:
+        - Projects
+      responses:
+        '201':
+          description: Проект создан.
+  /admin/projects/available-cost-categories:
+    get:
+      summary: Получить доступные категории затрат для проектов.
+      tags:
+        - Projects
+        - CostCategories
+      responses:
+        '200':
+          description: Список доступных категорий затрат.
+  /admin/projects/{project_id}:
+    summary: Операции с конкретным проектом.
+    parameters:
+      - name: project_id
+        in: path
+        required: true
+        description: Идентификатор проекта.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить информацию о проекте.
+      tags:
+        - Projects
+      responses:
+        '200':
+          description: Информация о проекте.
+        '404':
+          description: Проект не найден.
+    put:
+      summary: Обновить информацию о проекте.
+      tags:
+        - Projects
+      responses:
+        '200':
+          description: Проект обновлен.
+        '404':
+          description: Проект не найден.
+    patch:
+      summary: Частично обновить информацию о проекте.
+      tags:
+        - Projects
+      responses:
+        '200':
+          description: Проект обновлен.
+        '404':
+          description: Проект не найден.
+    delete:
+      summary: Удалить проект.
+      tags:
+        - Projects
+      responses:
+        '204':
+          description: Проект удален.
+        '404':
+          description: Проект не найден.
+  /admin/projects/{project_id}/foremen/{user_id}:
+    summary: Управление прорабами на проекте.
+    parameters:
+      - name: project_id
+        in: path
+        required: true
+        description: Идентификатор проекта.
+        schema:
+          type: integer # или string
+      - name: user_id
+        in: path
+        required: true
+        description: Идентификатор пользователя (прораба).
+        schema:
+          type: integer # или string
+    post:
+      summary: Назначить прораба на проект.
+      tags:
+        - Projects
+        - Users
+      responses:
+        '200':
+          description: Прораб назначен.
+        '404':
+          description: Проект или пользователь не найден.
+    delete:
+      summary: Открепить прораба от проекта.
+      tags:
+        - Projects
+        - Users
+      responses:
+        '204':
+          description: Прораб откреплен.
+        '404':
+          description: Проект или пользователь не найден.
+  /admin/projects/{project_id}/statistics:
+    summary: Статистика по проекту.
+    parameters:
+      - name: project_id
+        in: path
+        required: true
+        description: Идентификатор проекта.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить статистику по проекту.
+      tags:
+        - Projects
+      responses:
+        '200':
+          description: Статистика по проекту.
+        '404':
+          description: Проект не найден.
+  /admin/projects/{project_id}/materials:
+    summary: Материалы, связанные с проектом.
+    parameters:
+      - name: project_id
+        in: path
+        required: true
+        description: Идентификатор проекта.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить материалы проекта.
+      tags:
+        - Projects
+        - Materials
+      responses:
+        '200':
+          description: Список материалов проекта.
+        '404':
+          description: Проект не найден.
+  /admin/projects/{project_id}/work-types:
+    summary: Типы работ, связанные с проектом.
+    parameters:
+      - name: project_id
+        in: path
+        required: true
+        description: Идентификатор проекта.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить типы работ проекта.
+      tags:
+        - Projects
+        - WorkTypes
+      responses:
+        '200':
+          description: Список типов работ проекта.
+        '404':
+          description: Проект не найден.
+  /admin/logs:
+    summary: Операции с логами.
+    # Будет заполнено при обработке logs.php
+  /admin/logs/material-usage:
+    summary: Логи использования материалов.
+    get:
+      summary: Получить логи использования материалов прорабами.
+      tags:
+        - Logs
+        - Materials
+      responses:
+        '200':
+          description: Список логов использования материалов.
+        '403':
+          description: Доступ запрещен (нет права view-operation-logs).
+  /admin/logs/work-completion:
+    summary: Логи выполнения работ.
+    get:
+      summary: Получить логи выполнения работ прорабами.
+      tags:
+        - Logs
+        - Works
+      responses:
+        '200':
+          description: Список логов выполнения работ.
+        '403':
+          description: Доступ запрещен (нет права view-operation-logs).
+  /admin/users:
+    summary: Операции с пользователями.
+    # Будет дополнено/заполнено при обработке users.php и advance_transactions.php
+  /admin/users/{id}:
+    summary: Операции с конкретным пользователем.
+    # Будет дополнено/заполнено при обработке users.php и advance_transactions.php
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Идентификатор пользователя.
+        schema:
+          type: integer 
+  /admin/users/{user_id}/advance-balance:
+    summary: Получить авансовый баланс пользователя.
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        description: Идентификатор пользователя.
+        schema:
+          type: integer # или string
+    get:
+      summary: Авансовый баланс пользователя.
+      tags:
+        - Users
+        - AdvanceTransactions
+      responses:
+        '200':
+          description: Баланс пользователя.
+        '404':
+          description: Пользователь не найден.
+  /admin/users/{user_id}/advance-transactions:
+    summary: Получить список авансовых транзакций пользователя.
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        description: Идентификатор пользователя.
+        schema:
+          type: integer # или string
+    get:
+      summary: Авансовые транзакции пользователя.
+      tags:
+        - Users
+        - AdvanceTransactions
+      responses:
+        '200':
+          description: Список транзакций.
+        '404':
+          description: Пользователь не найден.
+  /admin/users/{user_id}/issue-funds:
+    summary: Выдать средства пользователю.
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        description: Идентификатор пользователя.
+        schema:
+          type: integer # или string
+    post:
+      summary: Выдать авансовые средства.
+      tags:
+        - Users
+        - AdvanceTransactions
+      responses:
+        '200':
+          description: Средства выданы.
+        '404':
+          description: Пользователь не найден.
+  /admin/users/{user_id}/return-funds:
+    summary: Вернуть средства от пользователя.
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        description: Идентификатор пользователя.
+        schema:
+          type: integer # или string
+    post:
+      summary: Вернуть авансовые средства.
+      tags:
+        - Users
+        - AdvanceTransactions
+      responses:
+        '200':
+          description: Средства возвращены.
+        '404':
+          description: Пользователь не найден.
+  /admin/reports:
+    summary: Операции с отчетами.
+    # Будет заполнено при обработке reports.php и advance_transactions.php
+  /admin/reports/advance-accounts/summary:
+    summary: Сводный отчет по подотчетным средствам.
+    get:
+      summary: Получить сводный отчет.
+      tags:
+        - Reports
+        - AdvanceAccounts
+      responses:
+        '200':
+          description: Сводный отчет.
+  /admin/reports/advance-accounts/users/{user_id}:
+    summary: Отчет по подотчетным средствам для конкретного пользователя.
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        description: Идентификатор пользователя.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить отчет по пользователю.
+      tags:
+        - Reports
+        - AdvanceAccounts
+        - Users
+      responses:
+        '200':
+          description: Отчет по пользователю.
+        '404':
+          description: Пользователь не найден.
+  /admin/reports/advance-accounts/projects/{project_id}:
+    summary: Отчет по подотчетным средствам для конкретного проекта.
+    parameters:
+      - name: project_id
+        in: path
+        required: true
+        description: Идентификатор проекта.
+        schema:
+          type: integer # или string
+    get:
+      summary: Получить отчет по проекту.
+      tags:
+        - Reports
+        - AdvanceAccounts
+        - Projects
+      responses:
+        '200':
+          description: Отчет по проекту.
+        '404':
+          description: Проект не найден.
+  /admin/reports/advance-accounts/overdue:
+    summary: Отчет по просроченным подотчетным средствам.
+    get:
+      summary: Получить отчет о просроченных средствах.
+      tags:
+        - Reports
+        - AdvanceAccounts
+      responses:
+        '200':
+          description: Отчет о просроченных средствах.
+  /admin/reports/advance-accounts/export/{format}:
+    summary: Экспорт отчета по подотчетным средствам.
+    parameters:
+      - name: format
+        in: path
+        required: true
+        description: Формат экспорта (например, xlsx, csv).
+        schema:
+          type: string
+    get:
+      summary: Экспортировать отчет.
+      tags:
+        - Reports
+        - AdvanceAccounts
+      responses:
+        '200':
+          description: Файл отчета.
+        '400':
+          description: Неверный формат экспорта.
+  /admin/accounting/import-users:
+    summary: Импорт пользователей из бухгалтерской системы.
+    post:
+      summary: Импортировать пользователей.
+      tags:
+        - AccountingIntegration
+        - Users
+      responses:
+        '200':
+          description: Пользователи импортированы.
+        '422':
+          description: Ошибка валидации или процесса импорта.
+  /admin/accounting/import-projects:
+    summary: Импорт проектов из бухгалтерской системы.
+    post:
+      summary: Импортировать проекты.
+      tags:
+        - AccountingIntegration
+        - Projects
+      responses:
+        '200':
+          description: Проекты импортированы.
+        '422':
+          description: Ошибка валидации или процесса импорта.
+  /admin/accounting/import-materials:
+    summary: Импорт материалов из бухгалтерской системы.
+    post:
+      summary: Импортировать материалы.
+      tags:
+        - AccountingIntegration
+        - Materials
+      responses:
+        '200':
+          description: Материалы импортированы.
+        '422':
+          description: Ошибка валидации или процесса импорта.
+  /admin/accounting/export-transactions:
+    summary: Экспорт авансовых транзакций в бухгалтерскую систему.
+    post:
+      summary: Экспортировать транзакции.
+      tags:
+        - AccountingIntegration
+        - AdvanceTransactions
+      responses:
+        '200':
+          description: Транзакции экспортированы.
+        '422':
+          description: Ошибка валидации или процесса экспорта.
+  /admin/accounting/sync-status:
+    summary: Получить статус последней синхронизации с бухгалтерской системой.
+    get:
+      summary: Статус синхронизации.
+      tags:
+        - AccountingIntegration
+      responses:
+        '200':
+          description: Статус синхронизации.
+  /admin/auth:
+    summary: Операции, связанные с аутентификацией администратора.
+    # Будет заполнено при обработке auth.php 

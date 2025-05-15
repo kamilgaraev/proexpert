@@ -1,0 +1,105 @@
+<?php
+
+namespace App\Http\Controllers\Api\V1\Admin;
+
+use App\Http\Controllers\Controller;
+use App\Services\CompletedWork\CompletedWorkService;
+use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkRequest;
+use App\Http\Requests\Api\V1\Admin\CompletedWork\UpdateCompletedWorkRequest;
+use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkResource;
+use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkCollection;
+use App\Models\CompletedWork; // Для route model binding
+use Illuminate\Http\Request; // Для Request в index
+use Illuminate\Http\JsonResponse;
+use Symfony\Component\HttpFoundation\Response;
+use App\Exceptions\BusinessLogicException;
+use Illuminate\Support\Facades\Auth; // Для получения current_organization_id
+
+class CompletedWorkController extends Controller
+{
+    protected CompletedWorkService $completedWorkService;
+
+    public function __construct(CompletedWorkService $completedWorkService)
+    {
+        $this->completedWorkService = $completedWorkService;
+        // Middleware для прав доступа, например, $this->middleware('can:manage-completed-works');
+    }
+
+    public function index(Request $request): CompletedWorkCollection
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $filters = $request->query();
+        $filters['organization_id'] = $organizationId; // Всегда фильтруем по текущей организации
+        
+        // Получаем параметры сортировки из запроса или используем значения по умолчанию
+        $sortBy = $request->query('sortBy', 'completion_date');
+        $sortDirection = $request->query('sortDirection', 'desc');
+        $perPage = $request->query('perPage', 15);
+
+        $completedWorks = $this->completedWorkService->getAll($filters, $perPage, $sortBy, $sortDirection, ['project', 'contract', 'workType', 'user']);
+        return new CompletedWorkCollection($completedWorks);
+    }
+
+    public function store(StoreCompletedWorkRequest $request): JsonResponse
+    {
+        try {
+            $dto = $request->toDto();
+            $completedWork = $this->completedWorkService->create($dto);
+            return response()->json(
+                [
+                    'success' => true, 
+                    'message' => 'Запись о выполненной работе успешно создана.',
+                    'data' => new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user']))
+                ],
+                Response::HTTP_CREATED
+            );
+        } catch (BusinessLogicException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function show(CompletedWork $completedWork): CompletedWorkResource // Используем Route Model Binding
+    {
+        // Проверка принадлежности организации
+        if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
+            abort(404, 'Запись о выполненной работе не найдена.');
+        }
+        return new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'files']));
+    }
+
+    public function update(UpdateCompletedWorkRequest $request, CompletedWork $completedWork): JsonResponse
+    {
+        // Проверка принадлежности организации (FormRequest делает это через $this->route('completed_work')->organization_id)
+        if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
+             abort(403, 'Это действие не авторизовано.');
+        }
+
+        try {
+            $dto = $request->toDto(); // DTO содержит ID и organization_id из существующей модели
+            $updatedWork = $this->completedWorkService->update($completedWork->id, $dto);
+            return response()->json(
+                [
+                    'success' => true, 
+                    'message' => 'Запись о выполненной работе успешно обновлена.',
+                    'data' => new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user']))
+                ]
+            );
+        } catch (BusinessLogicException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function destroy(CompletedWork $completedWork): JsonResponse
+    {
+        if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
+            abort(403, 'Это действие не авторизовано.');
+        }
+
+        try {
+            $this->completedWorkService->delete($completedWork->id, $completedWork->organization_id);
+            return response()->json(null, Response::HTTP_NO_CONTENT);
+        } catch (BusinessLogicException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        }
+    }
+} 

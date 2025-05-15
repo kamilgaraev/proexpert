@@ -2,10 +2,12 @@
 
 namespace App\Repositories\Interfaces;
 
-use App\Repositories\RepositoryInterface;
+use App\Repositories\Interfaces\BaseRepositoryInterface;
 use Illuminate\Support\Collection;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use App\Models\Project;
 
-interface ProjectRepositoryInterface extends RepositoryInterface
+interface ProjectRepositoryInterface extends BaseRepositoryInterface
 {
     /**
      * Получить проекты для определенной организации
@@ -68,4 +70,6 @@ interface ProjectRepositoryInterface extends RepositoryInterface
      * @return Collection Ключ - статус, значение - количество.
      */
     public function getProjectCountsByStatus(int $organizationId, array $filters = []): Collection;
+
+    public function findBy(string $field, mixed $value, array $columns = ['*']);
 } 

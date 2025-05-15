@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Models\Role;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use App\Models\SiteRequest;
 
 class AuthServiceProvider extends ServiceProvider
 {
@@ -364,6 +365,73 @@ class AuthServiceProvider extends ServiceProvider
                 ]);
                 return false; // В случае ошибки не даем доступ
             }
+        });
+
+        /**
+         * Gate для управления заявками с объекта (SiteRequest).
+         * Разрешено автору заявки или пользователю с ролью Admin (organization_admin) или System Admin.
+         * Второй аргумент $siteRequest может быть null, если Gate используется для проверки возможности создания новой заявки (в этом случае проверка по автору невозможна).
+         */
+        Gate::define('manage_site_requests', function (User $user, ?SiteRequest $siteRequest = null): bool {
+            if ($user->isSystemAdmin()) {
+                return true;
+            }
+
+            // Если это проверка для конкретной заявки, и пользователь ее автор
+            if ($siteRequest && $siteRequest->user_id === $user->id) {
+                return true;
+            }
+
+            // Пользователь с ролью Admin в организации заявки (или текущей организации пользователя, если заявка еще не создана)
+            $organizationId = $siteRequest?->organization_id ?? $user->current_organization_id;
+            if (!$organizationId) {
+                 Log::warning('[Gate:manage_site_requests] Access DENIED due to missing organizationId for user.', ['user_id' => $user->id]);
+                return false;
+            }
+            
+            if ($user->hasRole(Role::ROLE_ADMIN, $organizationId)) {
+                return true;
+            }
+
+            Log::info('[Gate:manage_site_requests] Access DENIED for user.', [
+                'user_id' => $user->id,
+                'site_request_id' => $siteRequest?->id,
+                'site_request_user_id' => $siteRequest?->user_id,
+                'organization_id_of_check' => $organizationId
+            ]);
+            return false;
+        });
+
+        /**
+         * Gate для управления вложениями в заявках с объекта (SiteRequest attachments).
+         * Логика аналогична 'manage_site_requests'.
+         */
+        Gate::define('manage_site_request_attachments', function (User $user, ?SiteRequest $siteRequest = null): bool {
+            if ($user->isSystemAdmin()) {
+                return true;
+            }
+
+            if ($siteRequest && $siteRequest->user_id === $user->id) {
+                return true;
+            }
+
+            $organizationId = $siteRequest?->organization_id ?? $user->current_organization_id;
+            if (!$organizationId) {
+                Log::warning('[Gate:manage_site_request_attachments] Access DENIED due to missing organizationId for user.', ['user_id' => $user->id]);
+                return false;
+            }
+
+            if ($user->hasRole(Role::ROLE_ADMIN, $organizationId)) {
+                return true;
+            }
+            
+            Log::info('[Gate:manage_site_request_attachments] Access DENIED for user.', [
+                'user_id' => $user->id,
+                'site_request_id' => $siteRequest?->id,
+                'site_request_user_id' => $siteRequest?->user_id,
+                'organization_id_of_check' => $organizationId
+            ]);
+            return false;
         });
 
         // TODO: Добавить другие Gates по мере необходимости
