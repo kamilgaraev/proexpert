@@ -1,0 +1,408 @@
+openapi: 3.0.0
+info:
+  title: Measurement Units API
+  version: v1
+  description: API для управления единицами измерения в административной панели.
+
+servers:
+  - url: /api/v1/admin # Базовый путь ко всем эндпоинтам этого файла
+
+components:
+  securitySchemes:
+    bearerAuth: # Можно ссылаться на это из общего файла
+      type: http
+      scheme: bearer
+
+  schemas:
+    MeasurementUnit:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID единицы измерения
+          example: 1
+        name:
+          type: string
+          description: Полное название
+          example: "Килограмм"
+        short_name:
+          type: string
+          description: Краткое обозначение
+          example: "кг"
+        type:
+          type: string
+          description: "Тип (material, work, other)"
+          example: "material"
+        description:
+          type: string
+          nullable: true
+          description: Описание
+          example: "Единица измерения массы"
+        is_default:
+          type: boolean
+          description: Является ли единицей по умолчанию для своего типа
+        is_system:
+          type: boolean
+          description: Является ли системной (нередактируемой пользователем)
+        organization_id:
+          type: integer
+          description: ID организации (для несистемных единиц)
+          example: 1
+        created_at:
+          type: string
+          format: date-time
+          description: Дата создания
+        updated_at:
+          type: string
+          format: date-time
+          description: Дата обновления
+
+    MeasurementUnitResource:
+      type: object
+      properties:
+        data:
+          $ref: "#/components/schemas/MeasurementUnit"
+
+    MeasurementUnitCollection:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/MeasurementUnit"
+        links:
+          type: object
+          properties:
+            first:
+              type: string
+              nullable: true
+            last:
+              type: string
+              nullable: true
+            prev:
+              type: string
+              nullable: true
+            next:
+              type: string
+              nullable: true
+        meta:
+          type: object
+          properties:
+            current_page:
+              type: integer
+              nullable: true
+            from:
+              type: integer
+              nullable: true
+            last_page:
+              type: integer
+              nullable: true
+            path:
+              type: string
+              nullable: true
+            per_page:
+              type: integer
+              nullable: true
+            to:
+              type: integer
+              nullable: true
+            total:
+              type: integer
+              nullable: true
+
+    StoreMeasurementUnitRequest:
+      type: object
+      required:
+        - name
+        - short_name
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: "Полное название"
+          example: "Штука"
+        short_name:
+          type: string
+          maxLength: 50
+          description: "Краткое обозначение"
+          example: "шт."
+        type:
+          type: string
+          description: "Тип (material, work, other), по умолчанию 'material'"
+          example: "material"
+          default: "material"
+        description:
+          type: string
+          nullable: true
+          description: "Описание"
+        is_default:
+          type: boolean
+          description: "Является ли единицей по умолчанию для своего типа"
+          default: false
+
+    UpdateMeasurementUnitRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+          description: "Полное название"
+          example: "Штуки"
+        short_name:
+          type: string
+          maxLength: 50
+          description: "Краткое обозначение"
+          example: "шт."
+        type:
+          type: string
+          description: "Тип (material, work, other)"
+          example: "material"
+        description:
+          type: string
+          nullable: true
+          description: "Описание"
+        is_default:
+          type: boolean
+          description: "Является ли единицей по умолчанию для своего типа"
+
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        error:
+          type: string
+          nullable: true
+
+    ValidationErrorResponse: # Стандартный ответ Laravel при ошибках валидации
+      type: object
+      properties:
+        message:
+          type: string
+          example: "The given data was invalid."
+        errors:
+          type: object
+          # additionalProperties: # Это для динамических ключей полей
+          #   type: array
+          #   items:
+          #     type: string
+          example: {"name": ["Название единицы измерения обязательно для заполнения."]}
+
+paths:
+  /measurement-units:
+    get:
+      summary: Список всех единиц измерения для организации
+      tags:
+        - "Admin/MeasurementUnits"
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 15
+        - name: type
+          in: query
+          description: "Фильтр по типу (material, work, other)"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeasurementUnitCollection"
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      summary: Создание новой единицы измерения
+      tags:
+        - "Admin/MeasurementUnits"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StoreMeasurementUnitRequest"
+      responses:
+        '201':
+          description: Создано
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeasurementUnitResource"
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /measurement-units/{id}:
+    get:
+      summary: Получение информации о конкретной единице измерения
+      tags:
+        - "Admin/MeasurementUnits"
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeasurementUnitResource"
+        '404':
+          description: Не найдено
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      summary: Обновление существующей единицы измерения
+      tags:
+        - "Admin/MeasurementUnits"
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMeasurementUnitRequest"
+      responses:
+        '200':
+          description: Обновлено
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeasurementUnitResource"
+        '404':
+          description: Не найдено
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '422':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: Удаление единицы измерения
+      tags:
+        - "Admin/MeasurementUnits"
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
+          description: "Удалено (нет контента)"
+        '404':
+          description: Не найдено
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '403':
+          description: "Удаление запрещено (например, системная или используемая единица)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /measurement-units/material-units:
+    get:
+      summary: Получение списка единиц измерения, используемых для материалов
+      tags:
+        - "Admin/MeasurementUnits"
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: array # Это коллекция ресурсов, но без пагинации
+                items:
+                  $ref: "#/components/schemas/MeasurementUnitResource"
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse" 

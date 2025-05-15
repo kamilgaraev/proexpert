@@ -4,39 +4,10 @@ info:
   version: v1
 paths:
   # Materials
-  /api/v1/admin/materials/measurement-units:
-    get:
-      summary: Получить все единицы измерения
-      tags:
-        - Materials
-      security:
-        - bearerAuth: []
-      parameters:
-        # Можно добавить параметры фильтрации, если сервис их поддерживает (например, по organization_id, если они не глобальные)
-        - name: perPage
-          in: query
-          description: Количество на страницу
-          schema:
-            type: integer
-            default: 100 # Обычно справочники возвращают много записей
-        - name: page
-          in: query
-          description: Номер страницы
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Список единиц измерения
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/MeasurementUnit'
-                  # Добавить links и meta для пагинации, если сервис их возвращает
+  # Блок /api/v1/admin/materials/measurement-units удален.
+  # Его функциональность перенесена в measurement_units.yaml
+  # и соответствующий контроллер.
+
   /api/v1/admin/materials/{material_id}/balances:
     get:
       summary: Получить остатки по материалу на проектах

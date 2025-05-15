@@ -2,36 +2,51 @@
 
 namespace App\Repositories\Interfaces;
 
-use Illuminate\Database\Eloquent\Collection;
-use App\Models\MeasurementUnit; // Предполагаем, что модель существует
+use App\Models\MeasurementUnit;
+use Illuminate\Database\Eloquent\Collection; // Основной тип коллекции
+use Illuminate\Pagination\LengthAwarePaginator;
 
-interface MeasurementUnitRepositoryInterface
+interface MeasurementUnitRepositoryInterface extends BaseRepositoryInterface
 {
     /**
-     * Получить все единицы измерения (может быть использовано для суперадмина или системных нужд).
-     *
-     * @return Collection<int, MeasurementUnit>
-     */
-    public function all(): Collection;
-
-    /**
-     * Найти единицу измерения по ID.
+     * Найти единицу измерения по ID для конкретной организации.
      *
      * @param int $id
+     * @param int $organizationId
+     * @param array $columns
+     * @param array $relations
+     * @param array $appends
      * @return MeasurementUnit|null
      */
-    public function find(int $id): ?MeasurementUnit;
+    public function findById(int $id, int $organizationId, array $columns = ['*'], array $relations = [], array $appends = []): ?MeasurementUnit;
 
     /**
-     * Получить все единицы измерения для указанной организации.
+     * Получить все единицы измерения для указанной организации (непагинированный список).
      *
      * @param int $organizationId
+     * @param array $columns
+     * @param array $relations
      * @return Collection<int, MeasurementUnit>
      */
-    public function getByOrganization(int $organizationId): Collection;
-    
-    // Можно добавить другие методы, если они понадобятся, например:
-    // public function create(array $data): MeasurementUnit;
-    // public function update(int $id, array $data): bool;
-    // public function delete(int $id): bool;
+    public function getByOrganization(int $organizationId, array $columns = ['*'], array $relations = []): Collection;
+
+    /**
+     * Сбросить флаг is_default для всех единиц измерения данного типа в организации.
+     *
+     * @param int $organizationId
+     * @param string $type
+     * @param int|null $excludeId
+     * @return bool
+     */
+    public function resetDefaultFlag(int $organizationId, string $type, ?int $excludeId = null): bool;
+
+    /**
+     * Получить единицы измерения по типу для организации.
+     *
+     * @param int $organizationId
+     * @param string $type
+     * @param array $columns
+     * @return Collection<int, MeasurementUnit>
+     */
+    public function getUnitsByType(int $organizationId, string $type, array $columns = ['*']): Collection;
 } 

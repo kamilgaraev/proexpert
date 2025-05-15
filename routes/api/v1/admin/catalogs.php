@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\Admin\SupplierController;
 use App\Http\Controllers\Api\V1\Admin\ContractorController;
 use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Controllers\Api\V1\Admin\CostCategoryController;
+use App\Http\Controllers\Api\V1\Admin\MeasurementUnitController;
 
 /*
 |--------------------------------------------------------------------------
@@ -20,7 +21,7 @@ use App\Http\Controllers\Api\V1\Admin\CostCategoryController;
 // Группа уже защищена middleware в RouteServiceProvider
 
 // Маршрут для получения единиц измерения должен быть определен ПЕРЕД apiResource для материалов
-Route::get('/materials/measurement-units', [MaterialController::class, 'getMeasurementUnits'])->name('materials.measurementUnits');
+// Route::get('/materials/measurement-units', [MaterialController::class, 'getMeasurementUnits'])->name('materials.measurementUnits');
 
 // Маршруты для балансов материалов (если ID материала передается как параметр)
 // Пример: /materials/{materialId}/balances
@@ -44,6 +45,10 @@ Route::apiResource('materials', MaterialController::class);
 Route::apiResource('suppliers', SupplierController::class);
 Route::apiResource('contractors', ContractorController::class);
 Route::apiResource('contracts', ContractController::class);
+
+// Маршруты для единиц измерения
+Route::get('/measurement-units/material-units', [MeasurementUnitController::class, 'getMaterialUnits'])->name('measurement-units.material-units');
+Route::apiResource('measurement-units', MeasurementUnitController::class);
 
 // Группа для видов работ и связанных с ними материалов
 Route::apiresource('work-types', WorkTypeController::class)->except([]); // Оставляем все стандартные CRUD для WorkType

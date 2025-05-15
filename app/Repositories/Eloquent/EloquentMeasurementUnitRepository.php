@@ -4,51 +4,60 @@ namespace App\Repositories\Eloquent;
 
 use App\Models\MeasurementUnit;
 use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
+use App\Repositories\BaseRepository;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Facades\DB;
 
-class EloquentMeasurementUnitRepository implements MeasurementUnitRepositoryInterface
+class EloquentMeasurementUnitRepository extends BaseRepository implements MeasurementUnitRepositoryInterface
 {
-    public function all(): Collection
+    public function __construct()
     {
-        return MeasurementUnit::orderBy('name')->get();
+        parent::__construct(MeasurementUnit::class);
     }
 
-    public function find(int $id): ?MeasurementUnit
+    public function findById(int $id, int $organizationId, array $columns = ['*'], array $relations = [], array $appends = []): ?MeasurementUnit
     {
-        return MeasurementUnit::find($id);
+        return $this->model->select($columns)
+            ->with($relations)
+            ->where('organization_id', $organizationId)
+            ->find($id)
+            ?->append($appends);
     }
 
-    public function getByOrganization(int $organizationId): Collection
+    public function getByOrganization(int $organizationId, array $columns = ['*'], array $relations = []): Collection
     {
-        // Возвращаем единицы измерения, принадлежащие указанной организации,
-        // ИЛИ системные/общие единицы измерения (если у вас такие есть и они помечены, например, organization_id = null)
-        // В данном случае, основываясь на сидере, мы ищем строго по organization_id
-        return MeasurementUnit::where('organization_id', $organizationId)
+        return $this->model->select($columns)
+                            ->with($relations)
+                            ->where('organization_id', $organizationId)
+                            ->orWhere('is_system', true)
                             ->orderBy('name')
                             ->get();
     }
 
-    // При необходимости можно добавить реализацию методов create, update, delete
-    // public function create(array $data): MeasurementUnit
-    // {
-    //     return MeasurementUnit::create($data);
-    // }
+    public function resetDefaultFlag(int $organizationId, string $type, ?int $excludeId = null): bool
+    {
+        $query = $this->model->where('organization_id', $organizationId)
+                             ->where('type', $type)
+                             ->where('is_default', true);
 
-    // public function update(int $id, array $data): bool
-    // {
-    //     $unit = $this->find($id);
-    //     if ($unit) {
-    //         return $unit->update($data);
-    //     }
-    //     return false;
-    // }
+        if ($excludeId !== null) {
+            $query->where('id', '!=', $excludeId);
+        }
 
-    // public function delete(int $id): bool
-    // {
-    //     $unit = $this->find($id);
-    //     if ($unit) {
-    //         return $unit->delete();
-    //     }
-    //     return false;
-    // }
+        return $query->update(['is_default' => false]);
+    }
+
+    public function getUnitsByType(int $organizationId, string $type, array $columns = ['*']): Collection
+    {
+        return $this->model->select($columns)
+                            ->where('organization_id', $organizationId)
+                            ->where('type', $type)
+                            ->orWhere(function ($query) use ($type) {
+                                $query->where('is_system', true)
+                                      ->where('type', $type);
+                            })
+                            ->orderBy('name')
+                            ->get();
+    }
 } 

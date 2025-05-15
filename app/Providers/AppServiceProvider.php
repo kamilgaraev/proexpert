@@ -7,8 +7,6 @@ use Illuminate\Support\Facades\App;
 use App\Http\Middleware\CorsMiddleware;
 use Illuminate\Routing\Router;
 use App\Services\Organization\OrganizationContext;
-use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
-use App\Repositories\MeasurementUnitRepository;
 use App\Services\FileService;
 
 class AppServiceProvider extends ServiceProvider
@@ -18,12 +16,6 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        // Связываем интерфейс с конкретной реализацией
-        $this->app->bind(
-            MeasurementUnitRepositoryInterface::class,
-            MeasurementUnitRepository::class
-        );
-        
         // Регистрируем FileService как singleton
         $this->app->singleton(FileService::class, function ($app) {
             return new FileService($app->make(\Illuminate\Contracts\Filesystem\Factory::class));
