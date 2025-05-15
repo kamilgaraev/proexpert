@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Exception;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Auth;
 
 class AdvanceAccountService
 {
@@ -77,7 +78,7 @@ class AdvanceAccountService
             $transaction->fill($data);
             $transaction->balance_after = $newBalance;
             $transaction->reporting_status = AdvanceAccountTransaction::STATUS_PENDING;
-            $transaction->created_by_user_id = auth()->id();
+            $transaction->created_by_user_id = Auth::id();
             $transaction->save();
             
             // Обновляем баланс пользователя
@@ -234,20 +235,18 @@ class AdvanceAccountService
             
             // Проверяем статус транзакции
             if ($transaction->reporting_status !== AdvanceAccountTransaction::STATUS_REPORTED) {
-                throw new Exception('Эта транзакция не может быть утверждена, так как не имеет отчета или уже утверждена');
+                throw new Exception('Утвердить можно только транзакции со статусом "Отчитана"');
             }
             
             // Обновляем данные транзакции
-            $transaction->reporting_status = AdvanceAccountTransaction::STATUS_APPROVED;
             $transaction->approved_at = Carbon::now();
-            $transaction->approved_by_user_id = auth()->id();
-            
-            // Если есть дополнительные данные для бухгалтерии
-            if (isset($data['accounting_data'])) {
-                $transaction->accounting_data = $data['accounting_data'];
-            }
+            $transaction->approved_by_user_id = Auth::id();
+            $transaction->reporting_status = AdvanceAccountTransaction::STATUS_APPROVED;
             
             $transaction->save();
+            
+            // Здесь можно добавить логику, если нужно что-то сделать после утверждения
+            // Например, обновить баланс пользователя (если "Отчитана" не означает окончательное списание)
             
             DB::commit();
             return $transaction;
@@ -271,35 +270,37 @@ class AdvanceAccountService
      */
     public function attachFilesToTransaction(AdvanceAccountTransaction $transaction, array $files)
     {
-        $fileIds = [];
-        
-        // Получаем текущие прикрепленные файлы
-        if ($transaction->attachment_ids) {
-            $fileIds = explode(',', $transaction->attachment_ids);
+        // Если транзакция уже утверждена, запрещаем добавление файлов
+        if ($transaction->reporting_status === AdvanceAccountTransaction::STATUS_APPROVED) {
+            throw new Exception('Нельзя добавить файлы к утвержденной транзакции');
         }
-        
-        // Добавляем новые файлы
-        foreach ($files as $uploadedFile) {
-            $path = $uploadedFile->store('advance_transactions/' . $transaction->id, 'public');
-            
-            $file = new File([
-                'user_id' => auth()->id(),
-                'filename' => basename($path),
-                'filepath' => $path,
-                'original_filename' => $uploadedFile->getClientOriginalName(),
-                'mime_type' => $uploadedFile->getMimeType(),
-                'size' => $uploadedFile->getSize(),
-                'storage_disk' => 'public',
-            ]);
-            
-            $file->save();
-            $fileIds[] = $file->id;
+
+        $currentFileIds = $transaction->attachment_ids ? explode(',', $transaction->attachment_ids) : [];
+        $newFileIds = [];
+
+        foreach ($files as $fileData) {
+            if ($fileData instanceof \Illuminate\Http\UploadedFile) {
+                $path = $fileData->store('advance_transaction_attachments/' . $transaction->id, 'public');
+                $file = new File();
+                $file->filename = $fileData->getClientOriginalName();
+                $file->filepath = $path;
+                $file->filesize = $fileData->getSize();
+                $file->filetype = $fileData->getMimeType();
+                $file->uploaded_by_user_id = Auth::id();
+                $file->organization_id = $transaction->organization_id;
+                $file->save();
+                $newFileIds[] = $file->id;
+            } elseif (is_numeric($fileData)) {
+                // Если передан ID существующего файла, просто добавляем его
+                // (предполагается, что файл уже существует и проверен)
+                $newFileIds[] = $fileData;
+            }
         }
-        
-        // Обновляем transaction
-        $transaction->attachment_ids = implode(',', $fileIds);
+
+        $allFileIds = array_unique(array_merge($currentFileIds, $newFileIds));
+        $transaction->attachment_ids = implode(',', $allFileIds);
         $transaction->save();
-        
+
         return $transaction;
     }
 
@@ -481,27 +482,40 @@ class AdvanceAccountService
      */
     public function getAvailableProjects(int $organizationId, ?int $userId = null, ?string $search = null)
     {
-        // Базовый запрос для проектов
-        $query = Project::where('organization_id', $organizationId)
-            ->where('is_archived', false)
-            ->select(['id', 'name', 'external_code', 'status', 'address']);
+        try {
+            // Базовый запрос для проектов
+            $query = Project::where('organization_id', $organizationId)
+                ->where('is_archived', false)
+                ->select(['id', 'name', 'external_code', 'status', 'address']);
 
-        // Если указан ID пользователя, фильтруем по проектам, назначенным этому пользователю
-        if ($userId) {
-            $query->whereHas('users', function ($q) use ($userId) {
-                $q->where('user_id', $userId);
-            });
+            // Если указан ID пользователя, фильтруем по проектам, назначенным этому пользователю
+            if ($userId) {
+                $query->whereHas('users', function ($q) use ($userId) {
+                    $q->where('user_id', $userId);
+                });
+            }
+
+            // Применяем поиск, если задан
+            if ($search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('name', 'like', "%{$search}%")
+                      ->orWhere('address', 'like', "%{$search}%")
+                      ->orWhere('external_code', 'like', "%{$search}%");
+                });
+            }
+
+            return $query->orderBy('name')->get();
+        } catch (\Throwable $e) {
+            Log::error('[AdvanceAccountService@getAvailableProjects] Exception caught: ' . $e->getMessage(), [
+                'organizationId' => $organizationId,
+                'userId' => $userId,
+                'search' => $search,
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString() // Осторожно, может быть большим
+            ]);
+            // Перевыбрасываем, чтобы сохранить поведение ошибки 500 и чтобы Laravel мог ее обработать стандартно
+            throw $e; 
         }
-
-        // Применяем поиск, если задан
-        if ($search) {
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('address', 'like', "%{$search}%")
-                  ->orWhere('external_code', 'like', "%{$search}%");
-            });
-        }
-
-        return $query->orderBy('name')->get();
     }
 } 
