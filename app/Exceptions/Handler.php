@@ -1,0 +1,107 @@
+<?php
+
+namespace App\Exceptions;
+
+use Illuminate\Foundation\Exceptions\Handler as ExceptionHandler;
+use Illuminate\Auth\AuthenticationException;
+use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
+use Throwable;
+
+class Handler extends ExceptionHandler
+{
+    /**
+     * A list of exception types with their corresponding custom log levels.
+     *
+     * @var array<class-string<\Throwable>, \Psr\Log\LogLevel::*>
+     */
+    protected $levels = [
+        //
+    ];
+
+    /**
+     * A list of the exception types that are not reported.
+     *
+     * @var array<int, class-string<\Throwable>>
+     */
+    protected $dontReport = [
+        AuthorizationException::class,
+        \Symfony\Component\HttpKernel\Exception\HttpException::class,
+        \Illuminate\Database\Eloquent\ModelNotFoundException::class,
+        ValidationException::class,
+    ];
+
+    /**
+     * A list of the inputs that are never flashed to the session on validation exceptions.
+     *
+     * @var array<int, string>
+     */
+    protected $dontFlash = [
+        'current_password',
+        'password',
+        'password_confirmation',
+    ];
+
+    /**
+     * Register the exception handling callbacks for the application.
+     *
+     * @return void
+     */
+    public function register()
+    {
+        $this->reportable(function (Throwable $e) {
+            // 
+        });
+
+        // Для API запросов мы хотим всегда возвращать JSON
+        $this->renderable(function (Throwable $e, $request) {
+            if ($request->expectsJson() || $request->is('api/*')) {
+                
+                if ($e instanceof ValidationException) {
+                    return response()->json([
+                        'message' => $e->getMessage(),
+                        'errors' => $e->errors(),
+                    ], $e->status);
+                }
+
+                if ($e instanceof AuthorizationException) {
+                    return response()->json([
+                        'message' => $e->getMessage() ?: 'This action is unauthorized.',
+                    ], 403);
+                }
+
+                if ($e instanceof AuthenticationException) {
+                    return response()->json([
+                        'message' => $e->getMessage() ?: 'Unauthenticated.',
+                    ], 401);
+                }
+
+                if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
+                    return response()->json([
+                        'message' => 'Resource not found.'
+                    ], 404);
+                }
+
+                $statusCode = $e instanceof HttpExceptionInterface ? $e->getStatusCode() : 500;
+                $message = $e->getMessage();
+
+                if ($statusCode === 500 && !config('app.debug')) {
+                    $message = 'Server Error';
+                }
+                
+                $response = ['message' => $message];
+
+                if (config('app.debug')) {
+                    $response['exception'] = get_class($e);
+                    $response['file'] = $e->getFile();
+                    $response['line'] = $e->getLine();
+                    // $response['trace'] = $e->getTraceAsString(); // Трассировка может быть очень большой
+                }
+
+                return response()->json($response, $statusCode);
+            }
+        });
+    }
+} 
