@@ -40,6 +40,9 @@ Route::put('/materials/{id}/consumption-rates', [MaterialController::class, 'upd
 Route::get('/materials/{id}/validate-for-accounting', [MaterialController::class, 'validateForAccounting'])
     ->name('materials.validate-for-accounting');
 
+// Маршрут для скачивания шаблона импорта материалов
+Route::get('/materials/import-template', [MaterialController::class, 'downloadImportTemplate'])->name('materials.import-template');
+
 Route::apiResource('materials', MaterialController::class);
 
 Route::apiResource('suppliers', SupplierController::class);

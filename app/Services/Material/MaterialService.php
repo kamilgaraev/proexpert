@@ -13,6 +13,9 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
 use App\Http\Resources\Api\V1\Admin\MeasurementUnitResource;
 use App\Models\Material;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use Illuminate\Support\Facades\DB;
 
 class MaterialService
 {
@@ -242,16 +245,178 @@ class MaterialService
         }
     }
 
-    public function importMaterialsFromFile(\Illuminate\Http\UploadedFile $file): array
+    public function importMaterialsFromFile(\Illuminate\Http\UploadedFile $file, string $format = 'simple', array $options = []): array
     {
-        Log::warning('Method MaterialService@importMaterialsFromFile called but not implemented.', ['filename' => $file->getClientOriginalName()]);
-        // TODO: Реализовать логику импорта материалов из файла
+        $dryRun = $options['dry_run'] ?? false;
+        $orgId = $options['organization_id'] ?? null;
+        $imported = 0;
+        $updated = 0;
+        $errors = [];
+        $rows = [];
+        $ext = strtolower($file->getClientOriginalExtension());
+        try {
+            if (in_array($ext, ['xlsx', 'xls'])) {
+                $spreadsheet = IOFactory::load($file->getPathname());
+                $sheet = $spreadsheet->getActiveSheet();
+                $rows = $sheet->toArray(null, true, true, true);
+            } elseif ($ext === 'csv') {
+                $rows = array_map('str_getcsv', file($file->getPathname()));
+            } else {
+                throw new BusinessLogicException('Неподдерживаемый формат файла', 400);
+            }
+        } catch (\Throwable $e) {
+            Log::error('Ошибка чтения файла импорта материалов', ['error' => $e->getMessage()]);
+            return [
+                'success' => false,
+                'message' => 'Ошибка чтения файла: ' . $e->getMessage(),
+                'imported' => 0,
+                'updated' => 0,
+                'errors' => [$e->getMessage()]
+            ];
+        }
+        if (empty($rows) || count($rows) < 2) {
+            return [
+                'success' => false,
+                'message' => 'Файл пуст или не содержит данных',
+                'imported' => 0,
+                'updated' => 0,
+                'errors' => ['Файл пуст или не содержит данных']
+            ];
+        }
+        $headers = array_map(fn($h) => trim(mb_strtolower($h)), array_values($rows[0]));
+        unset($rows[0]);
+        // orgId должен быть передан явно через options (контроллер обязан это делать)
+        if (!$orgId) {
+            return [
+                'success' => false,
+                'message' => 'Не удалось определить организацию',
+                'imported' => 0,
+                'updated' => 0,
+                'errors' => ['Не удалось определить организацию']
+            ];
+        }
+        $unitCache = [];
+        DB::beginTransaction();
+        try {
+            foreach ($rows as $i => $row) {
+                $row = is_array($row) ? array_values($row) : $row;
+                $data = array_combine($headers, array_map('trim', $row));
+                $line = $i + 2;
+                // Валидация
+                if (empty($data['name'])) {
+                    $errors[] = "Строка $line: не указано имя материала";
+                    continue;
+                }
+                // Единица измерения
+                $unitId = null;
+                if (!empty($data['measurement_unit_id'])) {
+                    $unitId = (int)$data['measurement_unit_id'];
+                } elseif (!empty($data['measurement_unit'])) {
+                    $unitKey = mb_strtolower(trim($data['measurement_unit']));
+                    if (!isset($unitCache[$unitKey])) {
+                        $unit = $this->measurementUnitRepository->getByOrganization($orgId)
+                            ->first(fn($u) => mb_strtolower($u->name) === $unitKey || mb_strtolower($u->short_name) === $unitKey);
+                        if ($unit) {
+                            $unitCache[$unitKey] = $unit->id;
+                        }
+                    }
+                    $unitId = $unitCache[$unitKey] ?? null;
+                }
+                if (!$unitId) {
+                    $errors[] = "Строка $line: не найдена единица измерения";
+                    continue;
+                }
+                // Поиск существующего материала
+                $material = null;
+                if (!empty($data['external_code'])) {
+                    $material = $this->materialRepository->findByExternalCode($data['external_code'], $orgId);
+                }
+                if (!$material && !empty($data['code'])) {
+                    $material = $this->materialRepository->findByNameAndOrganization($data['code'], $orgId);
+                }
+                if (!$material && !empty($data['name'])) {
+                    $material = $this->materialRepository->findByNameAndOrganization($data['name'], $orgId);
+                }
+                // Подготовка данных
+                $materialData = [
+                    'organization_id' => $orgId,
+                    'name' => $data['name'],
+                    'code' => $data['code'] ?? null,
+                    'measurement_unit_id' => $unitId,
+                    'description' => $data['description'] ?? null,
+                    'category' => $data['category'] ?? null,
+                    'default_price' => isset($data['default_price']) ? (float)str_replace(',', '.', $data['default_price']) : null,
+                    'external_code' => $data['external_code'] ?? null,
+                    'sbis_nomenclature_code' => $data['sbis_nomenclature_code'] ?? null,
+                    'sbis_unit_code' => $data['sbis_unit_code'] ?? null,
+                    'accounting_account' => $data['accounting_account'] ?? null,
+                    'is_active' => isset($data['is_active']) ? filter_var($data['is_active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) : true,
+                ];
+                try {
+                    if ($dryRun) {
+                        continue;
+                    }
+                    if ($material) {
+                        $material->update($materialData);
+                        $updated++;
+                    } else {
+                        $this->materialRepository->create($materialData);
+                        $imported++;
+                    }
+                } catch (\Throwable $e) {
+                    $errors[] = "Строка $line: " . $e->getMessage();
+                    Log::error('Ошибка при импорте материала', ['line' => $line, 'data' => $materialData, 'error' => $e->getMessage()]);
+                }
+            }
+            if ($dryRun) {
+                DB::rollBack();
+            } else {
+                DB::commit();
+            }
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            Log::error('Критическая ошибка при импорте материалов', ['error' => $e->getMessage()]);
+            return [
+                'success' => false,
+                'message' => 'Критическая ошибка: ' . $e->getMessage(),
+                'imported' => $imported,
+                'updated' => $updated,
+                'errors' => $errors
+            ];
+        }
         return [
-            'success' => false,
-            'message' => 'Functionality to import materials is not yet implemented.',
-            'imported_count' => 0,
-            'errors_count' => 0,
-            'errors_list' => []
+            'success' => empty($errors),
+            'message' => empty($errors) ? 'Импорт завершён успешно' : 'Импорт завершён с ошибками',
+            'imported' => $imported,
+            'updated' => $updated,
+            'errors' => $errors
         ];
+    }
+
+    public function generateImportTemplate(): Spreadsheet
+    {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $headers = [
+            'name', 'code', 'measurement_unit', 'description', 'category', 'default_price',
+            'external_code', 'sbis_nomenclature_code', 'sbis_unit_code', 'accounting_account', 'is_active'
+        ];
+        $examples = [
+            'Цемент М500', 'CEM500', 'кг', 'Основной строительный материал', 'Строительные материалы', '4500.50',
+            'EXT-001', '123456', '796', '10.01', 'true'
+        ];
+        foreach ($headers as $i => $header) {
+            $col = chr(65 + $i); // A, B, C ...
+            $sheet->setCellValue($col . '1', $header);
+            $sheet->setCellValue($col . '2', $examples[$i]);
+        }
+        $sheet->getStyle('A1:K1')->getFont()->setBold(true);
+        $sheet->getStyle('A1:K2')->getAlignment()->setWrapText(true);
+        foreach (range('A', 'K') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+        $sheet->getRowDimension(1)->setRowHeight(28);
+        $sheet->getRowDimension(2)->setRowHeight(22);
+        return $spreadsheet;
     }
 } 

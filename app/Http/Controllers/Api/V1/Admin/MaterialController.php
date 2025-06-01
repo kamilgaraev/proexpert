@@ -16,6 +16,8 @@ use Illuminate\Support\Facades\Log;
 use App\Exceptions\BusinessLogicException;
 use App\Models\Material;
 use App\Models\WorkType;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 class MaterialController extends Controller
 {
@@ -365,5 +367,20 @@ class MaterialController extends Controller
                 'message' => 'Внутренняя ошибка сервера при проверке материала для интеграции.'
             ], 500);
         }
+    }
+
+    /**
+     * Скачать шаблон для импорта материалов (xlsx)
+     */
+    public function downloadImportTemplate(): StreamedResponse
+    {
+        $spreadsheet = $this->materialService->generateImportTemplate();
+        $writer = new Xlsx($spreadsheet);
+        $response = new StreamedResponse(function () use ($writer) {
+            $writer->save('php://output');
+        });
+        $response->headers->set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        $response->headers->set('Content-Disposition', 'attachment; filename="materials_import_template.xlsx"');
+        return $response;
     }
 } 
