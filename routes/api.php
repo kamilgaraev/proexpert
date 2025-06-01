@@ -175,6 +175,9 @@ Route::prefix('admin')->name('admin.')->group(function () {
             require __DIR__ . '/api/v1/admin/completed_works.php';
         }
         // Сюда можно будет добавлять require для новых файлов маршрутов админки
+        if (file_exists(__DIR__ . '/api/v1/admin/dashboard.php')) {
+            require __DIR__ . '/api/v1/admin/dashboard.php';
+        }
     });
 });
 
