@@ -124,4 +124,20 @@ class Material extends Model
             ->withPivot(['organization_id', 'default_quantity', 'notes'])
             ->withTimestamps();
     }
+
+    /**
+     * Получить нормы списания по видам работ для данного материала.
+     * Возвращает массив: [work_type_id, work_type_name, rate, notes]
+     */
+    public function getConsumptionRatesWithWorkTypes(): array
+    {
+        return $this->workTypes()->get()->map(function ($workType) {
+            return [
+                'work_type_id' => $workType->id,
+                'work_type_name' => $workType->name,
+                'rate' => $workType->pivot->default_quantity ?? null,
+                'notes' => $workType->pivot->notes ?? null,
+            ];
+        })->toArray();
+    }
 }
