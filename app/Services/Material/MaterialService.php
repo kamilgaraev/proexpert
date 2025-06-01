@@ -274,7 +274,7 @@ class MaterialService
                 'errors' => [$e->getMessage()]
             ];
         }
-        if (empty($rows) || count($rows) < 2) {
+        if (empty($rows) || !isset($rows[0]) || count($rows) < 2) {
             return [
                 'success' => false,
                 'message' => 'Файл пуст или не содержит данных',
@@ -283,7 +283,29 @@ class MaterialService
                 'errors' => ['Файл пуст или не содержит данных']
             ];
         }
-        $headers = array_map(fn($h) => trim(mb_strtolower($h)), array_values($rows[0]));
+        // Проверка корректности заголовков
+        $rawHeaders = array_values($rows[0]);
+        if (count(array_filter($rawHeaders, fn($h) => !is_string($h) || trim($h) === '')) > 0) {
+            return [
+                'success' => false,
+                'message' => 'Некорректный формат заголовков файла',
+                'imported' => 0,
+                'updated' => 0,
+                'errors' => ['Некорректный формат заголовков файла (проверьте первую строку)']
+            ];
+        }
+        $headers = array_map(fn($h) => trim(mb_strtolower($h)), $rawHeaders);
+        $required = ['name', 'measurement_unit'];
+        $missing = array_diff($required, $headers);
+        if (!empty($missing)) {
+            return [
+                'success' => false,
+                'message' => 'В файле отсутствуют обязательные колонки',
+                'imported' => 0,
+                'updated' => 0,
+                'errors' => ['Отсутствуют обязательные колонки: ' . implode(', ', $missing)]
+            ];
+        }
         unset($rows[0]);
         // orgId должен быть передан явно через options (контроллер обязан это делать)
         if (!$orgId) {
