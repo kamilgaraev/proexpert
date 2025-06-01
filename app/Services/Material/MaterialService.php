@@ -274,7 +274,7 @@ class MaterialService
                 'errors' => [$e->getMessage()]
             ];
         }
-        if (empty($rows) || !isset($rows[0]) || count($rows) < 2) {
+        if (empty($rows) || count($rows) < 2) {
             return [
                 'success' => false,
                 'message' => 'Файл пуст или не содержит данных',
@@ -283,8 +283,9 @@ class MaterialService
                 'errors' => ['Файл пуст или не содержит данных']
             ];
         }
-        // Проверка корректности заголовков
-        $rawHeaders = array_values($rows[0]);
+        // Корректно определяем первую строку (заголовки) для xlsx/csv
+        $firstRowKey = array_key_first($rows);
+        $rawHeaders = array_values($rows[$firstRowKey]);
         if (count(array_filter($rawHeaders, fn($h) => !is_string($h) || trim($h) === '')) > 0) {
             return [
                 'success' => false,
@@ -306,7 +307,7 @@ class MaterialService
                 'errors' => ['Отсутствуют обязательные колонки: ' . implode(', ', $missing)]
             ];
         }
-        unset($rows[0]);
+        unset($rows[$firstRowKey]);
         // orgId должен быть передан явно через options (контроллер обязан это делать)
         if (!$orgId) {
             return [
