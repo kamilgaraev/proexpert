@@ -53,6 +53,14 @@ class UserManagementController extends Controller
     public function store(StoreForemanRequest $request): ForemanUserResource | JsonResponse
     {
         try {
+            // Проверяем лимит по подписке на количество пользователей
+            if (!$this->userService->checkUserLimit('max_users', 1)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Достигнут лимит количества пользователей по вашей подписке.',
+                ], 403);
+            }
+
             // Сначала создаем пользователя через сервис
             // $request->validated() уже будет содержать phone и position, если они были переданы
             $foreman = $this->userService->createForeman($request->validated(), $request);
@@ -231,7 +239,6 @@ class UserManagementController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Внутренняя ошибка сервера при блокировке прораба.',
-                // 'debug_message' => config('app.debug') ? $e->getMessage() : null
             ], 500);
         }
     }
@@ -259,8 +266,7 @@ class UserManagementController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Внутренняя ошибка сервера при разблокировке прораба.',
-                // 'debug_message' => config('app.debug') ? $e->getMessage() : null
             ], 500);
         }
     }
-} 
+}
