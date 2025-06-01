@@ -27,5 +27,7 @@ class DatabaseSeeder extends Seeder
             SubscriptionPlanSeeder::class,
             // Добавьте сюда другие необходимые сидеры
         ]);
+
+        $this->call(MaterialUsageLogSeeder::class);
     }
 }
