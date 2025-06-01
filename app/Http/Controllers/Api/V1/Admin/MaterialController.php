@@ -168,6 +168,7 @@ class MaterialController extends Controller
 
             $format = $validatedData['format'] ?? 'simple';
             $options = $validatedData['options'] ?? [];
+            $options['organization_id'] = $request->user()?->current_organization_id;
 
             $result = $this->materialService->importMaterialsFromFile(
                 $validatedData['file'], 
