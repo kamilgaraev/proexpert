@@ -139,14 +139,18 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
     // Заглушки для методов интерфейса MaterialRepositoryInterface
     public function findByExternalCode(string $externalCode, int $organizationId): ?Material
     {
-        // TODO: Implement findByExternalCode() method.
-        return null;
+        return $this->model->where('organization_id', $organizationId)
+            ->where('external_code', $externalCode)
+            ->whereNull('deleted_at')
+            ->first();
     }
 
     public function findByNameAndOrganization(string $name, int $organizationId): ?Material
     {
-        // TODO: Implement findByNameAndOrganization() method.
-        return null;
+        return $this->model->where('organization_id', $organizationId)
+            ->where('name', $name)
+            ->whereNull('deleted_at')
+            ->first();
     }
 
     public function getMaterialUsageByProjects(int $organizationId, array $projectIds, ?string $dateFrom, ?string $dateTo): Collection
