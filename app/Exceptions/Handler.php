@@ -9,6 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
+use Symfony\Component\Routing\Exception\RouteNotFoundException;
 
 class Handler extends ExceptionHandler
 {
@@ -82,6 +83,12 @@ class Handler extends ExceptionHandler
                     return response()->json([
                         'message' => 'Resource not found.'
                     ], 404);
+                }
+
+                if ($e instanceof RouteNotFoundException) {
+                    return response()->json([
+                        'message' => 'Route not found or not authorized.'
+                    ], 401);
                 }
 
                 $statusCode = $e instanceof HttpExceptionInterface ? $e->getStatusCode() : 500;
