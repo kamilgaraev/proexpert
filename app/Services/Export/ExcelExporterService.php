@@ -44,6 +44,14 @@ class ExcelExporterService
                     $spreadsheet = new Spreadsheet();
                     $sheet = $spreadsheet->getActiveSheet();
 
+                    // Явно записываем заголовки колонок
+                    $colIndex = 0;
+                    foreach ($headers as $header) {
+                        $cell = chr(65 + $colIndex) . '1';
+                        $sheet->setCellValue($cell, $header);
+                        $colIndex++;
+                    }
+
                     // Стилизация заголовков
                     $headerStyle = [
                         'font' => [
