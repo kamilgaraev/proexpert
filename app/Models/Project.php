@@ -106,6 +106,16 @@ class Project extends Model
     }
 
     /**
+     * Получить материалы, связанные с проектом (по приемкам и списаниям).
+     */
+    public function materials()
+    {
+        // Если материалы привязаны к проекту через MaterialReceipt и MaterialWriteOff,
+        // то можно использовать hasManyThrough или кастомный запрос. Для простоты — через MaterialReceipt.
+        return $this->hasMany(MaterialReceipt::class)->select('material_id', 'project_id');
+    }
+
+    /**
      * Проекты, которые используются в бухгалтерских отчетах.
      *
      * @param \Illuminate\Database\Eloquent\Builder $query
