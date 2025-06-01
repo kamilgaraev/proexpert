@@ -12,6 +12,7 @@
         "laravel/framework": "^11.31",
         "laravel/tinker": "^2.9",
         "league/flysystem-aws-s3-v3": "^3.29",
+        "phpoffice/phpspreadsheet": "^3.9",
         "tymon/jwt-auth": "^2.1"
     },
     "require-dev": {

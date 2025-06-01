@@ -7,6 +7,7 @@ use App\Repositories\Interfaces\Log\WorkCompletionLogRepositoryInterface;
 use App\Repositories\Interfaces\ProjectRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Services\Export\CsvExporterService;
+use App\Services\Export\ExcelExporterService;
 use App\Models\User;
 use App\Models\Role;
 use Illuminate\Http\Request;
@@ -27,6 +28,7 @@ class ReportService
     protected ProjectRepositoryInterface $projectRepo;
     protected UserRepositoryInterface $userRepo;
     protected CsvExporterService $csvExporter;
+    protected ExcelExporterService $excelExporter;
     protected ReportTemplateService $reportTemplateService;
 
     public function __construct(
@@ -35,6 +37,7 @@ class ReportService
         ProjectRepositoryInterface $projectRepo,
         UserRepositoryInterface $userRepo,
         CsvExporterService $csvExporter,
+        ExcelExporterService $excelExporter,
         ReportTemplateService $reportTemplateService
     ) {
         $this->materialLogRepo = $materialLogRepo;
@@ -42,6 +45,7 @@ class ReportService
         $this->projectRepo = $projectRepo;
         $this->userRepo = $userRepo;
         $this->csvExporter = $csvExporter;
+        $this->excelExporter = $excelExporter;
         $this->reportTemplateService = $reportTemplateService;
     }
 
@@ -152,12 +156,12 @@ class ReportService
         if ($isExport) {
             if ($logEntriesModels->isEmpty()) {
                 Log::warning('[ReportService] No log entries found for file export with current filters.');
-                // Вернуть пустой файл или HTTP ошибку/сообщение
-                // Для примера, вернем пустой CSV, чтобы не было ошибки 500
                 if ($format === 'csv') {
                     return $this->csvExporter->streamDownload('empty_report_'.date('YmdHis').'.csv', ['Сообщение'], [['Данные по указанным фильтрам отсутствуют.']]);
                 }
-                // Для xlsx можно аналогично вернуть пустой Excel или ошибку
+                if ($format === 'xlsx') {
+                    return $this->excelExporter->streamDownload('empty_report_'.date('YmdHis').'.xlsx', ['Сообщение'], [['Данные по указанным фильтрам отсутствуют.']]);
+                }
                 throw new BusinessLogicException('Нет данных для экспорта по указанным фильтрам.', 404);
             }
 
@@ -191,14 +195,21 @@ class ReportService
 
             $dataForExport = \App\Http\Resources\Api\V1\Admin\Log\MaterialUsageLogResource::collection($logEntriesModels)->resolve($request);
 
-            Log::debug('[ReportService] Data TRULY PREPARED for CsvExporterService:', [
+            Log::debug('[ReportService] Data TRULY PREPARED for Csv/ExcelExporterService:', [
                 'data_for_export_count' => count($dataForExport),
                 'first_data_for_export_example' => !empty($dataForExport) ? ($dataForExport[0] ?? null) : null,
             ]);
 
-            $exportable = $this->csvExporter->prepareDataForExport($dataForExport, $columnMapping);
-            $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'material_usage_report';
-            return $this->csvExporter->streamDownload($filename . '_' . date('YmdHis') . '.' . $format, $exportable['headers'], $exportable['data']);
+            if ($format === 'csv') {
+                $exportable = $this->csvExporter->prepareDataForExport($dataForExport, $columnMapping);
+                $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'material_usage_report';
+                return $this->csvExporter->streamDownload($filename . '_' . date('YmdHis') . '.csv', $exportable['headers'], $exportable['data']);
+            }
+            if ($format === 'xlsx') {
+                $exportable = $this->excelExporter->prepareDataForExport($dataForExport, $columnMapping);
+                $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'material_usage_report';
+                return $this->excelExporter->streamDownload($filename . '_' . date('YmdHis') . '.xlsx', $exportable['headers'], $exportable['data']);
+            }
         }
 
         // Логика для JSON ответа (использует $aggregatedData)
@@ -267,6 +278,30 @@ class ReportService
             $exportable = $this->csvExporter->prepareDataForExport($logEntries, $columnMapping);
             $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'work_completion_report';
             return $this->csvExporter->streamDownload($filename . '_' . date('YmdHis'), $exportable['headers'], $exportable['data']);
+        }
+        if ($request->query('format') === 'xlsx') {
+            $reportTemplate = $this->reportTemplateService->getTemplateForReport('work_completion', $request, $templateId);
+            $defaultColumnMapping = [
+                'Дата выполнения' => 'completion_date',
+                'Проект' => 'project.name',
+                'Вид работы' => 'workType.name',
+                'Ед. изм.' => 'workType.measurementUnit.symbol',
+                'Объем' => 'quantity',
+                'Цена за ед.' => 'unit_price',
+                'Сумма' => 'total_price',
+                'Исполнитель' => 'user.name',
+                'Примечание' => 'notes',
+                'Дата создания записи' => 'created_at',
+            ];
+            $columnMapping = $this->getColumnMappingFromTemplate($reportTemplate, $defaultColumnMapping);
+
+            if (empty($columnMapping)) {
+                throw new BusinessLogicException('Не удалось определить колонки для Excel отчета. Проверьте шаблон или маппинг по умолчанию.', 400);
+            }
+
+            $exportable = $this->excelExporter->prepareDataForExport($logEntries, $columnMapping);
+            $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'work_completion_report';
+            return $this->excelExporter->streamDownload($filename . '_' . date('YmdHis') . '.xlsx', $exportable['headers'], $exportable['data']);
         }
         
         $aggregatedData = $this->workLogRepo->getAggregatedUsage($organizationId, $filters);

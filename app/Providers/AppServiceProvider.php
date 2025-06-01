@@ -8,6 +8,7 @@ use App\Http\Middleware\CorsMiddleware;
 use Illuminate\Routing\Router;
 use App\Services\Organization\OrganizationContext;
 use App\Services\FileService;
+use App\Services\Export\ExcelExporterService;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -19,6 +20,10 @@ class AppServiceProvider extends ServiceProvider
         // Регистрируем FileService как singleton
         $this->app->singleton(FileService::class, function ($app) {
             return new FileService($app->make(\Illuminate\Contracts\Filesystem\Factory::class));
+        });
+        // Регистрируем ExcelExporterService как singleton
+        $this->app->singleton(ExcelExporterService::class, function ($app) {
+            return new ExcelExporterService();
         });
         
         // Здесь могут быть другие связывания

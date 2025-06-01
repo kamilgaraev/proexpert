@@ -11,9 +11,17 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Exception;
 use Symfony\Component\HttpFoundation\Response;
+use App\Services\Export\ExcelExporterService;
 
 class AdvanceAccountReportService
 {
+    protected ExcelExporterService $excelExporter;
+
+    public function __construct(ExcelExporterService $excelExporter)
+    {
+        $this->excelExporter = $excelExporter;
+    }
+
     /**
      * Получить сводный отчет по подотчетным средствам.
      *
@@ -334,44 +342,84 @@ class AdvanceAccountReportService
             $reportType = $filters['report_type'] ?? 'summary';
             $fileName = 'advance_account_report_' . $reportType . '_' . date('Y-m-d_H-i-s');
 
-            // Получение данных отчета в зависимости от типа
             switch ($reportType) {
                 case 'user':
                     $reportData = $this->getUserReport($filters);
+                    $headers = ['ID', 'Имя', 'Проект', 'Тип транзакции', 'Сумма', 'Дата'];
+                    $rows = collect($reportData['transactions'])->map(function($t) {
+                        return [
+                            $t['id'] ?? ($t->id ?? ''),
+                            $t['user']['name'] ?? ($t->user->name ?? ''),
+                            $t['project']['name'] ?? ($t->project->name ?? ''),
+                            $t['type'] ?? ($t->type ?? ''),
+                            $t['amount'] ?? ($t->amount ?? ''),
+                            isset($t['created_at']) ? (string)$t['created_at'] : ((string)($t->created_at ?? '')),
+                        ];
+                    });
                     break;
                 case 'project':
                     $reportData = $this->getProjectReport($filters);
+                    $headers = ['ID', 'Имя', 'Тип транзакции', 'Сумма', 'Дата', 'Пользователь'];
+                    $rows = collect($reportData['transactions'])->map(function($t) {
+                        return [
+                            $t['id'] ?? ($t->id ?? ''),
+                            $t['project']['name'] ?? ($t->project->name ?? ''),
+                            $t['type'] ?? ($t->type ?? ''),
+                            $t['amount'] ?? ($t->amount ?? ''),
+                            isset($t['created_at']) ? (string)$t['created_at'] : ((string)($t->created_at ?? '')),
+                            $t['user']['name'] ?? ($t->user->name ?? ''),
+                        ];
+                    });
                     break;
                 case 'overdue':
                     $reportData = $this->getOverdueReport($filters);
+                    $headers = ['ID', 'Имя', 'Текущий баланс', 'Последняя транзакция'];
+                    $rows = collect($reportData['users_with_overdue_balance'])->map(function($u) {
+                        return [
+                            $u['id'] ?? ($u->id ?? ''),
+                            $u['name'] ?? ($u->name ?? ''),
+                            $u['current_balance'] ?? ($u->current_balance ?? ''),
+                            isset($u['last_transaction_at']) ? (string)$u['last_transaction_at'] : ((string)($u->last_transaction_at ?? '')),
+                        ];
+                    });
                     break;
                 default:
                     $reportData = $this->getSummaryReport($filters);
+                    $headers = ['Тип', 'Статус', 'Количество', 'Сумма'];
+                    $rows = collect();
+                    foreach ($reportData['transaction_summary'] as $type => $statuses) {
+                        foreach ($statuses as $status => $vals) {
+                            $rows->push([
+                                $type,
+                                $status,
+                                $vals['count'] ?? '',
+                                $vals['total_amount'] ?? '',
+                            ]);
+                        }
+                    }
             }
 
-            // Преобразуем данные в JSON для временного решения
-            $json = json_encode($reportData, JSON_PRETTY_PRINT);
-            
             if ($format === 'json') {
+                $json = json_encode($reportData, JSON_PRETTY_PRINT);
                 return response($json, 200, [
                     'Content-Type' => 'application/json',
                     'Content-Disposition' => 'attachment; filename="' . $fileName . '.json"'
                 ]);
-            } else {
-                // Заглушка для других форматов - для полной реализации нужно установить пакет PhpSpreadsheet
-                return response()->json([
-                    'message' => 'Экспорт в формате ' . $format . ' временно недоступен. Для экспорта в Excel или CSV используйте JSON формат и конвертируйте его.',
-                    'data' => $reportData
-                ]);
             }
+            if ($format === 'xlsx') {
+                return $this->excelExporter->streamDownload($fileName . '.xlsx', $headers, $rows);
+            }
+            // Для csv пока оставляем заглушку
+            return response()->json([
+                'message' => 'Экспорт в формате ' . $format . ' временно недоступен. Для экспорта в Excel или CSV используйте JSON формат и конвертируйте его.',
+                'data' => $reportData
+            ]);
         } catch (Exception $e) {
             Log::error('Error exporting advance account report: ' . $e->getMessage(), [
                 'exception' => $e,
                 'filters' => $filters,
                 'format' => $format
             ]);
-
-            // В случае ошибки возвращаем ошибку в JSON
             return response()->json([
                 'error' => 'Failed to export report',
                 'message' => $e->getMessage(),
