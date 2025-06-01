@@ -9,6 +9,9 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection as SupportCollection;
 use Exception;
+use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Style\Alignment;
 
 class ExcelExporterService
 {
@@ -41,15 +44,33 @@ class ExcelExporterService
                     $spreadsheet = new Spreadsheet();
                     $sheet = $spreadsheet->getActiveSheet();
 
-                    Log::info('[ExcelExporterService] Запись заголовков', ['headers' => $headers]);
-                    $colIndex = 0;
-                    foreach ($headers as $header) {
-                        $cell = chr(65 + $colIndex) . '1';
-                        $sheet->setCellValue($cell, $header);
-                        $colIndex++;
-                    }
+                    // Стилизация заголовков
+                    $headerStyle = [
+                        'font' => [
+                            'bold' => true,
+                            'size' => 12,
+                        ],
+                        'fill' => [
+                            'fillType' => Fill::FILL_SOLID,
+                            'startColor' => ['rgb' => 'E3EAFD'],
+                        ],
+                        'alignment' => [
+                            'horizontal' => Alignment::HORIZONTAL_CENTER,
+                            'vertical' => Alignment::VERTICAL_CENTER,
+                            'wrapText' => true,
+                        ],
+                        'borders' => [
+                            'allBorders' => [
+                                'borderStyle' => Border::BORDER_THIN,
+                                'color' => ['rgb' => 'AAB2BD'],
+                            ],
+                        ],
+                    ];
+                    $colCount = count($headers);
+                    $sheet->getStyle('A1:' . chr(65 + $colCount - 1) . '1')->applyFromArray($headerStyle);
+                    $sheet->getRowDimension(1)->setRowHeight(28);
 
-                    Log::info('[ExcelExporterService] Запись строк', ['rows_count' => is_countable($data) ? count($data) : null]);
+                    // Запись данных и стилизация строк
                     $rowIndex = 2;
                     $rowLogged = 0;
                     foreach ($data as $rowArray) {
@@ -57,14 +78,34 @@ class ExcelExporterService
                         foreach ($rowArray as $value) {
                             $cell = chr(65 + $colIndex) . $rowIndex;
                             $sheet->setCellValue($cell, $value);
+                            // Форматирование чисел и дат
+                            if (is_numeric($value) && $colIndex > 0) {
+                                $sheet->getStyle($cell)->getNumberFormat()->setFormatCode('#,##0.00');
+                                $sheet->getStyle($cell)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+                            }
+                            if (preg_match('/^\d{4}-\d{2}-\d{2}/', (string)$value)) {
+                                $sheet->getStyle($cell)->getNumberFormat()->setFormatCode('DD.MM.YYYY');
+                                $sheet->getStyle($cell)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+                            }
+                            // Примечания — перенос строк
+                            if ($colIndex === array_key_last($rowArray)) {
+                                $sheet->getStyle($cell)->getAlignment()->setWrapText(true);
+                            }
                             $colIndex++;
                         }
-                        if ($rowLogged < 3) {
-                            Log::info('[ExcelExporterService] Пример строки', ['rowIndex' => $rowIndex, 'row' => $rowArray]);
-                            $rowLogged++;
-                        }
+                        // Границы для всей строки
+                        $sheet->getStyle('A' . $rowIndex . ':' . chr(65 + $colCount - 1) . $rowIndex)
+                            ->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN)->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color('AAB2BD'));
                         $rowIndex++;
                     }
+
+                    // Автоширина для всех колонок
+                    for ($c = 0; $c < $colCount; $c++) {
+                        $sheet->getColumnDimension(chr(65 + $c))->setAutoSize(true);
+                    }
+
+                    // Заморозка заголовка
+                    $sheet->freezePane('A2');
 
                     Log::info('[ExcelExporterService] Создание Xlsx writer и сохранение в поток');
                     $writer = new Xlsx($spreadsheet);

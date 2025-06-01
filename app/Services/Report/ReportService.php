@@ -91,6 +91,18 @@ class ReportService
             }
         }
 
+        // Диапазон суммы
+        if ($request->has('total_price_from') && $request->query('total_price_from') !== '') {
+            $filters['total_price_from'] = (float)$request->query('total_price_from');
+        }
+        if ($request->has('total_price_to') && $request->query('total_price_to') !== '') {
+            $filters['total_price_to'] = (float)$request->query('total_price_to');
+        }
+        // Фильтр по наличию фото
+        if ($request->has('has_photo')) {
+            $filters['has_photo'] = (bool)$request->query('has_photo');
+        }
+
         return $filters;
     }
 
@@ -117,7 +129,16 @@ class ReportService
     public function getMaterialUsageReport(Request $request): array | StreamedResponse
     {
         $organizationId = $this->getCurrentOrgId($request);
-        $filters = $this->prepareReportFilters($request, ['project_id', 'material_id', 'user_id', 'date_from', 'date_to', 'operation_type']);
+        $filters = $this->prepareReportFilters($request, [
+            'project_id',
+            'material_id',
+            'user_id',
+            'supplier_id',
+            'work_type_id',
+            'date_from',
+            'date_to',
+            'operation_type',
+        ]);
         $templateId = $request->query('template_id') ? (int)$request->query('template_id') : null;
         $format = $request->query('format');
 

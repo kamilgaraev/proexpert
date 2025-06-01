@@ -134,6 +134,28 @@ class MaterialUsageLogRepository extends BaseRepository implements MaterialUsage
         if (!empty($filters['date_to'])) {
             $query->where('usage_date', '<=', $filters['date_to']);
         }
+        if (!empty($filters['supplier_id'])) {
+            $query->where('supplier_id', $filters['supplier_id']);
+        }
+        if (!empty($filters['work_type_id'])) {
+            $query->where('work_type_id', $filters['work_type_id']);
+        }
+        if (!empty($filters['operation_type'])) {
+            $query->where('operation_type', $filters['operation_type']);
+        }
+        if (isset($filters['total_price_from'])) {
+            $query->where('total_price', '>=', $filters['total_price_from']);
+        }
+        if (isset($filters['total_price_to'])) {
+            $query->where('total_price', '<=', $filters['total_price_to']);
+        }
+        if (isset($filters['has_photo'])) {
+            if ($filters['has_photo']) {
+                $query->whereNotNull('photo_path');
+            } else {
+                $query->whereNull('photo_path');
+            }
+        }
 
         // TODO: Добавить валидацию $sortBy
         $query->orderBy($sortBy, $sortDirection);
