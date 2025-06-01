@@ -325,9 +325,11 @@ class MaterialService
                 $row = is_array($row) ? array_values($row) : $row;
                 $data = array_combine($headers, array_map('trim', $row));
                 $line = $i + 2;
+                Log::debug('[MaterialImport] Обработка строки', ['line' => $line, 'data' => $data]);
                 // Валидация
                 if (empty($data['name'])) {
                     $errors[] = "Строка $line: не указано имя материала";
+                    Log::debug('[MaterialImport] Пропуск: не указано имя', ['line' => $line]);
                     continue;
                 }
                 // Единица измерения
@@ -347,18 +349,22 @@ class MaterialService
                 }
                 if (!$unitId) {
                     $errors[] = "Строка $line: не найдена единица измерения";
+                    Log::debug('[MaterialImport] Пропуск: не найдена единица измерения', ['line' => $line, 'unit' => $data['measurement_unit'] ?? null]);
                     continue;
                 }
                 // Поиск существующего материала
                 $material = null;
                 if (!empty($data['external_code'])) {
                     $material = $this->materialRepository->findByExternalCode($data['external_code'], $orgId);
+                    Log::debug('[MaterialImport] Поиск по external_code', ['line' => $line, 'external_code' => $data['external_code'], 'found' => (bool)$material]);
                 }
                 if (!$material && !empty($data['code'])) {
                     $material = $this->materialRepository->findByNameAndOrganization($data['code'], $orgId);
+                    Log::debug('[MaterialImport] Поиск по code', ['line' => $line, 'code' => $data['code'], 'found' => (bool)$material]);
                 }
                 if (!$material && !empty($data['name'])) {
                     $material = $this->materialRepository->findByNameAndOrganization($data['name'], $orgId);
+                    Log::debug('[MaterialImport] Поиск по name', ['line' => $line, 'name' => $data['name'], 'found' => (bool)$material]);
                 }
                 // Подготовка данных
                 $materialData = [
@@ -377,18 +383,21 @@ class MaterialService
                 ];
                 try {
                     if ($dryRun) {
+                        Log::debug('[MaterialImport] Dry-run, материал не создаётся/не обновляется', ['line' => $line, 'data' => $materialData]);
                         continue;
                     }
                     if ($material) {
                         $material->update($materialData);
                         $updated++;
+                        Log::debug('[MaterialImport] Материал обновлён', ['line' => $line, 'id' => $material->id, 'data' => $materialData]);
                     } else {
-                        $this->materialRepository->create($materialData);
+                        $created = $this->materialRepository->create($materialData);
                         $imported++;
+                        Log::debug('[MaterialImport] Материал создан', ['line' => $line, 'id' => $created->id ?? null, 'data' => $materialData]);
                     }
                 } catch (\Throwable $e) {
                     $errors[] = "Строка $line: " . $e->getMessage();
-                    Log::error('Ошибка при импорте материала', ['line' => $line, 'data' => $materialData, 'error' => $e->getMessage()]);
+                    Log::error('[MaterialImport] Ошибка при создании/обновлении', ['line' => $line, 'data' => $materialData, 'error' => $e->getMessage()]);
                 }
             }
             if ($dryRun) {
