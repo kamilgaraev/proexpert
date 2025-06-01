@@ -56,6 +56,7 @@ use App\Http\Controllers\Api\UserController;
                 require __DIR__ . '/api/v1/admin/users.php'; // Управление прорабами
                 require __DIR__ . '/api/v1/admin/logs.php'; // Добавляем подключение логов
                 require __DIR__ . '/api/v1/admin/reports.php'; // Добавляем подключение отчетов
+                require __DIR__ . '/api/v1/admin/dashboard.php'; // Дашборд админки
                 // Добавить другие защищенные маршруты админки
             });
         });
