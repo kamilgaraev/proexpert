@@ -67,12 +67,13 @@ class OrganizationController extends Controller
 
         // Привязываем пользователя к созданной организации (если не сделано через observer/event)
         if (!$user->organizations()->where('organization_id', $organization->id)->exists()) {
-             $user->organizations()->attach($organization->id, ['role' => 'owner']); // Пример роли
+            $user->organizations()->attach($organization->id, [
+                'is_owner' => true,
+                'is_active' => true
+            ]);
         }
-        
-        // Обновляем текущий контекст организации пользователя (опционально)
-        // $user->current_organization_id = $organization->id;
-        // $user->save();
+        $user->current_organization_id = $organization->id;
+        $user->save();
 
         return new SuccessResourceResponse(
             new OrganizationResource($organization->fresh()), // Ресурс как первый аргумент

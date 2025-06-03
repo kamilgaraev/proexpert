@@ -142,12 +142,13 @@ class JwtAuthService
                     // Устанавливаем current_organization_id для объекта User, который вернется в контроллер
                     // Это важно для корректной работы Gate в контроллере
                     if ($organizationId && $user->current_organization_id !== $organizationId) {
-                         $user->current_organization_id = $organizationId; // Просто присваиваем свойству для текущего запроса
-                         Log::info('[JwtAuthService] User object\'s current_organization_id set (was different).', ['user_id' => $user->id, 'org_id' => $organizationId]); // Логируем установку
+                         $user->current_organization_id = $organizationId;
+                         $user->save();
+                         Log::info('[JwtAuthService] User object\'s current_organization_id set (was different).', ['user_id' => $user->id, 'org_id' => $organizationId]);
                     } elseif (!$user->current_organization_id && $organizationId) {
-                        // Если был null, а мы нашли ID
                         $user->current_organization_id = $organizationId;
-                         Log::info('[JwtAuthService] User object\'s current_organization_id set (was null).', ['user_id' => $user->id, 'org_id' => $organizationId]); // Логируем установку
+                        $user->save();
+                         Log::info('[JwtAuthService] User object\'s current_organization_id set (was null).', ['user_id' => $user->id, 'org_id' => $organizationId]);
                     } else {
                          Log::info('[JwtAuthService] User object\'s current_organization_id not changed.', ['user_id' => $user->id, 'existing_org_id' => $user->current_organization_id, 'determined_org_id' => $organizationId]); // Логируем, если не меняли
                     }
@@ -519,6 +520,19 @@ class JwtAuthService
                         'org_id' => $organization->id ?? 'Failed to get ID',
                         'name' => $organization->name
                     ]);
+                    // Привязываем пользователя к организации
+                    if (!$user->organizations()->where('organization_id', $organization->id)->exists()) {
+                        $user->organizations()->attach($organization->id, [
+                            'is_owner' => true,
+                            'is_active' => true
+                        ]);
+                    }
+                    $user->current_organization_id = $organization->id;
+                    $user->save();
+                    Log::info('[JwtAuthService] Set current organization for user', [
+                        'user_id' => $user->id,
+                        'current_org_id' => $user->current_organization_id
+                    ]);
                 } catch (\Exception $e) {
                     Log::error('[JwtAuthService] Failed to create organization', [
                         'error' => $e->getMessage(),
@@ -526,31 +540,6 @@ class JwtAuthService
                     ]);
                     throw $e; // Пробрасываем исключение для обработки во внешнем catch
                 }
-                
-                // Привязываем пользователя к организации с ролью владельца
-                try {
-                    Log::info('[JwtAuthService] Attaching user to organization', [
-                        'user_id' => $user->id,
-                        'org_id' => $organization->id
-                    ]);
-                    $this->userRepository->attachToOrganization($user->id, $organization->id, true);
-                } catch (\Exception $e) {
-                    Log::error('[JwtAuthService] Failed to attach user to organization', [
-                        'error' => $e->getMessage(),
-                        'user_id' => $user->id,
-                        'org_id' => $organization->id,
-                        'trace' => $e->getTraceAsString()
-                    ]);
-                    throw $e; // Пробрасываем исключение для обработки во внешнем catch
-                }
-                
-                // Устанавливаем организацию как текущую для пользователя
-                $user->current_organization_id = $organization->id;
-                $user->save();
-                Log::info('[JwtAuthService] Set current organization for user', [
-                    'user_id' => $user->id,
-                    'current_org_id' => $user->current_organization_id
-                ]);
             }
 
             // Генерируем JWT токен для пользователя
