@@ -85,8 +85,8 @@ class AdminPanelUserController extends Controller
 
             // Возвращаем правильный Responsable ответ
             return new SuccessCreationResponse(
-                new AdminPanelUserResource($user->load('roles')), // Используем ресурс и загружаем роли
-                'Admin panel user created successfully'
+                new AdminPanelUserResource($user->load('roles')),
+                'Пользователь админ-панели успешно создан'
             );
          } catch (\Illuminate\Validation\ValidationException $e) {
              Log::error('[AdminPanelUserController] Ошибка валидации', [
