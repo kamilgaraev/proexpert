@@ -29,6 +29,10 @@ class User extends Authenticatable implements JWTSubject
      * Эти роли будут иметь неограниченный доступ.
      */
     const ADMIN_PANEL_ACCESS_ROLES = [
+        'super_admin',
+        'admin',
+        'content_admin',
+        'support_admin',
         Role::ROLE_SYSTEM_ADMIN,    // system_admin
         Role::ROLE_OWNER,           // organization_owner
         Role::ROLE_ADMIN,           // organization_admin

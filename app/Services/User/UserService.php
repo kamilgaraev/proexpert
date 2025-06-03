@@ -644,7 +644,7 @@ class UserService
      * @return Collection
      * @throws BusinessLogicException
      */
-    public function getAdminPanelUsersForCurrentOrg(Request $request, array $rolesToFetch = ['web_admin', 'accountant']): Collection
+    public function getAdminPanelUsersForCurrentOrg(Request $request, array $rolesToFetch = null): Collection
     {
         Log::info('[UserService@getAdminPanelUsersForCurrentOrg] Method entered.', [
             'user_id' => $request->user() ? $request->user()->id : null, 
@@ -652,7 +652,6 @@ class UserService
             'roles_to_fetch' => $rolesToFetch
         ]);
 
-        /** @var \App\Models\User $requestingUser */
         $requestingUser = $request->user();
         if (!$requestingUser instanceof \App\Models\User) {
             Log::error('[UserService@getAdminPanelUsersForCurrentOrg] Requesting user is not a User instance or is null.', [
@@ -662,12 +661,22 @@ class UserService
         }
 
         $organizationId = $request->attributes->get('current_organization_id');
-
         if (!$organizationId) {
             Log::error('[UserService@getAdminPanelUsersForCurrentOrg] Organization ID not found in request attributes.');
             throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
         $intOrganizationId = (int) $organizationId;
+
+        // Новый набор ролей для админ-панели
+        $adminPanelRoles = [
+            'super_admin',
+            'admin',
+            'content_admin',
+            'support_admin',
+            'web_admin',
+            'accountant',
+        ];
+        $rolesToFetch = $rolesToFetch ?? $adminPanelRoles;
 
         Log::debug('[UserService@getAdminPanelUsersForCurrentOrg] Calling userRepository->findByRolesInOrganization.', ['org_id' => $intOrganizationId, 'roles' => $rolesToFetch]);
         try {
