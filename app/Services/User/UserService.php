@@ -803,7 +803,7 @@ class UserService
      * @return bool
      * @throws BusinessLogicException
      */
-    public function deleteAdminPanelUser(int $targetUserId, Request $request, array $rolesToDelete = ['web_admin', 'accountant']): bool
+    public function deleteAdminPanelUser(int $targetUserId, Request $request, array $rolesToDelete = null): bool
     {
         $this->ensureUserIsAdmin($request); // Проверяем права запрашивающего
         $organizationId = $request->attributes->get('current_organization_id');
@@ -814,6 +814,7 @@ class UserService
         $requestingUser = $request->user();
 
         // Используем findAdminPanelUserById для проверки
+        $rolesToDelete = $rolesToDelete ?? \App\Models\User::ADMIN_PANEL_ACCESS_ROLES;
         $targetUser = $this->findAdminPanelUserById($targetUserId, $request, $rolesToDelete);
         if (!$targetUser) {
             throw new BusinessLogicException('Пользователь админ-панели не найден или нет прав на его просмотр/удаление.', 404);
@@ -839,13 +840,18 @@ class UserService
         }
 
         // Отвязываем от организации, если нет других ролей в этой организации
-        // Перезагружаем пользователя, чтобы получить актуальные роли после отзыва
         $targetUser = $this->userRepository->find($targetUserId);
         if ($targetUser && $targetUser->rolesInOrganization($intOrganizationId)->count() === 0) {
              $this->userRepository->detachFromOrganization($targetUserId, $intOrganizationId);
         }
 
-        return $revokedAny; // Возвращаем true, если хотя бы одна роль была отозвана
+        Log::info('[UserService@deleteAdminPanelUser] User deleted from admin panel', [
+            'target_user_id' => $targetUserId,
+            'organization_id' => $intOrganizationId,
+            'revoked_any' => $revokedAny
+        ]);
+
+        return $revokedAny;
     }
 
     /**
