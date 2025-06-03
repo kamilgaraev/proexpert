@@ -18,6 +18,8 @@ class Role extends Model
     const ROLE_WEB_ADMIN = 'web_admin';
     const ROLE_ACCOUNTANT = 'accountant';
     const ROLE_SYSTEM_ADMIN = 'system_admin'; // Добавим для полноты
+    const ROLE_SUPER_ADMIN = 'super_admin'; // Системная роль супер-админа
+    const ROLE_ADMIN_SYSTEM = 'admin';     // Системная роль admin (отличается от organization_admin)
 
     // Типы ролей
     const TYPE_SYSTEM = 'system';

@@ -272,6 +272,8 @@ class AuthServiceProvider extends ServiceProvider
                     Role::ROLE_ADMIN,
                     Role::ROLE_ACCOUNTANT,
                     Role::ROLE_WEB_ADMIN,
+                    'admin',        // системная роль admin
+                    'super_admin',  // системная роль super_admin
                 ];
                 Log::debug('[Gate:manage-catalogs] Checking roles for user.', ['user_id' => $user->id, 'org_id' => $orgId, 'allowed_roles' => $allowedRoles]);
 
