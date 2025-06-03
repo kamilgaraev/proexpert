@@ -72,39 +72,54 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
      * @param int $userId ID пользователя
      * @param int $organizationId ID организации
      * @param bool $isOwner Установить пользователя как владельца организации
+     * @param bool $isActive Установить активность пользователя
      * @return void
      */
-    public function attachToOrganization(int $userId, int $organizationId, bool $isOwner = false): void
+    public function attachToOrganization(int $userId, int $organizationId, bool $isOwner = false, bool $isActive = true): void
     {
         $user = $this->model->find($userId);
         if ($user) {
-            // Привязываем пользователя к организации
-            $user->organizations()->attach($organizationId, ['is_owner' => $isOwner]);
-            
+            // Проверяем, есть ли уже связь
+            $exists = $user->organizations()->where('organization_user.organization_id', $organizationId)->exists();
+            if (!$exists) {
+                $user->organizations()->attach($organizationId, [
+                    'is_owner' => $isOwner,
+                    'is_active' => $isActive
+                ]);
+                Log::info("[UserRepository] attachToOrganization: User attached to org", [
+                    'user_id' => $userId,
+                    'organization_id' => $organizationId,
+                    'is_owner' => $isOwner,
+                    'is_active' => $isActive
+                ]);
+            } else {
+                Log::debug("[UserRepository] attachToOrganization: User already attached to org", [
+                    'user_id' => $userId,
+                    'organization_id' => $organizationId
+                ]);
+            }
             // Присваиваем роль владельца (Owner) только если $isOwner = true
             if ($isOwner) {
                 try {
-                    // Находим роль Owner по slug
                     $ownerRole = Role::where('slug', Role::ROLE_OWNER)->first();
                     if ($ownerRole) {
                         $this->assignRole($userId, $ownerRole->id, $organizationId);
-                        Log::info("Assigned owner role to user", [
+                        Log::info("[UserRepository] Assigned owner role to user", [
                             'user_id' => $userId,
                             'organization_id' => $organizationId,
                             'role_id' => $ownerRole->id
                         ]);
                     } else {
-                        Log::error("Owner role not found in the system");
+                        Log::error("[UserRepository] Owner role not found in the system");
                     }
                 } catch (\Exception $e) {
-                    Log::error("Failed to assign owner role: " . $e->getMessage(), [
+                    Log::error("[UserRepository] Failed to assign owner role: " . $e->getMessage(), [
                         'user_id' => $userId,
                         'organization_id' => $organizationId,
                         'exception' => $e->getMessage()
                     ]);
                 }
             }
-            
             // Устанавливаем текущую организацию для пользователя
             $user->current_organization_id = $organizationId;
             $user->save();
@@ -115,14 +130,23 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     {
         $user = $this->model->find($userId);
         if ($user) {
-            // Проверяем, существует ли уже такая связь с ролью, чтобы избежать дублирования
             $exists = $user->roles()
-                          ->where('role_user.organization_id', $organizationId)
-                          ->where('role_user.role_id', $roleId)
-                          ->exists();
-
+                ->where('role_user.organization_id', $organizationId)
+                ->where('role_user.role_id', $roleId)
+                ->exists();
             if (!$exists) {
                 $user->roles()->attach($roleId, ['organization_id' => $organizationId]);
+                Log::info("[UserRepository] assignRole: Role assigned", [
+                    'user_id' => $userId,
+                    'role_id' => $roleId,
+                    'organization_id' => $organizationId
+                ]);
+            } else {
+                Log::debug("[UserRepository] assignRole: Role already assigned", [
+                    'user_id' => $userId,
+                    'role_id' => $roleId,
+                    'organization_id' => $organizationId
+                ]);
             }
         }
     }

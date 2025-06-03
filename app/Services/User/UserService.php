@@ -616,7 +616,7 @@ class UserService
                  throw new BusinessLogicException("Пользователь с таким email уже имеет роль '{$role->name}' в этой организации.", 409);
             }
             // Пользователь существует, но роли нет. Привязываем к организации и назначаем роль.
-            $this->userRepository->attachToOrganization($existingUser->id, $intOrganizationId, false, true); // Не владелец
+            $this->userRepository->attachToOrganization($existingUser->id, $intOrganizationId, false, true); // Не владелец, активный
             $this->userRepository->assignRole($existingUser->id, $role->id, $intOrganizationId);
             // Обновляем имя, если оно изменилось
             $this->userRepository->update($existingUser->id, ['name' => $userData['name']]);
@@ -627,7 +627,7 @@ class UserService
             $userData['current_organization_id'] = $intOrganizationId;
             $newUser = $this->userRepository->create($userData);
             // Привязываем к организации и назначаем роль.
-            $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId, false, true); // Не владелец
+            $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId, false, true); // Не владелец, активный
             $this->userRepository->assignRole($newUser->id, $role->id, $intOrganizationId);
             return $newUser;
         }
