@@ -40,9 +40,12 @@ abstract class ApiResponse implements Responsable
         ];
 
         if ($this->data !== null) {
-            $response['data'] = $this->data instanceof JsonResource
-                ? $this->data->response($request)->getData(true)
-                : $this->data;
+            if ($this->data instanceof JsonResource) {
+                $resolved = $this->data->resolve($request);
+                $response['data'] = $resolved;
+            } else {
+                $response['data'] = $this->data;
+            }
         }
 
         return new JsonResponse(
