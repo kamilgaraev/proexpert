@@ -26,10 +26,12 @@ class ContractorController extends Controller
 
     public function index(Request $request)
     {
-        // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id', 1); // Временно
-
-        $filters = $request->only(['name', 'inn']); // Добавьте фильтры по мере необходимости
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
+        $filters = $request->only(['name', 'inn']);
         $sortBy = $request->input('sort_by', 'name');
         $sortDirection = $request->input('sort_direction', 'asc');
         $perPage = $request->input('per_page', 15);
@@ -40,9 +42,11 @@ class ContractorController extends Controller
 
     public function store(StoreContractorRequest $request)
     {
-        // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id_for_creation', 1); // Временно
-
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
         try {
             $contractorDTO = $request->toDto();
             $contractor = $this->contractorService->createContractor($organizationId, $contractorDTO);
@@ -50,15 +54,17 @@ class ContractorController extends Controller
                     ->response()
                     ->setStatusCode(Response::HTTP_CREATED);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to create contractor', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST); // Или HTTP_INTERNAL_SERVER_ERROR
+            return response()->json(['message' => 'Failed to create contractor', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
         }
     }
 
-    public function show(int $contractorId)
+    public function show(int $contractorId, Request $request)
     {
-        // $organizationId = Auth::user()->organization_id;
-        $organizationId = request()->input('organization_id_for_show', 1); // Временно
-
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
         $contractor = $this->contractorService->getContractorById($contractorId, $organizationId);
         if (!$contractor) {
             return response()->json(['message' => 'Contractor not found'], Response::HTTP_NOT_FOUND);
@@ -68,23 +74,27 @@ class ContractorController extends Controller
 
     public function update(UpdateContractorRequest $request, int $contractorId)
     {
-        // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id_for_update', 1); // Временно
-        
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
         try {
             $contractorDTO = $request->toDto();
             $contractor = $this->contractorService->updateContractor($contractorId, $organizationId, $contractorDTO);
             return new ContractorResource($contractor);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to update contractor', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST); // Или HTTP_INTERNAL_SERVER_ERROR
+            return response()->json(['message' => 'Failed to update contractor', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
         }
     }
 
-    public function destroy(int $contractorId)
+    public function destroy(int $contractorId, Request $request)
     {
-        // $organizationId = Auth::user()->organization_id;
-        $organizationId = request()->input('organization_id_for_destroy', 1); // Временно
-
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
         try {
             $this->contractorService->deleteContractor($contractorId, $organizationId);
             return response()->json(null, Response::HTTP_NO_CONTENT);

@@ -34,12 +34,12 @@ class ContractController extends Controller
      */
     public function index(Request $request)
     {
-        // Предполагаем, что ID организации берется из текущего пользователя
-        // или другого источника, например, если админ может выбирать организацию.
-        // Для простоты, пока захардкодим или будем ожидать в запросе.
-        // $organizationId = Auth::user()->organization_id; 
-        $organizationId = $request->input('organization_id', 1); // Временно, для примера
-
+        $user = $request->user();
+        // Получаем organization_id только из middleware или пользователя
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
         $filters = $request->only(['contractor_id', 'project_id', 'status', 'type', 'number', 'date_from', 'date_to']);
         $sortBy = $request->input('sort_by', 'date');
         $sortDirection = $request->input('sort_direction', 'desc');
@@ -54,11 +54,13 @@ class ContractController extends Controller
      */
     public function store(StoreContractRequest $request)
     {
-        // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id_for_creation', 1); // Временно
-
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
         try {
-            $contractDTO = $request->toDto(); // Метод toDto() нужно будет добавить в StoreContractRequest
+            $contractDTO = $request->toDto(); // Метод toDto() должен быть реализован
             $contract = $this->contractService->createContract($organizationId, $contractDTO);
             return (new ContractResource($contract))
                     ->response()
@@ -71,11 +73,13 @@ class ContractController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(int $contractId) // Laravel автоматически внедрит модель, если использовать Route Model Binding (Contract $contract)
+    public function show(int $contractId, Request $request)
     {
-        // $organizationId = Auth::user()->organization_id;
-        $organizationId = request()->input('organization_id_for_show', 1); // Временно
-
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
         $contract = $this->contractService->getContractById($contractId, $organizationId);
         if (!$contract) {
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
@@ -86,13 +90,15 @@ class ContractController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(UpdateContractRequest $request, int $contractId) // (UpdateContractRequest $request, Contract $contract)
+    public function update(UpdateContractRequest $request, int $contractId)
     {
-        // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id_for_update', 1); // Временно
-        
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
         try {
-            $contractDTO = $request->toDto(); // Метод toDto() нужно будет добавить в UpdateContractRequest
+            $contractDTO = $request->toDto();
             $contract = $this->contractService->updateContract($contractId, $organizationId, $contractDTO);
             return new ContractResource($contract);
         } catch (Exception $e) {
@@ -103,11 +109,13 @@ class ContractController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(int $contractId) // (Contract $contract)
+    public function destroy(int $contractId, Request $request)
     {
-        // $organizationId = Auth::user()->organization_id;
-        $organizationId = request()->input('organization_id_for_destroy', 1); // Временно
-
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
         try {
             $this->contractService->deleteContract($contractId, $organizationId);
             return response()->json(null, Response::HTTP_NO_CONTENT);
