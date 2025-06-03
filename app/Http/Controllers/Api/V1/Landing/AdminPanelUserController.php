@@ -39,6 +39,7 @@ class AdminPanelUserController extends Controller
         Log::info('[AdminPanelUserController@index] Method entered.', ['user_id' => Auth::id(), 'organization_id' => $request->attributes->get('current_organization_id')]);
         try {
             $users = $this->userService->getAdminPanelUsersForCurrentOrg($request);
+            $users->load('roles');
             Log::info('[AdminPanelUserController@index] Users received from service.', ['count' => $users->count()]);
             
             // --- ВРЕМЕННОЕ ДИАГНОСТИЧЕСКОЕ ИЗМЕНЕНИЕ (возвращаем как было) ---
