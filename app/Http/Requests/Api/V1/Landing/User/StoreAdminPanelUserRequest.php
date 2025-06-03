@@ -10,7 +10,14 @@ use App\Models\Role; // Используем для проверки сущес�
 class StoreAdminPanelUserRequest extends FormRequest
 {
     // Определяем разрешенные роли для создания через этот запрос
-    protected array $allowedRoles = ['web_admin', 'accountant'];
+    protected array $allowedRoles = [
+        'super_admin',
+        'admin',
+        'content_admin',
+        'support_admin',
+        'web_admin',
+        'accountant',
+    ];
 
     /**
      * Determine if the user is authorized to make this request.
