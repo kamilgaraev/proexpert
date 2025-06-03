@@ -69,7 +69,7 @@ class Handler extends ExceptionHandler
 
                 if ($e instanceof AuthorizationException) {
                     return response()->json([
-                        'message' => $e->getMessage() ?: 'This action is unauthorized.',
+                        'message' => $e->getMessage() ?: 'Доступ запрещён.',
                     ], 403);
                 }
 
