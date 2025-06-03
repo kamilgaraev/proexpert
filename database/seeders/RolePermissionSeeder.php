@@ -25,6 +25,10 @@ class RolePermissionSeeder extends Seeder
         $this->command->info('Creating roles...');
 
         $rolesData = [
+            ['slug' => 'super_admin', 'name' => 'Главный администратор', 'type' => Role::TYPE_SYSTEM, 'description' => 'Полный контроль над системой.'],
+            ['slug' => 'admin', 'name' => 'Администратор', 'type' => Role::TYPE_SYSTEM, 'description' => 'Администрирование системы.'],
+            ['slug' => 'content_admin', 'name' => 'Администратор контента', 'type' => Role::TYPE_SYSTEM, 'description' => 'Управление контентом.'],
+            ['slug' => 'support_admin', 'name' => 'Администратор поддержки', 'type' => Role::TYPE_SYSTEM, 'description' => 'Поддержка пользователей.'],
             ['slug' => Role::ROLE_SYSTEM_ADMIN, 'name' => 'Системный администратор',    'type' => Role::TYPE_SYSTEM, 'description' => 'Полный доступ ко всей системе.'],
             ['slug' => Role::ROLE_OWNER,        'name' => 'Владелец организации',       'type' => Role::TYPE_SYSTEM, 'description' => 'Полный доступ к своей организации.'],
             ['slug' => Role::ROLE_ADMIN,        'name' => 'Администратор организации',  'type' => Role::TYPE_SYSTEM, 'description' => 'Управление пользователями и настройками организации.'],
@@ -75,6 +79,7 @@ class RolePermissionSeeder extends Seeder
 
         // Define permissions for each role
         $systemAdminPermissions = Permission::pluck('slug')->toArray(); // Sys admin gets all
+        $adminPanelPermissions = Permission::where('slug', 'like', 'admin.%')->pluck('slug')->toArray();
         $ownerPermissions = $systemAdminPermissions; // Owner also gets all within their org context implicitly
 
         $adminPermissions = [
@@ -109,6 +114,10 @@ class RolePermissionSeeder extends Seeder
         ];
         
         $rolePermissionsMap = [
+            'super_admin' => $adminPanelPermissions,
+            'admin' => $adminPermissions,
+            'content_admin' => [],
+            'support_admin' => [],
             Role::ROLE_SYSTEM_ADMIN => $systemAdminPermissions,
             Role::ROLE_OWNER => $ownerPermissions,
             Role::ROLE_ADMIN => $adminPermissions,
