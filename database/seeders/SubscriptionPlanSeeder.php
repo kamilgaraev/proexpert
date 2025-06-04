@@ -43,7 +43,7 @@ class SubscriptionPlanSeeder extends Seeder
                 'duration_in_days' => 30,
                 'max_foremen' => 2,
                 'max_projects' => 3,
-                'max_storage_gb' => 0.5,
+                'max_storage_gb' => 1,
                 'features' => json_encode([
                     'Базовые отчёты',
                 ]),
