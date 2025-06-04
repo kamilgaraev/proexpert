@@ -13,8 +13,8 @@ class SubscriptionPlanSeeder extends Seeder
      */
     public function run(): void
     {
-        // Очистка таблицы перед заполнением, если это необходимо
-        // DB::table('subscription_plans')->delete(); // или truncate()
+        // Очистка таблицы перед заполнением
+        \DB::table('subscription_plans')->truncate();
 
         $plans = [
             [
