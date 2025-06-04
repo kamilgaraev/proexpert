@@ -4,6 +4,9 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\Billing\SubscriptionPlanController;
 use App\Http\Controllers\Api\Billing\UserSubscriptionController;
 use App\Http\Controllers\Api\Billing\BalanceController;
+use App\Http\Controllers\Api\Landing\OrganizationSubscriptionAddonController;
+use App\Http\Controllers\Api\Landing\OrganizationSubscriptionController;
+use App\Http\Controllers\Api\Landing\OrganizationOneTimePurchaseController;
 
 // Маршруты биллинга, предполагается, что они будут доступны
 // аутентифицированному пользователю (владельцу организации)
@@ -34,4 +37,22 @@ Route::middleware(['auth:api_landing', 'role:organization_owner']) // Приме
         Route::get('balance/transactions', [BalanceController::class, 'getTransactions'])->name('balance.transactions');
         // POST /api/v1/landing/billing/balance/top-up
         Route::post('balance/top-up', [BalanceController::class, 'topUp'])->name('balance.top-up');
+
+        // --- Организационная монетизация ---
+        // Получить список add-on'ов
+        Route::get('addons', [OrganizationSubscriptionAddonController::class, 'index'])->name('addons.index');
+        // Получить текущую подписку организации
+        Route::get('org-subscription', [OrganizationSubscriptionController::class, 'show'])->name('org_subscription.show');
+        // Оформить/сменить подписку организации
+        Route::post('org-subscribe', [OrganizationSubscriptionController::class, 'subscribe'])->name('org_subscription.subscribe');
+        // Изменить параметры подписки (например, апгрейд/даунгрейд)
+        Route::patch('org-subscription', [OrganizationSubscriptionController::class, 'update'])->name('org_subscription.update');
+        // Подключить add-on
+        Route::post('org-addon', [OrganizationSubscriptionAddonController::class, 'attach'])->name('org_addon.attach');
+        // Отключить add-on
+        Route::delete('org-addon/{id}', [OrganizationSubscriptionAddonController::class, 'detach'])->name('org_addon.detach');
+        // Совершить одноразовую покупку
+        Route::post('org-one-time-purchase', [OrganizationOneTimePurchaseController::class, 'store'])->name('org_one_time_purchase.store');
+        // Получить историю одноразовых покупок
+        Route::get('org-one-time-purchases', [OrganizationOneTimePurchaseController::class, 'index'])->name('org_one_time_purchase.index');
     }); 
