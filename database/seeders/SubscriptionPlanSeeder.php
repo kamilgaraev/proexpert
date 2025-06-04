@@ -26,7 +26,7 @@ class SubscriptionPlanSeeder extends Seeder
                 'duration_in_days' => 30,
                 'max_foremen' => 1,
                 'max_projects' => 1,
-                'max_storage_gb' => 0.1,
+                'max_storage_gb' => 1,
                 'features' => json_encode([
                     'Базовые функции',
                     'Ограничение: 10 операций/мес',

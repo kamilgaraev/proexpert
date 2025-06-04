@@ -23,7 +23,7 @@ return new class extends Migration
             // Лимиты
             $table->integer('max_foremen')->nullable(); // null означает безлимит или не применимо
             $table->integer('max_projects')->nullable();
-            $table->integer('max_storage_gb')->nullable();
+            $table->decimal('max_storage_gb', 8, 2)->nullable();
 
             $table->json('features')->nullable(); // Дополнительные фичи тарифа в виде JSON
             // (например, ["API Access", "Priority Support"])
