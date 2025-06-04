@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\Billing\BalanceController;
 use App\Http\Controllers\Api\Landing\OrganizationSubscriptionAddonController;
 use App\Http\Controllers\Api\Landing\OrganizationSubscriptionController;
 use App\Http\Controllers\Api\Landing\OrganizationOneTimePurchaseController;
+use App\Http\Controllers\Api\v1\Landing\OrganizationDashboardController;
 
 // Маршруты биллинга, предполагается, что они будут доступны
 // аутентифицированному пользователю (владельцу организации)
@@ -55,4 +56,7 @@ Route::middleware(['auth:api_landing', 'role:organization_owner']) // Приме
         Route::post('org-one-time-purchase', [OrganizationOneTimePurchaseController::class, 'store'])->name('org_one_time_purchase.store');
         // Получить историю одноразовых покупок
         Route::get('org-one-time-purchases', [OrganizationOneTimePurchaseController::class, 'index'])->name('org_one_time_purchase.index');
+
+        // --- Дашборд организации ---
+        Route::get('org-dashboard', [OrganizationDashboardController::class, 'index'])->name('org_dashboard.index');
     }); 
