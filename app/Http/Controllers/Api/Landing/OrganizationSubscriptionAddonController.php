@@ -11,7 +11,12 @@ class OrganizationSubscriptionAddonController extends Controller
 {
     public function index(Request $request)
     {
-        $organization = Auth::user()->organization;
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        $organization = $user->organizations()->where('organization_id', $organizationId)->first();
+        if (!$organization) {
+            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+        }
         $service = new OrganizationSubscriptionAddonService();
         $allAddons = $service->getAllAddons();
         $orgAddons = $service->getOrganizationAddons($organization->id);
@@ -23,7 +28,12 @@ class OrganizationSubscriptionAddonController extends Controller
 
     public function attach(Request $request)
     {
-        $organization = Auth::user()->organization;
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        $organization = $user->organizations()->where('organization_id', $organizationId)->first();
+        if (!$organization) {
+            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+        }
         $addonId = $request->input('addon_id');
         $service = new OrganizationSubscriptionAddonService();
         $result = $service->attachAddon($organization->id, $addonId);
@@ -32,7 +42,12 @@ class OrganizationSubscriptionAddonController extends Controller
 
     public function detach($id)
     {
-        $organization = Auth::user()->organization;
+        $user = Auth::user();
+        $organizationId = request()->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        $organization = $user->organizations()->where('organization_id', $organizationId)->first();
+        if (!$organization) {
+            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+        }
         $service = new OrganizationSubscriptionAddonService();
         $result = $service->detachAddon($organization->id, $id);
         return response()->json(['success' => (bool)$result]);

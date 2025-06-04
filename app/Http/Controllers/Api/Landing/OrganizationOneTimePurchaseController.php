@@ -11,8 +11,12 @@ class OrganizationOneTimePurchaseController extends Controller
 {
     public function store(Request $request)
     {
-        $organization = Auth::user()->organization;
         $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        $organization = $user->organizations()->where('organization_id', $organizationId)->first();
+        if (!$organization) {
+            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+        }
         $type = $request->input('type');
         $description = $request->input('description');
         $amount = $request->input('amount');
@@ -24,7 +28,12 @@ class OrganizationOneTimePurchaseController extends Controller
 
     public function index(Request $request)
     {
-        $organization = Auth::user()->organization;
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        $organization = $user->organizations()->where('organization_id', $organizationId)->first();
+        if (!$organization) {
+            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+        }
         $service = new OrganizationOneTimePurchaseService();
         $history = $service->getHistory($organization->id);
         return response()->json($history);

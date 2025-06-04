@@ -11,7 +11,12 @@ class OrganizationSubscriptionController extends Controller
 {
     public function show(Request $request)
     {
-        $organization = Auth::user()->organization;
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        $organization = $user->organizations()->where('organization_id', $organizationId)->first();
+        if (!$organization) {
+            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+        }
         $service = new OrganizationSubscriptionService();
         $subscription = $service->getCurrentSubscription($organization->id);
         return response()->json($subscription);
@@ -19,7 +24,12 @@ class OrganizationSubscriptionController extends Controller
 
     public function subscribe(Request $request)
     {
-        $organization = Auth::user()->organization;
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        $organization = $user->organizations()->where('organization_id', $organizationId)->first();
+        if (!$organization) {
+            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+        }
         $planSlug = $request->input('plan_slug');
         $service = new OrganizationSubscriptionService();
         $subscription = $service->subscribe($organization->id, $planSlug);
@@ -28,7 +38,12 @@ class OrganizationSubscriptionController extends Controller
 
     public function update(Request $request)
     {
-        $organization = Auth::user()->organization;
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        $organization = $user->organizations()->where('organization_id', $organizationId)->first();
+        if (!$organization) {
+            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+        }
         $planSlug = $request->input('plan_slug');
         $service = new OrganizationSubscriptionService();
         $subscription = $service->updateSubscription($organization->id, $planSlug);
