@@ -209,3 +209,15 @@ Route::prefix('mobile')->name('mobile.')->group(function () {
 });
 
 // Все маршруты API для подотчетных средств перенесены в файл routes/api/v1/admin/advance_transactions.php
+
+// --- SuperAdmin API ---
+Route::prefix('superadmin')->name('superadmin.')->group(function () {
+    // Публичные маршруты суперадминки (например, аутентификация)
+    if (file_exists(__DIR__ . '/api/v1/superadmin/auth.php')) {
+        require __DIR__ . '/api/v1/superadmin/auth.php';
+    }
+    // В будущем: защищённые маршруты суперадминки
+    // Route::middleware(['auth:api_superadmin', 'superadmin.context'])->group(function() {
+    //     // require __DIR__ . '/api/v1/superadmin/dashboard.php';
+    // });
+});
