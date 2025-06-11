@@ -5,7 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Mobile\Auth\AuthController;
 
 Route::prefix('auth')->name('auth.')->group(function () {
-    Route::post('login', [AuthController::class, 'login'])->name('login');
+    Route::post('login', [AuthController::class, 'login'])->name('mobile.login');
     
     // Добавляем защищенные маршруты, требующие аутентификации
     Route::middleware('auth:api_mobile')->group(function() {

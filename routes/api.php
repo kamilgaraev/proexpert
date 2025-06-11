@@ -108,6 +108,8 @@ use App\Http\Controllers\Api\UserController;
 // - Для лендинга/ЛК: routes/api/v1/landing/...
 
 // Начинаем группу маршрутов API v1
+Route::prefix('v1')->name('api.v1.')->group(function () {
+
 Route::prefix('landing')->name('landing.')->group(function () {
     // Явно включаем маршруты для Landing API
     require __DIR__ . '/api/v1/landing/auth.php';
@@ -115,7 +117,7 @@ Route::prefix('landing')->name('landing.')->group(function () {
     require __DIR__ . '/api/v1/landing/organization.php';
     
     // Маршруты для управления пользователями админ-панели (accountant, web_admin)
-    Route::middleware(['auth:api_landing', 'role:organization_owner|organization_admin'])
+    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'role:organization_owner|organization_admin'])
         ->prefix('adminPanelUsers')
         ->name('adminPanelUsers.')
         ->group(function () {
@@ -128,7 +130,7 @@ Route::prefix('landing')->name('landing.')->group(function () {
 
     // Подключение маршрутов биллинга для лендинга/ЛК
     // Эти маршруты должны быть доступны аутентифицированному владельцу организации
-    Route::middleware(['auth:api_landing', 'role:organization_owner']) // Примерный middleware, уточните права
+    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'role:organization_owner'])
         ->prefix('billing')
         ->name('billing.')
         ->group(function () {
@@ -138,11 +140,11 @@ Route::prefix('landing')->name('landing.')->group(function () {
 
 // --- Admin Panel API ---
 Route::prefix('admin')->name('admin.')->group(function () {
-    // Если у вас есть отдельный файл для публичных маршрутов аутентификации админки, его можно подключить здесь, например:
-    // require __DIR__ . '/api/v1/admin/auth.php';
+    // Публичные маршруты аутентификации админки
+    require __DIR__ . '/api/v1/admin/auth.php';
 
     // Защищенные маршруты Admin Panel
-    Route::middleware(['auth:api_admin', 'jwt.auth', 'organization.context', 'can:access-admin-panel'])->group(function() {
+    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'can:access-admin-panel'])->group(function() {
         // Подключаем существующие файлы маршрутов для админки
         if (file_exists(__DIR__ . '/api/v1/admin/projects.php')) {
             require __DIR__ . '/api/v1/admin/projects.php';
@@ -190,7 +192,7 @@ Route::prefix('mobile')->name('mobile.')->group(function () {
     }
 
     // Защищенные маршруты Mobile App (требуют токен mobile + контекст организации)
-    Route::middleware(['auth:api_mobile', 'jwt.auth', 'organization.context', 'can:access-mobile-app'])->group(function() {
+    Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])->group(function() {
         if (file_exists(__DIR__ . '/api/v1/mobile/projects.php')) {
             require __DIR__ . '/api/v1/mobile/projects.php';
         }
@@ -221,3 +223,5 @@ Route::prefix('superadmin')->name('superadmin.')->group(function () {
     //     // require __DIR__ . '/api/v1/superadmin/dashboard.php';
     // });
 });
+
+}); // Закрываем группу v1
