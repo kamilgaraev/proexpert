@@ -84,8 +84,9 @@ class BasicDataSeeder extends Seeder
                     'start_date' => $faker->dateTimeBetween('-6 months', '-3 months'),
                     'end_date' => $faker->dateTimeBetween('+3 months', '+12 months'),
                     'status' => $faker->randomElement(['active', 'planning', 'completed']),
-                    'budget' => $faker->randomFloat(2, 1000000, 50000000),
                     'address' => $faker->address,
+                    'customer' => $faker->company,
+                    'designer' => $faker->optional(0.7)->name,
                 ]
             );
         }
