@@ -28,6 +28,12 @@ class DatabaseSeeder extends Seeder
             // Добавьте сюда другие необходимые сидеры
         ]);
 
-        $this->call(MaterialUsageLogSeeder::class);
+        // Сидеры для активности прорабов и выполненных работ
+        $this->call([
+            ForemanActivitySeeder::class,
+            MaterialUsageLogSeeder::class,
+            WorkCompletionLogSeeder::class,
+            CompletedWorkSeeder::class,
+        ]);
     }
 }

@@ -18,18 +18,42 @@ class MaterialUsageLogSeeder extends Seeder
 {
     public function run(): void
     {
-        $projectId = Project::query()->inRandomOrder()->value('id');
-        $materialId = Material::query()->inRandomOrder()->value('id');
-        $userId = User::query()->inRandomOrder()->value('id');
+        $faker = \Faker\Factory::create('ru_RU');
+        
         $organizationId = Organization::query()->inRandomOrder()->value('id');
-        $supplierId = Supplier::query()->inRandomOrder()->value('id');
-        $workTypeId = WorkType::query()->inRandomOrder()->value('id');
-
-        if (!$projectId || !$materialId || !$userId || !$organizationId) {
-            throw new \Exception('Для сидирования material_usage_logs необходимы проекты, материалы, пользователи и организации.');
+        if (!$organizationId) {
+            throw new \Exception('Для сидирования material_usage_logs необходима хотя бы одна организация.');
         }
 
-        foreach (range(1, 10) as $i) {
+        // Получаем прорабов
+        $foremanRole = \App\Models\Role::where('slug', \App\Models\Role::ROLE_FOREMAN)->first();
+        $userIds = [];
+        
+        if ($foremanRole) {
+            $userIds = User::whereHas('roles', function ($query) use ($foremanRole) {
+                $query->where('role_id', $foremanRole->id);
+            })->pluck('id')->toArray();
+        }
+        
+        if (empty($userIds)) {
+            $userIds = User::where('current_organization_id', $organizationId)->pluck('id')->toArray();
+        }
+        
+        if (empty($userIds)) {
+            throw new \Exception('В организации нет пользователей для привязки логов материалов.');
+        }
+
+        $projectIds = Project::where('organization_id', $organizationId)->pluck('id')->toArray();
+        $materialIds = Material::pluck('id')->toArray();
+        $supplierIds = Supplier::pluck('id')->toArray();
+        $workTypeIds = WorkType::pluck('id')->toArray();
+
+        if (empty($projectIds) || empty($materialIds)) {
+            throw new \Exception('Для сидирования material_usage_logs необходимы проекты и материалы.');
+        }
+
+        // Создаем больше записей для демонстрации активности
+        foreach (range(1, 100) as $i) {
             $operationType = $i % 2 === 0 ? 'write_off' : 'receipt';
             $quantity = rand(1, 100) + rand(0, 999) / 1000;
             $unitPrice = rand(100, 1000) + rand(0, 99) / 100;
@@ -39,22 +63,24 @@ class MaterialUsageLogSeeder extends Seeder
             $documentNumber = $operationType === 'receipt' ? Str::upper(Str::random(8)) : null;
 
             MaterialUsageLog::create([
-                'project_id' => $projectId,
-                'material_id' => $materialId,
-                'user_id' => $userId,
+                'project_id' => $faker->randomElement($projectIds),
+                'material_id' => $faker->randomElement($materialIds),
+                'user_id' => $faker->randomElement($userIds),
                 'organization_id' => $organizationId,
                 'operation_type' => $operationType,
                 'quantity' => $quantity,
                 'unit_price' => $unitPrice,
                 'total_price' => $totalPrice,
-                'supplier_id' => $operationType === 'receipt' ? $supplierId : null,
+                'supplier_id' => $operationType === 'receipt' && !empty($supplierIds) ? $faker->randomElement($supplierIds) : null,
                 'document_number' => $documentNumber,
                 'invoice_date' => $invoiceDate,
                 'usage_date' => $usageDate,
                 'photo_path' => null,
                 'notes' => $operationType === 'write_off' ? 'Списание на работы' : 'Поступление от поставщика',
-                'work_type_id' => $operationType === 'write_off' ? $workTypeId : null,
+                'work_type_id' => $operationType === 'write_off' && !empty($workTypeIds) ? $faker->randomElement($workTypeIds) : null,
             ]);
         }
+
+        $this->command->info('Создано 100 записей логов использования материалов');
     }
 } 
