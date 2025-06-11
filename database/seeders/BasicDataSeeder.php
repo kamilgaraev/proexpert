@@ -19,11 +19,15 @@ class BasicDataSeeder extends Seeder
     {
         $faker = Faker::create('ru_RU');
         
-        // Используем существующую организацию с id=1
-        $organization = Organization::find(1);
-        if (!$organization) {
-            throw new \Exception('Организация с ID=1 не найдена. Убедитесь, что она существует в базе данных.');
-        }
+        // Создаем или находим организацию
+        $organization = Organization::firstOrCreate(
+            ['id' => 1],
+            [
+                'name' => 'Тестовая организация',
+                'email' => 'test@example.com',
+                'is_active' => true,
+            ]
+        );
 
         // Создаем единицы измерения если их нет
         $units = [
@@ -37,8 +41,8 @@ class BasicDataSeeder extends Seeder
 
         foreach ($units as $unitData) {
             MeasurementUnit::firstOrCreate(
-                ['short_name' => $unitData['short_name']],
-                $unitData
+                ['short_name' => $unitData['short_name'], 'organization_id' => $organization->id],
+                array_merge($unitData, ['organization_id' => $organization->id])
             );
         }
 
