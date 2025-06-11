@@ -20,13 +20,15 @@ class DatabaseSeeder extends Seeder
         //     'email' => 'test@example.com',
         // ]);
 
-        // Вызываем сидер ролей и разрешений
+        // Базовые системные данные
         $this->call([
             RolePermissionSeeder::class,
             MeasurementUnitSeeder::class,
             SubscriptionPlanSeeder::class,
-            // Добавьте сюда другие необходимые сидеры
         ]);
+
+        // Базовые данные для работы (организации, проекты, материалы)
+        $this->call(BasicDataSeeder::class);
 
         // Сидеры для активности прорабов и выполненных работ
         $this->call([
