@@ -10,6 +10,8 @@ use App\Models\Role;
 use Illuminate\Support\Collection;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Pagination\LengthAwarePaginator as PaginationLengthAwarePaginator;
+use App\Models\Models\Log\MaterialUsageLog;
+use App\Models\CompletedWork;
 
 class UserRepository extends BaseRepository implements UserRepositoryInterface
 {
@@ -291,10 +293,60 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
      */
     public function getForemanActivity(int $organizationId, array $filters = []): Collection
     {
-        // TODO: Implementar логику для получения активности прорабов из логов
-        // Например, через запрос к таблицам MaterialUsageLog и WorkCompletionLog
-        // с группировкой и фильтрацией
-        return collect(); // Временная заглушка
+        $query = $this->model->whereHas('roles', function ($roleQuery) use ($organizationId) {
+            $roleQuery->where('slug', 'foreman')
+                      ->where('role_user.organization_id', $organizationId);
+        })->with(['roles']);
+
+        if (!empty($filters['user_id'])) {
+            $query->where('id', $filters['user_id']);
+        }
+
+        $foremen = $query->get();
+
+        $activityData = collect();
+
+        foreach ($foremen as $foreman) {
+            $materialUsageQuery = MaterialUsageLog::where('user_id', $foreman->id);
+            $completedWorksQuery = CompletedWork::where('user_id', $foreman->id);
+
+            if (!empty($filters['project_id'])) {
+                $materialUsageQuery->where('project_id', $filters['project_id']);
+                $completedWorksQuery->where('project_id', $filters['project_id']);
+            }
+
+            if (!empty($filters['date_from'])) {
+                $materialUsageQuery->whereDate('usage_date', '>=', $filters['date_from']);
+                $completedWorksQuery->whereDate('completion_date', '>=', $filters['date_from']);
+            }
+
+            if (!empty($filters['date_to'])) {
+                $materialUsageQuery->whereDate('usage_date', '<=', $filters['date_to']);
+                $completedWorksQuery->whereDate('completion_date', '<=', $filters['date_to']);
+            }
+
+            $materialUsageCount = $materialUsageQuery->count();
+            $completedWorksCount = $completedWorksQuery->count();
+            $completedWorksSum = $completedWorksQuery->sum('total_price');
+
+            $lastActivity = collect([
+                $materialUsageQuery->latest('usage_date')->first()?->usage_date,
+                $completedWorksQuery->latest('completion_date')->first()?->completion_date
+            ])->filter()->max();
+
+            $activityData->push([
+                'user_id' => $foreman->id,
+                'user_name' => $foreman->name,
+                'user_email' => $foreman->email,
+                'material_usage_operations' => $materialUsageCount,
+                'completed_works_count' => $completedWorksCount,
+                'completed_works_total_sum' => $completedWorksSum ?? 0,
+                'last_activity_date' => $lastActivity,
+                'is_active' => $foreman->is_active,
+            ]);
+        }
+
+        return $activityData->sortByDesc('completed_works_total_sum');
     }
 
     // Добавляем реализацию недостающего метода
