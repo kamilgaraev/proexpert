@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use App\Services\Report\ReportService;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Illuminate\Http\Request;
 
 // Импортируем созданные Request классы
 use App\Http\Requests\Api\V1\Admin\Report\MaterialUsageReportRequest;
@@ -78,6 +79,20 @@ class ReportController extends Controller
     {
         // TODO: Получить фильтры (status, date_from, date_to, is_archived)
         $reportData = $this->reportService->getProjectStatusSummaryReport($request);
+        return response()->json($reportData);
+    }
+
+    /**
+     * Официальный отчет об использовании материалов, переданных Заказчиком.
+     */
+    public function officialMaterialUsageReport(Request $request): JsonResponse | StreamedResponse
+    {
+        $reportData = $this->reportService->getOfficialMaterialUsageReport($request);
+        
+        if ($reportData instanceof StreamedResponse) {
+            return $reportData;
+        }
+        
         return response()->json($reportData);
     }
 } 

@@ -9,6 +9,7 @@ use Illuminate\Routing\Router;
 use App\Services\Organization\OrganizationContext;
 use App\Services\FileService;
 use App\Services\Export\ExcelExporterService;
+use App\Services\Report\MaterialReportService;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -24,6 +25,11 @@ class AppServiceProvider extends ServiceProvider
         // Регистрируем ExcelExporterService как singleton
         $this->app->singleton(ExcelExporterService::class, function ($app) {
             return new ExcelExporterService();
+        });
+        
+        // Регистрируем MaterialReportService как singleton
+        $this->app->singleton(MaterialReportService::class, function ($app) {
+            return new MaterialReportService();
         });
         
         // Здесь могут быть другие связывания
@@ -48,6 +54,5 @@ class AppServiceProvider extends ServiceProvider
             $router->prependMiddlewareToGroup("api", CorsMiddleware::class);
         }
         
-        \Illuminate\Support\Facades\Log::info("CORS middleware зарегистрирован");
     }
 } 

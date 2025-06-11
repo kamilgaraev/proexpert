@@ -80,13 +80,18 @@ class BasicDataSeeder extends Seeder
             Project::firstOrCreate(
                 ['name' => $projectName, 'organization_id' => $organization->id],
                 [
+                    'organization_id' => $organization->id,
                     'description' => 'Описание проекта: ' . $projectName,
                     'start_date' => $faker->dateTimeBetween('-6 months', '-3 months'),
                     'end_date' => $faker->dateTimeBetween('+3 months', '+12 months'),
-                    'status' => $faker->randomElement(['active', 'completed', 'paused', 'cancelled']), // ИСПРАВЛЕНО
+                    'status' => $faker->randomElement(['active', 'completed', 'paused', 'cancelled']),
                     'address' => $faker->address,
                     'customer' => $faker->company,
                     'designer' => $faker->optional(0.7)->name,
+                    'customer_organization' => 'ООО "НЕО СТРОЙ"',
+                    'customer_representative' => 'Шарафутдинов А.А.',
+                    'contract_number' => 'ПД-' . $faker->numberBetween(100, 999) . '/2025',
+                    'contract_date' => $faker->dateTimeBetween('-12 months', '-6 months'),
                 ]
             );
         }

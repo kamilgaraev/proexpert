@@ -56,6 +56,8 @@ class MaterialUsageLogSeeder extends Seeder
         foreach (range(1, 100) as $i) {
             $operationType = $i % 2 === 0 ? 'write_off' : 'receipt';
             $quantity = rand(1, 100) + rand(0, 999) / 1000;
+            $productionNormQuantity = $quantity * (0.95 + rand(0, 10) / 100); // ±5% от количества
+            $factQuantity = $quantity;
             $unitPrice = rand(100, 1000) + rand(0, 99) / 100;
             $totalPrice = $quantity * $unitPrice;
             $usageDate = Carbon::now()->subDays(rand(0, 30));
@@ -69,6 +71,10 @@ class MaterialUsageLogSeeder extends Seeder
                 'organization_id' => $organizationId,
                 'operation_type' => $operationType,
                 'quantity' => $quantity,
+                'production_norm_quantity' => $productionNormQuantity,
+                'fact_quantity' => $factQuantity,
+                'previous_month_balance' => $operationType === 'write_off' ? rand(0, 50) : null,
+                'current_balance' => $operationType === 'write_off' ? rand(0, 20) : $quantity,
                 'unit_price' => $unitPrice,
                 'total_price' => $totalPrice,
                 'supplier_id' => $operationType === 'receipt' && !empty($supplierIds) ? $faker->randomElement($supplierIds) : null,
@@ -78,6 +84,14 @@ class MaterialUsageLogSeeder extends Seeder
                 'photo_path' => null,
                 'notes' => $operationType === 'write_off' ? 'Списание на работы' : 'Поступление от поставщика',
                 'work_type_id' => $operationType === 'write_off' && !empty($workTypeIds) ? $faker->randomElement($workTypeIds) : null,
+                'work_description' => $operationType === 'write_off' ? $faker->randomElement([
+                    'Устройство бетонной подготовки',
+                    'Армирование фундаментных работ', 
+                    'Кладочные работы наружных стен',
+                    'Монтаж кровельных материалов',
+                    'Отделочные работы'
+                ]) : null,
+                'receipt_document_reference' => $operationType === 'receipt' ? "№{$documentNumber} от " . $usageDate->format('d.m.Y') : null,
             ]);
         }
 

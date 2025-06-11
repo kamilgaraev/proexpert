@@ -20,6 +20,7 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use App\Services\Report\ReportTemplateService;
 use App\Models\ReportTemplate;
+use App\Services\Report\MaterialReportService;
 
 class ReportService
 {
@@ -30,6 +31,7 @@ class ReportService
     protected CsvExporterService $csvExporter;
     protected ExcelExporterService $excelExporter;
     protected ReportTemplateService $reportTemplateService;
+    protected MaterialReportService $materialReportService;
 
     public function __construct(
         MaterialUsageLogRepositoryInterface $materialLogRepo,
@@ -38,7 +40,8 @@ class ReportService
         UserRepositoryInterface $userRepo,
         CsvExporterService $csvExporter,
         ExcelExporterService $excelExporter,
-        ReportTemplateService $reportTemplateService
+        ReportTemplateService $reportTemplateService,
+        MaterialReportService $materialReportService
     ) {
         $this->materialLogRepo = $materialLogRepo;
         $this->workLogRepo = $workLogRepo;
@@ -47,6 +50,7 @@ class ReportService
         $this->csvExporter = $csvExporter;
         $this->excelExporter = $excelExporter;
         $this->reportTemplateService = $reportTemplateService;
+        $this->materialReportService = $materialReportService;
     }
 
     /**
@@ -406,6 +410,51 @@ class ReportService
             'title' => 'Сводный отчет по статусам проектов',
             'filters' => $filters,
             'data' => $projectCounts,
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
+    /**
+     * Официальный отчет об использовании материалов, переданных Заказчиком.
+     */
+    public function getOfficialMaterialUsageReport(Request $request): array | StreamedResponse
+    {
+        $organizationId = $this->getCurrentOrgId($request);
+        $projectId = $request->query('project_id');
+        $dateFrom = $request->query('date_from');
+        $dateTo = $request->query('date_to');
+        $reportNumber = $request->query('report_number');
+        $format = $request->query('format');
+
+        if (!$projectId || !$dateFrom || !$dateTo) {
+            throw new BusinessLogicException('Необходимо указать project_id, date_from и date_to для формирования отчета.', 400);
+        }
+
+        Log::info('Generating Official Material Usage Report', [
+            'org_id' => $organizationId,
+            'project_id' => $projectId,
+            'date_from' => $dateFrom,
+            'date_to' => $dateTo,
+            'format' => $format
+        ]);
+
+        $reportData = $this->materialReportService->generateOfficialUsageReport(
+            (int)$projectId,
+            $dateFrom,
+            $dateTo,
+            $reportNumber ? (int)$reportNumber : null
+        );
+
+        // Если запрашивается Excel экспорт
+        if ($format === 'xlsx') {
+            $filename = "official_material_report_{$projectId}_" . date('YmdHis') . '.xlsx';
+            return $this->excelExporter->generateOfficialMaterialReport($reportData, $filename);
+        }
+
+        // JSON ответ
+        return [
+            'title' => 'Официальный отчет об использовании материалов',
+            'data' => $reportData,
             'generated_at' => Carbon::now(),
         ];
     }

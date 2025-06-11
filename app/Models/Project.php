@@ -28,6 +28,10 @@ class Project extends Model
         'cost_category_id',
         'accounting_data',
         'use_in_accounting_reports',
+        'customer_organization',
+        'customer_representative',
+        'contract_number',
+        'contract_date',
     ];
 
     protected $casts = [
@@ -37,6 +41,7 @@ class Project extends Model
         'is_archived' => 'boolean',
         'accounting_data' => 'array',
         'use_in_accounting_reports' => 'boolean',
+        'contract_date' => 'date',
     ];
 
     /**

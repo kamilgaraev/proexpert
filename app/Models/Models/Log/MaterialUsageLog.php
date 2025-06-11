@@ -23,6 +23,10 @@ class MaterialUsageLog extends Model
         'organization_id',  // Важно для привязки к организации
         'operation_type',   // Добавлено ('receipt', 'write_off')
         'quantity',
+        'production_norm_quantity',
+        'fact_quantity',
+        'previous_month_balance',
+        'current_balance',
         'unit_price',       // Добавлено
         'total_price',      // Добавлено
         'supplier_id',      // Добавлено
@@ -32,6 +36,8 @@ class MaterialUsageLog extends Model
         'photo_path',       // Добавлено
         'notes',
         'work_type_id',     // Добавлено для списания на работы
+        'work_description',
+        'receipt_document_reference',
     ];
 
     /**
@@ -42,7 +48,11 @@ class MaterialUsageLog extends Model
     protected $casts = [
         'usage_date' => 'date',
         'invoice_date' => 'date',
-        'quantity' => 'decimal:3', // Пример каста для точности
+        'quantity' => 'decimal:3',
+        'production_norm_quantity' => 'decimal:3',
+        'fact_quantity' => 'decimal:3',
+        'previous_month_balance' => 'decimal:3',
+        'current_balance' => 'decimal:3',
         'unit_price' => 'decimal:2',
         'total_price' => 'decimal:2',
     ];

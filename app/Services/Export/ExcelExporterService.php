@@ -377,4 +377,240 @@ class ExcelExporterService
             return response()->json(['error' => 'Ошибка при экспорте отчета', 'message' => $e->getMessage()], 500);
         }
     }
+
+    /**
+     * Генерирует официальный отчет об использовании материалов в формате Excel.
+     */
+    public function generateOfficialMaterialReport(array $reportData, string $filename)
+    {
+        Log::info('[ExcelExporterService] Генерация официального отчета по материалам', [
+            'filename' => $filename,
+            'materials_count' => count($reportData['materials'] ?? []),
+        ]);
+
+        try {
+            $response = new StreamedResponse(function () use ($reportData, $filename) {
+                try {
+                    $spreadsheet = new Spreadsheet();
+                    $sheet = $spreadsheet->getActiveSheet();
+                    
+                    $currentRow = 1;
+                    
+                    // ЗАГОЛОВОК ОТЧЕТА
+                    $sheet->setCellValue("A{$currentRow}", "Отчет №{$reportData['header']['report_number']} от {$reportData['header']['report_date']}");
+                    $sheet->mergeCells("A{$currentRow}:N{$currentRow}");
+                    $sheet->getStyle("A{$currentRow}")->applyFromArray([
+                        'font' => ['bold' => true, 'size' => 14],
+                        'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
+                    ]);
+                    $currentRow++;
+                    
+                    $sheet->setCellValue("A{$currentRow}", "об использовании материалов, переданных Заказчиком");
+                    $sheet->mergeCells("A{$currentRow}:N{$currentRow}");
+                    $sheet->getStyle("A{$currentRow}")->applyFromArray([
+                        'font' => ['bold' => true, 'size' => 12],
+                        'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
+                    ]);
+                    $currentRow += 2;
+                    
+                    // ИНФОРМАЦИЯ О ПРОЕКТЕ
+                    $sheet->setCellValue("A{$currentRow}", $reportData['header']['project_name']);
+                    $sheet->mergeCells("A{$currentRow}:F{$currentRow}");
+                    $sheet->getStyle("A{$currentRow}")->applyFromArray([
+                        'font' => ['bold' => true],
+                        'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                    ]);
+                    
+                    $sheet->setCellValue("L{$currentRow}", "Дата Отчета №");
+                    $sheet->mergeCells("L{$currentRow}:N{$currentRow}");
+                    $sheet->getStyle("L{$currentRow}:N{$currentRow}")->applyFromArray([
+                        'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                        'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'FFE6E6']],
+                    ]);
+                    $currentRow++;
+                    
+                    $sheet->setCellValue("A{$currentRow}", $reportData['header']['project_address']);
+                    $sheet->mergeCells("A{$currentRow}:F{$currentRow}");
+                    $sheet->getStyle("A{$currentRow}")->applyFromArray([
+                        'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                    ]);
+                    $currentRow += 2;
+                    
+                    // ОРГАНИЗАЦИИ
+                    $contractor = $reportData['organizations']['contractor'];
+                    $customer = $reportData['organizations']['customer'];
+                    $sheet->setCellValue("A{$currentRow}", "ООО \"{$contractor}\", именуемым в дальнейшем \"Подрядчик\", в лице директора {$reportData['organizations']['contractor_director']}, действующей на основании Устава, составлен настоящий отчет об использовании материалов,");
+                    $sheet->mergeCells("A{$currentRow}:N{$currentRow}");
+                    $currentRow++;
+                    
+                    $sheet->setCellValue("A{$currentRow}", "полученных от ООО \"{$customer}\" (далее — «Заказчик») при выполнении работ по договору подряда № {$reportData['organizations']['contract_number']} от {$reportData['organizations']['contract_date']} и были использованы в следующем объеме (количестве):");
+                    $sheet->mergeCells("A{$currentRow}:N{$currentRow}");
+                    $currentRow += 2;
+                    
+                    // ЗАГОЛОВКИ ТАБЛИЦЫ
+                    $headers = [
+                        'А' => '№',
+                        'В' => 'Наименование работ',
+                        'С' => 'Наименование материала изделий',
+                        'D' => 'Единица измерения',
+                        'E' => 'Получено материалов от Заказчика',
+                        'F' => '',
+                        'G' => 'Использование материалов',
+                        'H' => '',
+                        'I' => '',
+                        'J' => '',
+                        'K' => 'Остаток неиспользованного материала',
+                        'L' => '',
+                        'M' => 'Процентная доля экономии от производственной нормы (-)',
+                        'N' => 'Экономия (-)/перерасход (+) против производственной нормы (-)'
+                    ];
+                    
+                    foreach ($headers as $col => $header) {
+                        $sheet->setCellValue("{$col}{$currentRow}", $header);
+                    }
+                    
+                    // Объединяем ячейки заголовков
+                    $sheet->mergeCells("E{$currentRow}:F{$currentRow}"); // Получено материалов
+                    $sheet->mergeCells("G{$currentRow}:J{$currentRow}"); // Использование материалов
+                    $sheet->mergeCells("K{$currentRow}:L{$currentRow}"); // Остаток
+                    
+                    $sheet->getStyle("A{$currentRow}:N{$currentRow}")->applyFromArray([
+                        'font' => ['bold' => true, 'size' => 9],
+                        'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                        'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'E6F3FF']],
+                        'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'wrapText' => true],
+                    ]);
+                    $currentRow++;
+                    
+                    // ПОДЗАГОЛОВКИ
+                    $subHeaders = [
+                        'A' => '',
+                        'B' => '',
+                        'C' => '',
+                        'D' => '',
+                        'E' => 'Объем',
+                        'F' => '№ и дата накладной',
+                        'G' => 'По производственным нормам (проект от НЕО СТРОЙ)',
+                        'H' => 'По факту (переданного для работ)',
+                        'I' => 'Количество',
+                        'J' => 'Количество',
+                        'K' => 'Количество',
+                        'L' => 'Количество',
+                        'M' => '',
+                        'N' => ''
+                    ];
+                    
+                    foreach ($subHeaders as $col => $header) {
+                        $sheet->setCellValue("{$col}{$currentRow}", $header);
+                    }
+                    
+                    $sheet->getStyle("A{$currentRow}:N{$currentRow}")->applyFromArray([
+                        'font' => ['bold' => true, 'size' => 8],
+                        'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                        'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'F0F8FF']],
+                        'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER, 'wrapText' => true],
+                    ]);
+                    $currentRow++;
+                    
+                    // ДАННЫЕ ПО МАТЕРИАЛАМ
+                    foreach ($reportData['materials'] as $index => $material) {
+                        $sheet->setCellValue("A{$currentRow}", $index + 1);
+                        $sheet->setCellValue("B{$currentRow}", $material['work_name']);
+                        $sheet->setCellValue("C{$currentRow}", $material['material_name']);
+                        $sheet->setCellValue("D{$currentRow}", $material['unit']);
+                        $sheet->setCellValue("E{$currentRow}", number_format($material['received_from_customer']['volume'], 1));
+                        $sheet->setCellValue("F{$currentRow}", $material['received_from_customer']['document']);
+                        $sheet->setCellValue("G{$currentRow}", number_format($material['usage']['production_norm'], 1));
+                        $sheet->setCellValue("H{$currentRow}", number_format($material['usage']['fact_used'], 1));
+                        $sheet->setCellValue("I{$currentRow}", '0.00'); // Переданное в другие периоды
+                        $sheet->setCellValue("J{$currentRow}", number_format($material['usage']['for_next_month'], 1));
+                        $sheet->setCellValue("K{$currentRow}", number_format($material['usage']['balance'], 1));
+                        $sheet->setCellValue("L{$currentRow}", ''); // Дополнительный остаток
+                        $sheet->setCellValue("M{$currentRow}", number_format($material['economy_percentage'], 4));
+                        $sheet->setCellValue("N{$currentRow}", number_format($material['economy_overrun'], 4));
+                        
+                        // Выделяем переданные в следующий период желтым
+                        if ($material['usage']['for_next_month'] > 0) {
+                            $sheet->getStyle("J{$currentRow}")->applyFromArray([
+                                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'FFFF99']],
+                            ]);
+                        }
+                        
+                        $sheet->getStyle("A{$currentRow}:N{$currentRow}")->applyFromArray([
+                            'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
+                        ]);
+                        $currentRow++;
+                    }
+                    
+                    $currentRow += 2;
+                    
+                    // ИТОГО
+                    $sheet->setCellValue("A{$currentRow}", "ИТОГО");
+                    $sheet->mergeCells("A{$currentRow}:N{$currentRow}");
+                    $sheet->getStyle("A{$currentRow}")->applyFromArray([
+                        'font' => ['bold' => true],
+                        'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                    ]);
+                    $currentRow += 2;
+                    
+                    // ОБОСНОВАНИЕ ОТКЛОНЕНИЙ
+                    $sheet->setCellValue("A{$currentRow}", "Обоснование отклонения от норм (в случае наличия таковых):");
+                    $sheet->mergeCells("A{$currentRow}:N{$currentRow}");
+                    $currentRow += 3;
+                    
+                    // ПОДПИСИ
+                    $sheet->setCellValue("A{$currentRow}", "Представитель Заказчика :");
+                    $sheet->mergeCells("A{$currentRow}:G{$currentRow}");
+                    $sheet->setCellValue("I{$currentRow}", "Представитель Подрядчика :");
+                    $sheet->mergeCells("I{$currentRow}:N{$currentRow}");
+                    $currentRow += 2;
+                    
+                    $sheet->setCellValue("A{$currentRow}", "Прораб ООО \"НЕО СТРОЙ\"");
+                    $sheet->setCellValue("G{$currentRow}", $reportData['organizations']['customer_representative']);
+                    $sheet->setCellValue("J{$currentRow}", "Директор ООО \"{$contractor}\"");
+                    $sheet->setCellValue("N{$currentRow}", $reportData['organizations']['contractor_director']);
+                    $currentRow++;
+                    
+                    $sheet->setCellValue("A{$currentRow}", "(должность)");
+                    $sheet->setCellValue("G{$currentRow}", "(подпись)");
+                    $sheet->setCellValue("J{$currentRow}", "(должность)");
+                    $sheet->setCellValue("N{$currentRow}", "(подпись)");
+                    $currentRow += 2;
+                    
+                    $sheet->setCellValue("G{$currentRow}", "М.П.");
+                    $sheet->setCellValue("N{$currentRow}", "М.П.");
+                    
+                    // Автоширина колонок
+                    foreach (range('A', 'N') as $col) {
+                        $sheet->getColumnDimension($col)->setAutoSize(true);
+                    }
+                    
+                    // Настройки печати
+                    $sheet->getPageSetup()->setOrientation(\PhpOffice\PhpSpreadsheet\Worksheet\PageSetup::ORIENTATION_LANDSCAPE);
+                    $sheet->getPageMargins()->setTop(0.5)->setBottom(0.5)->setLeft(0.3)->setRight(0.3);
+                    
+                    $writer = new Xlsx($spreadsheet);
+                    $writer->save('php://output');
+                    
+                    Log::info('[ExcelExporterService] Официальный отчет по материалам успешно создан');
+                } catch (Exception $e) {
+                    Log::error('[ExcelExporterService] Ошибка при создании официального отчета:', [
+                        'exception' => $e->getMessage(),
+                    ]);
+                    echo json_encode(['error' => 'Ошибка при создании отчета', 'message' => $e->getMessage()]);
+                }
+            });
+
+            $response->headers->set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            $response->headers->set('Content-Disposition', 'attachment; filename="' . $filename . '"');
+
+            return $response;
+        } catch (Exception $e) {
+            Log::error('[ExcelExporterService] Критическая ошибка при создании официального отчета:', [
+                'exception' => $e->getMessage(),
+            ]);
+            return response()->json(['error' => 'Ошибка при экспорте отчета', 'message' => $e->getMessage()], 500);
+        }
+    }
 } 
