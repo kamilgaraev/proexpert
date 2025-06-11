@@ -67,7 +67,7 @@ class BasicDataSeeder extends Seeder
             );
         }
 
-        // Создаем проекты
+        // Создаем проекты (ИСПРАВЛЕНО: правильные статусы)
         $projects = [
             'Строительство жилого комплекса "Солнечный"',
             'Реконструкция офисного центра',
@@ -83,7 +83,7 @@ class BasicDataSeeder extends Seeder
                     'description' => 'Описание проекта: ' . $projectName,
                     'start_date' => $faker->dateTimeBetween('-6 months', '-3 months'),
                     'end_date' => $faker->dateTimeBetween('+3 months', '+12 months'),
-                    'status' => $faker->randomElement(['active', 'planning', 'completed']),
+                    'status' => $faker->randomElement(['active', 'completed', 'paused', 'cancelled']), // ИСПРАВЛЕНО
                     'address' => $faker->address,
                     'customer' => $faker->company,
                     'designer' => $faker->optional(0.7)->name,
@@ -91,7 +91,10 @@ class BasicDataSeeder extends Seeder
             );
         }
 
-        // Создаем виды работ
+        // Получаем единицы измерения для дальнейшего использования
+        $measurementUnits = MeasurementUnit::where('organization_id', $organization->id)->pluck('id', 'short_name');
+
+        // Создаем виды работ (ИСПРАВЛЕНО: добавлена organization_id)
         $workTypes = [
             'Земляные работы',
             'Фундаментные работы',
@@ -107,23 +110,22 @@ class BasicDataSeeder extends Seeder
             'Монтаж окон и дверей'
         ];
 
-        $measurementUnits = MeasurementUnit::pluck('id', 'short_name');
-
         foreach ($workTypes as $workTypeName) {
             $unit = $faker->randomElement(['м²', 'м³', 'м', 'шт']);
             $unitId = $measurementUnits[$unit] ?? $measurementUnits->first();
 
             WorkType::firstOrCreate(
-                ['name' => $workTypeName],
+                ['name' => $workTypeName, 'organization_id' => $organization->id],
                 [
+                    'organization_id' => $organization->id, // ИСПРАВЛЕНО
                     'description' => 'Выполнение работ: ' . $workTypeName,
                     'measurement_unit_id' => $unitId,
-                    'base_price' => $faker->randomFloat(2, 500, 5000),
+                    'default_price' => $faker->randomFloat(2, 500, 5000), // ИСПРАВЛЕНО: base_price -> default_price
                 ]
             );
         }
 
-        // Создаем материалы
+        // Создаем материалы (ИСПРАВЛЕНО: правильные поля)
         $materials = [
             ['name' => 'Цемент М400', 'unit' => 'кг', 'price' => 15.50],
             ['name' => 'Песок строительный', 'unit' => 'т', 'price' => 1200.00],
@@ -141,13 +143,12 @@ class BasicDataSeeder extends Seeder
             $unitId = $measurementUnits[$materialData['unit']] ?? $measurementUnits->first();
             
             Material::firstOrCreate(
-                ['name' => $materialData['name']],
+                ['name' => $materialData['name'], 'organization_id' => $organization->id],
                 [
+                    'organization_id' => $organization->id, // ИСПРАВЛЕНО
                     'description' => 'Строительный материал: ' . $materialData['name'],
                     'measurement_unit_id' => $unitId,
-                    'price' => $materialData['price'],
-                    'stock_quantity' => $faker->randomFloat(2, 100, 1000),
-                    'min_stock_level' => $faker->randomFloat(2, 10, 50),
+                    'default_price' => $materialData['price'], // ИСПРАВЛЕНО: price -> default_price
                 ]
             );
         }
