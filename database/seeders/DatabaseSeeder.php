@@ -37,5 +37,8 @@ class DatabaseSeeder extends Seeder
             WorkCompletionLogSeeder::class,
             CompletedWorkSeeder::class,
         ]);
+
+        // Тестовые данные для официального отчета по материалам
+        $this->call(OfficialMaterialReportSeeder::class);
     }
 }
