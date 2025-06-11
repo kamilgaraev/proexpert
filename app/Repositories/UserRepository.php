@@ -327,7 +327,7 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
 
             $materialUsageCount = $materialUsageQuery->count();
             $completedWorksCount = $completedWorksQuery->count();
-            $completedWorksSum = $completedWorksQuery->sum('total_price');
+            $completedWorksSum = $completedWorksQuery->sum('total_amount');
 
             $lastActivity = collect([
                 $materialUsageQuery->latest('usage_date')->first()?->usage_date,
