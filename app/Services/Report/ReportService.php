@@ -343,15 +343,45 @@ class ReportService
     /**
      * Отчет по активности прорабов.
      */
-    public function getForemanActivityReport(Request $request): array
+    public function getForemanActivityReport(Request $request): array | StreamedResponse
     {
         $organizationId = $this->getCurrentOrgId($request);
         $filters = $this->prepareReportFilters($request, ['project_id', 'user_id', 'date_from', 'date_to']);
+        $format = $request->query('format');
 
-        Log::info('Generating Foreman Activity Report', ['org_id' => $organizationId, 'filters' => $filters]);
+        Log::info('Generating Foreman Activity Report', [
+            'org_id' => $organizationId, 
+            'filters' => $filters,
+            'format' => $format
+        ]);
 
         $activityData = $this->userRepo->getForemanActivity($organizationId, $filters);
 
+        // Если запрашивается Excel экспорт
+        if ($format === 'xlsx') {
+            if ($activityData->isEmpty()) {
+                return $this->excelExporter->streamDownload(
+                    'empty_foreman_report_' . date('YmdHis') . '.xlsx',
+                    ['Сообщение'],
+                    [['Нет данных по прорабам для указанных фильтров']]
+                );
+            }
+
+            // Получаем детальные данные для Excel отчета
+            $materialLogs = $this->userRepo->getForemanMaterialLogs($organizationId, $filters);
+            $completedWorks = $this->userRepo->getForemanCompletedWorks($organizationId, $filters);
+
+            $filename = 'foreman_activity_report_' . date('YmdHis') . '.xlsx';
+            
+            return $this->excelExporter->streamForemanActivityReport(
+                $filename,
+                $activityData->toArray(),
+                $materialLogs->toArray(),
+                $completedWorks->toArray()
+            );
+        }
+
+        // Обычный JSON ответ
         return [
             'title' => 'Отчет по активности прорабов',
             'filters' => $filters,

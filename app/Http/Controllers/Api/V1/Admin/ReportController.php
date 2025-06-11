@@ -59,10 +59,15 @@ class ReportController extends Controller
     /**
      * Отчет по активности прорабов.
      */
-    public function foremanActivityReport(ForemanActivityReportRequest $request): JsonResponse
+    public function foremanActivityReport(ForemanActivityReportRequest $request): JsonResponse | StreamedResponse
     {
         // TODO: Получить фильтры (user_id, date_from, date_to)
         $reportData = $this->reportService->getForemanActivityReport($request);
+        
+        if ($reportData instanceof StreamedResponse) {
+            return $reportData;
+        }
+        
         return response()->json($reportData);
     }
 

@@ -70,4 +70,22 @@ interface UserRepositoryInterface extends BaseRepositoryInterface // Новое 
      * @return Collection
      */
     public function findByRolesInOrganization(int $organizationId, array $roleSlugs): Collection;
+
+    /**
+     * Получить детальные данные по использованию материалов прорабами.
+     *
+     * @param int $organizationId
+     * @param array $filters
+     * @return Collection
+     */
+    public function getForemanMaterialLogs(int $organizationId, array $filters = []): Collection;
+
+    /**
+     * Получить детальные данные по выполненным работам прорабов.
+     *
+     * @param int $organizationId
+     * @param array $filters
+     * @return Collection
+     */
+    public function getForemanCompletedWorks(int $organizationId, array $filters = []): Collection;
 }

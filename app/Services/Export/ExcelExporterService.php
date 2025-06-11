@@ -189,4 +189,192 @@ class ExcelExporterService
             'data' => $exportData
         ];
     }
+
+    /**
+     * Создает многостраничный Excel отчет по активности прорабов.
+     * Каждый прораб получает отдельный лист с детальной информацией.
+     */
+    public function streamForemanActivityReport(
+        string $filename,
+        array $foremanData,
+        array $materialLogs,
+        array $completedWorks
+    ) {
+        Log::info('[ExcelExporterService] Начало экспорта отчета по активности прорабов', [
+            'filename' => $filename,
+            'foreman_count' => count($foremanData),
+        ]);
+
+        try {
+            $response = new StreamedResponse(function () use ($foremanData, $materialLogs, $completedWorks, $filename) {
+                try {
+                    $spreadsheet = new Spreadsheet();
+                    
+                    // Удаляем лист по умолчанию, создадим свои
+                    $spreadsheet->removeSheetByIndex(0);
+
+                    foreach ($foremanData as $index => $foreman) {
+                        $sheetName = mb_substr($foreman['user_name'], 0, 30);
+                        $sheet = $spreadsheet->createSheet($index);
+                        $sheet->setTitle($sheetName);
+
+                        // Заголовок отчета
+                        $sheet->setCellValue('A1', 'ОТЧЕТ ПО АКТИВНОСТИ ПРОРАБА');
+                        $sheet->mergeCells('A1:F1');
+                        $sheet->getStyle('A1')->applyFromArray([
+                            'font' => ['bold' => true, 'size' => 16],
+                            'alignment' => ['horizontal' => Alignment::HORIZONTAL_CENTER],
+                            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'B8CCE4']],
+                        ]);
+
+                        // Информация о прорабе
+                        $sheet->setCellValue('A3', 'ФИО прораба:');
+                        $sheet->setCellValue('B3', $foreman['user_name']);
+                        $sheet->setCellValue('A4', 'Email:');
+                        $sheet->setCellValue('B4', $foreman['user_email']);
+                        $sheet->setCellValue('A5', 'Статус:');
+                        $sheet->setCellValue('B5', $foreman['is_active'] ? 'Активен' : 'Неактивен');
+                        $sheet->setCellValue('A6', 'Последняя активность:');
+                        $sheet->setCellValue('B6', $foreman['last_activity_date'] ?? 'Нет данных');
+
+                        // Стилизация информации о прорабе
+                        $sheet->getStyle('A3:A6')->applyFromArray([
+                            'font' => ['bold' => true],
+                            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'F2F2F2']],
+                        ]);
+
+                        // Сводная таблица
+                        $sheet->setCellValue('A8', 'СВОДНАЯ ИНФОРМАЦИЯ');
+                        $sheet->mergeCells('A8:B8');
+                        $sheet->getStyle('A8')->applyFromArray([
+                            'font' => ['bold' => true, 'size' => 14],
+                            'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'D9E1F2']],
+                        ]);
+
+                        $sheet->setCellValue('A9', 'Операции с материалами:');
+                        $sheet->setCellValue('B9', $foreman['material_usage_operations']);
+                        $sheet->setCellValue('A10', 'Выполненные работы:');
+                        $sheet->setCellValue('B10', $foreman['completed_works_count']);
+                        $sheet->setCellValue('A11', 'Общая сумма работ:');
+                        $sheet->setCellValue('B11', number_format($foreman['completed_works_total_sum'], 2, ',', ' ') . ' ₽');
+
+                        // Операции с материалами
+                        $materialRow = 13;
+                        $foremanMaterials = collect($materialLogs)->where('user_id', $foreman['user_id']);
+                        
+                        if ($foremanMaterials->isNotEmpty()) {
+                            $sheet->setCellValue('A' . $materialRow, 'ОПЕРАЦИИ С МАТЕРИАЛАМИ');
+                            $sheet->mergeCells('A' . $materialRow . ':F' . $materialRow);
+                            $sheet->getStyle('A' . $materialRow)->applyFromArray([
+                                'font' => ['bold' => true, 'size' => 14],
+                                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'E2EFDA']],
+                            ]);
+                            $materialRow++;
+
+                            // Заголовки таблицы материалов
+                            $materialHeaders = ['Дата', 'Проект', 'Материал', 'Количество', 'Тип операции', 'Примечание'];
+                            $col = 0;
+                            foreach ($materialHeaders as $header) {
+                                $sheet->setCellValue(chr(65 + $col) . $materialRow, $header);
+                                $col++;
+                            }
+                            $sheet->getStyle('A' . $materialRow . ':F' . $materialRow)->applyFromArray([
+                                'font' => ['bold' => true],
+                                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'F2F2F2']],
+                                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                            ]);
+                            $materialRow++;
+
+                            // Данные по материалам
+                            foreach ($foremanMaterials as $material) {
+                                $sheet->setCellValue('A' . $materialRow, $material['usage_date']);
+                                $sheet->setCellValue('B' . $materialRow, $material['project_name'] ?? '');
+                                $sheet->setCellValue('C' . $materialRow, $material['material_name'] ?? '');
+                                $sheet->setCellValue('D' . $materialRow, $material['quantity']);
+                                $sheet->setCellValue('E' . $materialRow, $material['operation_type'] ?? '');
+                                $sheet->setCellValue('F' . $materialRow, $material['notes'] ?? '');
+                                
+                                $sheet->getStyle('A' . $materialRow . ':F' . $materialRow)->applyFromArray([
+                                    'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                                ]);
+                                $materialRow++;
+                            }
+                            $materialRow += 2;
+                        }
+
+                        // Выполненные работы
+                        $workRow = $materialRow;
+                        $foremanWorks = collect($completedWorks)->where('user_id', $foreman['user_id']);
+                        
+                        if ($foremanWorks->isNotEmpty()) {
+                            $sheet->setCellValue('A' . $workRow, 'ВЫПОЛНЕННЫЕ РАБОТЫ');
+                            $sheet->mergeCells('A' . $workRow . ':F' . $workRow);
+                            $sheet->getStyle('A' . $workRow)->applyFromArray([
+                                'font' => ['bold' => true, 'size' => 14],
+                                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'FFF2CC']],
+                            ]);
+                            $workRow++;
+
+                            // Заголовки таблицы работ
+                            $workHeaders = ['Дата', 'Проект', 'Вид работ', 'Количество', 'Сумма', 'Статус'];
+                            $col = 0;
+                            foreach ($workHeaders as $header) {
+                                $sheet->setCellValue(chr(65 + $col) . $workRow, $header);
+                                $col++;
+                            }
+                            $sheet->getStyle('A' . $workRow . ':F' . $workRow)->applyFromArray([
+                                'font' => ['bold' => true],
+                                'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'F2F2F2']],
+                                'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                            ]);
+                            $workRow++;
+
+                            // Данные по работам
+                            foreach ($foremanWorks as $work) {
+                                $sheet->setCellValue('A' . $workRow, $work['completion_date']);
+                                $sheet->setCellValue('B' . $workRow, $work['project_name'] ?? '');
+                                $sheet->setCellValue('C' . $workRow, $work['work_type_name'] ?? '');
+                                $sheet->setCellValue('D' . $workRow, $work['quantity']);
+                                $sheet->setCellValue('E' . $workRow, number_format($work['total_amount'], 2, ',', ' ') . ' ₽');
+                                $sheet->setCellValue('F' . $workRow, $work['status'] ?? '');
+                                
+                                $sheet->getStyle('A' . $workRow . ':F' . $workRow)->applyFromArray([
+                                    'borders' => ['allBorders' => ['borderStyle' => Border::BORDER_THIN]],
+                                ]);
+                                $workRow++;
+                            }
+                        }
+
+                        // Автоширина колонок
+                        for ($col = 0; $col < 6; $col++) {
+                            $sheet->getColumnDimension(chr(65 + $col))->setAutoSize(true);
+                        }
+                    }
+
+                    // Делаем первый лист активным
+                    $spreadsheet->setActiveSheetIndex(0);
+
+                    $writer = new Xlsx($spreadsheet);
+                    $writer->save('php://output');
+                    
+                    Log::info('[ExcelExporterService] Отчет по активности прорабов успешно создан');
+                } catch (Exception $e) {
+                    Log::error('[ExcelExporterService] Ошибка при создании отчета по прорабам:', [
+                        'exception' => $e->getMessage(),
+                    ]);
+                    echo json_encode(['error' => 'Ошибка при создании отчета', 'message' => $e->getMessage()]);
+                }
+            });
+
+            $response->headers->set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            $response->headers->set('Content-Disposition', 'attachment; filename="' . $filename . '"');
+
+            return $response;
+        } catch (Exception $e) {
+            Log::error('[ExcelExporterService] Критическая ошибка при создании отчета по прорабам:', [
+                'exception' => $e->getMessage(),
+            ]);
+            return response()->json(['error' => 'Ошибка при экспорте отчета', 'message' => $e->getMessage()], 500);
+        }
+    }
 } 
