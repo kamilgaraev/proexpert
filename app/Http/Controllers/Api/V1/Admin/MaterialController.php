@@ -29,6 +29,20 @@ class MaterialController extends Controller
         $this->middleware('can:access-admin-panel')->except('getMeasurementUnits');
     }
 
+    private function getOrganizationId(Request $request): ?int
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        if (!$organizationId) {
+            $user = $request->user();
+            if ($user && $user->current_organization_id) {
+                $organizationId = $user->current_organization_id;
+            }
+        }
+        
+        return $organizationId ? (int) $organizationId : null;
+    }
+
     /**
      * Display a paginated list of materials with filtering and sorting.
      */
@@ -258,16 +272,33 @@ class MaterialController extends Controller
 
             // Проверяем существование видов работ
             $workTypeIds = array_keys($validated['consumption_rates']);
-            $existingWorkTypeCount = WorkType::whereIn('id', $workTypeIds)->count();
+            $existingWorkTypes = WorkType::whereIn('id', $workTypeIds)->get();
             
-            if (count($workTypeIds) != $existingWorkTypeCount) {
+            if (count($workTypeIds) != $existingWorkTypes->count()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Некоторые виды работ не найдены.'
                 ], 422);
             }
 
-            // Обновляем нормы списания
+            // Получаем organization_id из middleware или материала
+            $organizationId = $this->getOrganizationId($request) ?? $material->organization_id;
+
+            // Обновляем связи в таблице work_type_materials
+            foreach ($validated['consumption_rates'] as $workTypeId => $rate) {
+                $material->workTypes()->updateOrCreate(
+                    [
+                        'work_type_id' => $workTypeId,
+                        'organization_id' => $organizationId,
+                    ],
+                    [
+                        'default_quantity' => $rate,
+                        'notes' => null,
+                    ]
+                );
+            }
+
+            // Дополнительно сохраняем в JSON поле для обратной совместимости
             $material->consumption_rates = $validated['consumption_rates'];
             $material->save();
 

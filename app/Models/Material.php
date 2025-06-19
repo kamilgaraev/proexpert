@@ -29,6 +29,7 @@ class Material extends Model
         'accounting_data',
         'use_in_accounting_reports',
         'accounting_account',
+        'consumption_rates',
     ];
 
     protected $casts = [
@@ -37,6 +38,7 @@ class Material extends Model
         'is_active' => 'boolean',
         'accounting_data' => 'array',
         'use_in_accounting_reports' => 'boolean',
+        'consumption_rates' => 'array',
     ];
 
     /**
