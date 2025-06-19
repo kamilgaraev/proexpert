@@ -180,6 +180,9 @@ Route::prefix('admin')->name('admin.')->group(function () {
         if (file_exists(__DIR__ . '/api/v1/admin/dashboard.php')) {
             require __DIR__ . '/api/v1/admin/dashboard.php';
         }
+        if (file_exists(__DIR__ . '/api/v1/admin/profile.php')) {
+            require __DIR__ . '/api/v1/admin/profile.php';
+        }
     });
 });
 

@@ -1,0 +1,260 @@
+openapi: 3.0.3
+info:
+  title: Admin Profile API
+  description: API для управления профилем администратора
+  version: 1.0.0
+
+servers:
+  - url: /api/v1/admin
+    description: Admin API Server
+
+paths:
+  /profile:
+    get:
+      tags:
+        - Profile
+      summary: Получить данные профиля
+      description: Возвращает информацию о текущем аутентифицированном администраторе
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Данные профиля успешно получены
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/User'
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    patch:
+      tags:
+        - Profile
+      summary: Обновить профиль
+      description: Обновляет данные профиля текущего администратора
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  maxLength: 255
+                  description: Имя пользователя
+                  example: "Иван Иванов"
+                email:
+                  type: string
+                  format: email
+                  maxLength: 255
+                  description: Email адрес
+                  example: "admin@example.com"
+                phone:
+                  type: string
+                  maxLength: 20
+                  nullable: true
+                  description: Номер телефона
+                  example: "+7 900 123-45-67"
+                password:
+                  type: string
+                  minLength: 8
+                  description: Новый пароль
+                  example: "newpassword123"
+                password_confirmation:
+                  type: string
+                  description: Подтверждение нового пароля
+                  example: "newpassword123"
+                avatar:
+                  type: string
+                  format: binary
+                  description: Файл аватара (JPEG, PNG, JPG, GIF, макс. 2MB)
+                remove_avatar:
+                  type: boolean
+                  description: Удалить текущий аватар
+                  example: false
+      responses:
+        '200':
+          description: Профиль успешно обновлен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Профиль успешно обновлен."
+                  data:
+                    $ref: '#/components/schemas/User'
+        '400':
+          description: Ошибка валидации
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Profile
+      summary: Обновить профиль (PUT)
+      description: Альтернативный метод для обновления профиля
+      security:
+        - BearerAuth: []
+      requestBody:
+        $ref: '#/paths/~1profile/patch/requestBody'
+      responses:
+        $ref: '#/paths/~1profile/patch/responses'
+
+  /profile-settings:
+    get:
+      tags:
+        - Profile
+      summary: Получить данные профиля (альтернативный путь)
+      description: Альтернативный эндпоинт для получения данных профиля
+      security:
+        - BearerAuth: []
+      responses:
+        $ref: '#/paths/~1profile/get/responses'
+
+    patch:
+      tags:
+        - Profile
+      summary: Обновить профиль (альтернативный путь)
+      description: Альтернативный эндпоинт для обновления профиля
+      security:
+        - BearerAuth: []
+      requestBody:
+        $ref: '#/paths/~1profile/patch/requestBody'
+      responses:
+        $ref: '#/paths/~1profile/patch/responses'
+
+    put:
+      tags:
+        - Profile
+      summary: Обновить профиль PUT (альтернативный путь)
+      description: Альтернативный эндпоинт для обновления профиля методом PUT
+      security:
+        - BearerAuth: []
+      requestBody:
+        $ref: '#/paths/~1profile/patch/requestBody'
+      responses:
+        $ref: '#/paths/~1profile/patch/responses'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID пользователя
+          example: 1
+        name:
+          type: string
+          description: Имя пользователя
+          example: "Иван Иванов"
+        email:
+          type: string
+          format: email
+          description: Email адрес
+          example: "admin@example.com"
+        phone:
+          type: string
+          nullable: true
+          description: Номер телефона
+          example: "+7 900 123-45-67"
+        avatar_url:
+          type: string
+          nullable: true
+          description: URL аватара
+          example: "https://example.com/storage/avatars/user_1.jpg"
+        email_verified_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Дата верификации email
+          example: "2024-01-15T10:30:00Z"
+        current_organization_id:
+          type: integer
+          nullable: true
+          description: ID текущей организации
+          example: 1
+        created_at:
+          type: string
+          format: date-time
+          description: Дата создания
+          example: "2024-01-01T00:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: Дата последнего обновления
+          example: "2024-01-15T10:30:00Z"
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          description: Сообщение об ошибке
+          example: "Ошибка при получении данных профиля."
+
+    ValidationErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "The given data was invalid."
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            email: ["Данный email уже используется"]
+            password: ["Пароль должен содержать минимум 8 символов"] 
