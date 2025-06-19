@@ -286,16 +286,26 @@ class MaterialController extends Controller
 
             // Обновляем связи в таблице work_type_materials
             foreach ($validated['consumption_rates'] as $workTypeId => $rate) {
-                $material->workTypes()->updateOrCreate(
-                    [
-                        'work_type_id' => $workTypeId,
-                        'organization_id' => $organizationId,
-                    ],
-                    [
+                // Сначала пытаемся найти существующую запись
+                $existingPivot = $material->workTypes()
+                    ->wherePivot('work_type_id', $workTypeId)
+                    ->wherePivot('organization_id', $organizationId)
+                    ->first();
+                
+                if ($existingPivot) {
+                    // Обновляем существующую запись
+                    $material->workTypes()->updateExistingPivot($workTypeId, [
                         'default_quantity' => $rate,
                         'notes' => null,
-                    ]
-                );
+                    ]);
+                } else {
+                    // Создаем новую запись
+                    $material->workTypes()->attach($workTypeId, [
+                        'organization_id' => $organizationId,
+                        'default_quantity' => $rate,
+                        'notes' => null,
+                    ]);
+                }
             }
 
             // Дополнительно сохраняем в JSON поле для обратной совместимости
