@@ -19,10 +19,28 @@ class MaterialAnalyticsController extends Controller
         $this->middleware('can:access-admin-panel');
     }
 
+    private function getOrganizationId(Request $request): int
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        if (!$organizationId) {
+            $user = $request->user();
+            if ($user && $user->current_organization_id) {
+                $organizationId = $user->current_organization_id;
+            }
+        }
+        
+        if (!$organizationId) {
+            throw new \Exception('Контекст организации не определен');
+        }
+        
+        return (int) $organizationId;
+    }
+
     public function summary(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->get('organization_id');
+            $organizationId = $this->getOrganizationId($request);
             $dateFrom = $request->get('date_from');
             $dateTo = $request->get('date_to');
 
@@ -39,7 +57,7 @@ class MaterialAnalyticsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Ошибка получения сводки по материалам: ' . $e->getMessage(), [
-                'organization_id' => $request->get('organization_id'),
+                'user_id' => $request->user()?->id,
                 'date_from' => $request->get('date_from'),
                 'date_to' => $request->get('date_to'),
                 'trace' => $e->getTraceAsString()
@@ -55,7 +73,7 @@ class MaterialAnalyticsController extends Controller
     public function usageByProjects(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->get('organization_id');
+            $organizationId = $this->getOrganizationId($request);
             $projectIds = $request->get('project_ids', []);
             $dateFrom = $request->get('date_from');
             $dateTo = $request->get('date_to');
@@ -78,7 +96,7 @@ class MaterialAnalyticsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Ошибка получения использования материалов по проектам: ' . $e->getMessage(), [
-                'organization_id' => $request->get('organization_id'),
+                'user_id' => $request->user()?->id,
                 'project_ids' => $request->get('project_ids'),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -93,7 +111,7 @@ class MaterialAnalyticsController extends Controller
     public function usageBySuppliers(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->get('organization_id');
+            $organizationId = $this->getOrganizationId($request);
             $supplierIds = $request->get('supplier_ids', []);
             $dateFrom = $request->get('date_from');
             $dateTo = $request->get('date_to');
@@ -116,7 +134,7 @@ class MaterialAnalyticsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Ошибка получения использования материалов по поставщикам: ' . $e->getMessage(), [
-                'organization_id' => $request->get('organization_id'),
+                'user_id' => $request->user()?->id,
                 'supplier_ids' => $request->get('supplier_ids'),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -131,7 +149,7 @@ class MaterialAnalyticsController extends Controller
     public function lowStock(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->get('organization_id');
+            $organizationId = $this->getOrganizationId($request);
             $threshold = $request->get('threshold', 10);
 
             $materials = $this->materialRepository->getMaterialsWithLowStock(
@@ -146,7 +164,7 @@ class MaterialAnalyticsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Ошибка получения материалов с низким остатком: ' . $e->getMessage(), [
-                'organization_id' => $request->get('organization_id'),
+                'user_id' => $request->user()?->id,
                 'threshold' => $request->get('threshold'),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -161,7 +179,7 @@ class MaterialAnalyticsController extends Controller
     public function mostUsed(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->get('organization_id');
+            $organizationId = $this->getOrganizationId($request);
             $period = $request->get('period', 30);
             $limit = $request->get('limit', 10);
 
@@ -178,7 +196,7 @@ class MaterialAnalyticsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Ошибка получения наиболее используемых материалов: ' . $e->getMessage(), [
-                'organization_id' => $request->get('organization_id'),
+                'user_id' => $request->user()?->id,
                 'period' => $request->get('period'),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -193,7 +211,7 @@ class MaterialAnalyticsController extends Controller
     public function costHistory(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->get('organization_id');
+            $organizationId = $this->getOrganizationId($request);
             $materialId = $request->get('material_id');
             $dateFrom = $request->get('date_from');
             $dateTo = $request->get('date_to');
@@ -219,7 +237,7 @@ class MaterialAnalyticsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Ошибка получения истории стоимости материала: ' . $e->getMessage(), [
-                'organization_id' => $request->get('organization_id'),
+                'user_id' => $request->user()?->id,
                 'material_id' => $request->get('material_id'),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -234,7 +252,7 @@ class MaterialAnalyticsController extends Controller
     public function movementReport(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->get('organization_id');
+            $organizationId = $this->getOrganizationId($request);
             $filters = [
                 'date_from' => $request->get('date_from'),
                 'date_to' => $request->get('date_to'),
@@ -259,7 +277,7 @@ class MaterialAnalyticsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Ошибка получения отчета по движению материалов: ' . $e->getMessage(), [
-                'organization_id' => $request->get('organization_id'),
+                'user_id' => $request->user()?->id,
                 'filters' => $request->all(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -274,7 +292,7 @@ class MaterialAnalyticsController extends Controller
     public function inventoryReport(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->get('organization_id');
+            $organizationId = $this->getOrganizationId($request);
             $filters = [
                 'category_ids' => $request->get('category_ids', []),
                 'supplier_ids' => $request->get('supplier_ids', []),
@@ -300,7 +318,7 @@ class MaterialAnalyticsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Ошибка получения инвентаризационного отчета: ' . $e->getMessage(), [
-                'organization_id' => $request->get('organization_id'),
+                'user_id' => $request->user()?->id,
                 'filters' => $request->all(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -315,7 +333,7 @@ class MaterialAnalyticsController extends Controller
     public function costDynamicsReport(Request $request): JsonResponse
     {
         try {
-            $organizationId = $request->get('organization_id');
+            $organizationId = $this->getOrganizationId($request);
             $filters = [
                 'material_ids' => $request->get('material_ids', []),
                 'date_from' => $request->get('date_from'),
@@ -336,7 +354,7 @@ class MaterialAnalyticsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Ошибка получения отчета по динамике стоимости: ' . $e->getMessage(), [
-                'organization_id' => $request->get('organization_id'),
+                'user_id' => $request->user()?->id,
                 'filters' => $request->all(),
                 'trace' => $e->getTraceAsString()
             ]);
