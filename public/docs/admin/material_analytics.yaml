@@ -1,0 +1,542 @@
+openapi: 3.0.0
+info:
+  title: Material Analytics API
+  description: API для аналитики материалов
+  version: 1.0.0
+
+paths:
+  /api/v1/admin/materials/analytics/summary:
+    get:
+      summary: Сводка по использованию материалов
+      description: Получить общую сводку по использованию материалов в организации
+      tags:
+        - Material Analytics
+      parameters:
+        - name: organization_id
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: ID организации
+        - name: date_from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Дата начала периода (YYYY-MM-DD)
+        - name: date_to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Дата окончания периода (YYYY-MM-DD)
+      responses:
+        '200':
+          description: Сводка по материалам получена успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      unique_materials_count:
+                        type: integer
+                      total_operations:
+                        type: integer
+                      total_received:
+                        type: number
+                      total_used:
+                        type: number
+                      current_balance:
+                        type: number
+                      total_received_value:
+                        type: number
+                      total_used_value:
+                        type: number
+                      date_from:
+                        type: string
+                        format: date
+                      date_to:
+                        type: string
+                        format: date
+
+  /api/v1/admin/materials/analytics/usage-by-projects:
+    get:
+      summary: Использование материалов по проектам
+      description: Получить данные об использовании материалов по проектам
+      tags:
+        - Material Analytics
+      parameters:
+        - name: organization_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: project_ids
+          in: query
+          required: false
+          schema:
+            type: string
+          description: ID проектов через запятую
+        - name: date_from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Данные получены успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        project_id:
+                          type: integer
+                        project_name:
+                          type: string
+                        material_id:
+                          type: integer
+                        material_name:
+                          type: string
+                        unit:
+                          type: string
+                        total_received:
+                          type: number
+                        total_used:
+                          type: number
+                        operations_count:
+                          type: integer
+                        last_operation_date:
+                          type: string
+                          format: date-time
+
+  /api/v1/admin/materials/analytics/usage-by-suppliers:
+    get:
+      summary: Использование материалов по поставщикам
+      description: Получить данные об использовании материалов по поставщикам
+      tags:
+        - Material Analytics
+      parameters:
+        - name: organization_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: supplier_ids
+          in: query
+          required: false
+          schema:
+            type: string
+          description: ID поставщиков через запятую
+        - name: date_from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Данные получены успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        supplier_id:
+                          type: integer
+                        supplier_name:
+                          type: string
+                        material_id:
+                          type: integer
+                        material_name:
+                          type: string
+                        unit:
+                          type: string
+                        total_received:
+                          type: number
+                        total_used:
+                          type: number
+                        average_price:
+                          type: number
+                        operations_count:
+                          type: integer
+
+  /api/v1/admin/materials/analytics/low-stock:
+    get:
+      summary: Материалы с низким остатком
+      description: Получить список материалов с низким остатком
+      tags:
+        - Material Analytics
+      parameters:
+        - name: organization_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: threshold
+          in: query
+          required: false
+          schema:
+            type: number
+            default: 10
+          description: Пороговое значение для низкого остатка
+      responses:
+        '200':
+          description: Список материалов получен успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        material_id:
+                          type: integer
+                        material_name:
+                          type: string
+                        current_balance:
+                          type: number
+                        unit:
+                          type: string
+                        category_name:
+                          type: string
+                        last_receipt_date:
+                          type: string
+                          format: date
+
+  /api/v1/admin/materials/analytics/most-used:
+    get:
+      summary: Наиболее используемые материалы
+      description: Получить список наиболее используемых материалов
+      tags:
+        - Material Analytics
+      parameters:
+        - name: organization_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 30
+          description: Период в днях для анализа
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+          description: Количество материалов в результате
+      responses:
+        '200':
+          description: Список материалов получен успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        material_id:
+                          type: integer
+                        material_name:
+                          type: string
+                        total_used:
+                          type: number
+                        usage_frequency:
+                          type: integer
+                        unit:
+                          type: string
+                        average_daily_usage:
+                          type: number
+
+  /api/v1/admin/materials/analytics/cost-history:
+    get:
+      summary: История стоимости материала
+      description: Получить историю изменения стоимости конкретного материала
+      tags:
+        - Material Analytics
+      parameters:
+        - name: organization_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: material_id
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: ID материала
+        - name: date_from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: История стоимости получена успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        date:
+                          type: string
+                          format: date
+                        unit_price:
+                          type: number
+                        operation_type:
+                          type: string
+                        supplier_name:
+                          type: string
+                        quantity:
+                          type: number
+
+  /api/v1/admin/materials/analytics/movement-report:
+    get:
+      summary: Отчет по движению материалов
+      description: Получить детальный отчет по движению материалов
+      tags:
+        - Material Analytics
+      parameters:
+        - name: organization_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: date_from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: material_ids
+          in: query
+          required: false
+          schema:
+            type: string
+          description: ID материалов через запятую
+        - name: project_ids
+          in: query
+          required: false
+          schema:
+            type: string
+          description: ID проектов через запятую
+      responses:
+        '200':
+          description: Отчет получен успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      movements:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            material_id:
+                              type: integer
+                            material_name:
+                              type: string
+                            unit:
+                              type: string
+                            total_received:
+                              type: number
+                            total_used:
+                              type: number
+                            receipt_operations:
+                              type: integer
+                            writeoff_operations:
+                              type: integer
+                            first_operation:
+                              type: string
+                              format: date
+                            last_operation:
+                              type: string
+                              format: date
+                      summary:
+                        type: object
+                        properties:
+                          total_materials:
+                            type: integer
+                          total_received:
+                            type: number
+                          total_used:
+                            type: number
+                          net_movement:
+                            type: number
+
+  /api/v1/admin/materials/analytics/inventory-report:
+    get:
+      summary: Инвентаризационный отчет
+      description: Получить инвентаризационный отчет по материалам
+      tags:
+        - Material Analytics
+      parameters:
+        - name: organization_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: category_ids
+          in: query
+          required: false
+          schema:
+            type: string
+          description: ID категорий через запятую
+        - name: supplier_ids
+          in: query
+          required: false
+          schema:
+            type: string
+          description: ID поставщиков через запятую
+        - name: include_zero_balance
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: Включать материалы с нулевым остатком
+        - name: only_low_stock
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: Только материалы с низким остатком
+        - name: stock_threshold
+          in: query
+          required: false
+          schema:
+            type: number
+            default: 10
+          description: Пороговое значение для низкого остатка
+      responses:
+        '200':
+          description: Отчет получен успешно
+
+  /api/v1/admin/materials/analytics/cost-dynamics-report:
+    get:
+      summary: Отчет по динамике стоимости
+      description: Получить отчет по динамике изменения стоимости материалов
+      tags:
+        - Material Analytics
+      parameters:
+        - name: organization_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: material_ids
+          in: query
+          required: false
+          schema:
+            type: string
+          description: ID материалов через запятую
+        - name: date_from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: group_by
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [day, week, month, quarter, year]
+            default: month
+          description: Группировка данных по периодам
+      responses:
+        '200':
+          description: Отчет получен успешно
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - bearerAuth: [] 
