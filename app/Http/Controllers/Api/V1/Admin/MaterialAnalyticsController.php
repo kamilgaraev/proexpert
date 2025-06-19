@@ -183,10 +183,14 @@ class MaterialAnalyticsController extends Controller
             $period = $request->get('period', 30);
             $limit = $request->get('limit', 10);
 
+            $dateFrom = $period ? now()->subDays($period)->format('Y-m-d') : null;
+            $dateTo = now()->format('Y-m-d');
+
             $materials = $this->materialRepository->getMostUsedMaterials(
                 $organizationId,
-                (int) $period,
-                (int) $limit
+                (int) $limit,
+                $dateFrom,
+                $dateTo
             );
 
             return response()->json([

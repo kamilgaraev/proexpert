@@ -80,7 +80,7 @@ interface MaterialRepositoryInterface extends BaseRepositoryInterface
 
     public function getAllMaterialNames(int $organizationId): Collection;
 
-    public function getMaterialCostHistory(int $materialId, int $limit = 10): Collection;
+    public function getMaterialCostHistory(int $organizationId, int $materialId, ?string $dateFrom = null, ?string $dateTo = null): Collection;
 
     public function getAverageMaterialCost(int $materialId): ?float;
 

@@ -168,8 +168,8 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
                 'm.id as material_id',
                 'm.name as material_name',
                 'mu.short_name as unit',
-                DB::raw('SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END) as total_received'),
-                DB::raw('SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END) as total_used'),
+                DB::raw('SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END) as total_received'),
+                DB::raw('SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END) as total_used'),
                 DB::raw('COUNT(*) as operations_count'),
                 DB::raw('MAX(mul.usage_date) as last_operation_date')
             ])
@@ -203,8 +203,8 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
                 'm.id as material_id',
                 'm.name as material_name',
                 'mu.short_name as unit',
-                DB::raw('SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END) as total_received'),
-                DB::raw('SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END) as total_used'),
+                DB::raw('SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END) as total_received'),
+                DB::raw('SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END) as total_used'),
                 DB::raw('AVG(mul.unit_price) as average_price'),
                 DB::raw('COUNT(*) as operations_count')
             ])
@@ -242,10 +242,10 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
         $summary = $query->select([
             DB::raw('COUNT(DISTINCT m.id) as unique_materials_count'),
             DB::raw('COUNT(*) as total_operations'),
-            DB::raw('SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END) as total_received'),
-            DB::raw('SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END) as total_used'),
-            DB::raw('SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.total_price ELSE 0 END) as total_received_value'),
-            DB::raw('SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.total_price ELSE 0 END) as total_used_value')
+            DB::raw('SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END) as total_received'),
+            DB::raw('SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END) as total_used'),
+            DB::raw('SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.total_price ELSE 0 END) as total_received_value'),
+            DB::raw('SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.total_price ELSE 0 END) as total_used_value')
         ])->first();
 
         return collect([
@@ -295,13 +295,13 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
             ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
             ->where('m.organization_id', $organizationId)
             ->groupBy(['m.id', 'm.name', 'm.code', 'mu.short_name'])
-            ->havingRaw('(COALESCE(SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END), 0)) <= ?', [$threshold])
+            ->havingRaw('(COALESCE(SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END), 0)) <= ?', [$threshold])
             ->select([
                 'm.id',
                 'm.name',
                 'm.code',
                 'mu.short_name as unit',
-                DB::raw('COALESCE(SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END), 0) as current_stock'),
+                DB::raw('COALESCE(SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END), 0) as current_stock'),
                 DB::raw('MAX(mul.usage_date) as last_operation_date')
             ])
             ->get());
@@ -444,13 +444,23 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
             ->pluck('name', 'id');
     }
 
-    public function getMaterialCostHistory(int $materialId, int $limit = 10): Collection
+    public function getMaterialCostHistory(int $organizationId, int $materialId, ?string $dateFrom = null, ?string $dateTo = null): Collection
     {
-        return collect(DB::table('material_usage_logs as mul')
+        $query = DB::table('material_usage_logs as mul')
+            ->where('mul.organization_id', $organizationId)
             ->where('mul.material_id', $materialId)
-            ->whereNotNull('mul.unit_price')
+            ->whereNotNull('mul.unit_price');
+
+        if ($dateFrom) {
+            $query->where('mul.usage_date', '>=', $dateFrom);
+        }
+
+        if ($dateTo) {
+            $query->where('mul.usage_date', '<=', $dateTo);
+        }
+
+        return collect($query
             ->orderBy('mul.usage_date', 'desc')
-            ->limit($limit)
             ->select([
                 'mul.usage_date',
                 'mul.unit_price',
@@ -495,10 +505,10 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
                 'm.id as material_id',
                 'm.name as material_name',
                 'mu.short_name as unit',
-                DB::raw('SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END) as total_received'),
-                DB::raw('SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END) as total_used'),
-                DB::raw('COUNT(CASE WHEN mul.operation_type = "receipt" THEN 1 END) as receipt_operations'),
-                DB::raw('COUNT(CASE WHEN mul.operation_type = "write_off" THEN 1 END) as writeoff_operations'),
+                DB::raw('SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END) as total_received'),
+                DB::raw('SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END) as total_used'),
+                DB::raw('COUNT(CASE WHEN mul.operation_type = \'receipt\' THEN 1 END) as receipt_operations'),
+                DB::raw('COUNT(CASE WHEN mul.operation_type = \'write_off\' THEN 1 END) as writeoff_operations'),
                 DB::raw('MIN(mul.usage_date) as first_operation'),
                 DB::raw('MAX(mul.usage_date) as last_operation')
             ])
@@ -536,10 +546,10 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
                 'm.code as material_code',
                 'mu.short_name as unit',
                 'cc.name as category_name',
-                DB::raw('COALESCE(SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END), 0) as total_received'),
-                DB::raw('COALESCE(SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END), 0) as total_used'),
-                DB::raw('COALESCE(SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END), 0) as current_stock'),
-                DB::raw('AVG(CASE WHEN mul.operation_type = "receipt" THEN mul.unit_price END) as average_cost'),
+                DB::raw('COALESCE(SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END), 0) as total_received'),
+                DB::raw('COALESCE(SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END), 0) as total_used'),
+                DB::raw('COALESCE(SUM(CASE WHEN mul.operation_type = \'receipt\' THEN mul.quantity ELSE 0 END), 0) - COALESCE(SUM(CASE WHEN mul.operation_type = \'write_off\' THEN mul.quantity ELSE 0 END), 0) as current_stock'),
+                DB::raw('AVG(CASE WHEN mul.operation_type = \'receipt\' THEN mul.unit_price END) as average_cost'),
                 DB::raw('MAX(mul.usage_date) as last_movement_date')
             ])
             ->get();
