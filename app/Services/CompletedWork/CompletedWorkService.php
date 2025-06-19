@@ -4,11 +4,13 @@ namespace App\Services\CompletedWork;
 
 use App\Models\CompletedWork;
 use App\DTOs\CompletedWork\CompletedWorkDTO;
+use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
 use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
-use App\Repositories\Interfaces\CompletedWorkRepositoryInterface; // Предполагаем наличие репозитория
+use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
 use App\Exceptions\BusinessLogicException;
-use Illuminate\Support\Facades\Auth; // Для получения organization_id в create
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 class CompletedWorkService
 {
@@ -36,49 +38,99 @@ class CompletedWorkService
 
     public function create(CompletedWorkDTO $dto): CompletedWork
     {
-        // Предполагаем, что DTO уже содержит organization_id, установленный в FormRequest
-        // или мы можем установить его здесь, если это не так.
-        // $data = $dto->toArray();
-        // if (!isset($data['organization_id'])) {
-        //     $data['organization_id'] = Auth::user()->current_organization_id; 
-        // }
-        // $createdModel = $this->completedWorkRepository->create($data);
+        return DB::transaction(function () use ($dto) {
+            $data = $dto->toArray();
+            unset($data['materials']);
+            
+            $createdModel = $this->completedWorkRepository->create($data);
 
-        $createdModel = $this->completedWorkRepository->create($dto->toArray());
+            if (!$createdModel) {
+                throw new BusinessLogicException('Не удалось создать запись о выполненной работе.', 500);
+            }
 
-        if (!$createdModel) {
-            // Эта проверка избыточна, если create репозитория всегда возвращает Model или кидает Exception
-            // В BaseRepository create возвращает ?Model, так что проверка имеет смысл
-            throw new BusinessLogicException('Не удалось создать запись о выполненной работе.', 500);
-        }
-        return $createdModel; // BaseRepository->create возвращает ?Model, нужно приведение типа
+            if ($dto->materials) {
+                $this->syncMaterials($createdModel, $dto->materials);
+            }
+
+            return $createdModel->fresh(['materials.measurementUnit']);
+        });
     }
 
     public function update(int $id, CompletedWorkDTO $dto): CompletedWork
     {
-        // Убедимся, что работа существует и принадлежит организации из DTO (или текущей)
-        $existingWork = $this->getById($id, $dto->organization_id);
+        return DB::transaction(function () use ($id, $dto) {
+            $existingWork = $this->getById($id, $dto->organization_id);
 
-        $success = $this->completedWorkRepository->update($id, $dto->toArray());
-        if (!$success) {
-            throw new BusinessLogicException('Не удалось обновить запись о выполненной работе.', 500);
-        }
-        return $existingWork->refresh(); // Возвращаем обновленную модель
+            $data = $dto->toArray();
+            unset($data['materials']);
+
+            $success = $this->completedWorkRepository->update($id, $data);
+            if (!$success) {
+                throw new BusinessLogicException('Не удалось обновить запись о выполненной работе.', 500);
+            }
+
+            $updatedWork = $existingWork->refresh();
+
+            if ($dto->materials !== null) {
+                $this->syncMaterials($updatedWork, $dto->materials);
+            }
+
+            return $updatedWork->fresh(['materials.measurementUnit']);
+        });
     }
 
     public function delete(int $id, int $organizationId): bool
     {
-        // Проверяем существование и принадлежность перед удалением
         $this->getById($id, $organizationId);
         
         $success = $this->completedWorkRepository->delete($id);
         if (!$success) {
-            // Это может произойти, если запись была удалена между getById и delete, 
-            // или если delete в репозитории вернул false по другой причине.
-            // BaseRepository->delete() возвращает $this->find($modelId)?->delete() ?? false;
-            // То есть, если find не нашел, вернет false. getById уже это проверил.
             throw new BusinessLogicException('Не удалось удалить запись о выполненной работе.', 500);
         }
         return true;
+    }
+
+    protected function syncMaterials(CompletedWork $completedWork, array $materials): void
+    {
+        $syncData = [];
+        
+        foreach ($materials as $materialData) {
+            if ($materialData instanceof CompletedWorkMaterialDTO) {
+                $syncData[$materialData->material_id] = $materialData->toArray();
+            } elseif (is_array($materialData)) {
+                $syncData[$materialData['material_id']] = $materialData;
+            }
+        }
+
+        $completedWork->materials()->sync($syncData);
+    }
+
+    public function syncCompletedWorkMaterials(int $completedWorkId, array $materials, int $organizationId): CompletedWork
+    {
+        $completedWork = $this->getById($completedWorkId, $organizationId);
+        
+        $this->syncMaterials($completedWork, $materials);
+        
+        return $completedWork->fresh(['materials.measurementUnit']);
+    }
+
+    public function getWorkTypeMaterialDefaults(int $workTypeId, int $organizationId): Collection
+    {
+        return DB::table('work_type_materials as wtm')
+            ->join('materials as m', 'wtm.material_id', '=', 'm.id')
+            ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
+            ->where('wtm.work_type_id', $workTypeId)
+            ->where('wtm.organization_id', $organizationId)
+            ->whereNull('wtm.deleted_at')
+            ->whereNull('m.deleted_at')
+            ->select([
+                'm.id as material_id',
+                'm.name as material_name',
+                'm.default_price',
+                'wtm.default_quantity as quantity',
+                'wtm.notes',
+                'mu.short_name as measurement_unit'
+            ])
+            ->get();
     }
 } 

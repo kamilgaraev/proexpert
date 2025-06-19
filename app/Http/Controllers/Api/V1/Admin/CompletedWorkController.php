@@ -6,14 +6,16 @@ use App\Http\Controllers\Controller;
 use App\Services\CompletedWork\CompletedWorkService;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\StoreCompletedWorkRequest;
 use App\Http\Requests\Api\V1\Admin\CompletedWork\UpdateCompletedWorkRequest;
+use App\Http\Requests\Api\V1\Admin\CompletedWork\SyncCompletedWorkMaterialsRequest;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkResource;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkCollection;
-use App\Models\CompletedWork; // Для route model binding
-use Illuminate\Http\Request; // Для Request в index
+use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkMaterialResource;
+use App\Models\CompletedWork;
+use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
 use App\Exceptions\BusinessLogicException;
-use Illuminate\Support\Facades\Auth; // Для получения current_organization_id
+use Illuminate\Support\Facades\Auth;
 
 class CompletedWorkController extends Controller
 {
@@ -36,7 +38,7 @@ class CompletedWorkController extends Controller
         $sortDirection = $request->query('sortDirection', 'desc');
         $perPage = $request->query('perPage', 15);
 
-        $completedWorks = $this->completedWorkService->getAll($filters, $perPage, $sortBy, $sortDirection, ['project', 'contract', 'workType', 'user']);
+        $completedWorks = $this->completedWorkService->getAll($filters, $perPage, $sortBy, $sortDirection, ['project', 'contract', 'workType', 'user', 'materials.measurementUnit']);
         return new CompletedWorkCollection($completedWorks);
     }
 
@@ -49,7 +51,7 @@ class CompletedWorkController extends Controller
                 [
                     'success' => true, 
                     'message' => 'Запись о выполненной работе успешно создана.',
-                    'data' => new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user']))
+                    'data' => new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'materials.measurementUnit']))
                 ],
                 Response::HTTP_CREATED
             );
@@ -64,7 +66,7 @@ class CompletedWorkController extends Controller
         if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
             abort(404, 'Запись о выполненной работе не найдена.');
         }
-        return new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'files']));
+        return new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'materials.measurementUnit', 'files']));
     }
 
     public function update(UpdateCompletedWorkRequest $request, CompletedWork $completedWork): JsonResponse
@@ -81,7 +83,7 @@ class CompletedWorkController extends Controller
                 [
                     'success' => true, 
                     'message' => 'Запись о выполненной работе успешно обновлена.',
-                    'data' => new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user']))
+                    'data' => new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user', 'materials.measurementUnit']))
                 ]
             );
         } catch (BusinessLogicException $e) {
@@ -98,6 +100,51 @@ class CompletedWorkController extends Controller
         try {
             $this->completedWorkService->delete($completedWork->id, $completedWork->organization_id);
             return response()->json(null, Response::HTTP_NO_CONTENT);
+        } catch (BusinessLogicException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function syncMaterials(SyncCompletedWorkMaterialsRequest $request, CompletedWork $completedWork): JsonResponse
+    {
+        if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
+            abort(403, 'Это действие не авторизовано.');
+        }
+
+        try {
+            $materials = $request->getMaterialsArray();
+            $updatedWork = $this->completedWorkService->syncCompletedWorkMaterials(
+                $completedWork->id, 
+                $materials, 
+                $completedWork->organization_id
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Материалы выполненной работы успешно синхронизированы.',
+                'data' => new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user', 'materials.measurementUnit']))
+            ]);
+        } catch (BusinessLogicException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function getWorkTypeMaterialDefaults(Request $request): JsonResponse
+    {
+        $request->validate([
+            'work_type_id' => 'required|integer|exists:work_types,id'
+        ]);
+
+        $organizationId = Auth::user()->current_organization_id;
+        $workTypeId = $request->input('work_type_id');
+
+        try {
+            $defaults = $this->completedWorkService->getWorkTypeMaterialDefaults($workTypeId, $organizationId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $defaults
+            ]);
         } catch (BusinessLogicException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);
         }

@@ -128,6 +128,17 @@ class Material extends Model
     }
 
     /**
+     * Выполненные работы, в которых использовался данный материал.
+     */
+    public function completedWorks(): BelongsToMany
+    {
+        return $this->belongsToMany(CompletedWork::class, 'completed_work_materials')
+            ->using(CompletedWorkMaterial::class)
+            ->withPivot(['quantity', 'unit_price', 'total_amount', 'notes'])
+            ->withTimestamps();
+    }
+
+    /**
      * Получить нормы списания по видам работ для данного материала.
      * Возвращает массив: [work_type_id, work_type_name, rate, notes]
      */

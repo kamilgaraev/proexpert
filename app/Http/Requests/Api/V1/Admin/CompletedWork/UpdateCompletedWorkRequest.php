@@ -5,8 +5,10 @@ namespace App\Http\Requests\Api\V1\Admin\CompletedWork;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
 use App\DTOs\CompletedWork\CompletedWorkDTO;
+use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
 use Carbon\Carbon;
-use App\Models\Contract; // Для проверки принадлежности контракта организации и проекту
+use App\Models\Contract;
+use App\Models\Material;
 use Illuminate\Validation\Rule;
 
 class UpdateCompletedWorkRequest extends FormRequest
@@ -46,17 +48,37 @@ class UpdateCompletedWorkRequest extends FormRequest
             'notes' => 'sometimes|nullable|string|max:65535',
             'status' => 'sometimes|required|string|in:draft,confirmed,cancelled',
             'additional_info' => 'sometimes|nullable|array',
+            'materials' => 'sometimes|nullable|array',
+            'materials.*.material_id' => [
+                'required_with:materials',
+                'integer',
+                Rule::exists('materials', 'id')->where('organization_id', $organizationId)
+            ],
+            'materials.*.quantity' => 'required_with:materials|numeric|min:0.0001',
+            'materials.*.unit_price' => 'nullable|numeric|min:0',
+            'materials.*.total_amount' => 'nullable|numeric|min:0',
+            'materials.*.notes' => 'nullable|string|max:1000',
         ];
     }
 
     public function toDto(): CompletedWorkDTO
     {
         $validatedData = $this->validated();
-        $completedWork = $this->route('completed_work'); // Получаем модель из роута
+        $completedWork = $this->route('completed_work');
+
+        $materials = null;
+        if (array_key_exists('materials', $validatedData)) {
+            $materials = isset($validatedData['materials']) 
+                ? array_map(
+                    fn(array $material) => CompletedWorkMaterialDTO::fromArray($material),
+                    $validatedData['materials']
+                )
+                : [];
+        }
 
         return new CompletedWorkDTO(
             id: $completedWork->id,
-            organization_id: $completedWork->organization_id, // Не меняется при обновлении
+            organization_id: $completedWork->organization_id,
             project_id: $validatedData['project_id'] ?? $completedWork->project_id,
             contract_id: array_key_exists('contract_id', $validatedData) ? ($validatedData['contract_id'] ?? null) : $completedWork->contract_id,
             work_type_id: $validatedData['work_type_id'] ?? $completedWork->work_type_id,
@@ -67,7 +89,8 @@ class UpdateCompletedWorkRequest extends FormRequest
             completion_date: isset($validatedData['completion_date']) ? Carbon::parse($validatedData['completion_date']) : $completedWork->completion_date,
             notes: $validatedData['notes'] ?? $completedWork->notes,
             status: $validatedData['status'] ?? $completedWork->status,
-            additional_info: $validatedData['additional_info'] ?? $completedWork->additional_info
+            additional_info: $validatedData['additional_info'] ?? $completedWork->additional_info,
+            materials: $materials
         );
     }
 } 

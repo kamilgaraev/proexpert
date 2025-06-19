@@ -5,9 +5,11 @@ namespace App\Http\Requests\Api\V1\Admin\CompletedWork;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
 use App\DTOs\CompletedWork\CompletedWorkDTO;
+use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
 use Carbon\Carbon;
-use App\Models\Project; // Для проверки принадлежности контракта проекту
-use App\Models\Contract; // Для проверки принадлежности контракта организации
+use App\Models\Project;
+use App\Models\Contract;
+use App\Models\Material;
 use Illuminate\Validation\Rule;
 
 class StoreCompletedWorkRequest extends FormRequest
@@ -44,16 +46,35 @@ class StoreCompletedWorkRequest extends FormRequest
             'total_amount' => 'nullable|numeric|min:0',
             'completion_date' => 'required|date_format:Y-m-d',
             'notes' => 'nullable|string|max:65535',
-            'status' => 'required|string|in:draft,confirmed,cancelled', // Пример статусов
+            'status' => 'required|string|in:draft,confirmed,cancelled',
             'additional_info' => 'nullable|array',
+            'materials' => 'nullable|array',
+            'materials.*.material_id' => [
+                'required_with:materials',
+                'integer',
+                Rule::exists('materials', 'id')->where('organization_id', $organizationId)
+            ],
+            'materials.*.quantity' => 'required_with:materials|numeric|min:0.0001',
+            'materials.*.unit_price' => 'nullable|numeric|min:0',
+            'materials.*.total_amount' => 'nullable|numeric|min:0',
+            'materials.*.notes' => 'nullable|string|max:1000',
         ];
     }
 
     public function toDto(): CompletedWorkDTO
     {
         $validatedData = $this->validated();
+        
+        $materials = null;
+        if (isset($validatedData['materials'])) {
+            $materials = array_map(
+                fn(array $material) => CompletedWorkMaterialDTO::fromArray($material),
+                $validatedData['materials']
+            );
+        }
+
         return new CompletedWorkDTO(
-            id: null, // Для StoreRequest ID всегда null
+            id: null,
             organization_id: $this->route('organization')?->id ?? Auth::user()->current_organization_id,
             project_id: $validatedData['project_id'],
             contract_id: $validatedData['contract_id'] ?? null,
@@ -65,7 +86,8 @@ class StoreCompletedWorkRequest extends FormRequest
             completion_date: Carbon::parse($validatedData['completion_date']),
             notes: $validatedData['notes'] ?? null,
             status: $validatedData['status'],
-            additional_info: $validatedData['additional_info'] ?? null
+            additional_info: $validatedData['additional_info'] ?? null,
+            materials: $materials
         );
     }
 } 

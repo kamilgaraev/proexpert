@@ -19,11 +19,27 @@ class CompletedWorkDTO
         public readonly Carbon|string $completion_date,
         public readonly ?string $notes,
         public readonly string $status,
-        public readonly ?array $additional_info
+        public readonly ?array $additional_info,
+        public readonly ?array $materials = null
     ) {}
 
     public static function fromModel(object $model): self
     {
+        $materials = null;
+        if ($model->relationLoaded('materials')) {
+            $materials = $model->materials->map(function ($material) {
+                return CompletedWorkMaterialDTO::fromArray([
+                    'material_id' => $material->id,
+                    'quantity' => $material->pivot->quantity,
+                    'unit_price' => $material->pivot->unit_price,
+                    'total_amount' => $material->pivot->total_amount,
+                    'notes' => $material->pivot->notes,
+                    'material_name' => $material->name,
+                    'measurement_unit' => $material->measurementUnit?->short_name,
+                ]);
+            })->toArray();
+        }
+
         return new self(
             id: $model->id,
             organization_id: $model->organization_id,
@@ -37,13 +53,14 @@ class CompletedWorkDTO
             completion_date: $model->completion_date instanceof Carbon ? $model->completion_date : Carbon::parse($model->completion_date),
             notes: $model->notes,
             status: $model->status,
-            additional_info: $model->additional_info
+            additional_info: $model->additional_info,
+            materials: $materials
         );
     }
 
     public function toArray(): array
     {
-        return [
+        $data = [
             'organization_id' => $this->organization_id,
             'project_id' => $this->project_id,
             'contract_id' => $this->contract_id,
@@ -57,5 +74,14 @@ class CompletedWorkDTO
             'status' => $this->status,
             'additional_info' => $this->additional_info,
         ];
+
+        if ($this->materials !== null) {
+            $data['materials'] = array_map(
+                fn($material) => $material instanceof CompletedWorkMaterialDTO ? $material->toArray() : $material,
+                $this->materials
+            );
+        }
+
+        return $data;
     }
 } 

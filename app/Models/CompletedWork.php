@@ -81,4 +81,15 @@ class CompletedWork extends Model
     {
         return $this->morphMany(File::class, 'fileable');
     }
+
+    /**
+     * Получить материалы, использованные в данной выполненной работе.
+     */
+    public function materials()
+    {
+        return $this->belongsToMany(Material::class, 'completed_work_materials')
+            ->using(CompletedWorkMaterial::class)
+            ->withPivot(['quantity', 'unit_price', 'total_amount', 'notes'])
+            ->withTimestamps();
+    }
 }
