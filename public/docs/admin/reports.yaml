@@ -314,6 +314,181 @@ paths:
         '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
         '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
 
+  /api/v1/admin/reports/official-material-usage:
+    get:
+      tags: [StandardReports]
+      summary: Официальный отчет об использовании материалов
+      description: Генерирует официальный отчет об использовании материалов, переданных Заказчиком, с расширенными возможностями фильтрации
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: project_id
+          in: query
+          required: true
+          description: ID проекта (обязательный параметр)
+          schema:
+            type: integer
+            format: int64
+        - name: date_from
+          in: query
+          required: true
+          description: Дата начала периода (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          required: true
+          description: Дата окончания периода (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: report_number
+          in: query
+          required: false
+          description: Номер отчета
+          schema:
+            type: integer
+            minimum: 1
+        - name: material_id
+          in: query
+          required: false
+          description: ID конкретного материала
+          schema:
+            type: integer
+            format: int64
+        - name: material_name
+          in: query
+          required: false
+          description: Поиск по названию материала (частичное совпадение)
+          schema:
+            type: string
+            maxLength: 255
+        - name: operation_type
+          in: query
+          required: false
+          description: Тип операции
+          schema:
+            type: string
+            enum: [receipt, write_off]
+        - name: supplier_id
+          in: query
+          required: false
+          description: ID поставщика
+          schema:
+            type: integer
+            format: int64
+        - name: document_number
+          in: query
+          required: false
+          description: Номер документа (частичное совпадение)
+          schema:
+            type: string
+            maxLength: 255
+        - name: work_type_id
+          in: query
+          required: false
+          description: ID вида работы
+          schema:
+            type: integer
+            format: int64
+        - name: work_description
+          in: query
+          required: false
+          description: Описание работы (частичное совпадение)
+          schema:
+            type: string
+            maxLength: 500
+        - name: user_id
+          in: query
+          required: false
+          description: ID пользователя/исполнителя
+          schema:
+            type: integer
+            format: int64
+        - name: foreman_id
+          in: query
+          required: false
+          description: ID прораба (альтернатива user_id)
+          schema:
+            type: integer
+            format: int64
+        - name: invoice_date_from
+          in: query
+          required: false
+          description: Дата накладной с (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: invoice_date_to
+          in: query
+          required: false
+          description: Дата накладной по (YYYY-MM-DD)
+          schema:
+            type: string
+            format: date
+        - name: min_quantity
+          in: query
+          required: false
+          description: Минимальное количество
+          schema:
+            type: number
+            minimum: 0
+        - name: max_quantity
+          in: query
+          required: false
+          description: Максимальное количество
+          schema:
+            type: number
+            minimum: 0
+        - name: min_price
+          in: query
+          required: false
+          description: Минимальная цена за единицу
+          schema:
+            type: number
+            minimum: 0
+        - name: max_price
+          in: query
+          required: false
+          description: Максимальная цена за единицу
+          schema:
+            type: number
+            minimum: 0
+        - name: has_photo
+          in: query
+          required: false
+          description: Есть ли фото
+          schema:
+            type: boolean
+        - name: format
+          in: query
+          required: false
+          description: Формат отчета
+          schema:
+            type: string
+            enum: [json, xlsx, csv]
+            default: json
+      responses:
+        '200':
+          description: Официальный отчет об использовании материалов. В зависимости от параметра format, может быть JSON или файл.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponseOfficialMaterialUsage'
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                type: string
+                format: binary
+            text/csv:
+              schema:
+                type: string
+                format: binary
+        '400': { $ref: 'common_components.yaml#/components/responses/BadRequest' }
+        '401': { $ref: 'common_components.yaml#/components/responses/Unauthorized' }
+        '403': { $ref: 'common_components.yaml#/components/responses/Forbidden' }
+        '500': { $ref: 'common_components.yaml#/components/responses/InternalError' }
+
   # Advance Account Reports
   /api/v1/admin/advance-reports/summary: # Путь исправлен
     get:
@@ -912,6 +1087,210 @@ components:
           type: string
           format: date-time
       required: [title, cutoff_date, overdue_days, users_with_overdue_balance, overdue_transactions, summary, generated_at]
+
+    ReportResponseOfficialMaterialUsage:
+      type: object
+      description: Ответ официального отчета об использовании материалов
+      properties:
+        title:
+          type: string
+          example: Официальный отчет об использовании материалов
+        data:
+          type: object
+          description: Данные официального отчета
+          properties:
+            header:
+              type: object
+              description: Заголовок отчета
+              properties:
+                report_number:
+                  type: integer
+                  example: 1
+                report_date:
+                  type: string
+                  format: date
+                  example: "2024-01-15"
+                period_from:
+                  type: string
+                  format: date
+                  example: "2024-01-01"
+                period_to:
+                  type: string
+                  format: date
+                  example: "2024-01-31"
+                project_name:
+                  type: string
+                  example: "Строительство офисного здания"
+                project_address:
+                  type: string
+                  example: "г. Москва, ул. Примерная, д. 1"
+            organizations:
+              type: object
+              description: Информация об организациях
+              properties:
+                contractor:
+                  type: string
+                  example: "ООО Строительная компания"
+                contractor_director:
+                  type: string
+                  example: "Иванов И.И."
+                customer:
+                  type: string
+                  example: "ООО Заказчик"
+                customer_representative:
+                  type: string
+                  example: "Петров П.П."
+                contract_number:
+                  type: string
+                  example: "Д-123/2024"
+                contract_date:
+                  type: string
+                  format: date
+                  example: "2024-01-01"
+            materials:
+              type: array
+              description: Данные по материалам
+              items:
+                type: object
+                properties:
+                  work_name:
+                    type: string
+                    example: "Кладка стен"
+                  material_name:
+                    type: string
+                    example: "Кирпич керамический"
+                  unit:
+                    type: string
+                    example: "шт"
+                  received_from_customer:
+                    type: object
+                    properties:
+                      volume:
+                        type: number
+                        format: float
+                        example: 1000
+                      document:
+                        type: string
+                        example: "№123 от 01.01.2024"
+                  usage:
+                    type: object
+                    properties:
+                      production_norm:
+                        type: number
+                        format: float
+                        example: 950
+                      fact_used:
+                        type: number
+                        format: float
+                        example: 900
+                      balance:
+                        type: number
+                        format: float
+                        example: 100
+                      for_next_month:
+                        type: number
+                        format: float
+                        example: 100
+                  economy_overrun:
+                    type: number
+                    format: float
+                    example: 50
+                  economy_percentage:
+                    type: number
+                    format: float
+                    example: 5.26
+            summary:
+              type: object
+              description: Итоговые показатели
+              properties:
+                total_materials_count:
+                  type: integer
+                  example: 15
+                total_economy:
+                  type: number
+                  format: float
+                  example: 250.5
+                average_economy_percentage:
+                  type: number
+                  format: float
+                  example: 4.8
+            generated_at:
+              type: string
+              format: date-time
+              example: "2024-01-15T10:30:00Z"
+        filters:
+          type: object
+          description: Применённые фильтры
+          properties:
+            project_id:
+              type: integer
+              format: int64
+            date_from:
+              type: string
+              format: date
+            date_to:
+              type: string
+              format: date
+            material_id:
+              type: integer
+              format: int64
+              nullable: true
+            material_name:
+              type: string
+              nullable: true
+            operation_type:
+              type: string
+              enum: [receipt, write_off]
+              nullable: true
+            supplier_id:
+              type: integer
+              format: int64
+              nullable: true
+            document_number:
+              type: string
+              nullable: true
+            work_type_id:
+              type: integer
+              format: int64
+              nullable: true
+            work_description:
+              type: string
+              nullable: true
+            user_id:
+              type: integer
+              format: int64
+              nullable: true
+            foreman_id:
+              type: integer
+              format: int64
+              nullable: true
+            invoice_date_from:
+              type: string
+              format: date
+              nullable: true
+            invoice_date_to:
+              type: string
+              format: date
+              nullable: true
+            min_quantity:
+              type: number
+              nullable: true
+            max_quantity:
+              type: number
+              nullable: true
+            min_price:
+              type: number
+              nullable: true
+            max_price:
+              type: number
+              nullable: true
+            has_photo:
+              type: boolean
+              nullable: true
+        generated_at:
+          type: string
+          format: date-time
+      required: [title, data, filters, generated_at]
 
   securitySchemes:
     bearerAuth: { $ref: 'common_components.yaml#/components/securitySchemes/bearerAuth' } 

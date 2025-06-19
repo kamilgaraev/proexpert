@@ -19,7 +19,8 @@ class MaterialReportService
         int $projectId,
         string $dateFrom,
         string $dateTo,
-        ?int $reportNumber = null
+        ?int $reportNumber = null,
+        array $filters = []
     ): array {
         $project = Project::with(['organization'])->findOrFail($projectId);
         $periodFrom = Carbon::parse($dateFrom);
@@ -32,17 +33,21 @@ class MaterialReportService
             'report_number' => $reportNumber
         ]);
 
-        // Получаем все операции с материалами за период
-        $materialLogs = MaterialUsageLog::where('project_id', $projectId)
+        // Получаем все операции с материалами за период с применением фильтров
+        $materialLogsQuery = MaterialUsageLog::where('project_id', $projectId)
             ->whereBetween('usage_date', [$periodFrom, $periodTo])
-            ->with(['material.measurementUnit', 'user', 'supplier', 'workType'])
-            ->get();
+            ->with(['material.measurementUnit', 'user', 'supplier', 'workType']);
 
-        // Получаем приходы за период и предыдущие
-        $receipts = MaterialReceipt::where('project_id', $projectId)
+        $this->applyFiltersToMaterialLogs($materialLogsQuery, $filters);
+        $materialLogs = $materialLogsQuery->get();
+
+        // Получаем приходы за период и предыдущие с применением фильтров
+        $receiptsQuery = MaterialReceipt::where('project_id', $projectId)
             ->where('receipt_date', '<=', $periodTo)
-            ->with(['material.measurementUnit', 'supplier'])
-            ->get();
+            ->with(['material.measurementUnit', 'supplier']);
+
+        $this->applyFiltersToReceipts($receiptsQuery, $filters);
+        $receipts = $receiptsQuery->get();
 
         // Группируем по материалам и видам работ
         $materialGroups = $this->groupMaterialsByWork($materialLogs, $receipts, $periodFrom, $periodTo);
@@ -154,5 +159,123 @@ class MaterialReportService
     {
         // Можно добавить поле director_name в Organization или получать из связанных пользователей
         return 'Директор не указан'; // Заглушка
+    }
+
+    /**
+     * Применяет фильтры к запросу логов материалов.
+     */
+    private function applyFiltersToMaterialLogs($query, array $filters): void
+    {
+        if (!empty($filters['material_id'])) {
+            $query->where('material_id', $filters['material_id']);
+        }
+
+        if (!empty($filters['material_name'])) {
+            $query->whereHas('material', function ($q) use ($filters) {
+                $q->where('name', 'like', '%' . $filters['material_name'] . '%');
+            });
+        }
+
+        if (!empty($filters['operation_type'])) {
+            $query->where('operation_type', $filters['operation_type']);
+        }
+
+        if (!empty($filters['supplier_id'])) {
+            $query->where('supplier_id', $filters['supplier_id']);
+        }
+
+        if (!empty($filters['document_number'])) {
+            $query->where('document_number', 'like', '%' . $filters['document_number'] . '%');
+        }
+
+        if (!empty($filters['work_type_id'])) {
+            $query->where('work_type_id', $filters['work_type_id']);
+        }
+
+        if (!empty($filters['work_description'])) {
+            $query->where('work_description', 'like', '%' . $filters['work_description'] . '%');
+        }
+
+        if (!empty($filters['user_id']) || !empty($filters['foreman_id'])) {
+            $userId = $filters['user_id'] ?? $filters['foreman_id'];
+            $query->where('user_id', $userId);
+        }
+
+        if (!empty($filters['invoice_date_from']) && !empty($filters['invoice_date_to'])) {
+            $query->whereBetween('invoice_date', [$filters['invoice_date_from'], $filters['invoice_date_to']]);
+        } elseif (!empty($filters['invoice_date_from'])) {
+            $query->where('invoice_date', '>=', $filters['invoice_date_from']);
+        } elseif (!empty($filters['invoice_date_to'])) {
+            $query->where('invoice_date', '<=', $filters['invoice_date_to']);
+        }
+
+        if (!empty($filters['min_quantity'])) {
+            $query->where('quantity', '>=', $filters['min_quantity']);
+        }
+
+        if (!empty($filters['max_quantity'])) {
+            $query->where('quantity', '<=', $filters['max_quantity']);
+        }
+
+        if (!empty($filters['min_price'])) {
+            $query->where('unit_price', '>=', $filters['min_price']);
+        }
+
+        if (!empty($filters['max_price'])) {
+            $query->where('unit_price', '<=', $filters['max_price']);
+        }
+
+        if (isset($filters['has_photo'])) {
+            if ($filters['has_photo']) {
+                $query->whereNotNull('photo_path');
+            } else {
+                $query->whereNull('photo_path');
+            }
+        }
+    }
+
+    /**
+     * Применяет фильтры к запросу поступлений материалов.
+     */
+    private function applyFiltersToReceipts($query, array $filters): void
+    {
+        if (!empty($filters['material_id'])) {
+            $query->where('material_id', $filters['material_id']);
+        }
+
+        if (!empty($filters['material_name'])) {
+            $query->whereHas('material', function ($q) use ($filters) {
+                $q->where('name', 'like', '%' . $filters['material_name'] . '%');
+            });
+        }
+
+        if (!empty($filters['supplier_id'])) {
+            $query->where('supplier_id', $filters['supplier_id']);
+        }
+
+        if (!empty($filters['document_number'])) {
+            $query->where('document_number', 'like', '%' . $filters['document_number'] . '%');
+        }
+
+        if (!empty($filters['user_id']) || !empty($filters['foreman_id'])) {
+            $userId = $filters['user_id'] ?? $filters['foreman_id'];
+            $query->where('user_id', $userId);
+        }
+
+        if (!empty($filters['min_quantity'])) {
+            $query->where('quantity', '>=', $filters['min_quantity']);
+        }
+
+        if (!empty($filters['max_quantity'])) {
+            $query->where('quantity', '<=', $filters['max_quantity']);
+        }
+
+        if (!empty($filters['min_price'])) {
+            $query->where('price', '>=', $filters['min_price']);
+        }
+
+        if (!empty($filters['max_price'])) {
+            $query->where('price', '<=', $filters['max_price']);
+        }
     }
 } 

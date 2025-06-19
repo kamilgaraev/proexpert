@@ -430,19 +430,46 @@ class ReportService
             throw new BusinessLogicException('Необходимо указать project_id, date_from и date_to для формирования отчета.', 400);
         }
 
+        // Подготавливаем расширенные фильтры
+        $filters = [
+            'material_id' => $request->query('material_id'),
+            'material_name' => $request->query('material_name'),
+            'operation_type' => $request->query('operation_type'),
+            'supplier_id' => $request->query('supplier_id'),
+            'document_number' => $request->query('document_number'),
+            'work_type_id' => $request->query('work_type_id'),
+            'work_description' => $request->query('work_description'),
+            'user_id' => $request->query('user_id'),
+            'foreman_id' => $request->query('foreman_id'),
+            'invoice_date_from' => $request->query('invoice_date_from'),
+            'invoice_date_to' => $request->query('invoice_date_to'),
+            'min_quantity' => $request->query('min_quantity'),
+            'max_quantity' => $request->query('max_quantity'),
+            'min_price' => $request->query('min_price'),
+            'max_price' => $request->query('max_price'),
+            'has_photo' => $request->query('has_photo'),
+        ];
+
+        // Убираем пустые фильтры
+        $filters = array_filter($filters, function ($value) {
+            return $value !== null && $value !== '';
+        });
+
         Log::info('Generating Official Material Usage Report', [
             'org_id' => $organizationId,
             'project_id' => $projectId,
             'date_from' => $dateFrom,
             'date_to' => $dateTo,
-            'format' => $format
+            'format' => $format,
+            'filters' => $filters
         ]);
 
         $reportData = $this->materialReportService->generateOfficialUsageReport(
             (int)$projectId,
             $dateFrom,
             $dateTo,
-            $reportNumber ? (int)$reportNumber : null
+            $reportNumber ? (int)$reportNumber : null,
+            $filters
         );
 
         // Если запрашивается Excel экспорт
@@ -455,6 +482,7 @@ class ReportService
         return [
             'title' => 'Официальный отчет об использовании материалов',
             'data' => $reportData,
+            'filters' => $filters,
             'generated_at' => Carbon::now(),
         ];
     }

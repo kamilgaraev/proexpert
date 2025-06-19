@@ -14,6 +14,7 @@ use App\Http\Requests\Api\V1\Admin\Report\MaterialUsageReportRequest;
 use App\Http\Requests\Api\V1\Admin\Report\WorkCompletionReportRequest;
 use App\Http\Requests\Api\V1\Admin\Report\ForemanActivityReportRequest;
 use App\Http\Requests\Api\V1\Admin\Report\ProjectStatusSummaryReportRequest;
+use App\Http\Requests\Api\V1\Admin\Report\OfficialMaterialUsageReportRequest;
 
 // TODO: Добавить Request классы для валидации фильтров отчетов
 
@@ -85,7 +86,7 @@ class ReportController extends Controller
     /**
      * Официальный отчет об использовании материалов, переданных Заказчиком.
      */
-    public function officialMaterialUsageReport(Request $request): JsonResponse | StreamedResponse
+    public function officialMaterialUsageReport(OfficialMaterialUsageReportRequest $request): JsonResponse | StreamedResponse
     {
         $reportData = $this->reportService->getOfficialMaterialUsageReport($request);
         
