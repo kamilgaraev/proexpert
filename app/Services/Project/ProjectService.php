@@ -4,6 +4,8 @@ namespace App\Services\Project;
 
 use App\Repositories\Interfaces\ProjectRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
+use App\Repositories\Interfaces\MaterialRepositoryInterface;
+use App\Repositories\Interfaces\WorkTypeRepositoryInterface;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\Role;
@@ -12,19 +14,26 @@ use Illuminate\Database\Eloquent\Collection;
 use App\Exceptions\BusinessLogicException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use App\DTOs\Project\ProjectDTO;
 
 class ProjectService
 {
     protected ProjectRepositoryInterface $projectRepository;
     protected UserRepositoryInterface $userRepository;
+    protected MaterialRepositoryInterface $materialRepository;
+    protected WorkTypeRepositoryInterface $workTypeRepository;
 
     public function __construct(
         ProjectRepositoryInterface $projectRepository,
-        UserRepositoryInterface $userRepository
+        UserRepositoryInterface $userRepository,
+        MaterialRepositoryInterface $materialRepository,
+        WorkTypeRepositoryInterface $workTypeRepository
     ) {
         $this->projectRepository = $projectRepository;
         $this->userRepository = $userRepository;
+        $this->materialRepository = $materialRepository;
+        $this->workTypeRepository = $workTypeRepository;
     }
 
     /**
@@ -254,33 +263,235 @@ class ProjectService
     
     public function getProjectStatistics(int $id): array
     {
-        // TODO: Реализовать получение статистики по проекту
-        Log::warning("Method getProjectStatistics called but not fully implemented.", ['project_id' => $id]);
-        return ['message' => 'Statistics not available yet.']; 
+        $project = $this->projectRepository->find($id);
+        if (!$project) {
+            throw new BusinessLogicException('Проект не найден.', 404);
+        }
+
+        try {
+            // Статистика по материалам
+            $materialStats = DB::table('material_usage_logs as mul')
+                ->where('mul.project_id', $id)
+                ->selectRaw('
+                    COUNT(DISTINCT mul.material_id) as unique_materials_count,
+                    SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END) as total_received,
+                    SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END) as total_used,
+                    SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.total_price ELSE 0 END) as total_received_value,
+                    SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.total_price ELSE 0 END) as total_used_value
+                ')
+                ->first();
+
+            // Статистика по выполненным работам
+            $workStats = DB::table('completed_works as cw')
+                ->where('cw.project_id', $id)
+                ->selectRaw('
+                    COUNT(*) as total_works_count,
+                    SUM(cw.quantity) as total_work_quantity,
+                    COUNT(DISTINCT cw.work_type_id) as unique_work_types_count,
+                    SUM(cw.total_cost) as total_work_cost
+                ')
+                ->first();
+
+            // Статистика по пользователям
+            $userStats = DB::table('project_user as pu')
+                ->where('pu.project_id', $id)
+                ->selectRaw('COUNT(*) as assigned_users_count')
+                ->first();
+
+            // Последние операции
+            $lastMaterialOperation = DB::table('material_usage_logs')
+                ->where('project_id', $id)
+                ->orderBy('usage_date', 'desc')
+                ->first(['usage_date', 'operation_type']);
+
+            $lastWorkCompletion = DB::table('completed_works')
+                ->where('project_id', $id)
+                ->orderBy('completion_date', 'desc')
+                ->first(['completion_date']);
+
+            return [
+                'project_id' => $id,
+                'project_name' => $project->name,
+                'materials' => [
+                    'unique_materials_count' => $materialStats->unique_materials_count ?? 0,
+                    'total_received' => $materialStats->total_received ?? 0,
+                    'total_used' => $materialStats->total_used ?? 0,
+                    'current_balance' => ($materialStats->total_received ?? 0) - ($materialStats->total_used ?? 0),
+                    'total_received_value' => $materialStats->total_received_value ?? 0,
+                    'total_used_value' => $materialStats->total_used_value ?? 0,
+                    'last_operation_date' => $lastMaterialOperation->usage_date ?? null,
+                    'last_operation_type' => $lastMaterialOperation->operation_type ?? null
+                ],
+                'works' => [
+                    'total_works_count' => $workStats->total_works_count ?? 0,
+                    'total_work_quantity' => $workStats->total_work_quantity ?? 0,
+                    'unique_work_types_count' => $workStats->unique_work_types_count ?? 0,
+                    'total_work_cost' => $workStats->total_work_cost ?? 0,
+                    'last_completion_date' => $lastWorkCompletion->completion_date ?? null
+                ],
+                'team' => [
+                    'assigned_users_count' => $userStats->assigned_users_count ?? 0
+                ],
+                'project_info' => [
+                    'start_date' => $project->start_date,
+                    'end_date' => $project->end_date,
+                    'status' => $project->status,
+                    'created_at' => $project->created_at,
+                    'updated_at' => $project->updated_at
+                ]
+            ];
+        } catch (\Exception $e) {
+            Log::error('Error getting project statistics', [
+                'project_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            throw new BusinessLogicException('Ошибка при получении статистики проекта.', 500);
+        }
     }
 
     public function getProjectMaterials(int $id, int $perPage = 15, ?string $search = null, string $sortBy = 'created_at', string $sortDirection = 'desc'): array
     {
-        // TODO: Реализовать получение материалов по проекту
-        Log::warning("Method getProjectMaterials called but not fully implemented.", ['project_id' => $id]);
-        // В идеале, если есть связь, можно было бы сделать $project->materials()->paginate(...)
-        // Пока возвращаем пустой массив, имитируя пагинированный ответ
-        return [
-            'data' => [],
-            'links' => [],
-            'meta' => []
-        ];
+        $project = $this->projectRepository->find($id);
+        if (!$project) {
+            throw new BusinessLogicException('Проект не найден.', 404);
+        }
+
+        try {
+            $query = DB::table('material_usage_logs as mul')
+                ->join('materials as m', 'mul.material_id', '=', 'm.id')
+                ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
+                ->leftJoin('suppliers as s', 'mul.supplier_id', '=', 's.id')
+                ->where('mul.project_id', $id)
+                ->select([
+                    'm.id as material_id',
+                    'm.name as material_name',
+                    'm.code as material_code',
+                    'mu.short_name as unit',
+                    's.name as supplier_name',
+                    DB::raw('SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END) as total_received'),
+                    DB::raw('SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END) as total_used'),
+                    DB::raw('SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END) - SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END) as current_balance'),
+                    DB::raw('AVG(mul.unit_price) as average_price'),
+                    DB::raw('MAX(mul.usage_date) as last_operation_date')
+                ])
+                ->groupBy(['m.id', 'm.name', 'm.code', 'mu.short_name', 's.name']);
+
+            if ($search) {
+                $query->where(function($q) use ($search) {
+                    $q->where('m.name', 'like', "%{$search}%")
+                      ->orWhere('m.code', 'like', "%{$search}%");
+                });
+            }
+
+            $allowedSortBy = ['material_name', 'material_code', 'total_received', 'total_used', 'current_balance', 'last_operation_date'];
+            if (!in_array($sortBy, $allowedSortBy)) {
+                $sortBy = 'last_operation_date';
+            }
+
+            if (!in_array(strtolower($sortDirection), ['asc', 'desc'])) {
+                $sortDirection = 'desc';
+            }
+
+            $query->orderBy($sortBy, $sortDirection);
+
+            $paginatedResults = $query->paginate($perPage);
+
+            return [
+                'data' => $paginatedResults->items(),
+                'links' => [
+                    'first' => $paginatedResults->url(1),
+                    'last' => $paginatedResults->url($paginatedResults->lastPage()),
+                    'prev' => $paginatedResults->previousPageUrl(),
+                    'next' => $paginatedResults->nextPageUrl()
+                ],
+                'meta' => [
+                    'current_page' => $paginatedResults->currentPage(),
+                    'last_page' => $paginatedResults->lastPage(),
+                    'per_page' => $paginatedResults->perPage(),
+                    'total' => $paginatedResults->total(),
+                    'from' => $paginatedResults->firstItem(),
+                    'to' => $paginatedResults->lastItem()
+                ]
+            ];
+        } catch (\Exception $e) {
+            Log::error('Error getting project materials', [
+                'project_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            throw new BusinessLogicException('Ошибка при получении материалов проекта.', 500);
+        }
     }
 
     public function getProjectWorkTypes(int $id, int $perPage = 15, ?string $search = null, string $sortBy = 'created_at', string $sortDirection = 'desc'): array
     {
-        // TODO: Реализовать получение видов работ по проекту
-        Log::warning("Method getProjectWorkTypes called but not fully implemented.", ['project_id' => $id]);
-        // Аналогично getProjectMaterials
-        return [
-            'data' => [],
-            'links' => [],
-            'meta' => []
-        ];
+        $project = $this->projectRepository->find($id);
+        if (!$project) {
+            throw new BusinessLogicException('Проект не найден.', 404);
+        }
+
+        try {
+            $query = DB::table('completed_works as cw')
+                ->join('work_types as wt', 'cw.work_type_id', '=', 'wt.id')
+                ->leftJoin('measurement_units as mu', 'wt.measurement_unit_id', '=', 'mu.id')
+                ->leftJoin('users as u', 'cw.user_id', '=', 'u.id')
+                ->where('cw.project_id', $id)
+                ->select([
+                    'wt.id as work_type_id',
+                    'wt.name as work_type_name',
+                    'wt.description as work_type_description',
+                    'mu.short_name as unit',
+                    DB::raw('COUNT(cw.id) as works_count'),
+                    DB::raw('SUM(cw.quantity) as total_quantity'),
+                    DB::raw('SUM(cw.total_cost) as total_cost'),
+                    DB::raw('AVG(cw.unit_price) as average_unit_price'),
+                    DB::raw('MAX(cw.completion_date) as last_completion_date'),
+                    DB::raw('COUNT(DISTINCT cw.user_id) as workers_count')
+                ])
+                ->groupBy(['wt.id', 'wt.name', 'wt.description', 'mu.short_name']);
+
+            if ($search) {
+                $query->where(function($q) use ($search) {
+                    $q->where('wt.name', 'like', "%{$search}%")
+                      ->orWhere('wt.description', 'like', "%{$search}%");
+                });
+            }
+
+            $allowedSortBy = ['work_type_name', 'works_count', 'total_quantity', 'total_cost', 'last_completion_date'];
+            if (!in_array($sortBy, $allowedSortBy)) {
+                $sortBy = 'last_completion_date';
+            }
+
+            if (!in_array(strtolower($sortDirection), ['asc', 'desc'])) {
+                $sortDirection = 'desc';
+            }
+
+            $query->orderBy($sortBy, $sortDirection);
+
+            $paginatedResults = $query->paginate($perPage);
+
+            return [
+                'data' => $paginatedResults->items(),
+                'links' => [
+                    'first' => $paginatedResults->url(1),
+                    'last' => $paginatedResults->url($paginatedResults->lastPage()),
+                    'prev' => $paginatedResults->previousPageUrl(),
+                    'next' => $paginatedResults->nextPageUrl()
+                ],
+                'meta' => [
+                    'current_page' => $paginatedResults->currentPage(),
+                    'last_page' => $paginatedResults->lastPage(),
+                    'per_page' => $paginatedResults->perPage(),
+                    'total' => $paginatedResults->total(),
+                    'from' => $paginatedResults->firstItem(),
+                    'to' => $paginatedResults->lastItem()
+                ]
+            ];
+        } catch (\Exception $e) {
+            Log::error('Error getting project work types', [
+                'project_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            throw new BusinessLogicException('Ошибка при получении видов работ проекта.', 500);
+        }
     }
 } 

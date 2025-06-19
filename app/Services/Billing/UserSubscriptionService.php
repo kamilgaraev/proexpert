@@ -252,10 +252,71 @@ class UserSubscriptionService implements UserSubscriptionServiceInterface
 
     public function resumeSubscription(UserSubscription $subscription): UserSubscription
     {
-        if (!$subscription->isCanceled() || ($subscription->ends_at && $subscription->ends_at->isFuture())) {
-            throw new SubscriptionException('Subscription cannot be resumed or is already active.');
+        if (!$subscription->isCanceled()) {
+            throw new SubscriptionException('Подписка не может быть возобновлена: она не была отменена.');
         }
-        throw new SubscriptionException('Resuming subscription is not implemented yet.');
+
+        if ($subscription->ends_at && $subscription->ends_at->isFuture()) {
+            throw new SubscriptionException('Подписка уже активна до ' . $subscription->ends_at->format('Y-m-d'));
+        }
+
+        try {
+            // Проверяем достаточность баланса для возобновления
+            $user = $subscription->user;
+            $plan = $subscription->plan;
+            $organization = $user->organization;
+
+            if (!$organization) {
+                throw new SubscriptionException('Организация пользователя не найдена.');
+            }
+
+            $amountToPay = (int) ($plan->price * 100);
+
+            if (!$this->balanceService->hasSufficientBalance($organization, $amountToPay)) {
+                throw new InsufficientBalanceException(
+                    'Недостаточно средств для возобновления подписки. Требуется: ' . 
+                    number_format($plan->price, 2) . ' руб.'
+                );
+            }
+
+            // Списываем средства
+            $this->balanceService->debitBalance(
+                $organization,
+                $amountToPay,
+                "Возобновление подписки на план '{$plan->name}'",
+                null,
+                ['plan_slug' => $plan->slug, 'subscription_id' => $subscription->id]
+            );
+
+            // Обновляем подписку
+            $nextBillingDate = Carbon::now()->add($plan->billing_cycle, $plan->billing_period);
+            $subscription->update([
+                'status' => UserSubscription::STATUS_ACTIVE,
+                'canceled_at' => null,
+                'ends_at' => $nextBillingDate,
+                'next_billing_at' => $nextBillingDate,
+                'updated_at' => Carbon::now()
+            ]);
+
+            Log::info('Subscription resumed successfully', [
+                'subscription_id' => $subscription->id,
+                'user_id' => $user->id,
+                'organization_id' => $organization->id,
+                'plan_name' => $plan->name,
+                'next_billing_at' => $nextBillingDate
+            ]);
+
+            return $subscription->refresh();
+
+                 } catch (InsufficientBalanceException $e) {
+             throw $e;
+         } catch (\Exception $e) {
+            Log::error('Error resuming subscription', [
+                'subscription_id' => $subscription->id,
+                'error' => $e->getMessage()
+            ]);
+            throw new SubscriptionException('Ошибка при возобновлении подписки: ' . $e->getMessage());
+        }
     }
 
     public function getUserCurrentValidSubscription(User $user): ?UserSubscription
@@ -375,11 +436,145 @@ class UserSubscriptionService implements UserSubscriptionServiceInterface
 
     public function processPastDuePayment(UserSubscription $subscription): bool
     {
-        throw new SubscriptionException('Processing past due payment is not implemented yet.');
+        if (!$subscription->isPastDue()) {
+            Log::warning('Attempted to process past due payment for non-past-due subscription', [
+                'subscription_id' => $subscription->id,
+                'status' => $subscription->status
+            ]);
+            return false;
+        }
+
+        try {
+            $user = $subscription->user;
+            $plan = $subscription->plan;
+            $organization = $user->organization;
+
+            if (!$organization) {
+                Log::error('Cannot process past due payment: user has no organization', [
+                    'subscription_id' => $subscription->id,
+                    'user_id' => $user->id
+                ]);
+                return false;
+            }
+
+            $amountToPay = (int) ($plan->price * 100);
+
+            // Пытаемся списать с баланса
+            if ($this->balanceService->hasSufficientBalance($organization, $amountToPay)) {
+                $this->balanceService->debitBalance(
+                    $organization,
+                    $amountToPay,
+                    "Оплата просроченной подписки на план '{$plan->name}'",
+                    null,
+                    ['plan_slug' => $plan->slug, 'subscription_id' => $subscription->id, 'past_due_payment' => true]
+                );
+
+                // Обновляем подписку
+                $nextBillingDate = Carbon::now()->add($plan->billing_cycle, $plan->billing_period);
+                $subscription->update([
+                    'status' => UserSubscription::STATUS_ACTIVE,
+                    'ends_at' => $nextBillingDate,
+                    'next_billing_at' => $nextBillingDate,
+                    'updated_at' => Carbon::now()
+                ]);
+
+                Log::info('Past due payment processed successfully from balance', [
+                    'subscription_id' => $subscription->id,
+                    'user_id' => $user->id,
+                    'organization_id' => $organization->id,
+                    'amount' => $plan->price,
+                    'next_billing_at' => $nextBillingDate
+                ]);
+
+                return true;
+            } else {
+                Log::info('Past due payment failed: insufficient balance', [
+                    'subscription_id' => $subscription->id,
+                    'required_amount' => $plan->price,
+                    'organization_id' => $organization->id
+                ]);
+                return false;
+            }
+
+        } catch (\Exception $e) {
+            Log::error('Error processing past due payment', [
+                'subscription_id' => $subscription->id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
     }
 
     public function syncSubscriptionStatus(UserSubscription $subscription): UserSubscription
     {
-        throw new SubscriptionException('Syncing subscription status is not implemented yet.');
+        try {
+            Log::info('Syncing subscription status', ['subscription_id' => $subscription->id]);
+
+            // Проверяем состояние подписки на основе дат и статуса
+            $now = Carbon::now();
+            $originalStatus = $subscription->status;
+
+            // Если подписка активна, но истекла
+            if ($subscription->isActive() && $subscription->ends_at && $subscription->ends_at->isPast()) {
+                // Если есть следующая дата списания и она прошла - переводим в PAST_DUE
+                if ($subscription->next_billing_at && $subscription->next_billing_at->isPast()) {
+                    $subscription->update([
+                        'status' => UserSubscription::STATUS_PAST_DUE,
+                        'updated_at' => $now
+                    ]);
+                    Log::info('Subscription status synced: ACTIVE -> PAST_DUE', [
+                        'subscription_id' => $subscription->id,
+                        'ends_at' => $subscription->ends_at,
+                        'next_billing_at' => $subscription->next_billing_at
+                    ]);
+                } else {
+                    // Просто истекла без продления - отменяем
+                    $subscription->update([
+                        'status' => UserSubscription::STATUS_CANCELED,
+                        'canceled_at' => $now,
+                        'updated_at' => $now
+                    ]);
+                    Log::info('Subscription status synced: ACTIVE -> CANCELED (expired)', [
+                        'subscription_id' => $subscription->id,
+                        'ends_at' => $subscription->ends_at
+                    ]);
+                }
+            }
+
+            // Если подписка в статусе PAST_DUE слишком долго (более 7 дней), отменяем
+            if ($subscription->isPastDue() && 
+                $subscription->updated_at && 
+                $subscription->updated_at->diffInDays($now) > 7) {
+                
+                $subscription->update([
+                    'status' => UserSubscription::STATUS_CANCELED,
+                    'canceled_at' => $now,
+                    'updated_at' => $now
+                ]);
+                Log::info('Subscription status synced: PAST_DUE -> CANCELED (too long overdue)', [
+                    'subscription_id' => $subscription->id,
+                    'days_overdue' => $subscription->updated_at->diffInDays($now)
+                ]);
+            }
+
+            // Если статус изменился, логируем
+            if ($originalStatus !== $subscription->status) {
+                Log::info('Subscription status synchronized', [
+                    'subscription_id' => $subscription->id,
+                    'old_status' => $originalStatus,
+                    'new_status' => $subscription->status,
+                    'sync_time' => $now
+                ]);
+            }
+
+            return $subscription->refresh();
+
+        } catch (\Exception $e) {
+            Log::error('Error syncing subscription status', [
+                'subscription_id' => $subscription->id,
+                'error' => $e->getMessage()
+            ]);
+            throw new SubscriptionException('Ошибка при синхронизации статуса подписки: ' . $e->getMessage());
+        }
     }
 } 

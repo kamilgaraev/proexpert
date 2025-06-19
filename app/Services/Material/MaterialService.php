@@ -211,16 +211,86 @@ class MaterialService
         return collect(array_values($balances));
     }
 
-    // ЗАГЛУШКИ ДЛЯ НЕДОСТАЮЩИХ МЕТОДОВ
     public function getMaterialBalancesByMaterial(int $materialId, int $perPage = 15, ?int $projectId = null, string $sortBy = 'created_at', string $sortDirection = 'desc'): array
     {
-        Log::warning('Method MaterialService@getMaterialBalancesByMaterial called but not implemented.', ['material_id' => $materialId]);
-        return [
-            'data' => [],
-            'links' => [],
-            'meta' => [],
-            'message' => 'Functionality to get material balances is not yet implemented.'
-        ];
+        try {
+            $material = $this->materialRepository->find($materialId);
+            if (!$material) {
+                throw new BusinessLogicException('Материал не найден.', 404);
+            }
+
+            $query = DB::table('material_balances as mb')
+                ->join('projects as p', 'mb.project_id', '=', 'p.id')
+                ->leftJoin('materials as m', 'mb.material_id', '=', 'm.id')
+                ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
+                ->where('mb.material_id', $materialId)
+                ->select([
+                    'mb.id',
+                    'mb.project_id',
+                    'p.name as project_name',
+                    'p.status as project_status',
+                    'mb.available_quantity',
+                    'mb.reserved_quantity',
+                    'mb.average_price',
+                    'mb.last_update_date',
+                    'mb.additional_info',
+                    'mu.short_name as unit',
+                    DB::raw('(mb.available_quantity - mb.reserved_quantity) as free_quantity'),
+                    'mb.updated_at'
+                ]);
+
+            if ($projectId) {
+                $query->where('mb.project_id', $projectId);
+            }
+
+            $allowedSortBy = ['project_name', 'available_quantity', 'reserved_quantity', 'free_quantity', 'average_price', 'last_update_date', 'updated_at'];
+            if (!in_array($sortBy, $allowedSortBy)) {
+                $sortBy = 'updated_at';
+            }
+
+            if (!in_array(strtolower($sortDirection), ['asc', 'desc'])) {
+                $sortDirection = 'desc';
+            }
+
+            $query->orderBy($sortBy, $sortDirection);
+
+            $paginatedResults = $query->paginate($perPage);
+
+            return [
+                'data' => collect($paginatedResults->items())->map(function ($item) {
+                    $item->additional_info = $item->additional_info ? json_decode($item->additional_info, true) : null;
+                    return $item;
+                })->toArray(),
+                'links' => [
+                    'first' => $paginatedResults->url(1),
+                    'last' => $paginatedResults->url($paginatedResults->lastPage()),
+                    'prev' => $paginatedResults->previousPageUrl(),
+                    'next' => $paginatedResults->nextPageUrl()
+                ],
+                'meta' => [
+                    'current_page' => $paginatedResults->currentPage(),
+                    'last_page' => $paginatedResults->lastPage(),
+                    'per_page' => $paginatedResults->perPage(),
+                    'total' => $paginatedResults->total(),
+                    'from' => $paginatedResults->firstItem(),
+                    'to' => $paginatedResults->lastItem()
+                ],
+                'material_info' => [
+                    'id' => $material->id,
+                    'name' => $material->name,
+                    'code' => $material->code,
+                    'unit' => $material->measurementUnit?->short_name
+                ]
+            ];
+        } catch (BusinessLogicException $e) {
+            throw $e;
+        } catch (\Exception $e) {
+            Log::error('Error getting material balances', [
+                'material_id' => $materialId,
+                'error' => $e->getMessage()
+            ]);
+            throw new BusinessLogicException('Ошибка при получении остатков материала.', 500);
+        }
     }
 
     public function getMeasurementUnits(Request $request): \Illuminate\Http\Resources\Json\AnonymousResourceCollection | array
