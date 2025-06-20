@@ -7,6 +7,7 @@ use App\Repositories\Interfaces\ContractRepositoryInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Collection;
 
 class ContractRepository extends BaseRepository implements ContractRepositoryInterface
 {
@@ -169,7 +170,7 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
     /**
      * Получить последние выполненные работы по контракту
      */
-    public function getRecentCompletedWorks(int $contractId, int $limit = 10): \Illuminate\Database\Eloquent\Collection
+    public function getRecentCompletedWorks(int $contractId, int $limit = 10): Collection
     {
         return DB::table('completed_works')
             ->join('work_types', 'completed_works.work_type_id', '=', 'work_types.id')

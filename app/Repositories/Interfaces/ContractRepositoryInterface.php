@@ -4,6 +4,7 @@ namespace App\Repositories\Interfaces;
 
 use App\Models\Contract;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 
 interface ContractRepositoryInterface extends BaseRepositoryInterface
 {
@@ -23,7 +24,7 @@ interface ContractRepositoryInterface extends BaseRepositoryInterface
     /**
      * Получить последние выполненные работы по контракту
      */
-    public function getRecentCompletedWorks(int $contractId, int $limit = 10): \Illuminate\Database\Eloquent\Collection;
+    public function getRecentCompletedWorks(int $contractId, int $limit = 10): Collection;
 
     // public function getSumOfActiveContracts(int $organizationId): float;
     // public function getOverdueContracts(int $organizationId): Collection;
