@@ -30,6 +30,8 @@ return [
         'http://89.111.152.112',
         'https://89.111.152.112',
         'http://89.104.68.13',
+        'http://89.111.153.146',
+        'https://89.111.153.146',
         'https://prohelper.pro',
         'http://prohelper.pro',
         // '*'  // Убираем, чтобы избежать конфликта с supports_credentials = true
