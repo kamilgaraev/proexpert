@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\Landing\OrganizationSubscriptionAddonController;
 use App\Http\Controllers\Api\Landing\OrganizationSubscriptionController;
 use App\Http\Controllers\Api\Landing\OrganizationOneTimePurchaseController;
 use App\Http\Controllers\Api\v1\Landing\OrganizationDashboardController;
+use App\Http\Controllers\Api\V1\Landing\Billing\SubscriptionLimitsController;
 
 // Маршруты биллинга, предполагается, что они будут доступны
 // аутентифицированному пользователю (владельцу организации)
@@ -59,4 +60,7 @@ Route::middleware(['auth:api_landing', 'role:organization_owner']) // Приме
 
         // --- Дашборд организации ---
         Route::get('org-dashboard', [OrganizationDashboardController::class, 'index'])->name('org_dashboard.index');
+        
+        // --- Лимиты подписки ---
+        Route::get('subscription/limits', [SubscriptionLimitsController::class, 'show'])->name('subscription.limits');
     }); 

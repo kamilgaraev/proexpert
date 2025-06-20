@@ -21,6 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'auth.jwt' => JwtMiddleware::class,
             'organization.context' => SetOrganizationContext::class,
             'organization_context' => SetOrganizationContext::class,
+            'subscription.limit' => \App\Http\Middleware\CheckSubscriptionLimitsMiddleware::class,
         ]);
 
         // Глобальные middleware (если нужны)

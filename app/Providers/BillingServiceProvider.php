@@ -12,6 +12,8 @@ use App\Interfaces\Billing\UserSubscriptionServiceInterface;
 use App\Services\Billing\UserSubscriptionService;
 use App\Interfaces\Billing\BalanceServiceInterface;
 use App\Services\Billing\BalanceService;
+use App\Interfaces\Billing\SubscriptionLimitsServiceInterface;
+use App\Services\Billing\SubscriptionLimitsService;
 
 class BillingServiceProvider extends ServiceProvider
 {
@@ -32,6 +34,7 @@ class BillingServiceProvider extends ServiceProvider
         $this->app->singleton(SubscriptionPlanServiceInterface::class, SubscriptionPlanService::class);
         $this->app->singleton(UserSubscriptionServiceInterface::class, UserSubscriptionService::class);
         $this->app->singleton(BalanceServiceInterface::class, BalanceService::class);
+        $this->app->singleton(SubscriptionLimitsServiceInterface::class, SubscriptionLimitsService::class);
     }
 
     /**
