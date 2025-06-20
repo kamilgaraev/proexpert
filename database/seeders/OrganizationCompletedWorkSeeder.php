@@ -227,7 +227,9 @@ class OrganizationCompletedWorkSeeder extends Seeder
                     'contact_person' => $faker->name,
                     'phone' => $faker->phoneNumber,
                     'email' => $faker->companyEmail,
-                    'address' => $faker->address,
+                    'legal_address' => $faker->address,
+                    'inn' => $faker->numerify('############'),
+                    'kpp' => $faker->numerify('#########'),
                 ]
             );
             
