@@ -19,7 +19,7 @@ class CompletedWorkRepository extends BaseRepository implements CompletedWorkRep
         $query = $this->model->query();
 
         foreach ($filters as $key => $value) {
-            if ($value === null || $value === '') {
+            if ($value === null || $value === '' || $value === '0' || $value === 0) {
                 continue;
             }
 
