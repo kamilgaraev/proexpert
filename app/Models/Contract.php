@@ -158,7 +158,6 @@ class Contract extends Model
     public function getTotalPaidAmountAttribute(): float
     {
         return (float) $this->payments()
-            ->where('status', 'completed')
             ->sum('amount');
     }
 
@@ -168,7 +167,7 @@ class Contract extends Model
     public function getTotalPerformedAmountAttribute(): float
     {
         return (float) $this->performanceActs()
-            ->where('status', 'approved')
+            ->where('is_approved', true)
             ->sum('amount');
     }
 

@@ -26,33 +26,33 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
 
         // Основные фильтры
         if (!empty($filters['contractor_id'])) {
-            $query->where('contractor_id', $filters['contractor_id']);
+            $query->where('contracts.contractor_id', $filters['contractor_id']);
         }
         if (!empty($filters['project_id'])) {
-            $query->where('project_id', $filters['project_id']);
+            $query->where('contracts.project_id', $filters['project_id']);
         }
         if (!empty($filters['status'])) {
-            $query->where('status', $filters['status']);
+            $query->where('contracts.status', $filters['status']);
         }
         if (!empty($filters['type'])) {
-            $query->where('type', $filters['type']);
+            $query->where('contracts.type', $filters['type']);
         }
         if (!empty($filters['number'])) {
-            $query->where('number', 'ilike', '%' . $filters['number'] . '%');
+            $query->where('contracts.number', 'ilike', '%' . $filters['number'] . '%');
         }
         if (!empty($filters['date_from'])) {
-            $query->whereDate('date', '>=', $filters['date_from']);
+            $query->whereDate('contracts.date', '>=', $filters['date_from']);
         }
         if (!empty($filters['date_to'])) {
-            $query->whereDate('date', '<=', $filters['date_to']);
+            $query->whereDate('contracts.date', '<=', $filters['date_to']);
         }
 
         // Фильтры по суммам
         if (!empty($filters['amount_from'])) {
-            $query->where('total_amount', '>=', $filters['amount_from']);
+            $query->where('contracts.total_amount', '>=', $filters['amount_from']);
         }
         if (!empty($filters['amount_to'])) {
-            $query->where('total_amount', '<=', $filters['amount_to']);
+            $query->where('contracts.total_amount', '<=', $filters['amount_to']);
         }
 
         // Фильтры по проценту выполнения (через подзапрос)
@@ -76,8 +76,8 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
                     ) / NULLIF(total_amount, 0) * 100 >= 90
                 ', ['confirmed'])
                 ->orWhere(function ($qq) {
-                    $qq->where('end_date', '<', now())
-                       ->where('status', 'active');
+                    $qq->where('contracts.end_date', '<', now())
+                       ->where('contracts.status', 'active');
                 });
             });
         }
@@ -97,15 +97,15 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
 
         // Фильтр просроченных контрактов
         if (!empty($filters['is_overdue'])) {
-            $query->where('end_date', '<', now())
-                  ->where('status', 'active');
+            $query->where('contracts.end_date', '<', now())
+                  ->where('contracts.status', 'active');
         }
 
         // Поиск по номеру или названию проекта
         if (!empty($filters['search'])) {
             $search = $filters['search'];
             $query->where(function ($q) use ($search) {
-                $q->where('number', 'ilike', '%' . $search . '%')
+                $q->where('contracts.number', 'ilike', '%' . $search . '%')
                   ->orWhereHas('project', function ($projectQuery) use ($search) {
                       $projectQuery->where('name', 'ilike', '%' . $search . '%');
                   })
@@ -124,7 +124,7 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
             $sortBy = 'created_at';
         }
 
-        $query->orderBy($sortBy, $sortDirection);
+        $query->orderBy('contracts.' . $sortBy, $sortDirection);
 
         return $query->paginate($perPage);
     }
