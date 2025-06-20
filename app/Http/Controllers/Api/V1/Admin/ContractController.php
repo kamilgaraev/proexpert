@@ -212,4 +212,36 @@ class ContractController extends Controller
             'data' => $completedWorks
         ]);
     }
+
+    /**
+     * Получить полную информацию по контракту (все данные в одном запросе)
+     */
+    public function fullDetails(int $contractId, Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
+
+        try {
+            $fullDetails = $this->contractService->getFullContractDetails($contractId, $organizationId);
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'contract' => new ContractResource($fullDetails['contract']),
+                    'analytics' => $fullDetails['analytics'],
+                    'works_statistics' => $fullDetails['works_statistics'],
+                    'recent_works' => $fullDetails['recent_works'],
+                    'performance_acts' => $fullDetails['performance_acts'],
+                    'payments' => $fullDetails['payments'],
+                    'child_contracts' => $fullDetails['child_contracts'],
+                ]
+            ]);
+        } catch (Exception $e) {
+            return response()->json(['message' => $e->getMessage()], Response::HTTP_NOT_FOUND);
+        }
+    }
 } 

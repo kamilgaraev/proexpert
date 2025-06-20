@@ -6,6 +6,7 @@ use App\Models\Contract;
 use App\Repositories\Interfaces\ContractRepositoryInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 class ContractRepository extends BaseRepository implements ContractRepositoryInterface
 {
@@ -127,5 +128,76 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         $query->orderBy('contracts.' . $sortBy, $sortDirection);
 
         return $query->paginate($perPage);
+    }
+
+    /**
+     * Получить статистику по выполненным работам контракта
+     */
+    public function getContractWorksStatistics(int $contractId): array
+    {
+        $stats = DB::table('completed_works')
+            ->where('contract_id', $contractId)
+            ->selectRaw('
+                status,
+                COUNT(*) as count,
+                SUM(total_amount) as total_amount,
+                AVG(total_amount) as avg_amount
+            ')
+            ->groupBy('status')
+            ->get()
+            ->keyBy('status');
+
+        return [
+            'pending' => [
+                'count' => $stats->get('pending')?->count ?? 0,
+                'amount' => (float) ($stats->get('pending')?->total_amount ?? 0),
+                'avg_amount' => (float) ($stats->get('pending')?->avg_amount ?? 0),
+            ],
+            'confirmed' => [
+                'count' => $stats->get('confirmed')?->count ?? 0,
+                'amount' => (float) ($stats->get('confirmed')?->total_amount ?? 0),
+                'avg_amount' => (float) ($stats->get('confirmed')?->avg_amount ?? 0),
+            ],
+            'rejected' => [
+                'count' => $stats->get('rejected')?->count ?? 0,
+                'amount' => (float) ($stats->get('rejected')?->total_amount ?? 0),
+                'avg_amount' => (float) ($stats->get('rejected')?->avg_amount ?? 0),
+            ],
+        ];
+    }
+
+    /**
+     * Получить последние выполненные работы по контракту
+     */
+    public function getRecentCompletedWorks(int $contractId, int $limit = 10): \Illuminate\Database\Eloquent\Collection
+    {
+        return DB::table('completed_works')
+            ->join('work_types', 'completed_works.work_type_id', '=', 'work_types.id')
+            ->join('users', 'completed_works.user_id', '=', 'users.id')
+            ->leftJoin('completed_work_materials', 'completed_works.id', '=', 'completed_work_materials.completed_work_id')
+            ->where('completed_works.contract_id', $contractId)
+            ->select([
+                'completed_works.id',
+                'work_types.name as work_type_name',
+                'users.name as user_name',
+                'completed_works.quantity',
+                'completed_works.total_amount',
+                'completed_works.status',
+                'completed_works.completion_date',
+                DB::raw('COUNT(completed_work_materials.id) as materials_count'),
+                DB::raw('COALESCE(SUM(completed_work_materials.total_amount), 0) as materials_amount')
+            ])
+            ->groupBy([
+                'completed_works.id',
+                'work_types.name',
+                'users.name',
+                'completed_works.quantity',
+                'completed_works.total_amount',
+                'completed_works.status',
+                'completed_works.completion_date'
+            ])
+            ->orderBy('completed_works.completion_date', 'desc')
+            ->limit($limit)
+            ->get();
     }
 } 

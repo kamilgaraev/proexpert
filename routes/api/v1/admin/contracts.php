@@ -11,6 +11,8 @@ Route::apiResource('contracts', ContractController::class);
 
 // Дополнительные маршруты для контрактов
 Route::group(['prefix' => 'contracts'], function () {
+    Route::get('{contract}/full', [ContractController::class, 'fullDetails'])
+        ->name('contracts.full-details');
     Route::get('{contract}/analytics', [ContractController::class, 'analytics'])
         ->name('contracts.analytics');
     Route::get('{contract}/completed-works', [ContractController::class, 'completedWorks'])

@@ -15,6 +15,16 @@ interface ContractRepositoryInterface extends BaseRepositoryInterface
         string $sortDirection = 'desc'
     ): LengthAwarePaginator;
 
+    /**
+     * Получить статистику по выполненным работам контракта
+     */
+    public function getContractWorksStatistics(int $contractId): array;
+
+    /**
+     * Получить последние выполненные работы по контракту
+     */
+    public function getRecentCompletedWorks(int $contractId, int $limit = 10): \Illuminate\Database\Eloquent\Collection;
+
     // public function getSumOfActiveContracts(int $organizationId): float;
     // public function getOverdueContracts(int $organizationId): Collection;
 } 
