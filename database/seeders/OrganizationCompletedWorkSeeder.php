@@ -13,6 +13,7 @@ use App\Models\Role;
 use App\Models\CompletedWork;
 use App\Models\CompletedWorkMaterial;
 use App\Models\Contract;
+use App\Models\Contractor;
 use Carbon\Carbon;
 use Faker\Factory as Faker;
 use Illuminate\Support\Facades\Hash;
@@ -176,6 +177,10 @@ class OrganizationCompletedWorkSeeder extends Seeder
     {
         $contracts = collect();
         
+        // Создаем подрядчиков если их нет
+        $contractors = $this->createContractors($faker);
+        $contractorIds = $contractors->pluck('id')->toArray();
+        
         foreach (array_slice($projectIds, 0, 3) as $projectId) {
             $contractNumber = 'ДОГ-' . $faker->numberBetween(100, 999) . '/2025';
             
@@ -184,15 +189,16 @@ class OrganizationCompletedWorkSeeder extends Seeder
                 [
                     'organization_id' => $this->organizationId,
                     'project_id' => $projectId,
+                    'contractor_id' => $faker->randomElement($contractorIds),
                     'number' => $contractNumber,
+                    'date' => $faker->dateTimeBetween('-6 months', '-1 month'),
                     'type' => $faker->randomElement(['contract', 'agreement', 'specification']),
                     'status' => $faker->randomElement(['active', 'completed', 'draft']),
-                    'contract_date' => $faker->dateTimeBetween('-6 months', '-1 month'),
+                    'subject' => 'Выполнение строительно-монтажных работ',
+                    'total_amount' => $faker->randomFloat(2, 500000, 2000000),
                     'start_date' => $faker->dateTimeBetween('-3 months', 'now'),
                     'end_date' => $faker->dateTimeBetween('+1 month', '+6 months'),
-                    'contractor_name' => $faker->company,
-                    'contract_amount' => $faker->randomFloat(2, 500000, 2000000),
-                    'description' => 'Договор на выполнение строительных работ',
+                    'notes' => 'Договор на выполнение строительных работ',
                 ]
             );
             
@@ -200,6 +206,35 @@ class OrganizationCompletedWorkSeeder extends Seeder
         }
 
         return $contracts;
+    }
+
+    private function createContractors($faker)
+    {
+        $contractors = collect();
+        
+        $contractorNames = [
+            'ООО "СтройМонтаж"',
+            'ИП Иванов С.П.',
+            'ООО "МегаСтрой"'
+        ];
+
+        foreach ($contractorNames as $name) {
+            $contractor = Contractor::firstOrCreate(
+                ['name' => $name, 'organization_id' => $this->organizationId],
+                [
+                    'organization_id' => $this->organizationId,
+                    'name' => $name,
+                    'contact_person' => $faker->name,
+                    'phone' => $faker->phoneNumber,
+                    'email' => $faker->companyEmail,
+                    'address' => $faker->address,
+                ]
+            );
+            
+            $contractors->push($contractor);
+        }
+
+        return $contractors;
     }
 
     private function attachMaterialsToCompletedWork(CompletedWork $completedWork, array $materialIds, $faker): void
