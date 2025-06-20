@@ -35,6 +35,9 @@ class CompletedWorkRepository extends BaseRepository implements CompletedWorkRep
                           })
                           ->orWhereHas('user', function ($userQuery) use ($value) {
                               $userQuery->where('name', 'ILIKE', "%{$value}%");
+                          })
+                          ->orWhereHas('contract', function ($contractQuery) use ($value) {
+                              $contractQuery->where('number', 'ILIKE', "%{$value}%");
                           });
                     });
                     break;
@@ -70,6 +73,40 @@ class CompletedWorkRepository extends BaseRepository implements CompletedWorkRep
                 case 'completion_date_to':
                     $query->where('completion_date', '<=', $value);
                     break;
+
+                // Новые фильтры по суммам
+                case 'amount_from':
+                    $query->where('total_amount', '>=', $value);
+                    break;
+                
+                case 'amount_to':
+                    $query->where('total_amount', '<=', $value);
+                    break;
+
+                // Фильтры по количеству
+                case 'quantity_from':
+                    $query->where('quantity', '>=', $value);
+                    break;
+                
+                case 'quantity_to':
+                    $query->where('quantity', '<=', $value);
+                    break;
+
+                // Фильтр работ с материалами
+                case 'with_materials':
+                    if ($value) {
+                        $query->whereHas('materials');
+                    } else {
+                        $query->whereDoesntHave('materials');
+                    }
+                    break;
+
+                // Фильтр по подрядчику (через контракт)
+                case 'contractor_id':
+                    $query->whereHas('contract', function ($contractQuery) use ($value) {
+                        $contractQuery->where('contractor_id', $value);
+                    });
+                    break;
                 
                 default:
                     if (in_array($key, ['quantity', 'price', 'total_amount'])) {
@@ -77,6 +114,16 @@ class CompletedWorkRepository extends BaseRepository implements CompletedWorkRep
                     }
                     break;
             }
+        }
+
+        // Валидация поля сортировки
+        $allowedSortFields = [
+            'id', 'completion_date', 'created_at', 'updated_at', 
+            'quantity', 'price', 'total_amount', 'status'
+        ];
+        
+        if (!in_array($sortBy, $allowedSortFields)) {
+            $sortBy = 'completion_date';
         }
 
         $query->with($relations)->orderBy($sortBy, $sortDirection);

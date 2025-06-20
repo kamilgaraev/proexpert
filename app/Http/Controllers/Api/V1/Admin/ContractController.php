@@ -11,6 +11,7 @@ use App\Http\Resources\Api\V1\Admin\Contract\ContractCollection; // Создад
 use App\Models\Organization; // Для получения ID организации, например, из аутентифицированного пользователя
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
 use Exception;
 
@@ -35,13 +36,31 @@ class ContractController extends Controller
     public function index(Request $request)
     {
         $user = $request->user();
-        // Получаем organization_id только из middleware или пользователя
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
-        $filters = $request->only(['contractor_id', 'project_id', 'status', 'type', 'number', 'date_from', 'date_to']);
-        $sortBy = $request->input('sort_by', 'date');
+        
+        // Расширенная фильтрация
+        $filters = $request->only([
+            'contractor_id', 
+            'project_id', 
+            'status', 
+            'type', 
+            'number', 
+            'date_from', 
+            'date_to',
+            'completion_from',      // Процент выполнения от
+            'completion_to',        // Процент выполнения до
+            'amount_from',          // Сумма контракта от
+            'amount_to',            // Сумма контракта до
+            'requiring_attention',  // Требуют внимания
+            'is_nearing_limit',     // Приближаются к лимиту
+            'is_overdue',           // Просроченные
+            'search'                // Поиск по номеру/названию
+        ]);
+        
+        $sortBy = $request->input('sort_by', 'created_at');
         $sortDirection = $request->input('sort_direction', 'desc');
         $perPage = $request->input('per_page', 15);
 
@@ -122,5 +141,75 @@ class ContractController extends Controller
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to delete contract', 'error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
+    }
+
+    /**
+     * Получить аналитику по контракту
+     */
+    public function analytics(int $contractId, Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
+
+        $contract = $this->contractService->getContractById($contractId, $organizationId);
+        
+        if (!$contract) {
+            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+        }
+
+        $analytics = [
+            'contract_id' => $contract->id,
+            'contract_number' => $contract->number,
+            'total_amount' => (float) $contract->total_amount,
+            'completed_works_amount' => $contract->completed_works_amount,
+            'remaining_amount' => $contract->remaining_amount,
+            'completion_percentage' => $contract->completion_percentage,
+            'total_paid_amount' => $contract->total_paid_amount,
+            'total_performed_amount' => $contract->total_performed_amount,
+            'status' => $contract->status->value,
+            'is_nearing_limit' => $contract->isNearingLimit(),
+            'can_add_work' => $contract->canAddWork(0), // Проверка общей возможности
+            'completed_works_count' => $contract->completedWorks()->count(),
+            'confirmed_works_count' => $contract->completedWorks()->where('status', 'confirmed')->count(),
+        ];
+
+        return response()->json([
+            'success' => true,
+            'data' => $analytics
+        ]);
+    }
+
+    /**
+     * Получить выполненные работы по контракту
+     */
+    public function completedWorks(int $contractId, Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
+
+        $contract = $this->contractService->getContractById($contractId, $organizationId);
+        
+        if (!$contract) {
+            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+        }
+
+        $perPage = $request->query('per_page', 15);
+        $completedWorks = $contract->completedWorks()
+            ->with(['project', 'workType', 'user', 'materials.measurementUnit'])
+            ->orderBy('completion_date', 'desc')
+            ->paginate($perPage);
+
+        return response()->json([
+            'success' => true,
+            'data' => $completedWorks
+        ]);
     }
 } 

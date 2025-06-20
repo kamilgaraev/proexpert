@@ -45,9 +45,14 @@ class ContractResource extends JsonResource
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
 
-            // Суммарные данные (можно вычислять в сервисе и добавлять к ресурсу, если часто нужны)
-            // 'total_performed_amount' => $this->when(isset($this->total_performed_amount), (float) $this->total_performed_amount),
-            // 'total_paid_amount' => $this->when(isset($this->total_paid_amount), (float) $this->total_paid_amount),
+            // Аналитические данные контракта
+            'completed_works_amount' => (float) $this->completed_works_amount,
+            'remaining_amount' => (float) $this->remaining_amount,
+            'completion_percentage' => (float) $this->completion_percentage,
+            'total_performed_amount' => (float) $this->total_performed_amount,
+            'total_paid_amount' => (float) $this->total_paid_amount,
+            'is_nearing_limit' => $this->isNearingLimit(),
+            'can_add_work' => $this->canAddWork(0),
 
             // Связанные данные (если загружены)
             'child_contracts' => ContractMiniResource::collection($this->whenLoaded('childContracts')),

@@ -9,8 +9,12 @@ use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
 use App\Exceptions\BusinessLogicException;
+use App\Exceptions\ContractException;
+use App\Models\Contract;
+use App\Enums\Contract\ContractStatusEnum;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CompletedWorkService
 {
@@ -39,6 +43,11 @@ class CompletedWorkService
     public function create(CompletedWorkDTO $dto): CompletedWork
     {
         return DB::transaction(function () use ($dto) {
+            // Валидация контракта перед созданием работы
+            if ($dto->contract_id) {
+                $this->validateContract($dto->contract_id, $dto->total_amount);
+            }
+
             $data = $dto->toArray();
             unset($data['materials']);
             
@@ -52,6 +61,11 @@ class CompletedWorkService
                 $this->syncMaterials($createdModel, $dto->materials);
             }
 
+            // Обновление статуса контракта после создания работы
+            if ($dto->contract_id && $dto->status === 'confirmed') {
+                $this->updateContractStatus($dto->contract_id);
+            }
+
             return $createdModel->fresh(['materials.measurementUnit']);
         });
     }
@@ -60,6 +74,16 @@ class CompletedWorkService
     {
         return DB::transaction(function () use ($id, $dto) {
             $existingWork = $this->getById($id, $dto->organization_id);
+
+            // Валидация контракта при изменении суммы или статуса
+            if ($dto->contract_id && ($dto->total_amount !== $existingWork->total_amount || $dto->status !== $existingWork->status)) {
+                // Расчет разницы в сумме
+                $amountDifference = ($dto->total_amount ?? 0) - ($existingWork->total_amount ?? 0);
+                
+                if ($amountDifference > 0) {
+                    $this->validateContract($dto->contract_id, $amountDifference);
+                }
+            }
 
             $data = $dto->toArray();
             unset($data['materials']);
@@ -73,6 +97,11 @@ class CompletedWorkService
 
             if ($dto->materials !== null) {
                 $this->syncMaterials($updatedWork, $dto->materials);
+            }
+
+            // Обновление статуса контракта после изменения работы
+            if ($dto->contract_id && $dto->status === 'confirmed') {
+                $this->updateContractStatus($dto->contract_id);
             }
 
             return $updatedWork->fresh(['materials.measurementUnit']);
@@ -132,5 +161,77 @@ class CompletedWorkService
                 'mu.short_name as measurement_unit'
             ])
             ->get();
+    }
+
+    /**
+     * Валидация контракта перед добавлением работы
+     */
+    protected function validateContract(int $contractId, ?float $workAmount): void
+    {
+        $contract = Contract::find($contractId);
+        
+        if (!$contract) {
+            throw new BusinessLogicException('Контракт не найден.', 404);
+        }
+
+        // Проверка статуса контракта
+        if ($contract->status === ContractStatusEnum::COMPLETED) {
+            throw ContractException::contractCompleted();
+        }
+
+        if ($contract->status === ContractStatusEnum::TERMINATED) {
+            throw ContractException::contractTerminated();
+        }
+
+        // Проверка лимита суммы
+        if ($workAmount && !$contract->canAddWork($workAmount)) {
+            throw ContractException::amountExceedsLimit(
+                $contract->completed_works_amount,
+                $contract->total_amount,
+                $workAmount
+            );
+        }
+    }
+
+    /**
+     * Обновление статуса контракта после выполнения работ
+     */
+    protected function updateContractStatus(int $contractId): void
+    {
+        $contract = Contract::find($contractId);
+        
+        if (!$contract) {
+            return;
+        }
+
+        // Автоматическое обновление статуса
+        $statusChanged = $contract->updateStatusBasedOnCompletion();
+
+        // Проверка приближения к лимиту (для уведомлений)
+        if ($contract->isNearingLimit()) {
+            // Здесь можно добавить логику отправки уведомлений
+            // Например, dispatch event или отправить в очередь
+            $this->notifyContractNearingLimit($contract);
+        }
+    }
+
+    /**
+     * Уведомление о приближении контракта к лимиту
+     */
+    protected function notifyContractNearingLimit(Contract $contract): void
+    {
+        // Логирование
+        Log::warning("Контракт #{$contract->number} приближается к лимиту: {$contract->completion_percentage}%", [
+            'contract_id' => $contract->id,
+            'organization_id' => $contract->organization_id,
+            'completed_amount' => $contract->completed_works_amount,
+            'total_amount' => $contract->total_amount,
+            'completion_percentage' => $contract->completion_percentage
+        ]);
+
+        // Отправляем real-time уведомление
+        event(new \App\Events\ContractLimitWarning($contract));
+
+        // Здесь можно добавить отправку email, push-уведомлений и т.д.
     }
 } 

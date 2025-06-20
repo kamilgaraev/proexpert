@@ -9,6 +9,14 @@ use App\Http\Controllers\Api\V1\Admin\Contract\ContractPaymentController;
 // Префикс 'admin' и middleware применяются в главном файле routes/api.php
 Route::apiResource('contracts', ContractController::class);
 
+// Дополнительные маршруты для контрактов
+Route::group(['prefix' => 'contracts'], function () {
+    Route::get('{contract}/analytics', [ContractController::class, 'analytics'])
+        ->name('contracts.analytics');
+    Route::get('{contract}/completed-works', [ContractController::class, 'completedWorks'])
+        ->name('contracts.completed-works');
+});
+
 // Вложенные маршруты для Актов выполненных работ к Контрактам
 // Имена параметров будут contract и performance_act
 // Доступ: admin/contracts/{contract}/performance-acts

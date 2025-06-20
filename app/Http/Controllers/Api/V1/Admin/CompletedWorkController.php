@@ -30,15 +30,39 @@ class CompletedWorkController extends Controller
     public function index(Request $request): CompletedWorkCollection
     {
         $organizationId = Auth::user()->current_organization_id;
-        $filters = $request->query();
-        $filters['organization_id'] = $organizationId; // Всегда фильтруем по текущей организации
         
-        // Получаем параметры сортировки из запроса или используем значения по умолчанию
+        // Расширенная фильтрация выполненных работ
+        $filters = $request->only([
+            'project_id',           // По проекту
+            'contract_id',          // По контракту  
+            'work_type_id',         // По типу работ
+            'user_id',              // По прорабу/исполнителю
+            'status',               // По статусу (pending, confirmed, rejected)
+            'completion_date_from', // Дата выполнения от
+            'completion_date_to',   // Дата выполнения до
+            'amount_from',          // Сумма работы от
+            'amount_to',            // Сумма работы до
+            'quantity_from',        // Количество от
+            'quantity_to',          // Количество до
+            'with_materials',       // Только работы с материалами (boolean)
+            'contractor_id',        // По подрядчику (через контракт)
+            'search',               // Поиск по описанию/комментарию
+        ]);
+        
+        $filters['organization_id'] = $organizationId;
+        
         $sortBy = $request->query('sortBy', 'completion_date');
         $sortDirection = $request->query('sortDirection', 'desc');
         $perPage = $request->query('perPage', 15);
 
-        $completedWorks = $this->completedWorkService->getAll($filters, $perPage, $sortBy, $sortDirection, ['project', 'contract', 'workType', 'user', 'materials.measurementUnit']);
+        $completedWorks = $this->completedWorkService->getAll(
+            $filters, 
+            $perPage, 
+            $sortBy, 
+            $sortDirection, 
+            ['project', 'contract.contractor', 'workType', 'user', 'materials.measurementUnit']
+        );
+        
         return new CompletedWorkCollection($completedWorks);
     }
 

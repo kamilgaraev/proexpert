@@ -100,6 +100,100 @@ class Contract extends Model
         return 0.00;
     }
 
-    // You might want to add accessors for total_paid_amount and total_performed_amount later
-    // by summing up related payments and performance_acts.
+    /**
+     * Получить общую сумму выполненных работ по контракту
+     */
+    public function getCompletedWorksAmountAttribute(): float
+    {
+        return (float) $this->completedWorks()
+            ->whereIn('status', ['confirmed'])
+            ->sum('total_amount');
+    }
+
+    /**
+     * Получить оставшуюся сумму по контракту
+     */
+    public function getRemainingAmountAttribute(): float
+    {
+        return max(0, $this->total_amount - $this->completed_works_amount);
+    }
+
+    /**
+     * Получить процент выполнения контракта
+     */
+    public function getCompletionPercentageAttribute(): float
+    {
+        if ($this->total_amount <= 0) {
+            return 0.0;
+        }
+        return round(($this->completed_works_amount / $this->total_amount) * 100, 2);
+    }
+
+    /**
+     * Проверить, можно ли добавить работу на указанную сумму
+     */
+    public function canAddWork(float $amount): bool
+    {
+        // Проверяем статус контракта
+        if (in_array($this->status, [ContractStatusEnum::COMPLETED, ContractStatusEnum::TERMINATED])) {
+            return false;
+        }
+
+        // Проверяем лимит суммы (с допуском 1%)
+        $allowedOverrun = $this->total_amount * 0.01;
+        return ($this->completed_works_amount + $amount) <= ($this->total_amount + $allowedOverrun);
+    }
+
+    /**
+     * Проверить, приближается ли контракт к лимиту (90%+)
+     */
+    public function isNearingLimit(): bool
+    {
+        return $this->completion_percentage >= 90.0;
+    }
+
+    /**
+     * Получить сумму всех платежей по контракту
+     */
+    public function getTotalPaidAmountAttribute(): float
+    {
+        return (float) $this->payments()
+            ->where('status', 'completed')
+            ->sum('amount');
+    }
+
+    /**
+     * Получить сумму всех актов по контракту
+     */
+    public function getTotalPerformedAmountAttribute(): float
+    {
+        return (float) $this->performanceActs()
+            ->where('status', 'approved')
+            ->sum('amount');
+    }
+
+    /**
+     * Автоматически обновить статус контракта на основе выполненных работ
+     */
+    public function updateStatusBasedOnCompletion(): bool
+    {
+        $oldStatus = $this->status;
+        
+        if ($this->completion_percentage >= 100 && $this->status === ContractStatusEnum::ACTIVE) {
+            $this->status = ContractStatusEnum::COMPLETED;
+        } elseif ($this->completion_percentage > 0 && $this->status === ContractStatusEnum::DRAFT) {
+            $this->status = ContractStatusEnum::ACTIVE;
+        }
+
+        if ($this->status !== $oldStatus) {
+            $this->save();
+            
+            // Отправляем событие об изменении статуса
+            event(new \App\Events\ContractStatusChanged($this, $oldStatus->value, $this->status->value));
+            
+            return true;
+        }
+
+        return false;
+    }
 } 
