@@ -30,10 +30,14 @@ return [
         'http://89.111.152.112',
         'https://89.111.152.112',
         'http://89.104.68.13',
+        'https://prohelper.pro',
+        'http://prohelper.pro',
         // '*'  // Убираем, чтобы избежать конфликта с supports_credentials = true
     ],
 
-    'allowed_origins_patterns' => [],
+    'allowed_origins_patterns' => [
+        '/^https?:\/\/.*\.prohelper\.pro$/',
+    ],
 
     'allowed_methods' => [
         'GET',
