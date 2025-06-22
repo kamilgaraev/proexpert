@@ -34,6 +34,11 @@ class Organization extends Model
         'logo_path',
         'is_active',
         'subscription_expires_at',
+        'is_verified',
+        'verified_at',
+        'verification_data',
+        'verification_status',
+        'verification_notes',
     ];
 
     /**
@@ -44,6 +49,9 @@ class Organization extends Model
     protected $casts = [
         'is_active' => 'boolean',
         'subscription_expires_at' => 'datetime',
+        'is_verified' => 'boolean',
+        'verified_at' => 'datetime',
+        'verification_data' => 'array',
     ];
 
     /**
@@ -98,5 +106,46 @@ class Organization extends Model
         return $this->is_active && 
             ($this->subscription_expires_at === null || 
             $this->subscription_expires_at->isFuture());
+    }
+
+    /**
+     * Получить текстовое представление статуса верификации.
+     *
+     * @return string
+     */
+    public function getVerificationStatusTextAttribute(): string
+    {
+        return match($this->verification_status) {
+            'verified' => 'Верифицирована',
+            'partially_verified' => 'Частично верифицирована',
+            'needs_review' => 'Требует проверки',
+            'failed' => 'Верификация не пройдена',
+            'pending' => 'Ожидает верификации',
+            default => 'Неизвестный статус'
+        };
+    }
+
+    /**
+     * Проверить, может ли организация пройти автоматическую верификацию.
+     *
+     * @return bool
+     */
+    public function canBeVerified(): bool
+    {
+        return !empty($this->tax_number) && !empty($this->address);
+    }
+
+    /**
+     * Получить оценку верификации из данных верификации.
+     *
+     * @return int
+     */
+    public function getVerificationScoreAttribute(): int
+    {
+        if (!$this->verification_data || !is_array($this->verification_data)) {
+            return 0;
+        }
+
+        return $this->verification_data['score'] ?? 0;
     }
 }

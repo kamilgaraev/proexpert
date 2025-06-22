@@ -35,4 +35,11 @@ return [
         ],
     ],
 
+    'dadata' => [
+        'api_key' => env('DADATA_API_KEY', 'c2110ee53431438f940545629894ebb5dc1fb1a4'),
+        'secret_key' => env('DADATA_SECRET_KEY', '9acd90e91b45e9105f0a7fac58bfebca6addf914'),
+        'base_url' => 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/',
+        'clean_url' => 'https://cleaner.dadata.ru/api/v1/clean/',
+    ],
+
 ];
