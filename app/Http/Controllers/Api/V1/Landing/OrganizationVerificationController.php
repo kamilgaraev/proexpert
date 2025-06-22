@@ -25,19 +25,19 @@ class OrganizationVerificationController extends Controller
         $this->daDataService = $daDataService;
     }
 
-    public function show()
+    public function show(Request $request)
     {
         try {
-            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id');
             
-            if (!$user->current_organization_id) {
+            if (!$organizationId) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Организация не найдена',
                 ], 404);
             }
             
-            $organization = Organization::find($user->current_organization_id);
+            $organization = Organization::find($organizationId);
 
             if (!$organization) {
                 return response()->json([
@@ -71,16 +71,16 @@ class OrganizationVerificationController extends Controller
     public function update(UpdateOrganizationRequest $request)
     {
         try {
-            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id');
             
-            if (!$user->current_organization_id) {
+            if (!$organizationId) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Организация не найдена',
                 ], 404);
             }
             
-            $organization = Organization::find($user->current_organization_id);
+            $organization = Organization::find($organizationId);
 
             if (!$organization) {
                 return response()->json([
@@ -122,19 +122,19 @@ class OrganizationVerificationController extends Controller
         }
     }
 
-    public function requestVerification()
+    public function requestVerification(Request $request)
     {
         try {
-            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id');
             
-            if (!$user->current_organization_id) {
+            if (!$organizationId) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Организация не найдена',
                 ], 404);
             }
             
-            $organization = Organization::find($user->current_organization_id);
+            $organization = Organization::find($organizationId);
 
             if (!$organization) {
                 return response()->json([
