@@ -114,7 +114,11 @@ Route::prefix('landing')->name('landing.')->group(function () {
     // Явно включаем маршруты для Landing API
     require __DIR__ . '/api/v1/landing/auth.php';
     // require __DIR__ . '/api/v1/landing/users.php'; // Закомментировал, т.к. ниже есть более специфичное подключение для adminPanelUsers
-    require __DIR__ . '/api/v1/landing/organization.php';
+    
+    // Роуты организации с правильным middleware
+    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing'])->group(function () {
+        require __DIR__ . '/api/v1/landing/organization.php';
+    });
     
     // Маршруты для управления пользователями админ-панели (accountant, web_admin)
     Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'role:organization_owner|organization_admin'])
