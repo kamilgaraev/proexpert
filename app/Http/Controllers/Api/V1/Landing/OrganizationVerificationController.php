@@ -47,13 +47,15 @@ class OrganizationVerificationController extends Controller
             }
 
             $recommendations = $this->verificationService->getVerificationRecommendations($organization);
+            $userMessage = $this->verificationService->getUserFriendlyMessage($organization);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Данные организации получены',
                 'data' => [
                     'organization' => new OrganizationResource($organization),
-                    'recommendations' => $recommendations
+                    'recommendations' => $recommendations,
+                    'user_message' => $userMessage
                 ]
             ]);
 
@@ -200,11 +202,15 @@ class OrganizationVerificationController extends Controller
             }
 
             $recommendations = $this->verificationService->getVerificationRecommendations($organization);
+            $userMessage = $this->verificationService->getUserFriendlyMessage($organization);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Рекомендации по верификации получены',
-                'data' => $recommendations
+                'data' => [
+                    'recommendations' => $recommendations,
+                    'user_message' => $userMessage
+                ]
             ]);
 
         } catch (\Exception $e) {

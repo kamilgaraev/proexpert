@@ -200,6 +200,46 @@ class OrganizationVerificationService
     }
 
     /**
+     * Рассчитать базовый рейтинг организации на основе заполненных полей
+     */
+    public function calculateBasicScore(Organization $organization): int
+    {
+        $score = 0;
+        
+        // ИНН - 70 баллов
+        if (!empty($organization->tax_number) && $this->isValidInn($organization->tax_number)) {
+            $score += 70;
+        }
+        
+        // Адрес - 30 баллов  
+        if (!empty($organization->address)) {
+            $score += 30;
+        }
+        
+        // Полное наименование - 15 баллов
+        if (!empty($organization->legal_name)) {
+            $score += 15;
+        }
+        
+        // ОГРН - 15 баллов
+        if (!empty($organization->registration_number) && $this->isValidOgrn($organization->registration_number)) {
+            $score += 15;
+        }
+        
+        // Город - 10 баллов
+        if (!empty($organization->city)) {
+            $score += 10;
+        }
+        
+        // Почтовый индекс - 10 баллов
+        if (!empty($organization->postal_code) && preg_match('/^\d{6}$/', $organization->postal_code)) {
+            $score += 10;
+        }
+        
+        return min($score, 100); // Максимум 100 баллов
+    }
+
+    /**
      * Получить детальную информацию о том, что нужно исправить для улучшения верификации
      */
     public function getVerificationRecommendations(Organization $organization): array
@@ -327,18 +367,35 @@ class OrganizationVerificationService
                     ];
                 }
             }
+        } else if ($organization->canBeVerified()) {
+            // Если все основные поля заполнены, но верификация не проводилась
+            $verificationIssues[] = [
+                'type' => 'info',
+                'message' => 'Запустите автоматическую верификацию для проверки данных через государственные реестры',
+                'severity' => 'medium'
+            ];
         }
 
+        // Используем базовый рейтинг если верификация еще не проводилась
+        $currentScore = $organization->verification_score > 0 
+            ? $organization->verification_score 
+            : $this->calculateBasicScore($organization);
+            
+        // Определяем статус на основе текущего рейтинга
+        $currentStatus = $organization->verification_status ?: $this->determineOverallStatus($currentScore);
+        $statusText = $this->getVerificationStatusText($currentStatus);
+
         return [
-            'current_score' => $organization->verification_score,
+            'current_score' => $currentScore,
             'max_score' => 100,
-            'status' => $organization->verification_status,
-            'status_text' => $organization->verification_status_text,
+            'status' => $currentStatus,
+            'status_text' => $statusText,
             'missing_fields' => $missingFields,
             'field_issues' => $issues,
             'verification_issues' => $verificationIssues,
             'can_auto_verify' => $organization->canBeVerified(),
             'potential_score_increase' => array_sum(array_column($missingFields, 'weight')) + array_sum(array_column($issues, 'weight')),
+            'needs_verification' => empty($organization->verification_data) && $organization->canBeVerified(),
         ];
     }
 
@@ -350,5 +407,77 @@ class OrganizationVerificationService
     private function isValidOgrn(string $ogrn): bool
     {
         return preg_match('/^\d{13}$|^\d{15}$/', $ogrn);
+    }
+
+    /**
+     * Получить пользовательское сообщение о состоянии верификации
+     */
+    public function getUserFriendlyMessage(Organization $organization): array
+    {
+        $recommendations = $this->getVerificationRecommendations($organization);
+        $score = $recommendations['current_score'];
+        $missingFields = $recommendations['missing_fields'];
+        $issues = $recommendations['field_issues'];
+        $needsVerification = $recommendations['needs_verification'];
+
+        if ($score === 100 && empty($issues) && !$needsVerification) {
+            return [
+                'type' => 'success',
+                'title' => 'Организация полностью верифицирована',
+                'message' => 'Все данные заполнены корректно и проверены через государственные реестры.',
+                'action' => null
+            ];
+        }
+
+        if ($score >= 100 && $needsVerification) {
+            return [
+                'type' => 'warning',
+                'title' => 'Требуется верификация',
+                'message' => 'Все основные данные заполнены. Запустите автоматическую верификацию для проверки через государственные реестры.',
+                'action' => 'verify'
+            ];
+        }
+
+        if (!empty($issues)) {
+            $issuesList = array_map(fn($issue) => "• {$issue['name']}: {$issue['description']}", $issues);
+            return [
+                'type' => 'error',
+                'title' => 'Обнаружены ошибки в данных',
+                'message' => "Исправьте следующие поля:\n" . implode("\n", $issuesList),
+                'action' => 'edit'
+            ];
+        }
+
+        if (!empty($missingFields)) {
+            $requiredFields = array_filter($missingFields, fn($field) => $field['required']);
+            $optionalFields = array_filter($missingFields, fn($field) => !$field['required']);
+
+            if (!empty($requiredFields)) {
+                $fieldsList = array_map(fn($field) => "• {$field['name']}", $requiredFields);
+                return [
+                    'type' => 'warning',
+                    'title' => 'Заполните обязательные поля',
+                    'message' => "Для верификации необходимо заполнить:\n" . implode("\n", $fieldsList),
+                    'action' => 'edit'
+                ];
+            }
+
+            if (!empty($optionalFields)) {
+                $fieldsList = array_map(fn($field) => "• {$field['name']} (+{$field['weight']} баллов)", $optionalFields);
+                return [
+                    'type' => 'info',
+                    'title' => 'Можно улучшить рейтинг',
+                    'message' => "Заполните дополнительные поля для повышения рейтинга:\n" . implode("\n", $fieldsList),
+                    'action' => 'edit'
+                ];
+            }
+        }
+
+        return [
+            'type' => 'info',
+            'title' => 'Статус верификации',
+            'message' => "Текущий рейтинг: {$score}/100 баллов",
+            'action' => null
+        ];
     }
 } 

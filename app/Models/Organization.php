@@ -143,7 +143,8 @@ class Organization extends Model
     public function getVerificationScoreAttribute(): int
     {
         if (!$this->verification_data || !is_array($this->verification_data)) {
-            return 0;
+            // Если верификация не проводилась, рассчитываем базовый рейтинг
+            return app(\App\Services\OrganizationVerificationService::class)->calculateBasicScore($this);
         }
 
         return $this->verification_data['score'] ?? 0;
