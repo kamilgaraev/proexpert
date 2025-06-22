@@ -46,11 +46,14 @@ class OrganizationVerificationController extends Controller
                 ], 404);
             }
 
+            $recommendations = $this->verificationService->getVerificationRecommendations($organization);
+
             return response()->json([
                 'success' => true,
                 'message' => 'Данные организации получены',
                 'data' => [
-                    'organization' => new OrganizationResource($organization)
+                    'organization' => new OrganizationResource($organization),
+                    'recommendations' => $recommendations
                 ]
             ]);
 
@@ -171,6 +174,49 @@ class OrganizationVerificationController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка при запросе верификации',
+            ], 500);
+        }
+    }
+
+    public function getRecommendations(Request $request)
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Организация не найдена',
+                ], 404);
+            }
+            
+            $organization = Organization::find($organizationId);
+
+            if (!$organization) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Организация не найдена',
+                ], 404);
+            }
+
+            $recommendations = $this->verificationService->getVerificationRecommendations($organization);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Рекомендации по верификации получены',
+                'data' => $recommendations
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error getting verification recommendations', [
+                'user_id' => Auth::id(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении рекомендаций',
             ], 500);
         }
     }

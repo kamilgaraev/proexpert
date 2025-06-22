@@ -22,6 +22,8 @@ Route::middleware(['auth:api_landing', 'organization.context'])
              ->name('landing.organization.verification.update');
         Route::post('/verification/request', [OrganizationVerificationController::class, 'requestVerification'])
              ->name('landing.organization.verification.request');
+        Route::get('/verification/recommendations', [OrganizationVerificationController::class, 'getRecommendations'])
+             ->name('landing.organization.verification.recommendations');
     });
 
 Route::middleware(['auth:api_landing'])

@@ -160,7 +160,92 @@ Content-Type: application/json
 
 ---
 
-### 3. Запрос верификации организации
+### 3. Получение рекомендаций по верификации
+
+```http
+GET /organization/verification/recommendations
+```
+
+**Описание:** Получает детальные рекомендации о том, какие поля нужно заполнить или исправить для улучшения верификации.
+
+**Заголовки:**
+```
+Authorization: Bearer {jwt_token}
+Content-Type: application/json
+```
+
+**Ответ (успех):**
+```json
+{
+  "success": true,
+  "message": "Рекомендации по верификации получены",
+  "data": {
+    "current_score": 70,
+    "max_score": 100,
+    "status": "partially_verified",
+    "status_text": "Частично верифицирована",
+    "missing_fields": [
+      {
+        "field": "legal_name",
+        "name": "Полное наименование",
+        "description": "Полное юридическое наименование организации",
+        "weight": 10,
+        "required": false
+      },
+      {
+        "field": "phone",
+        "name": "Телефон",
+        "description": "Контактный телефон организации",
+        "weight": 5,
+        "required": false
+      }
+    ],
+    "field_issues": [
+      {
+        "field": "postal_code",
+        "name": "Почтовый индекс",
+        "description": "Почтовый индекс должен содержать ровно 6 цифр",
+        "current_value": "12345",
+        "weight": 5
+      }
+    ],
+    "verification_issues": [
+      {
+        "type": "warning",
+        "message": "Адрес не полностью соответствует данным ФИАС",
+        "severity": "medium"
+      }
+    ],
+    "can_auto_verify": true,
+    "potential_score_increase": 20
+  }
+}
+```
+
+**Описание полей ответа:**
+- `current_score` - текущая оценка верификации (0-100)
+- `max_score` - максимально возможная оценка (100)
+- `status` - текущий статус верификации
+- `status_text` - текстовое описание статуса
+- `missing_fields` - список незаполненных полей
+- `field_issues` - список полей с некорректными данными
+- `verification_issues` - проблемы, выявленные при верификации через DaData
+- `can_auto_verify` - можно ли запустить автоматическую верификацию
+- `potential_score_increase` - на сколько баллов может увеличиться оценка
+
+**Веса полей для верификации:**
+- ИНН: 70 баллов (обязательное поле)
+- Адрес: 30 баллов (обязательное поле)
+- Полное наименование: 10 баллов
+- ОГРН: 10 баллов
+- Телефон: 5 баллов
+- Email: 5 баллов
+- Город: 5 баллов
+- Почтовый индекс: 5 баллов
+
+---
+
+### 4. Запрос верификации организации
 
 ```http
 POST /organization/verification/request
