@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 // use App\Services\Organization\OrganizationService; // Удаляем зависимость
 use App\Http\Requests\Api\V1\Landing\Organization\StoreOrganizationRequest; // Уточняем путь и добавляем Store
 use App\Http\Requests\Api\V1\Landing\Organization\UpdateOrganizationRequest;
-use App\Http\Resources\Api\V1\Landing\OrganizationResource;
+use App\Http\Resources\Api\V1\Landing\Organization\OrganizationResource;
 use App\Http\Responses\Api\V1\ErrorResponse;
 use App\Http\Responses\Api\V1\NotFoundResponse;
 use App\Http\Responses\Api\V1\SuccessResourceResponse;
@@ -90,8 +90,8 @@ class OrganizationController extends Controller
     {
         /** @var User $user */
         $user = Auth::user();
-        // Проверяем, принадлежит ли пользователь к этой организации
-        if (!Auth::user()->organizations()->where('organization_id', $organization->id)->exists()) {
+        // Проверяем, принадлежит ли пользователь к этой организации  
+        if (!$user->organizations()->where('organization_id', $organization->id)->exists()) {
              // Или можно использовать Gate/Policy: Gate::authorize('view', $organization);
             return new ErrorResponse('Access denied to this organization.', Response::HTTP_FORBIDDEN);
         }
