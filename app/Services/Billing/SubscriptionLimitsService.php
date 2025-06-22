@@ -51,6 +51,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
             'limits' => [
                 'foremen' => $this->formatLimitData($plan->max_foremen, $currentUsage['foremen']),
                 'projects' => $this->formatLimitData($plan->max_projects, $currentUsage['projects']),
+                'users' => $this->formatLimitData($plan->max_users, $currentUsage['users']),
                 'storage' => $this->formatStorageLimitData($plan->max_storage_gb, $currentUsage['storage_mb']),
             ],
             'features' => $plan->features ? (array) $plan->features : [],
@@ -135,6 +136,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
             return [
                 'foremen' => $this->getForemenCount($organizationId),
                 'projects' => $this->getProjectsCount($organizationId),
+                'users' => $this->getUsersCount($organizationId),
                 'storage_mb' => $this->getStorageUsage($organizationId),
             ];
         });
@@ -154,6 +156,13 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         return \App\Models\Project::where('organization_id', $organizationId)->count();
     }
 
+    private function getUsersCount(int $organizationId): int
+    {
+        return DB::table('organization_user')
+            ->where('organization_id', $organizationId)
+            ->count();
+    }
+
     private function getStorageUsage(int $organizationId): float
     {
         $completedWorksCount = \App\Models\CompletedWork::whereHas('contract', function($query) use ($organizationId) {
@@ -163,6 +172,48 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         $materialsCount = \App\Models\Material::where('organization_id', $organizationId)->count();
         
         return ($completedWorksCount * 0.1) + ($materialsCount * 0.05);
+    }
+
+    public function canCreateUser(User $user): bool
+    {
+        $limitsData = $this->getUserLimitsData($user);
+        
+        if (!$limitsData['has_subscription']) {
+            $defaultLimits = config('billing.default_limits');
+            $currentUsage = $this->getCurrentUsage($user);
+            return $currentUsage['users'] < ($defaultLimits['max_users'] ?? 1);
+        }
+        
+        $userLimit = $limitsData['limits']['users'];
+        return $userLimit['is_unlimited'] || $userLimit['used'] < $userLimit['limit'];
+    }
+
+    public function canCreateForeman(User $user): bool
+    {
+        $limitsData = $this->getUserLimitsData($user);
+        
+        if (!$limitsData['has_subscription']) {
+            $defaultLimits = config('billing.default_limits');
+            $currentUsage = $this->getCurrentUsage($user);
+            return $currentUsage['foremen'] < ($defaultLimits['max_foremen'] ?? 1);
+        }
+        
+        $foremanLimit = $limitsData['limits']['foremen'];
+        return $foremanLimit['is_unlimited'] || $foremanLimit['used'] < $foremanLimit['limit'];
+    }
+
+    public function canCreateProject(User $user): bool
+    {
+        $limitsData = $this->getUserLimitsData($user);
+        
+        if (!$limitsData['has_subscription']) {
+            $defaultLimits = config('billing.default_limits');
+            $currentUsage = $this->getCurrentUsage($user);
+            return $currentUsage['projects'] < ($defaultLimits['max_projects'] ?? 1);
+        }
+        
+        $projectLimit = $limitsData['limits']['projects'];
+        return $projectLimit['is_unlimited'] || $projectLimit['used'] < $projectLimit['limit'];
     }
 
     private function generateWarnings(SubscriptionPlan $plan, array $currentUsage): array

@@ -20,6 +20,7 @@ class SubscriptionPlan extends Model
         'max_foremen',
         'max_projects',
         'max_storage_gb',
+        'max_users',
         'features',
         'is_active',
         'display_order',
@@ -32,6 +33,7 @@ class SubscriptionPlan extends Model
         'max_foremen' => 'integer',
         'max_projects' => 'integer',
         'max_storage_gb' => 'integer',
+        'max_users' => 'integer',
         'duration_in_days' => 'integer',
         'display_order' => 'integer',
     ];

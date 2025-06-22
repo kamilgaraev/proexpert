@@ -12,9 +12,9 @@ return [
     */
 
     'default_limits' => [
-        'max_users' => 1,
+        'max_users' => 3,
+        'max_foremen' => 1,
         'max_projects' => 1,
         'max_storage_mb' => 100,
-        // Добавьте другие лимиты по необходимости
     ],
 ];
