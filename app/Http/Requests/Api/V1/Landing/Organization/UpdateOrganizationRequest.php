@@ -25,36 +25,37 @@ class UpdateOrganizationRequest extends FormRequest
      */
     public function rules(): array
     {
-        $organizationId = $this->route('organization') ? $this->route('organization')->id : null;
+        // Получаем ID организации из current_organization_id пользователя
+        $organizationId = Auth::user()->current_organization_id ?? null;
         
         return [
             'name' => 'sometimes|required|string|max:255|min:2',
             'legal_name' => 'nullable|string|max:255|min:2',
-            'tax_number' => [
+            'tax_number' => array_filter([
                 'nullable',
                 'string',
                 'regex:/^(\d{10}|\d{12})$/',
-                'unique:organizations,tax_number,' . $organizationId
-            ],
-            'registration_number' => [
+                $organizationId ? 'unique:organizations,tax_number,' . $organizationId : 'unique:organizations,tax_number'
+            ]),
+            'registration_number' => array_filter([
                 'nullable',
                 'string',
                 'regex:/^(\d{13}|\d{15})$/',
-                'unique:organizations,registration_number,' . $organizationId
-            ],
+                $organizationId ? 'unique:organizations,registration_number,' . $organizationId : 'unique:organizations,registration_number'
+            ]),
             'phone' => [
                 'nullable',
                 'string',
                 'max:20',
                 'regex:/^(\+7|8)[- ]?\(?[0-9]{3}\)?[- ]?[0-9]{3}[- ]?[0-9]{2}[- ]?[0-9]{2}$/'
             ],
-            'email' => [
+            'email' => array_filter([
                 'nullable',
                 'string',
                 'email',
                 'max:255',
-                'unique:organizations,email,' . $organizationId
-            ],
+                $organizationId ? 'unique:organizations,email,' . $organizationId : 'unique:organizations,email'
+            ]),
             'address' => 'nullable|string|max:500|min:10',
             'city' => 'nullable|string|max:100|min:2|regex:/^[а-яёА-ЯЁa-zA-Z\s\-\.]+$/u',
             'postal_code' => [
