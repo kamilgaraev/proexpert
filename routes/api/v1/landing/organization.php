@@ -4,16 +4,16 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\OrganizationController;
 use App\Http\Controllers\Api\V1\Landing\OrganizationVerificationController;
 
-Route::middleware(['auth:api_landing', 'role:organization_owner|organization_admin']) // Используем | как разделитель
+Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'role:organization_owner|organization_admin'])
     ->prefix('organization')
     ->group(function () {
         Route::get('/', [OrganizationController::class, 'show'])
-             ->name('landing.organization.show'); // Имя маршрута
+             ->name('landing.organization.show');
         Route::patch('/', [OrganizationController::class, 'update'])
-             ->name('landing.organization.update'); // Имя маршрута
+             ->name('landing.organization.update');
     });
 
-Route::middleware(['auth:api_landing'])
+Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
     ->prefix('organization')
     ->group(function () {
         Route::get('/verification', [OrganizationVerificationController::class, 'show'])
@@ -24,7 +24,7 @@ Route::middleware(['auth:api_landing'])
              ->name('landing.organization.verification.request');
     });
 
-Route::middleware(['auth:api_landing'])
+Route::middleware(['auth:api_landing', 'auth.jwt:api_landing'])
     ->prefix('dadata')
     ->group(function () {
         Route::post('/suggest/organizations', [OrganizationVerificationController::class, 'suggestOrganizations'])
