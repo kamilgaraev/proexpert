@@ -246,7 +246,7 @@ class OrganizationVerificationService
                 'field' => 'legal_name',
                 'name' => 'Полное наименование',
                 'description' => 'Полное юридическое наименование организации',
-                'weight' => 10,
+                'weight' => 15,
                 'required' => false
             ];
         }
@@ -256,7 +256,7 @@ class OrganizationVerificationService
                 'field' => 'registration_number',
                 'name' => 'ОГРН',
                 'description' => 'Основной государственный регистрационный номер',
-                'weight' => 10,
+                'weight' => 15,
                 'required' => false
             ];
         } else {
@@ -267,37 +267,19 @@ class OrganizationVerificationService
                     'name' => 'ОГРН',
                     'description' => 'ОГРН должен содержать только цифры (13 или 15 знаков)',
                     'current_value' => $organization->registration_number,
-                    'weight' => 10
+                    'weight' => 15
                 ];
             }
         }
 
-        if (empty($organization->phone)) {
-            $missingFields[] = [
-                'field' => 'phone',
-                'name' => 'Телефон',
-                'description' => 'Контактный телефон организации',
-                'weight' => 5,
-                'required' => false
-            ];
-        }
 
-        if (empty($organization->email)) {
-            $missingFields[] = [
-                'field' => 'email',
-                'name' => 'Email',
-                'description' => 'Контактный email организации',
-                'weight' => 5,
-                'required' => false
-            ];
-        }
 
         if (empty($organization->city)) {
             $missingFields[] = [
                 'field' => 'city',
                 'name' => 'Город',
                 'description' => 'Город регистрации организации',
-                'weight' => 5,
+                'weight' => 10,
                 'required' => false
             ];
         }
@@ -307,7 +289,7 @@ class OrganizationVerificationService
                 'field' => 'postal_code',
                 'name' => 'Почтовый индекс',
                 'description' => 'Почтовый индекс (6 цифр)',
-                'weight' => 5,
+                'weight' => 10,
                 'required' => false
             ];
         } else {
@@ -318,7 +300,7 @@ class OrganizationVerificationService
                     'name' => 'Почтовый индекс',
                     'description' => 'Почтовый индекс должен содержать ровно 6 цифр',
                     'current_value' => $organization->postal_code,
-                    'weight' => 5
+                    'weight' => 10
                 ];
             }
         }

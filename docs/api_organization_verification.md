@@ -189,14 +189,14 @@ Content-Type: application/json
         "field": "legal_name",
         "name": "Полное наименование",
         "description": "Полное юридическое наименование организации",
-        "weight": 10,
+        "weight": 15,
         "required": false
       },
       {
-        "field": "phone",
-        "name": "Телефон",
-        "description": "Контактный телефон организации",
-        "weight": 5,
+        "field": "registration_number",
+        "name": "ОГРН",
+        "description": "Основной государственный регистрационный номер",
+        "weight": 15,
         "required": false
       }
     ],
@@ -206,7 +206,7 @@ Content-Type: application/json
         "name": "Почтовый индекс",
         "description": "Почтовый индекс должен содержать ровно 6 цифр",
         "current_value": "12345",
-        "weight": 5
+        "weight": 10
       }
     ],
     "verification_issues": [
@@ -217,7 +217,7 @@ Content-Type: application/json
       }
     ],
     "can_auto_verify": true,
-    "potential_score_increase": 20
+    "potential_score_increase": 40
   }
 }
 ```
@@ -236,12 +236,12 @@ Content-Type: application/json
 **Веса полей для верификации:**
 - ИНН: 70 баллов (обязательное поле)
 - Адрес: 30 баллов (обязательное поле)
-- Полное наименование: 10 баллов
-- ОГРН: 10 баллов
-- Телефон: 5 баллов
-- Email: 5 баллов
-- Город: 5 баллов
-- Почтовый индекс: 5 баллов
+- Полное наименование: 15 баллов
+- ОГРН: 15 баллов
+- Город: 10 баллов
+- Почтовый индекс: 10 баллов
+
+**Примечание:** Email и телефон не участвуют в процессе верификации, но могут быть указаны для контактной информации.
 
 ---
 
