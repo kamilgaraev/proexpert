@@ -287,9 +287,20 @@ class ContractSeeder extends Seeder
     private function createContractPayments(Contract $contract, $faker): void
     {
         if ($contract->actual_advance_amount > 0) {
+            // Авансовый платеж между датой договора и началом работ (или текущей датой)
+            $advanceStartDate = $contract->date;
+            $advanceEndDate = $contract->start_date ?: 'now';
+            
+            // Проверяем корректность дат
+            if (strtotime($advanceStartDate) <= strtotime($advanceEndDate)) {
+                $paymentDate = $faker->dateTimeBetween($advanceStartDate, $advanceEndDate);
+            } else {
+                $paymentDate = $contract->date;
+            }
+
             ContractPayment::create([
                 'contract_id' => $contract->id,
-                'payment_date' => $faker->dateTimeBetween($contract->date, $contract->start_date ?: 'now'),
+                'payment_date' => $paymentDate,
                 'amount' => $contract->actual_advance_amount,
                 'payment_type' => ContractPaymentTypeEnum::ADVANCE,
                 'reference_document_number' => 'ПП-' . $faker->numberBetween(1000, 9999),
@@ -307,9 +318,20 @@ class ContractSeeder extends Seeder
                 
                 if ($remainingAmount < 0) break;
 
+                // Промежуточные платежи между началом работ и текущей датой
+                $paymentStartDate = $contract->start_date ?: $contract->date;
+                $paymentEndDate = 'now';
+                
+                // Проверяем корректность дат
+                if (strtotime($paymentStartDate) <= strtotime('now')) {
+                    $paymentDate = $faker->dateTimeBetween($paymentStartDate, $paymentEndDate);
+                } else {
+                    $paymentDate = $contract->start_date ?: $contract->date;
+                }
+
                 ContractPayment::create([
                     'contract_id' => $contract->id,
-                    'payment_date' => $faker->dateTimeBetween($contract->start_date ?: $contract->date, 'now'),
+                    'payment_date' => $paymentDate,
                     'amount' => $paymentAmount,
                     'payment_type' => ContractPaymentTypeEnum::FACT_PAYMENT,
                     'reference_document_number' => 'ПП-' . $faker->numberBetween(1000, 9999),
@@ -326,8 +348,28 @@ class ContractSeeder extends Seeder
             
             for ($i = 0; $i < $actsCount; $i++) {
                 $actAmount = $faker->randomFloat(2, 100000, $contract->total_amount / 3);
-                $actDate = $faker->dateTimeBetween($contract->start_date ?: $contract->date, 'now');
+                
+                // Безопасная генерация даты акта
+                $actStartDate = $contract->start_date ?: $contract->date;
+                $actEndDate = 'now';
+                
+                if (strtotime($actStartDate) <= strtotime('now')) {
+                    $actDate = $faker->dateTimeBetween($actStartDate, $actEndDate);
+                } else {
+                    $actDate = $contract->start_date ?: $contract->date;
+                }
+                
                 $isApproved = $faker->boolean(80);
+                
+                // Дата утверждения не может быть раньше даты акта
+                $approvalDate = null;
+                if ($isApproved) {
+                    if (strtotime($actDate) <= strtotime('now')) {
+                        $approvalDate = $faker->dateTimeBetween($actDate, 'now');
+                    } else {
+                        $approvalDate = $actDate;
+                    }
+                }
                 
                 ContractPerformanceAct::create([
                     'contract_id' => $contract->id,
@@ -336,7 +378,7 @@ class ContractSeeder extends Seeder
                     'amount' => $actAmount,
                     'description' => 'Акт выполненных работ № ' . ($i + 1) . ' по договору ' . $contract->number,
                     'is_approved' => $isApproved,
-                    'approval_date' => $isApproved ? $faker->dateTimeBetween($actDate, 'now') : null,
+                    'approval_date' => $approvalDate,
                 ]);
             }
         }
