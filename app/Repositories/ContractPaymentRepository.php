@@ -38,4 +38,12 @@ class ContractPaymentRepository extends BaseRepository implements ContractPaymen
 
         return (float) $query->sum('amount');
     }
+
+    public function getAdvancePaymentsSum(int $contractId): float
+    {
+        return (float) $this->model->query()
+            ->where('contract_id', $contractId)
+            ->where('payment_type', ContractPaymentTypeEnum::ADVANCE)
+            ->sum('amount');
+    }
 } 

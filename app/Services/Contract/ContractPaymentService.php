@@ -7,6 +7,7 @@ use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\DTOs\Contract\ContractPaymentDTO;
 use App\Models\ContractPayment;
 use App\Models\Contract;
+use App\Enums\Contract\ContractPaymentTypeEnum;
 use Illuminate\Support\Collection;
 use Exception;
 
@@ -32,6 +33,25 @@ class ContractPaymentService
         return $contract;
     }
 
+    /**
+     * Пересчитать и обновить actual_advance_amount в контракте
+     */
+    protected function updateActualAdvanceAmount(int $contractId): void
+    {
+        $contract = $this->contractRepository->find($contractId);
+        if (!$contract) {
+            return;
+        }
+
+        // Сумма всех авансовых платежей
+        $totalAdvanceAmount = $this->paymentRepository->getAdvancePaymentsSum($contractId);
+        
+        // Обновляем поле actual_advance_amount
+        $this->contractRepository->update($contractId, [
+            'actual_advance_amount' => $totalAdvanceAmount
+        ]);
+    }
+
     public function getAllPaymentsForContract(int $contractId, int $organizationId, array $filters = []): Collection
     {
         $this->getContractOrFail($contractId, $organizationId); 
@@ -45,7 +65,14 @@ class ContractPaymentService
         $paymentData = $paymentDTO->toArray();
         $paymentData['contract_id'] = $contract->id;
 
-        return $this->paymentRepository->create($paymentData);
+        $payment = $this->paymentRepository->create($paymentData);
+
+        // Если это авансовый платеж - обновляем actual_advance_amount
+        if ($paymentDTO->payment_type === ContractPaymentTypeEnum::ADVANCE) {
+            $this->updateActualAdvanceAmount($contractId);
+        }
+
+        return $payment;
     }
 
     public function getPaymentById(int $paymentId, int $contractId, int $organizationId): ?ContractPayment
@@ -67,12 +94,19 @@ class ContractPaymentService
             throw new Exception('Payment not found or does not belong to the specified contract.');
         }
 
+        $oldPaymentType = $payment->payment_type;
         $updateData = $paymentDTO->toArray();
         $updated = $this->paymentRepository->update($paymentId, $updateData);
 
         if (!$updated) {
             throw new Exception('Failed to update payment.');
         }
+
+        // Если изменился тип платежа или это авансовый платеж - пересчитываем actual_advance_amount
+        if ($oldPaymentType === ContractPaymentTypeEnum::ADVANCE || $paymentDTO->payment_type === ContractPaymentTypeEnum::ADVANCE) {
+            $this->updateActualAdvanceAmount($contractId);
+        }
+
         return $this->paymentRepository->find($paymentId); 
     }
 
@@ -84,7 +118,16 @@ class ContractPaymentService
         if (!$payment || $payment->contract_id !== $contractId) {
             throw new Exception('Payment not found or does not belong to the specified contract.');
         }
-        return $this->paymentRepository->delete($paymentId);
+
+        $wasAdvancePayment = $payment->payment_type === ContractPaymentTypeEnum::ADVANCE;
+        $result = $this->paymentRepository->delete($paymentId);
+
+        // Если удален авансовый платеж - пересчитываем actual_advance_amount
+        if ($result && $wasAdvancePayment) {
+            $this->updateActualAdvanceAmount($contractId);
+        }
+
+        return $result;
     }
     
     public function getTotalPaidAmountForContract(int $contractId, int $organizationId): float

@@ -9,4 +9,5 @@ interface ContractPaymentRepositoryInterface extends BaseRepositoryInterface
 {
     public function getPaymentsForContract(int $contractId, array $filters = [], string $sortBy = 'payment_date', string $sortDirection = 'desc'): Collection;
     public function getTotalPaidAmountForContract(int $contractId, ?string $paymentType = null): float;
+    public function getAdvancePaymentsSum(int $contractId): float;
 } 
