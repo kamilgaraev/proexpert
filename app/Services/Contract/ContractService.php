@@ -9,6 +9,7 @@ use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
 use App\DTOs\Contract\ContractDTO; // Создадим его позже
 use App\Models\Contract;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Exception;
 
@@ -113,7 +114,8 @@ class ContractService
         // Получаем все работы по контракту
         $recentWorks = $this->contractRepository->getAllCompletedWorks($contractId);
 
-        // Загружаем все связанные данные ПОСЛЕ аналитики
+        // Принудительно обновляем модель и загружаем связи
+        $contract = $this->contractRepository->find($contractId);
         $contract->load([
             'contractor:id,name,legal_address,inn,kpp,phone,email',
             'project:id,name,address,description',
@@ -121,6 +123,16 @@ class ContractService
             'childContracts:id,number,total_amount,status',
             'performanceActs:id,act_document_number,act_date,amount,description,is_approved,approval_date',
             'payments:id,payment_date,amount,payment_type,reference_document_number,description'
+        ]);
+
+        // Debug: проверяем что загрузилось
+        Log::info('Contract relations loaded:', [
+            'contract_id' => $contract->id,
+            'performanceActs_count' => $contract->performanceActs->count(),
+            'payments_count' => $contract->payments->count(),
+            'childContracts_count' => $contract->childContracts->count(),
+            'performanceActs_ids' => $contract->performanceActs->pluck('id')->toArray(),
+            'payments_ids' => $contract->payments->pluck('id')->toArray(),
         ]);
         
         return [
