@@ -276,10 +276,10 @@ class ContractSeeder extends Seeder
                 'planned_advance_amount' => $plannedAdvanceAmount,
                 'actual_advance_amount' => $actualAdvanceAmount,
                 'status' => $faker->randomElement([
-                    ContractStatusEnum::DRAFT,
-                    ContractStatusEnum::ACTIVE,
-                    ContractStatusEnum::COMPLETED,
-                    ContractStatusEnum::TERMINATED
+                    ContractStatusEnum::DRAFT,      // 25%
+                    ContractStatusEnum::ACTIVE,     // 25%
+                    ContractStatusEnum::ACTIVE,     // 25% (дублируем для увеличения веса)
+                    ContractStatusEnum::COMPLETED,  // 25%
                 ]),
                 'start_date' => $startDate,
                 'end_date' => $endDate,
@@ -450,10 +450,10 @@ class ContractSeeder extends Seeder
 
     private function createChildContracts(Contract $contract, $faker): void
     {
-        // Создаем дочерние контракты только для 20% контрактов
-        $shouldCreate = $faker->boolean(20);
+        // Создаем дочерние контракты только для 50% контрактов
+        $shouldCreate = $faker->boolean(50);
         if (!$shouldCreate) {
-            $this->command->info("Контракт {$contract->number}: пропускаем создание дочерних (20% шанс)");
+            $this->command->info("Контракт {$contract->number}: пропускаем создание дочерних (50% шанс)");
             return;
         }
 
