@@ -129,17 +129,17 @@ class ActReportsController extends Controller
     /**
      * Получить детали акта
      */
-    public function show(int $actId): JsonResponse
+    public function show(ContractPerformanceAct $act): JsonResponse
     {
         try {
-            $act = ContractPerformanceAct::with([
+            $act->load([
                 'contract.project',
                 'contract.contractor',
                 'contract.organization',
                 'completedWorks.workType',
                 'completedWorks.materials',
                 'completedWorks.user'
-            ])->findOrFail($actId);
+            ]);
 
             return response()->json([
                 'data' => new ContractPerformanceActResource($act),
@@ -157,7 +157,7 @@ class ActReportsController extends Controller
     /**
      * Экспорт акта в PDF
      */
-    public function exportPdf(Request $request, int $actId)
+    public function exportPdf(Request $request, ContractPerformanceAct $act)
     {
         try {
             $user = $request->user();
@@ -167,16 +167,19 @@ class ActReportsController extends Controller
                 return response()->json(['error' => 'Не определена организация пользователя'], 400);
             }
 
-            $act = ContractPerformanceAct::with([
+            // Проверяем принадлежность акта организации
+            if ($act->contract->organization_id !== $organizationId) {
+                return response()->json(['error' => 'Доступ запрещен'], 403);
+            }
+
+            $act->load([
                 'contract.project',
                 'contract.contractor',
                 'contract.organization',
                 'completedWorks.workType',
                 'completedWorks.materials',
                 'completedWorks.user'
-            ])->whereHas('contract', function ($q) use ($organizationId) {
-                $q->where('organization_id', $organizationId);
-            })->findOrFail($actId);
+            ]);
 
             $data = [
                 'act' => $act,
@@ -197,7 +200,7 @@ class ActReportsController extends Controller
 
         } catch (Exception $e) {
             Log::error('Ошибка экспорта PDF акта из отчетов', [
-                'act_id' => $actId,
+                'act_id' => $act->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -212,7 +215,7 @@ class ActReportsController extends Controller
     /**
      * Экспорт акта в Excel
      */
-    public function exportExcel(Request $request, int $actId)
+    public function exportExcel(Request $request, ContractPerformanceAct $act)
     {
         try {
             $user = $request->user();
@@ -222,15 +225,18 @@ class ActReportsController extends Controller
                 return response()->json(['error' => 'Не определена организация пользователя'], 400);
             }
 
-            $act = ContractPerformanceAct::with([
+            // Проверяем принадлежность акта организации
+            if ($act->contract->organization_id !== $organizationId) {
+                return response()->json(['error' => 'Доступ запрещен'], 403);
+            }
+
+            $act->load([
                 'contract.project',
                 'contract.contractor',
                 'completedWorks.workType',
                 'completedWorks.materials',
                 'completedWorks.user'
-            ])->whereHas('contract', function ($q) use ($organizationId) {
-                $q->where('organization_id', $organizationId);
-            })->findOrFail($actId);
+            ]);
 
             $headers = [
                 'Наименование работы',
@@ -292,7 +298,7 @@ class ActReportsController extends Controller
 
         } catch (Exception $e) {
             Log::error('Ошибка экспорта Excel акта из отчетов', [
-                'act_id' => $actId,
+                'act_id' => $act->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -400,7 +406,7 @@ class ActReportsController extends Controller
     /**
      * Получить доступные работы для включения в акт
      */
-    public function getAvailableWorks(Request $request, int $actId): JsonResponse
+    public function getAvailableWorks(Request $request, ContractPerformanceAct $act): JsonResponse
     {
         try {
             $user = $request->user();
@@ -410,9 +416,12 @@ class ActReportsController extends Controller
                 return response()->json(['error' => 'Не определена организация пользователя'], 400);
             }
 
-            $act = ContractPerformanceAct::with('completedWorks')->whereHas('contract', function ($q) use ($organizationId) {
-                $q->where('organization_id', $organizationId);
-            })->findOrFail($actId);
+            // Проверяем принадлежность акта организации
+            if ($act->contract->organization_id !== $organizationId) {
+                return response()->json(['error' => 'Доступ запрещен'], 403);
+            }
+
+            $act->load('completedWorks');
 
             // Получаем подтвержденные работы по контракту которые еще не включены в утвержденные акты
             $works = CompletedWork::where('contract_id', $act->contract_id)
@@ -441,7 +450,7 @@ class ActReportsController extends Controller
 
         } catch (Exception $e) {
             Log::error('Ошибка получения доступных работ для акта', [
-                'act_id' => $actId,
+                'act_id' => $act->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -456,7 +465,7 @@ class ActReportsController extends Controller
     /**
      * Обновить состав работ в акте
      */
-    public function updateWorks(Request $request, int $actId): JsonResponse
+    public function updateWorks(Request $request, ContractPerformanceAct $act): JsonResponse
     {
         try {
             $user = $request->user();
@@ -466,9 +475,10 @@ class ActReportsController extends Controller
                 return response()->json(['error' => 'Не определена организация пользователя'], 400);
             }
 
-            $act = ContractPerformanceAct::whereHas('contract', function ($q) use ($organizationId) {
-                $q->where('organization_id', $organizationId);
-            })->findOrFail($actId);
+            // Проверяем принадлежность акта организации
+            if ($act->contract->organization_id !== $organizationId) {
+                return response()->json(['error' => 'Доступ запрещен'], 403);
+            }
 
             $workIds = $request->input('work_ids', []);
             
@@ -501,7 +511,7 @@ class ActReportsController extends Controller
 
         } catch (Exception $e) {
             Log::error('Ошибка обновления работ в акте', [
-                'act_id' => $actId,
+                'act_id' => $act->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -516,7 +526,7 @@ class ActReportsController extends Controller
     /**
      * Обновить основную информацию акта
      */
-    public function update(Request $request, int $actId): JsonResponse
+    public function update(Request $request, ContractPerformanceAct $act): JsonResponse
     {
         try {
             $user = $request->user();
@@ -526,9 +536,10 @@ class ActReportsController extends Controller
                 return response()->json(['error' => 'Не определена организация пользователя'], 400);
             }
 
-            $act = ContractPerformanceAct::whereHas('contract', function ($q) use ($organizationId) {
-                $q->where('organization_id', $organizationId);
-            })->findOrFail($actId);
+            // Проверяем принадлежность акта организации
+            if ($act->contract->organization_id !== $organizationId) {
+                return response()->json(['error' => 'Доступ запрещен'], 403);
+            }
 
             $request->validate([
                 'act_document_number' => 'sometimes|string|max:255',
@@ -561,7 +572,7 @@ class ActReportsController extends Controller
 
         } catch (Exception $e) {
             Log::error('Ошибка обновления акта', [
-                'act_id' => $actId,
+                'act_id' => $act->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);

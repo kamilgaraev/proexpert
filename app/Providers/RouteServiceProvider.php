@@ -23,6 +23,23 @@ class RouteServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->configureRateLimiting();
+        
+        // Route Model Binding для актов с проверкой принадлежности организации
+        Route::bind('act', function ($value) {
+            $user = request()->user();
+            if (!$user) {
+                abort(401);
+            }
+            
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+            if (!$organizationId) {
+                abort(400, 'Не определена организация пользователя');
+            }
+            
+            return \App\Models\ContractPerformanceAct::whereHas('contract', function ($q) use ($organizationId) {
+                $q->where('organization_id', $organizationId);
+            })->findOrFail($value);
+        });
 
         $this->routes(function () {
             // Admin Auth Routes (loaded separately, login accessible without auth middleware)
@@ -44,6 +61,7 @@ class RouteServiceProvider extends ServiceProvider
                             require base_path('routes/api/v1/admin/projects.php');
                             require base_path('routes/api/v1/admin/catalogs.php');
                             require base_path('routes/api/v1/admin/reports.php');
+                            require base_path('routes/api/v1/admin/act_reports.php');
                             require base_path('routes/api/v1/admin/logs.php');
                             require base_path('routes/api/v1/admin/advance_settings.php');
                             // TODO: Добавить файл для логов аудита, когда он будет
