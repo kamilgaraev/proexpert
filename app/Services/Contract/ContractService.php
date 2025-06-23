@@ -9,7 +9,6 @@ use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
 use App\DTOs\Contract\ContractDTO; // Создадим его позже
 use App\Models\Contract;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Exception;
 
@@ -105,7 +104,11 @@ class ContractService
             throw new Exception('Contract not found or does not belong to organization.');
         }
 
-        // Сначала загружаем все связи
+        // Принудительно очищаем и перезагружаем связи
+        $contract->unsetRelation('performanceActs');
+        $contract->unsetRelation('payments');
+        $contract->unsetRelation('childContracts');
+        
         $contract->load([
             'contractor:id,name,legal_address,inn,kpp,phone,email',
             'project:id,name,address,description',
@@ -115,28 +118,7 @@ class ContractService
             'payments:id,payment_date,amount,payment_type,reference_document_number,description'
         ]);
 
-        // Debug: проверяем что загрузилось vs что в БД
-        $dbPaymentsCount = DB::table('contract_payments')->where('contract_id', $contract->id)->count();
-        $dbActsCount = DB::table('contract_performance_acts')->where('contract_id', $contract->id)->count();
-        $totalDbPayments = DB::table('contract_payments')->count();
-        $totalDbActs = DB::table('contract_performance_acts')->count();
-        $latestContracts = DB::table('contracts')->where('organization_id', $organizationId)
-            ->orderBy('created_at', 'desc')->limit(5)->pluck('id')->toArray();
-        
-        Log::info('Contract relations debug:', [
-            'contract_id' => $contract->id,
-            'contract_status' => $contract->status->value,
-            'loaded_performanceActs_count' => $contract->performanceActs->count(),
-            'loaded_payments_count' => $contract->payments->count(),
-            'loaded_childContracts_count' => $contract->childContracts->count(),
-            'db_payments_for_contract' => $dbPaymentsCount,
-            'db_acts_for_contract' => $dbActsCount,
-            'total_db_payments' => $totalDbPayments,
-            'total_db_acts' => $totalDbActs,
-            'latest_contracts' => $latestContracts,
-            'performanceActs_ids' => $contract->performanceActs->pluck('id')->toArray(),
-            'payments_ids' => $contract->payments->pluck('id')->toArray(),
-        ]);
+
 
         // Получаем аналитические данные на основе того же экземпляра
         $analytics = $this->buildContractAnalytics($contract);
