@@ -493,11 +493,26 @@ class ActReportsController extends Controller
                 ->toArray();
 
             DB::transaction(function () use ($act, $validWorks) {
-                // Синхронизируем работы с актом
-                $act->completedWorks()->sync($validWorks);
+                // Удаляем все существующие связи
+                $act->completedWorks()->detach();
+                
+                // Получаем данные работ для правильного заполнения пивот таблицы
+                $works = CompletedWork::whereIn('id', $validWorks)->get();
+                $pivotData = [];
+                
+                foreach ($works as $work) {
+                    $pivotData[$work->id] = [
+                        'included_quantity' => $work->quantity,
+                        'included_amount' => $work->total_amount,
+                        'notes' => null,
+                    ];
+                }
+                
+                // Прикрепляем работы с заполнением всех полей
+                $act->completedWorks()->attach($pivotData);
                 
                 // Пересчитываем сумму акта
-                $totalAmount = $act->completedWorks()->sum('total_amount');
+                $totalAmount = $works->sum('total_amount');
                 $act->update(['amount' => $totalAmount]);
             });
 
