@@ -24,6 +24,12 @@ class ActReportService
 
     public function createReport(int $organizationId, int $performanceActId, string $format, string $title = null): ActReport
     {
+        Log::info('ActReportService::createReport started', [
+            'org_id' => $organizationId,
+            'act_id' => $performanceActId,
+            'format' => $format
+        ]);
+        
         $performanceAct = ContractPerformanceAct::with([
             'contract.project', 
             'contract.contractor',
@@ -32,6 +38,11 @@ class ActReportService
             'completedWorks.materials',
             'completedWorks.executor'
         ])->findOrFail($performanceActId);
+
+        Log::info('ActReportService::createReport loaded performance act', [
+            'act_id' => $performanceAct->id,
+            'has_contract' => !!$performanceAct->contract
+        ]);
 
         if (!$performanceAct->contract) {
             throw new Exception('Акт не связан с контрактом');
@@ -56,13 +67,22 @@ class ActReportService
             ]
         ]);
 
+        Log::info('ActReportService::createReport act report created', ['report_id' => $actReport->id]);
+
         try {
             if ($format === 'pdf') {
+                Log::info('ActReportService generating PDF report');
                 $this->generatePdfReport($actReport, $performanceAct);
             } else {
+                Log::info('ActReportService generating Excel report');
                 $this->generateExcelReport($actReport, $performanceAct);
             }
+            Log::info('ActReportService::createReport generation completed');
         } catch (Exception $e) {
+            Log::error('ActReportService::createReport generation failed', [
+                'error' => $e->getMessage(),
+                'report_id' => $actReport->id
+            ]);
             $actReport->delete();
             throw $e;
         }
