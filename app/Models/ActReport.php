@@ -40,13 +40,21 @@ class ActReport extends Model
 
     public function getDownloadUrl(): ?string
     {
-        if ($this->s3_key) {
-            $s3Config = config('filesystems.disks.s3');
-            $baseUrl = $s3Config['url'] ?? "https://{$s3Config['bucket']}.s3.{$s3Config['region']}.amazonaws.com";
-            return rtrim($baseUrl, '/') . '/' . ltrim($this->s3_key, '/');
+        if (!$this->s3_key) {
+            return null;
         }
         
-        return null;
+        try {
+            $s3Config = config('filesystems.disks.s3');
+            if (!$s3Config || !isset($s3Config['bucket']) || !isset($s3Config['region'])) {
+                return null;
+            }
+            
+            $baseUrl = $s3Config['url'] ?? "https://{$s3Config['bucket']}.s3.{$s3Config['region']}.amazonaws.com";
+            return rtrim($baseUrl, '/') . '/' . ltrim($this->s3_key, '/');
+        } catch (\Exception $e) {
+            return null;
+        }
     }
 
     public function isExpired(): bool

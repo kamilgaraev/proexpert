@@ -46,19 +46,33 @@ class ActReportController extends Controller
 
     public function store(CreateActReportRequest $request): JsonResponse
     {
-        $organizationId = $request->user()->organization_id;
-        
-        $report = $this->actReportService->createReport(
-            $organizationId,
-            $request->performance_act_id,
-            $request->format,
-            $request->title
-        );
+        try {
+            $organizationId = $request->user()->organization_id;
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'error' => 'Не определена организация пользователя'
+                ], 400);
+            }
+            
+            $report = $this->actReportService->createReport(
+                $organizationId,
+                $request->performance_act_id,
+                $request->format,
+                $request->title
+            );
 
-        return response()->json([
-            'data' => new ActReportResource($report),
-            'message' => 'Отчет акта создан успешно'
-        ], 201);
+            return response()->json([
+                'data' => new ActReportResource($report),
+                'message' => 'Отчет акта создан успешно'
+            ], 201);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Ошибка при создании отчета',
+                'message' => $e->getMessage()
+            ], 500);
+        }
     }
 
     public function show(ActReport $actReport): JsonResponse

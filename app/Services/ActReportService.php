@@ -27,9 +27,15 @@ class ActReportService
         $performanceAct = ContractPerformanceAct::with([
             'contract.project', 
             'contract.contractor',
+            'contract.organization',
             'completedWorks.workType',
-            'completedWorks.materials'
+            'completedWorks.materials',
+            'completedWorks.executor'
         ])->findOrFail($performanceActId);
+
+        if (!$performanceAct->contract) {
+            throw new Exception('Акт не связан с контрактом');
+        }
 
         $reportTitle = $title ?: "Акт выполненных работ №{$performanceAct->act_document_number}";
         
@@ -41,12 +47,12 @@ class ActReportService
             'file_path' => '',
             'metadata' => [
                 'contract_id' => $performanceAct->contract_id,
-                'contract_number' => $performanceAct->contract->contract_number,
-                'project_name' => $performanceAct->contract->project->name,
-                'contractor_name' => $performanceAct->contract->contractor->name,
-                'act_date' => $performanceAct->act_date->format('Y-m-d'),
-                'act_amount' => $performanceAct->amount,
-                'works_count' => $performanceAct->completedWorks->count(),
+                'contract_number' => $performanceAct->contract->contract_number ?? '',
+                'project_name' => $performanceAct->contract->project->name ?? '',
+                'contractor_name' => $performanceAct->contract->contractor->name ?? '',
+                'act_date' => $performanceAct->act_date ? $performanceAct->act_date->format('Y-m-d') : '',
+                'act_amount' => $performanceAct->amount ?? 0,
+                'works_count' => $performanceAct->completedWorks ? $performanceAct->completedWorks->count() : 0,
             ]
         ]);
 
@@ -94,45 +100,68 @@ class ActReportService
 
         $exportData = [];
         foreach ($data['works'] as $work) {
-            $materials = $work['materials']->map(function ($material) {
-                return $material['name'] . ' (' . $material['pivot']['quantity'] . ' ' . $material['unit'] . ')';
-            })->join(', ');
+            $materials = '';
+            if ($work->materials && $work->materials->isNotEmpty()) {
+                $materials = $work->materials->map(function ($material) {
+                    $quantity = $material->pivot->quantity ?? 0;
+                    $unit = $material->unit ?? '';
+                    return $material->name . ' (' . $quantity . ' ' . $unit . ')';
+                })->join(', ');
+            }
+
+            $workTypeName = $work->workType ? $work->workType->name : 'Не указан';
+            $executorName = $work->executor ? $work->executor->name : 'Не указан';
+            $completionDate = $work->completion_date ? $work->completion_date->format('d.m.Y') : 'Не указана';
 
             $exportData[] = [
-                $work['work_type']['name'],
-                $work['unit'],
-                $work['quantity'],
-                number_format($work['unit_price'], 2, ',', ' '),
-                number_format($work['total_amount'], 2, ',', ' '),
+                $workTypeName,
+                $work->unit ?? '',
+                number_format($work->quantity ?? 0, 2, ',', ' '),
+                number_format($work->unit_price ?? 0, 2, ',', ' '),
+                number_format($work->total_amount ?? 0, 2, ',', ' '),
                 $materials,
-                $work['completion_date']->format('d.m.Y'),
-                $work['executor']['name'] ?? 'Не указан'
+                $completionDate,
+                $executorName
             ];
         }
 
         $filename = $this->generateFileName($actReport, 'xlsx');
-        $tempFile = tempnam(sys_get_temp_dir(), 'act_report_');
         
-        $response = $this->excelExporter->streamDownload(
-            basename($tempFile) . '.xlsx',
-            $headers,
-            $exportData
-        );
-        
-        if ($response instanceof \Symfony\Component\HttpFoundation\StreamedResponse) {
-            ob_start();
-            $response->sendContent();
-            $content = ob_get_contents();
-            ob_end_clean();
-        } else {
-            $content = json_encode(['error' => 'Failed to generate Excel']);
-        }
-
-        if (file_exists($tempFile)) {
+        try {
+            $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+            $sheet = $spreadsheet->getActiveSheet();
+            
+            $colIndex = 0;
+            foreach ($headers as $header) {
+                $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIndex + 1) . '1';
+                $sheet->setCellValue($cell, $header);
+                $colIndex++;
+            }
+            
+            $rowIndex = 2;
+            foreach ($exportData as $row) {
+                $colIndex = 0;
+                foreach ($row as $value) {
+                    $cell = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($colIndex + 1) . $rowIndex;
+                    $sheet->setCellValue($cell, $value);
+                    $colIndex++;
+                }
+                $rowIndex++;
+            }
+            
+            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+            
+            $tempFile = tempnam(sys_get_temp_dir(), 'act_report_');
+            $writer->save($tempFile);
+            
+            $content = file_get_contents($tempFile);
             unlink($tempFile);
+            
+            $this->uploadToS3($actReport, $filename, $content, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+            
+        } catch (Exception $e) {
+            throw new Exception('Ошибка при генерации Excel отчета: ' . $e->getMessage());
         }
-        
-        $this->uploadToS3($actReport, $filename, $content, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
 
     protected function prepareReportData(ContractPerformanceAct $performanceAct): array
@@ -158,26 +187,24 @@ class ActReportService
 
     protected function uploadToS3(ActReport $actReport, string $filename, string $content, string $mimeType): void
     {
-        $uploaded = Storage::disk('s3')->put($filename, $content, [
-            'ContentType' => $mimeType,
-            'Expires' => $actReport->expires_at->toDateTimeString()
-        ]);
+        try {
+            $uploaded = Storage::disk('s3')->put($filename, $content, [
+                'ContentType' => $mimeType
+            ]);
 
-        if (!$uploaded) {
-            throw new Exception('Не удалось загрузить файл на S3');
+            if (!$uploaded) {
+                throw new Exception('Не удалось загрузить файл на S3');
+            }
+
+            $actReport->update([
+                'file_path' => $filename,
+                's3_key' => $filename,
+                'file_size' => strlen($content)
+            ]);
+
+        } catch (Exception $e) {
+            throw new Exception('Ошибка при загрузке файла на S3: ' . $e->getMessage());
         }
-
-        $actReport->update([
-            'file_path' => $filename,
-            's3_key' => $filename,
-            'file_size' => strlen($content)
-        ]);
-
-        Log::info('Отчет акта успешно создан и загружен на S3', [
-            'report_id' => $actReport->id,
-            'filename' => $filename,
-            'file_size' => strlen($content)
-        ]);
     }
 
     public function getReportsByOrganization(int $organizationId, array $filters = []): \Illuminate\Database\Eloquent\Collection
@@ -213,12 +240,8 @@ class ActReportService
             try {
                 $report->delete();
                 $deletedCount++;
-                Log::info('Удален просроченный отчет акта', ['report_id' => $report->id]);
             } catch (Exception $e) {
-                Log::error('Ошибка при удалении просроченного отчета акта', [
-                    'report_id' => $report->id,
-                    'error' => $e->getMessage()
-                ]);
+                continue;
             }
         }
 

@@ -60,9 +60,6 @@ class CleanupExpiredActReports extends Command
             
             if ($deletedCount > 0) {
                 $this->info("Успешно удалено {$deletedCount} просроченных отчетов актов.");
-                Log::info("Очистка просроченных отчетов актов завершена", [
-                    'deleted_count' => $deletedCount
-                ]);
             } else {
                 $this->info('Просроченных отчетов актов не найдено.');
             }
@@ -70,11 +67,6 @@ class CleanupExpiredActReports extends Command
             return self::SUCCESS;
         } catch (\Exception $e) {
             $this->error('Ошибка при очистке просроченных отчетов: ' . $e->getMessage());
-            Log::error('Ошибка при очистке просроченных отчетов актов', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
             return self::FAILURE;
         }
     }
