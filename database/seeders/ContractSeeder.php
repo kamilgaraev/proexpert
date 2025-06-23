@@ -35,13 +35,15 @@ class ContractSeeder extends Seeder
             return;
         }
 
-        $organization = Organization::first();
+        // Используем организацию с ID = 1, для которой у пользователя есть доступ
+        $organization = Organization::find(1);
         if (!$organization) {
-            $this->command->error('Не найдена организация! Запустите сначала BasicDataSeeder');
+            $this->command->error('Не найдена организация с ID = 1! Проверьте наличие организации');
             return;
         }
 
         $this->organizationId = $organization->id;
+        $this->command->info('Создаем контракты для организации: ' . $organization->name . ' (ID: ' . $organization->id . ')');
 
         $faker = \Faker\Factory::create('ru_RU');
 
@@ -183,6 +185,19 @@ class ContractSeeder extends Seeder
         $projectIds = Project::where('organization_id', $this->organizationId)->pluck('id')->toArray();
         $contractorIds = Contractor::where('organization_id', $this->organizationId)->pluck('id')->toArray();
 
+        $this->command->info('Найдено проектов: ' . count($projectIds) . ' для организации ' . $this->organizationId);
+        $this->command->info('Найдено подрядчиков: ' . count($contractorIds) . ' для организации ' . $this->organizationId);
+
+        if (empty($projectIds)) {
+            $this->command->error('Нет проектов для создания контрактов!');
+            return $contracts;
+        }
+
+        if (empty($contractorIds)) {
+            $this->command->error('Нет подрядчиков для создания контрактов!');
+            return $contracts;
+        }
+
         $contractTemplates = [
             [
                 'type' => ContractTypeEnum::CONTRACT,
@@ -222,6 +237,8 @@ class ContractSeeder extends Seeder
             $endDate = $faker->dateTimeBetween('+1 month', '+1 year');
             $contractDate = $faker->dateTimeBetween('-1 year', '-2 weeks');
 
+            $contractNumber = $this->generateContractNumber($faker, $template['type']);
+            
             $contract = Contract::create([
                 'organization_id' => $this->organizationId,
                 'project_id' => $faker->randomElement($projectIds),
@@ -229,7 +246,7 @@ class ContractSeeder extends Seeder
                 'parent_contract_id' => $faker->optional(0.2)->randomElement(
                     Contract::where('organization_id', $this->organizationId)->pluck('id')->toArray() ?: [null]
                 ),
-                'number' => $this->generateContractNumber($faker, $template['type']),
+                'number' => $contractNumber,
                 'date' => $contractDate,
                 'type' => $template['type'],
                 'subject' => $template['subject'] . ' по проекту',
@@ -255,6 +272,9 @@ class ContractSeeder extends Seeder
             if ($i % 5 === 0) {
                 $this->command->info("Создано контрактов: {$i}/15");
             }
+            
+            // Детальная информация о созданном контракте
+            $this->command->info("Создан контракт #{$contract->id}: {$contractNumber} для организации {$this->organizationId}");
         }
 
         return $contracts;
