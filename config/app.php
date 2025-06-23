@@ -177,6 +177,7 @@ return [
         // App\Providers\EventServiceProvider::class, // Файл отсутствует
         App\Providers\RouteServiceProvider::class,
         App\Providers\BillingServiceProvider::class,
+        App\Providers\ModuleServiceProvider::class,
         // App\Providers\TelescopeServiceProvider::class,
         // App\Providers\FortifyServiceProvider::class,
         // App\Providers\JetstreamServiceProvider::class,

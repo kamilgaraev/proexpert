@@ -138,13 +138,16 @@ Route::prefix('landing')->name('landing.')->group(function () {
             require __DIR__ . '/api/v1/landing/billing.php';
         });
 
-    // Подключение маршрутов управления пользователями для лендинга/ЛК
-    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'role:organization_owner|organization_admin'])
-        ->prefix('user-management')
-        ->name('userManagement.')
-        ->group(function () {
-            require __DIR__ . '/api/v1/landing/user_management.php';
-        });
+                // Подключение маршрутов управления пользователями для лендинга/ЛК
+            Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'role:organization_owner|organization_admin'])
+                ->prefix('user-management')
+                ->name('userManagement.')
+                ->group(function () {
+                    require __DIR__ . '/api/v1/landing/user_management.php';
+                });
+
+            // Подключение маршрутов модулей для лендинга/ЛК
+            require __DIR__ . '/api/v1/landing/modules.php';
 });
 
 // --- Admin Panel API ---

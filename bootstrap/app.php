@@ -22,6 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'organization.context' => SetOrganizationContext::class,
             'organization_context' => SetOrganizationContext::class,
             'subscription.limit' => \App\Http\Middleware\CheckSubscriptionLimitsMiddleware::class,
+            'module.access' => \App\Http\Middleware\CheckModuleAccessMiddleware::class,
         ]);
 
         // Глобальные middleware (если нужны)
