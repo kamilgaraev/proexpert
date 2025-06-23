@@ -287,19 +287,8 @@ class ContractSeeder extends Seeder
     private function createContractPayments(Contract $contract, $faker): void
     {
         if ($contract->actual_advance_amount > 0) {
-            // Авансовый платеж между датой договора и началом работ (или текущей датой)
-            $advanceStartDate = $contract->date;
-            $advanceEndDate = $contract->start_date ?: 'now';
-            
-            // Проверяем корректность дат
-            $startDateTime = is_string($advanceStartDate) ? new \DateTime($advanceStartDate) : $advanceStartDate;
-            $endDateTime = is_string($advanceEndDate) ? new \DateTime($advanceEndDate) : new \DateTime();
-            
-            if ($startDateTime <= $endDateTime) {
-                $paymentDate = $faker->dateTimeBetween($advanceStartDate, $advanceEndDate);
-            } else {
-                $paymentDate = $contract->date;
-            }
+            // Авансовый платеж - всегда после даты договора
+            $paymentDate = $faker->dateTimeBetween($contract->date, '+30 days');
 
             ContractPayment::create([
                 'contract_id' => $contract->id,
@@ -321,19 +310,8 @@ class ContractSeeder extends Seeder
                 
                 if ($remainingAmount < 0) break;
 
-                // Промежуточные платежи между началом работ и текущей датой
-                $paymentStartDate = $contract->start_date ?: $contract->date;
-                $paymentEndDate = 'now';
-                
-                // Проверяем корректность дат
-                $startDateTime = is_string($paymentStartDate) ? new \DateTime($paymentStartDate) : $paymentStartDate;
-                $now = new \DateTime();
-                
-                if ($startDateTime <= $now) {
-                    $paymentDate = $faker->dateTimeBetween($paymentStartDate, $paymentEndDate);
-                } else {
-                    $paymentDate = $contract->start_date ?: $contract->date;
-                }
+                // Промежуточные платежи - от даты договора до сегодня
+                $paymentDate = $faker->dateTimeBetween($contract->date, 'now');
 
                 ContractPayment::create([
                     'contract_id' => $contract->id,
@@ -355,30 +333,14 @@ class ContractSeeder extends Seeder
             for ($i = 0; $i < $actsCount; $i++) {
                 $actAmount = $faker->randomFloat(2, 100000, $contract->total_amount / 3);
                 
-                // Безопасная генерация даты акта
-                $actStartDate = $contract->start_date ?: $contract->date;
-                $actEndDate = 'now';
-                
-                $startDateTime = is_string($actStartDate) ? new \DateTime($actStartDate) : $actStartDate;
-                $now = new \DateTime();
-                
-                if ($startDateTime <= $now) {
-                    $actDate = $faker->dateTimeBetween($actStartDate, $actEndDate);
-                } else {
-                    $actDate = $contract->start_date ?: $contract->date;
-                }
-                
+                // Акты - от даты договора до сегодня
+                $actDate = $faker->dateTimeBetween($contract->date, 'now');
                 $isApproved = $faker->boolean(80);
                 
-                // Дата утверждения не может быть раньше даты акта
+                // Дата утверждения - после даты акта
                 $approvalDate = null;
                 if ($isApproved) {
-                    $now = new \DateTime();
-                    if ($actDate <= $now) {
-                        $approvalDate = $faker->dateTimeBetween($actDate, 'now');
-                    } else {
-                        $approvalDate = $actDate;
-                    }
+                    $approvalDate = $faker->dateTimeBetween($actDate, 'now');
                 }
                 
                 ContractPerformanceAct::create([
