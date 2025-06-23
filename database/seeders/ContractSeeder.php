@@ -55,12 +55,25 @@ class ContractSeeder extends Seeder
 
         $contracts = $this->createContracts($faker);
 
+        // Сначала создаем все платежи, акты и работы для основных контрактов
         foreach ($contracts as $contract) {
             $this->createContractPayments($contract, $faker);
             $this->createContractPerformanceActs($contract, $faker);
             $this->createCompletedWorks($contract, $faker);
-            $this->createChildContracts($contract, $contracts, $faker);
         }
+
+        // Потом создаем дочерние контракты для некоторых основных
+        $this->command->info('Начинаем создание дочерних контрактов...');
+        $childContractsCreated = 0;
+        foreach ($contracts as $contract) {
+            $before = Contract::count();
+            $this->createChildContracts($contract, $faker);
+            $after = Contract::count();
+            if ($after > $before) {
+                $childContractsCreated += ($after - $before);
+            }
+        }
+        $this->command->info("Создано дочерних контрактов: {$childContractsCreated}");
 
         $this->command->info('Создание контрактов завершено!');
         $this->command->info('Создано контрактов: ' . $contracts->count());
@@ -435,17 +448,22 @@ class ContractSeeder extends Seeder
         $this->command->info("Создано {$worksCount} выполненных работ для контракта {$contract->number}");
     }
 
-    private function createChildContracts(Contract $contract, $contracts, $faker): void
+    private function createChildContracts(Contract $contract, $faker): void
     {
         // Создаем дочерние контракты только для 20% контрактов
-        if (!$faker->boolean(20)) {
+        $shouldCreate = $faker->boolean(20);
+        if (!$shouldCreate) {
+            $this->command->info("Контракт {$contract->number}: пропускаем создание дочерних (20% шанс)");
             return;
         }
 
         // Только для активных и завершенных контрактов
         if (!in_array($contract->status, [ContractStatusEnum::ACTIVE, ContractStatusEnum::COMPLETED])) {
+            $this->command->info("Контракт {$contract->number}: пропускаем (статус {$contract->status->value})");
             return;
         }
+
+        $this->command->info("Контракт {$contract->number}: создаем дочерние контракты");
 
         $contractorIds = Contractor::where('organization_id', $this->organizationId)->pluck('id')->toArray();
 
