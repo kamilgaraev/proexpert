@@ -112,4 +112,20 @@ class ContractPerformanceActController extends Controller
             return response()->json(['message' => 'Failed to delete performance act', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
         }
     }
+
+    /**
+     * Получить доступные работы для включения в акт
+     */
+    public function availableWorks(Request $request, int $contractId)
+    {
+        // $organizationId = Auth::user()->organization_id;
+        $organizationId = $request->input('organization_id', 1); // Временно
+
+        try {
+            $works = $this->actService->getAvailableWorksForAct($contractId, $organizationId);
+            return response()->json(['data' => $works]);
+        } catch (Exception $e) {
+            return response()->json(['message' => 'Failed to retrieve available works', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+        }
+    }
 } 

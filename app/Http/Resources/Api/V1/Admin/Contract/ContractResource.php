@@ -66,7 +66,17 @@ class ContractResource extends JsonResource
             'completion_percentage' => ($this->total_amount ?? 0) > 0 ? 
                 round((($completedWorksAmount ?? 0) / ($this->total_amount ?? 0)) * 100, 2) : 0.0,
             'total_performed_amount' => (float) $this->whenLoaded('performanceActs', function() {
-                return $this->performanceActs->where('is_approved', true)->sum('amount') ?? 0;
+                $totalAmount = 0;
+                foreach ($this->performanceActs->where('is_approved', true) as $act) {
+                    // Если у акта есть связанные работы - считаем по ним
+                    if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                        $totalAmount += $act->completedWorks->sum('pivot.included_amount');
+                    } else {
+                        // Если работы не связаны - используем старое поле amount (для совместимости)
+                        $totalAmount += $act->amount ?? 0;
+                    }
+                }
+                return $totalAmount;
             }, 0),
             'total_paid_amount' => (float) $this->whenLoaded('payments', function() {
                 return $this->payments->sum('amount') ?? 0;

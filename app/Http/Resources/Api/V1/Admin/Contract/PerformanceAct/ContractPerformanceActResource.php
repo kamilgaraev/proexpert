@@ -27,6 +27,23 @@ class ContractPerformanceActResource extends JsonResource
             'approval_date' => $this->approval_date,
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
+            
+            // Связанные выполненные работы
+            'completed_works' => $this->whenLoaded('completedWorks', function() {
+                return $this->completedWorks->map(function($work) {
+                    return [
+                        'id' => $work->id,
+                        'work_type_name' => $work->workType->name ?? 'Не указано',
+                        'user_name' => $work->user->name ?? 'Не указано',
+                        'total_quantity' => (float) $work->quantity,
+                        'total_amount' => (float) $work->total_amount,
+                        'completion_date' => $work->completion_date,
+                        'included_quantity' => (float) ($work->pivot->included_quantity ?? 0),
+                        'included_amount' => (float) ($work->pivot->included_amount ?? 0),
+                        'notes' => $work->pivot->notes,
+                    ];
+                });
+            }, []),
         ];
     }
 } 

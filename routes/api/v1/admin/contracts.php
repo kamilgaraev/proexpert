@@ -17,6 +17,8 @@ Route::group(['prefix' => 'contracts'], function () {
         ->name('contracts.analytics');
     Route::get('{contract}/completed-works', [ContractController::class, 'completedWorks'])
         ->name('contracts.completed-works');
+    Route::get('{contract}/available-works-for-acts', [ContractPerformanceActController::class, 'availableWorks'])
+        ->name('contracts.available-works-for-acts');
 });
 
 // Вложенные маршруты для Актов выполненных работ к Контрактам

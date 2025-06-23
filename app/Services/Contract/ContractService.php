@@ -57,7 +57,15 @@ class ContractService
     {
         $contract = $this->contractRepository->find($contractId);
         if ($contract && $contract->organization_id === $organizationId) {
-            return $contract->load(['contractor', 'project', 'parentContract', 'childContracts', 'performanceActs', 'payments']);
+            return $contract->load([
+                'contractor', 
+                'project', 
+                'parentContract', 
+                'childContracts', 
+                'performanceActs',
+                'performanceActs.completedWorks',
+                'payments'
+            ]);
         }
         return null;
     }
@@ -110,6 +118,9 @@ class ContractService
             'project:id,name,address,description',
             'parentContract:id,number,total_amount,status',
             'performanceActs:id,contract_id,act_document_number,act_date,amount,description,is_approved,approval_date',
+            'performanceActs.completedWorks:id,work_type_id,user_id,quantity,total_amount,status,completion_date',
+            'performanceActs.completedWorks.workType:id,name',
+            'performanceActs.completedWorks.user:id,name',
             'payments:id,contract_id,payment_date,amount,payment_type,reference_document_number,description',
             'completedWorks:id,contract_id,work_type_id,user_id,quantity,total_amount,status,completion_date',
             'completedWorks.workType:id,name',
@@ -175,7 +186,9 @@ class ContractService
         
         $completedWorksAmount = $confirmedWorks->sum('total_amount');
         $totalPaidAmount = $contract->payments->sum('amount');
-        $totalPerformedAmount = $approvedActs->sum('amount');
+        
+        // Новый расчет суммы актов на основе включенных работ
+        $totalPerformedAmount = $this->calculateActualPerformedAmount($approvedActs);
 
         return [
             'financial' => [
@@ -212,6 +225,26 @@ class ContractService
                 'child_contracts' => $contract->childContracts->count(),
             ]
         ];
+    }
+
+    /**
+     * Рассчитать фактическую сумму выполненных работ по актам
+     */
+    private function calculateActualPerformedAmount($approvedActs): float
+    {
+        $totalAmount = 0;
+        
+        foreach ($approvedActs as $act) {
+            // Если у акта есть связанные работы - считаем по ним
+            if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                $totalAmount += $act->completedWorks->sum('pivot.included_amount');
+            } else {
+                // Если работы не связаны - используем старое поле amount (для совместимости)
+                $totalAmount += $act->amount ?? 0;
+            }
+        }
+        
+        return $totalAmount;
     }
 
     /**

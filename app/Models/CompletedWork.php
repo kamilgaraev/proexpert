@@ -92,4 +92,15 @@ class CompletedWork extends Model
             ->withPivot(['quantity', 'unit_price', 'total_amount', 'notes'])
             ->withTimestamps();
     }
+
+    /**
+     * Акты выполненных работ в которые включена данная работа
+     */
+    public function performanceActs()
+    {
+        return $this->belongsToMany(ContractPerformanceAct::class, 'performance_act_completed_works', 'completed_work_id', 'performance_act_id')
+            ->using(PerformanceActCompletedWork::class)
+            ->withPivot(['included_quantity', 'included_amount', 'notes'])
+            ->withTimestamps();
+    }
 }
