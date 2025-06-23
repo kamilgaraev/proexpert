@@ -292,7 +292,10 @@ class ContractSeeder extends Seeder
             $advanceEndDate = $contract->start_date ?: 'now';
             
             // Проверяем корректность дат
-            if (strtotime($advanceStartDate) <= strtotime($advanceEndDate)) {
+            $startDateTime = is_string($advanceStartDate) ? new \DateTime($advanceStartDate) : $advanceStartDate;
+            $endDateTime = is_string($advanceEndDate) ? new \DateTime($advanceEndDate) : new \DateTime();
+            
+            if ($startDateTime <= $endDateTime) {
                 $paymentDate = $faker->dateTimeBetween($advanceStartDate, $advanceEndDate);
             } else {
                 $paymentDate = $contract->date;
@@ -323,7 +326,10 @@ class ContractSeeder extends Seeder
                 $paymentEndDate = 'now';
                 
                 // Проверяем корректность дат
-                if (strtotime($paymentStartDate) <= strtotime('now')) {
+                $startDateTime = is_string($paymentStartDate) ? new \DateTime($paymentStartDate) : $paymentStartDate;
+                $now = new \DateTime();
+                
+                if ($startDateTime <= $now) {
                     $paymentDate = $faker->dateTimeBetween($paymentStartDate, $paymentEndDate);
                 } else {
                     $paymentDate = $contract->start_date ?: $contract->date;
@@ -353,7 +359,10 @@ class ContractSeeder extends Seeder
                 $actStartDate = $contract->start_date ?: $contract->date;
                 $actEndDate = 'now';
                 
-                if (strtotime($actStartDate) <= strtotime('now')) {
+                $startDateTime = is_string($actStartDate) ? new \DateTime($actStartDate) : $actStartDate;
+                $now = new \DateTime();
+                
+                if ($startDateTime <= $now) {
                     $actDate = $faker->dateTimeBetween($actStartDate, $actEndDate);
                 } else {
                     $actDate = $contract->start_date ?: $contract->date;
@@ -364,7 +373,8 @@ class ContractSeeder extends Seeder
                 // Дата утверждения не может быть раньше даты акта
                 $approvalDate = null;
                 if ($isApproved) {
-                    if (strtotime($actDate) <= strtotime('now')) {
+                    $now = new \DateTime();
+                    if ($actDate <= $now) {
                         $approvalDate = $faker->dateTimeBetween($actDate, 'now');
                     } else {
                         $approvalDate = $actDate;
