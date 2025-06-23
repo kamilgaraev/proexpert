@@ -142,13 +142,19 @@ class ContractService
         return [
             'financial' => [
                 'total_amount' => (float) $contract->total_amount,
+                'gp_percentage' => (float) $contract->gp_percentage,
+                'gp_amount' => (float) $contract->gp_amount,
+                'total_amount_with_gp' => (float) $contract->total_amount_with_gp,
                 'completed_works_amount' => $contract->completed_works_amount,
                 'remaining_amount' => $contract->remaining_amount,
                 'completion_percentage' => $contract->completion_percentage,
                 'total_paid_amount' => $contract->total_paid_amount,
                 'total_performed_amount' => $contract->total_performed_amount,
-                'gp_amount' => (float) $contract->gp_amount,
                 'planned_advance_amount' => (float) $contract->planned_advance_amount,
+                'actual_advance_amount' => (float) $contract->actual_advance_amount,
+                'remaining_advance_amount' => (float) $contract->remaining_advance_amount,
+                'advance_payment_percentage' => (float) $contract->advance_payment_percentage,
+                'is_advance_fully_paid' => $contract->is_advance_fully_paid,
             ],
             'status' => [
                 'current_status' => $contract->status->value,

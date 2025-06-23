@@ -39,6 +39,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'total_amount' => ['sometimes', 'required', 'numeric', 'min:0'],
             'gp_percentage' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
             'planned_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'actual_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'status' => ['sometimes', 'required', new Enum(ContractStatusEnum::class)],
             'start_date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
             'end_date' => ['sometimes', 'nullable', 'date_format:Y-m-d', 'after_or_equal:start_date'],
@@ -81,6 +82,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             total_amount: (float) ($validatedData['total_amount'] ?? 0), // Должно быть, если 'required'
             gp_percentage: isset($validatedData['gp_percentage']) ? (float) $validatedData['gp_percentage'] : null,
             planned_advance_amount: isset($validatedData['planned_advance_amount']) ? (float) $validatedData['planned_advance_amount'] : null,
+            actual_advance_amount: isset($validatedData['actual_advance_amount']) ? (float) $validatedData['actual_advance_amount'] : null,
             status: ContractStatusEnum::from($validatedData['status']),
             start_date: $validatedData['start_date'] ?? null,
             end_date: $validatedData['end_date'] ?? null,

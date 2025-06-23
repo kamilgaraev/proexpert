@@ -22,6 +22,7 @@ class ContractDTO
         public readonly float $total_amount,
         public readonly ?float $gp_percentage,
         public readonly ?float $planned_advance_amount,
+        public readonly ?float $actual_advance_amount,
         public readonly ContractStatusEnum $status,
         public readonly ?string $start_date, // Y-m-d format
         public readonly ?string $end_date, // Y-m-d format
@@ -43,6 +44,7 @@ class ContractDTO
             'total_amount' => $this->total_amount,
             'gp_percentage' => $this->gp_percentage,
             'planned_advance_amount' => $this->planned_advance_amount,
+            'actual_advance_amount' => $this->actual_advance_amount,
             'status' => $this->status->value,
             'start_date' => $this->start_date,
             'end_date' => $this->end_date,

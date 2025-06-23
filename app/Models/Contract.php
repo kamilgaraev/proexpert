@@ -30,6 +30,7 @@ class Contract extends Model
         'total_amount',
         'gp_percentage',
         'planned_advance_amount',
+        'actual_advance_amount',
         'status',
         'start_date',
         'end_date',
@@ -41,6 +42,7 @@ class Contract extends Model
         'total_amount' => 'decimal:2',
         'gp_percentage' => 'decimal:2',
         'planned_advance_amount' => 'decimal:2',
+        'actual_advance_amount' => 'decimal:2',
         'start_date' => 'date',
         'end_date' => 'date',
         'status' => ContractStatusEnum::class,
@@ -98,6 +100,41 @@ class Contract extends Model
             return round(($this->total_amount * $this->gp_percentage) / 100, 2);
         }
         return 0.00;
+    }
+
+    /**
+     * Получить сумму контракта с учетом генподрядного процента
+     */
+    public function getTotalAmountWithGpAttribute(): float
+    {
+        return $this->total_amount + $this->gp_amount;
+    }
+
+    /**
+     * Получить остаток планируемого аванса для выплаты
+     */
+    public function getRemainingAdvanceAmountAttribute(): float
+    {
+        return max(0, $this->planned_advance_amount - $this->actual_advance_amount);
+    }
+
+    /**
+     * Проверить, выплачен ли планируемый аванс полностью
+     */
+    public function isAdvanceFullyPaidAttribute(): bool
+    {
+        return $this->actual_advance_amount >= $this->planned_advance_amount;
+    }
+
+    /**
+     * Получить процент выплаченного аванса
+     */
+    public function getAdvancePaymentPercentageAttribute(): float
+    {
+        if ($this->planned_advance_amount <= 0) {
+            return 0.0;
+        }
+        return round(($this->actual_advance_amount / $this->planned_advance_amount) * 100, 2);
     }
 
     /**

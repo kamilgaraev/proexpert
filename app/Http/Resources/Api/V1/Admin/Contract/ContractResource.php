@@ -36,7 +36,12 @@ class ContractResource extends JsonResource
             'total_amount' => (float) $this->total_amount,
             'gp_percentage' => (float) $this->gp_percentage,
             'gp_amount' => (float) $this->gp_amount, // Accessor
+            'total_amount_with_gp' => (float) $this->total_amount_with_gp, // Accessor
             'planned_advance_amount' => (float) $this->planned_advance_amount,
+            'actual_advance_amount' => (float) $this->actual_advance_amount,
+            'remaining_advance_amount' => (float) $this->remaining_advance_amount, // Accessor
+            'is_advance_fully_paid' => $this->is_advance_fully_paid, // Accessor
+            'advance_payment_percentage' => (float) $this->advance_payment_percentage, // Accessor
             'status' => $this->status->value, // Enum
             'status_label' => $this->status->name, // Для отображения
             'start_date' => $this->start_date, // Формат Y-m-d
