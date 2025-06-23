@@ -43,15 +43,15 @@ class ContractResource extends JsonResource
             'work_type_category' => $this->work_type_category?->value,
             'work_type_category_label' => $this->work_type_category?->name,
             'payment_terms' => $this->payment_terms,
-            'total_amount' => (float) $this->total_amount,
-            'gp_percentage' => (float) $this->gp_percentage,
-            'gp_amount' => (float) $this->gp_amount, // Accessor
-            'total_amount_with_gp' => (float) $this->total_amount_with_gp, // Accessor
-            'planned_advance_amount' => (float) $this->planned_advance_amount,
-            'actual_advance_amount' => (float) $this->actual_advance_amount,
-            'remaining_advance_amount' => (float) $this->remaining_advance_amount, // Accessor
-            'is_advance_fully_paid' => $this->is_advance_fully_paid, // Accessor
-            'advance_payment_percentage' => (float) $this->advance_payment_percentage, // Accessor
+            'total_amount' => (float) ($this->total_amount ?? 0),
+            'gp_percentage' => (float) ($this->gp_percentage ?? 0),
+            'gp_amount' => (float) ($this->gp_amount ?? 0),
+            'total_amount_with_gp' => (float) ($this->total_amount_with_gp ?? 0),
+            'planned_advance_amount' => (float) ($this->planned_advance_amount ?? 0),
+            'actual_advance_amount' => (float) ($this->actual_advance_amount ?? 0),
+            'remaining_advance_amount' => (float) ($this->remaining_advance_amount ?? 0),
+            'is_advance_fully_paid' => $this->is_advance_fully_paid ?? false,
+            'advance_payment_percentage' => (float) ($this->advance_payment_percentage ?? 0),
             'status' => $this->status->value, // Enum
             'status_label' => $this->status->name, // Для отображения
             'start_date' => $this->start_date, // Формат Y-m-d
@@ -61,17 +61,17 @@ class ContractResource extends JsonResource
             'updated_at' => $this->updated_at->toIso8601String(),
 
             // Аналитические данные из загруженных связей (НЕ accessors!)
-            'completed_works_amount' => (float) $completedWorksAmount,
-            'remaining_amount' => (float) max(0, $this->total_amount - $completedWorksAmount),
-            'completion_percentage' => $this->total_amount > 0 ? 
-                round(($completedWorksAmount / $this->total_amount) * 100, 2) : 0.0,
+            'completed_works_amount' => (float) ($completedWorksAmount ?? 0),
+            'remaining_amount' => (float) max(0, ($this->total_amount ?? 0) - ($completedWorksAmount ?? 0)),
+            'completion_percentage' => ($this->total_amount ?? 0) > 0 ? 
+                round((($completedWorksAmount ?? 0) / ($this->total_amount ?? 0)) * 100, 2) : 0.0,
             'total_performed_amount' => (float) $this->whenLoaded('performanceActs', function() {
-                return $this->performanceActs->where('is_approved', true)->sum('amount');
+                return $this->performanceActs->where('is_approved', true)->sum('amount') ?? 0;
             }, 0),
             'total_paid_amount' => (float) $this->whenLoaded('payments', function() {
-                return $this->payments->sum('amount');
+                return $this->payments->sum('amount') ?? 0;
             }, 0),
-            'is_nearing_limit' => $completedWorksAmount >= ($this->total_amount * 0.9),
+            'is_nearing_limit' => ($completedWorksAmount ?? 0) >= (($this->total_amount ?? 0) * 0.9),
             'can_add_work' => !in_array($this->status->value, ['completed', 'terminated']),
 
             // Связанные данные (если загружены)

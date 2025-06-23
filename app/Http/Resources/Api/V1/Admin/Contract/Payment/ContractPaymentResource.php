@@ -14,7 +14,7 @@ class ContractPaymentResource extends JsonResource
             'contract_id' => $this->contract_id,
             // 'contract' => new ContractMiniResource($this->whenLoaded('contract')), // Если нужно будет загружать детали контракта
             'payment_date' => $this->payment_date, // Предполагается, что в модели кастуется в Y-m-d
-            'amount' => (float) $this->amount,
+            'amount' => (float) ($this->amount ?? 0),
             'payment_type' => $this->payment_type->value, // Enum
             'payment_type_label' => $this->payment_type->name, // Для отображения
             'reference_document_number' => $this->reference_document_number,

@@ -21,7 +21,7 @@ class ContractPerformanceActResource extends JsonResource
             // 'contract' => new ContractMiniResource($this->whenLoaded('contract')), // Если нужно будет загружать детали контракта
             'act_document_number' => $this->act_document_number,
             'act_date' => $this->act_date, // Предполагается, что в модели кастуется в Y-m-d
-            'amount' => (float) $this->amount,
+            'amount' => (float) ($this->amount ?? 0),
             'description' => $this->description,
             'is_approved' => (bool) $this->is_approved,
             'approval_date' => $this->approval_date,

@@ -13,7 +13,7 @@ class ContractMiniResource extends JsonResource
             'id' => $this->id,
             'number' => $this->number,
             'date' => $this->date,
-            'total_amount' => (float) $this->total_amount,
+            'total_amount' => (float) ($this->total_amount ?? 0),
             'status' => $this->status->value,
             'status_label' => $this->status->name,
         ];

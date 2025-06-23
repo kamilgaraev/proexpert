@@ -99,8 +99,11 @@ class Contract extends Model
     // Accessor for calculated GP Amount
     public function getGpAmountAttribute(): float
     {
-        if ($this->gp_percentage > 0 && $this->total_amount > 0) {
-            return round(($this->total_amount * $this->gp_percentage) / 100, 2);
+        $percentage = $this->gp_percentage ?? 0;
+        $amount = $this->total_amount ?? 0;
+        
+        if ($percentage > 0 && $amount > 0) {
+            return round(($amount * $percentage) / 100, 2);
         }
         return 0.00;
     }
@@ -110,7 +113,9 @@ class Contract extends Model
      */
     public function getTotalAmountWithGpAttribute(): float
     {
-        return $this->total_amount + $this->gp_amount;
+        $totalAmount = $this->total_amount ?? 0;
+        $gpAmount = $this->gp_amount ?? 0;
+        return $totalAmount + $gpAmount;
     }
 
     /**
@@ -118,7 +123,9 @@ class Contract extends Model
      */
     public function getRemainingAdvanceAmountAttribute(): float
     {
-        return max(0, $this->planned_advance_amount - $this->actual_advance_amount);
+        $planned = $this->planned_advance_amount ?? 0;
+        $actual = $this->actual_advance_amount ?? 0;
+        return max(0, $planned - $actual);
     }
 
     /**
@@ -126,7 +133,9 @@ class Contract extends Model
      */
     public function isAdvanceFullyPaidAttribute(): bool
     {
-        return $this->actual_advance_amount >= $this->planned_advance_amount;
+        $planned = $this->planned_advance_amount ?? 0;
+        $actual = $this->actual_advance_amount ?? 0;
+        return $planned > 0 && $actual >= $planned;
     }
 
     /**
@@ -134,10 +143,13 @@ class Contract extends Model
      */
     public function getAdvancePaymentPercentageAttribute(): float
     {
-        if ($this->planned_advance_amount <= 0) {
+        $planned = $this->planned_advance_amount ?? 0;
+        $actual = $this->actual_advance_amount ?? 0;
+        
+        if ($planned <= 0) {
             return 0.0;
         }
-        return round(($this->actual_advance_amount / $this->planned_advance_amount) * 100, 2);
+        return round(($actual / $planned) * 100, 2);
     }
 
     /**
@@ -155,7 +167,9 @@ class Contract extends Model
      */
     public function getRemainingAmountAttribute(): float
     {
-        return max(0, $this->total_amount - $this->completed_works_amount);
+        $totalAmount = $this->total_amount ?? 0;
+        $completedAmount = $this->completed_works_amount ?? 0;
+        return max(0, $totalAmount - $completedAmount);
     }
 
     /**
@@ -163,10 +177,13 @@ class Contract extends Model
      */
     public function getCompletionPercentageAttribute(): float
     {
-        if ($this->total_amount <= 0) {
+        $totalAmount = $this->total_amount ?? 0;
+        $completedAmount = $this->completed_works_amount ?? 0;
+        
+        if ($totalAmount <= 0) {
             return 0.0;
         }
-        return round(($this->completed_works_amount / $this->total_amount) * 100, 2);
+        return round(($completedAmount / $totalAmount) * 100, 2);
     }
 
     /**
@@ -179,9 +196,12 @@ class Contract extends Model
             return false;
         }
 
+        $totalAmount = $this->total_amount ?? 0;
+        $completedAmount = $this->completed_works_amount ?? 0;
+        
         // Проверяем лимит суммы (с допуском 1%)
-        $allowedOverrun = $this->total_amount * 0.01;
-        return ($this->completed_works_amount + $amount) <= ($this->total_amount + $allowedOverrun);
+        $allowedOverrun = $totalAmount * 0.01;
+        return ($completedAmount + $amount) <= ($totalAmount + $allowedOverrun);
     }
 
     /**
