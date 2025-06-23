@@ -160,7 +160,7 @@ class ContractPerformanceActController extends Controller
                 'contract.organization',
                 'completedWorks.workType',
                 'completedWorks.materials',
-                'completedWorks.executor'
+                'completedWorks.user'
             ]);
 
             $data = [
@@ -219,7 +219,7 @@ class ContractPerformanceActController extends Controller
                 'contract.contractor',
                 'completedWorks.workType',
                 'completedWorks.materials',
-                'completedWorks.executor'
+                'completedWorks.user'
             ]);
 
             $headers = [
@@ -247,7 +247,7 @@ class ContractPerformanceActController extends Controller
                 }
 
                 $workTypeName = $work->workType ? $work->workType->name : 'Не указан';
-                $executorName = $work->executor ? $work->executor->name : 'Не указан';
+                $executorName = $work->user ? $work->user->name : 'Не указан';
                 $completionDate = $work->completion_date ? $work->completion_date->format('d.m.Y') : 'Не указана';
 
                 $exportData[] = [
