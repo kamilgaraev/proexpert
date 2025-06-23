@@ -28,8 +28,20 @@ class ActReportController extends Controller
         try {
             Log::info('ActReportController::index started');
             
-            $organizationId = $request->user()->organization_id;
-            Log::info('ActReportController::index org_id', ['org_id' => $organizationId]);
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+            
+            Log::info('ActReportController::index org_id', [
+                'org_id' => $organizationId,
+                'user_org_id' => $user->organization_id,
+                'user_current_org_id' => $user->current_organization_id
+            ]);
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'error' => 'Не определена организация пользователя'
+                ], 400);
+            }
             
             $filters = $request->only([
                 'performance_act_id',
@@ -62,7 +74,8 @@ class ActReportController extends Controller
     public function store(CreateActReportRequest $request): JsonResponse
     {
         try {
-            $organizationId = $request->user()->organization_id;
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
             
             if (!$organizationId) {
                 return response()->json([

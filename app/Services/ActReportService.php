@@ -227,8 +227,12 @@ class ActReportService
         }
     }
 
-    public function getReportsByOrganization(int $organizationId, array $filters = []): \Illuminate\Database\Eloquent\Collection
+    public function getReportsByOrganization(?int $organizationId, array $filters = []): \Illuminate\Database\Eloquent\Collection
     {
+        if (!$organizationId) {
+            return new \Illuminate\Database\Eloquent\Collection();
+        }
+        
         $query = ActReport::with(['performanceAct.contract.project', 'performanceAct.contract.contractor'])
             ->where('organization_id', $organizationId);
 
