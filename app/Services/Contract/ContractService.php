@@ -119,13 +119,24 @@ class ContractService
         ]);
 
         // Временная диагностика дочерних контрактов
+        $dbChildren = \App\Models\Contract::where('parent_contract_id', $contract->id)->get();
         Log::info('Contract child contracts check:', [
             'contract_id' => $contract->id,
             'contract_number' => $contract->number,
+            'contract_org_id' => $contract->organization_id,
             'childContracts_loaded' => $contract->relationLoaded('childContracts'),
             'childContracts_count' => $contract->childContracts->count(),
             'childContracts_ids' => $contract->childContracts->pluck('id')->toArray(),
-            'db_children_check' => \App\Models\Contract::where('parent_contract_id', $contract->id)->pluck('id')->toArray(),
+            'db_children_count' => $dbChildren->count(),
+            'db_children_details' => $dbChildren->map(function($child) {
+                return [
+                    'id' => $child->id,
+                    'number' => $child->number,
+                    'organization_id' => $child->organization_id,
+                    'parent_contract_id' => $child->parent_contract_id,
+                    'deleted_at' => $child->deleted_at,
+                ];
+            })->toArray(),
         ]);
 
         // Аналитика на основе загруженных связей (не новых запросов!)
