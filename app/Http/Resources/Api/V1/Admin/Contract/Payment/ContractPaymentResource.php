@@ -19,8 +19,8 @@ class ContractPaymentResource extends JsonResource
             'payment_type_label' => $this->payment_type->name, // Для отображения
             'reference_document_number' => $this->reference_document_number,
             'description' => $this->description,
-            'created_at' => $this->created_at->toIso8601String(),
-            'updated_at' => $this->updated_at->toIso8601String(),
+            'created_at' => $this->created_at?->toIso8601String(),
+            'updated_at' => $this->updated_at?->toIso8601String(),
         ];
     }
 } 

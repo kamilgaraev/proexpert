@@ -24,9 +24,9 @@ class ContractPerformanceActResource extends JsonResource
             'amount' => (float) $this->amount,
             'description' => $this->description,
             'is_approved' => (bool) $this->is_approved,
-            'approval_date' => $this->approval_date, // Предполагается, что в модели кастуется в Y-m-d
-            'created_at' => $this->created_at->toIso8601String(),
-            'updated_at' => $this->updated_at->toIso8601String(),
+            'approval_date' => $this->approval_date,
+            'created_at' => $this->created_at?->toIso8601String(),
+            'updated_at' => $this->updated_at?->toIso8601String(),
         ];
     }
 } 
