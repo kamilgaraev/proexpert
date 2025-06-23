@@ -12,6 +12,10 @@ use App\Models\Project;
 use App\Models\Organization;
 use App\Models\ContractPayment;
 use App\Models\ContractPerformanceAct;
+use App\Models\CompletedWork;
+use App\Models\WorkType;
+use App\Models\User;
+use App\Models\Role;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractTypeEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
@@ -54,6 +58,8 @@ class ContractSeeder extends Seeder
         foreach ($contracts as $contract) {
             $this->createContractPayments($contract, $faker);
             $this->createContractPerformanceActs($contract, $faker);
+            $this->createCompletedWorks($contract, $faker);
+            $this->createChildContracts($contract, $contracts, $faker);
         }
 
         $this->command->info('Создание контрактов завершено!');
@@ -373,6 +379,111 @@ class ContractSeeder extends Seeder
                     'approval_date' => $approvalDate,
                 ]);
             }
+        }
+    }
+
+    private function createCompletedWorks(Contract $contract, $faker): void
+    {
+        // Получаем виды работ и пользователей для организации
+        $workTypeIds = WorkType::where('organization_id', $this->organizationId)->pluck('id')->toArray();
+        $userIds = User::where('current_organization_id', $this->organizationId)->pluck('id')->toArray();
+
+        if (empty($workTypeIds)) {
+            $this->command->warn('Нет видов работ для создания выполненных работ');
+            return;
+        }
+
+        if (empty($userIds)) {
+            $this->command->warn('Нет пользователей для создания выполненных работ');
+            return;
+        }
+
+        // Создаем 3-7 выполненных работ для контракта
+        $worksCount = $faker->numberBetween(3, 7);
+        
+        for ($i = 0; $i < $worksCount; $i++) {
+            $quantity = $faker->randomFloat(3, 1, 100);
+            $price = $faker->randomFloat(2, 500, 5000);
+            $totalAmount = $quantity * $price;
+            
+            $completionDate = $faker->dateTimeBetween($contract->start_date ?: $contract->date, 'now');
+
+            CompletedWork::create([
+                'organization_id' => $this->organizationId,
+                'project_id' => $contract->project_id,
+                'contract_id' => $contract->id,
+                'work_type_id' => $faker->randomElement($workTypeIds),
+                'user_id' => $faker->randomElement($userIds),
+                'quantity' => $quantity,
+                'price' => $price,
+                'total_amount' => $totalAmount,
+                'completion_date' => $completionDate,
+                'status' => $faker->randomElement(['confirmed', 'pending', 'rejected']),
+                'notes' => $faker->optional(0.7)->sentence(),
+                'additional_info' => [
+                    'weather' => $faker->randomElement(['солнечно', 'дождь', 'облачно']),
+                    'team_size' => $faker->numberBetween(2, 6),
+                    'quality_rating' => $faker->numberBetween(3, 5)
+                ],
+                'created_at' => $completionDate,
+                'updated_at' => $completionDate,
+            ]);
+        }
+
+        $this->command->info("Создано {$worksCount} выполненных работ для контракта {$contract->number}");
+    }
+
+    private function createChildContracts(Contract $contract, $contracts, $faker): void
+    {
+        // Создаем дочерние контракты только для 20% контрактов
+        if (!$faker->boolean(20)) {
+            return;
+        }
+
+        // Только для активных и завершенных контрактов
+        if (!in_array($contract->status, [ContractStatusEnum::ACTIVE, ContractStatusEnum::COMPLETED])) {
+            return;
+        }
+
+        $contractorIds = Contractor::where('organization_id', $this->organizationId)->pluck('id')->toArray();
+
+        // Создаем 1-2 дочерних контракта
+        $childrenCount = $faker->numberBetween(1, 2);
+
+        for ($i = 0; $i < $childrenCount; $i++) {
+            $totalAmount = $faker->randomFloat(2, 100000, $contract->total_amount * 0.3);
+            $gpPercentage = $faker->randomFloat(2, 3, 10);
+            $plannedAdvanceAmount = $totalAmount * $faker->randomFloat(2, 0.1, 0.3);
+            $actualAdvanceAmount = $plannedAdvanceAmount * $faker->randomFloat(2, 0, 1.1);
+            
+            $startDate = $faker->dateTimeBetween($contract->start_date ?: $contract->date, '+45 days');
+            $endDate = $faker->dateTimeBetween($startDate, '+6 months');
+
+            $childContract = Contract::create([
+                'organization_id' => $this->organizationId,
+                'project_id' => $contract->project_id,
+                'contractor_id' => $faker->randomElement($contractorIds),
+                'parent_contract_id' => $contract->id,
+                'number' => 'ПОД-' . $faker->numberBetween(1000, 9999) . '/2025',
+                'date' => $faker->dateTimeBetween($contract->date, '+30 days'),
+                'type' => ContractTypeEnum::SPECIFICATION,
+                'subject' => 'Дополнительные работы по контракту ' . $contract->number,
+                'work_type_category' => ContractWorkTypeCategoryEnum::SERVICES,
+                'payment_terms' => 'Оплата в течение 7 дней после выполнения работ',
+                'total_amount' => $totalAmount,
+                'gp_percentage' => $gpPercentage,
+                'planned_advance_amount' => $plannedAdvanceAmount,
+                'actual_advance_amount' => $actualAdvanceAmount,
+                'status' => $faker->randomElement([
+                    ContractStatusEnum::ACTIVE,
+                    ContractStatusEnum::COMPLETED
+                ]),
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'notes' => 'Дочерний контракт для ' . $contract->number,
+            ]);
+
+            $this->command->info("Создан дочерний контракт {$childContract->number} для {$contract->number}");
         }
     }
 }
