@@ -3,6 +3,11 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\ActReportsController;
 
+// Тестовый маршрут для отладки
+Route::get('act-reports-test', function() {
+    return response()->json(['message' => 'Test route works']);
+})->name('act-reports.test');
+
 // Маршруты для управления отчетами по актам
 Route::prefix('act-reports')->group(function () {
     // Получить все акты организации с фильтрацией

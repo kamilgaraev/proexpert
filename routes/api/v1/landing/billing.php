@@ -7,7 +7,7 @@ use App\Http\Controllers\Api\Billing\BalanceController;
 use App\Http\Controllers\Api\Landing\OrganizationSubscriptionAddonController;
 use App\Http\Controllers\Api\Landing\OrganizationSubscriptionController;
 use App\Http\Controllers\Api\Landing\OrganizationOneTimePurchaseController;
-use App\Http\Controllers\Api\v1\Landing\OrganizationDashboardController;
+use App\Http\Controllers\Api\V1\Landing\OrganizationDashboardController;
 use App\Http\Controllers\Api\V1\Landing\Billing\SubscriptionLimitsController;
 
 // Маршруты биллинга, предполагается, что они будут доступны
