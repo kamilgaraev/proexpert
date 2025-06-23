@@ -20,6 +20,7 @@ class AuthServiceProvider extends ServiceProvider
     protected $policies = [
         // Добавляем автоматическое обнаружение политик, если нужно
         // Если политики лежат в App\Policies и называются как ModelPolicy
+        \App\Models\ActReport::class => \App\Policies\ActReportPolicy::class,
     ];
 
     /**

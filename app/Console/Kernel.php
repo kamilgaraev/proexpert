@@ -27,6 +27,9 @@ class Kernel extends ConsoleKernel
         // (например, в 2 часа ночи серверного времени)
         $schedule->command('billing:process-renewals')->dailyAt('02:00');
 
+        // Ежедневная очистка просроченных отчетов актов (в 3 часа ночи)
+        $schedule->command('act-reports:cleanup')->dailyAt('03:00');
+
         // Ежедневная очистка "осиротевших" файлов была перенесена в routes/console.php
 
         // Для более частого тестирования можно использовать, например, ->everyMinute()

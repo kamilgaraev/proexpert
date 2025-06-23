@@ -198,6 +198,9 @@ Route::prefix('admin')->name('admin.')->group(function () {
         if (file_exists(__DIR__ . '/api/v1/admin/contracts.php')) {
             require __DIR__ . '/api/v1/admin/contracts.php';
         }
+        if (file_exists(__DIR__ . '/api/v1/admin/act_reports.php')) {
+            require __DIR__ . '/api/v1/admin/act_reports.php';
+        }
         if (file_exists(__DIR__ . '/api/v1/admin/filters.php')) {
             require __DIR__ . '/api/v1/admin/filters.php';
         }
