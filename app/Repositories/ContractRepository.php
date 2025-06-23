@@ -201,4 +201,38 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
             ->limit($limit)
             ->get();
     }
+
+    /**
+     * Получить все выполненные работы по контракту
+     */
+    public function getAllCompletedWorks(int $contractId): Collection
+    {
+        return DB::table('completed_works')
+            ->join('work_types', 'completed_works.work_type_id', '=', 'work_types.id')
+            ->join('users', 'completed_works.user_id', '=', 'users.id')
+            ->leftJoin('completed_work_materials', 'completed_works.id', '=', 'completed_work_materials.completed_work_id')
+            ->where('completed_works.contract_id', $contractId)
+            ->select([
+                'completed_works.id',
+                'work_types.name as work_type_name',
+                'users.name as user_name',
+                'completed_works.quantity',
+                'completed_works.total_amount',
+                'completed_works.status',
+                'completed_works.completion_date',
+                DB::raw('COUNT(completed_work_materials.id) as materials_count'),
+                DB::raw('COALESCE(SUM(completed_work_materials.total_amount), 0) as materials_amount')
+            ])
+            ->groupBy([
+                'completed_works.id',
+                'work_types.name',
+                'users.name',
+                'completed_works.quantity',
+                'completed_works.total_amount',
+                'completed_works.status',
+                'completed_works.completion_date'
+            ])
+            ->orderBy('completed_works.completion_date', 'desc')
+            ->get();
+    }
 } 

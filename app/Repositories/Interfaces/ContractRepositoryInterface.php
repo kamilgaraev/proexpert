@@ -26,6 +26,11 @@ interface ContractRepositoryInterface extends BaseRepositoryInterface
      */
     public function getRecentCompletedWorks(int $contractId, int $limit = 10): Collection;
 
+    /**
+     * Получить все выполненные работы по контракту
+     */
+    public function getAllCompletedWorks(int $contractId): Collection;
+
     // public function getSumOfActiveContracts(int $organizationId): float;
     // public function getOverdueContracts(int $organizationId): Collection;
 } 

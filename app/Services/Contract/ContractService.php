@@ -120,8 +120,8 @@ class ContractService
         // Получаем статистику по работам
         $worksStatistics = $this->contractRepository->getContractWorksStatistics($contractId);
         
-        // Получаем последние работы
-        $recentWorks = $this->contractRepository->getRecentCompletedWorks($contractId, 10);
+        // Получаем все работы по контракту
+        $recentWorks = $this->contractRepository->getAllCompletedWorks($contractId);
         
         return [
             'contract' => $contract,
@@ -170,7 +170,7 @@ class ContractService
     }
 
     /**
-     * Форматировать последние работы
+     * Форматировать все работы по контракту
      */
     private function formatRecentWorks($works): array
     {
