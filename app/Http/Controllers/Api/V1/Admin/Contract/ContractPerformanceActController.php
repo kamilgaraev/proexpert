@@ -11,15 +11,20 @@ use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceA
 use Illuminate\Http\Request; // Для $request->input()
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth; // Для Auth::user()
+use App\Services\Export\ExcelExporterService;
+use Barryvdh\DomPDF\Facade\Pdf;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 use Exception;
 
 class ContractPerformanceActController extends Controller
 {
     protected ContractPerformanceActService $actService;
+    protected ExcelExporterService $excelExporter;
 
-    public function __construct(ContractPerformanceActService $actService)
+    public function __construct(ContractPerformanceActService $actService, ExcelExporterService $excelExporter)
     {
         $this->actService = $actService;
+        $this->excelExporter = $excelExporter;
         // Здесь можно добавить middleware для авторизации, если требуется
         // Например, $this->middleware('can:viewAny,App\Models\ContractPerformanceAct::class')->only('index');
         // Или $this->authorizeResource(App\Models\ContractPerformanceAct::class, 'performance_act');
@@ -126,6 +131,128 @@ class ContractPerformanceActController extends Controller
             return response()->json(['data' => $works]);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to retrieve available works', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    /**
+     * Экспорт акта в PDF
+     */
+    public function exportPdf(Request $request, int $contractId, int $actId)
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            $act = $this->actService->getActById($actId, $contractId, $organizationId);
+            if (!$act) {
+                return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
+            }
+
+            // Загружаем связанные данные
+            $act->load([
+                'contract.project', 
+                'contract.contractor',
+                'contract.organization',
+                'completedWorks.workType',
+                'completedWorks.materials',
+                'completedWorks.executor'
+            ]);
+
+            $data = [
+                'act' => $act,
+                'contract' => $act->contract,
+                'project' => $act->contract->project,
+                'contractor' => $act->contract->contractor,
+                'works' => $act->completedWorks,
+                'total_amount' => $act->amount,
+                'generated_at' => now()->format('d.m.Y H:i')
+            ];
+
+            $pdf = Pdf::loadView('reports.act-report-pdf', $data);
+            $pdf->setPaper('A4', 'portrait');
+
+            $filename = "act_{$act->act_document_number}_" . now()->format('Y-m-d') . ".pdf";
+
+            return $pdf->download($filename);
+
+        } catch (Exception $e) {
+            return response()->json([
+                'error' => 'Ошибка при экспорте в PDF',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Экспорт акта в Excel
+     */
+    public function exportExcel(Request $request, int $contractId, int $actId)
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            $act = $this->actService->getActById($actId, $contractId, $organizationId);
+            if (!$act) {
+                return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
+            }
+
+            // Загружаем связанные данные
+            $act->load([
+                'contract.project', 
+                'contract.contractor',
+                'completedWorks.workType',
+                'completedWorks.materials',
+                'completedWorks.executor'
+            ]);
+
+            $headers = [
+                'Наименование работы',
+                'Единица измерения', 
+                'Количество',
+                'Цена за единицу',
+                'Сумма',
+                'Материалы',
+                'Дата выполнения',
+                'Исполнитель'
+            ];
+
+            $exportData = [];
+            foreach ($act->completedWorks as $work) {
+                $materials = '';
+                if ($work->materials && $work->materials->isNotEmpty()) {
+                    $materials = $work->materials->map(function ($material) {
+                        $quantity = $material->pivot->quantity ?? 0;
+                        $unit = $material->unit ?? '';
+                        return $material->name . ' (' . $quantity . ' ' . $unit . ')';
+                    })->join(', ');
+                }
+
+                $workTypeName = $work->workType ? $work->workType->name : 'Не указан';
+                $executorName = $work->executor ? $work->executor->name : 'Не указан';
+                $completionDate = $work->completion_date ? $work->completion_date->format('d.m.Y') : 'Не указана';
+
+                $exportData[] = [
+                    $workTypeName,
+                    $work->unit ?? '',
+                    number_format($work->quantity ?? 0, 2, ',', ' '),
+                    number_format($work->unit_price ?? 0, 2, ',', ' '),
+                    number_format($work->total_amount ?? 0, 2, ',', ' '),
+                    $materials,
+                    $completionDate,
+                    $executorName
+                ];
+            }
+
+            $filename = "act_{$act->act_document_number}_" . now()->format('Y-m-d') . ".xlsx";
+
+            return $this->excelExporter->streamDownload($filename, $headers, $exportData);
+
+        } catch (Exception $e) {
+            return response()->json([
+                'error' => 'Ошибка при экспорте в Excel',
+                'message' => $e->getMessage()
+            ], 500);
         }
     }
 } 

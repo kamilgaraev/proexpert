@@ -1,13 +1,27 @@
 <?php
 
-use App\Http\Controllers\Api\V1\Admin\ActReportController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\Admin\ActReportsController;
 
-Route::prefix('act-reports')->name('act-reports.')->group(function () {
-    Route::get('/', [ActReportController::class, 'index'])->name('index');
-    Route::post('/', [ActReportController::class, 'store'])->name('store');
-    Route::get('/{actReport}', [ActReportController::class, 'show'])->name('show');
-    Route::get('/{actReport}/download', [ActReportController::class, 'download'])->name('download');
-    Route::post('/{actReport}/regenerate', [ActReportController::class, 'regenerate'])->name('regenerate');
-    Route::delete('/{actReport}', [ActReportController::class, 'destroy'])->name('destroy');
+// Маршруты для управления отчетами по актам
+Route::prefix('act-reports')->group(function () {
+    // Получить все акты организации с фильтрацией
+    Route::get('/', [ActReportsController::class, 'index'])
+        ->name('act-reports.index');
+    
+    // Получить детали конкретного акта
+    Route::get('{act}', [ActReportsController::class, 'show'])
+        ->name('act-reports.show');
+    
+    // Экспорт акта в PDF
+    Route::get('{act}/export/pdf', [ActReportsController::class, 'exportPdf'])
+        ->name('act-reports.export.pdf');
+    
+    // Экспорт акта в Excel
+    Route::get('{act}/export/excel', [ActReportsController::class, 'exportExcel'])
+        ->name('act-reports.export.excel');
+    
+    // Массовый экспорт актов в Excel
+    Route::post('bulk-export/excel', [ActReportsController::class, 'bulkExportExcel'])
+        ->name('act-reports.bulk-export.excel');
 }); 
