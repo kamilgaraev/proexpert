@@ -30,6 +30,9 @@ class DatabaseSeeder extends Seeder
         // Базовые данные для работы (организации, проекты, материалы)
         $this->call(BasicDataSeeder::class);
 
+        // Контракты с полными данными
+        $this->call(ContractSeeder::class);
+
         // Сидеры для активности прорабов и выполненных работ
         $this->call([
             ForemanActivitySeeder::class,

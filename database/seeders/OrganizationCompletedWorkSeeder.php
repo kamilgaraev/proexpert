@@ -184,6 +184,11 @@ class OrganizationCompletedWorkSeeder extends Seeder
         foreach (array_slice($projectIds, 0, 3) as $projectId) {
             $contractNumber = 'ДОГ-' . $faker->numberBetween(100, 999) . '/2025';
             
+            $totalAmount = $faker->randomFloat(2, 500000, 2000000);
+            $gpPercentage = $faker->randomFloat(2, 5, 20);
+            $plannedAdvanceAmount = $totalAmount * $faker->randomFloat(2, 0.1, 0.4);
+            $actualAdvanceAmount = $plannedAdvanceAmount * $faker->randomFloat(2, 0, 1.2);
+
             $contract = Contract::firstOrCreate(
                 ['number' => $contractNumber, 'organization_id' => $this->organizationId],
                 [
@@ -195,7 +200,12 @@ class OrganizationCompletedWorkSeeder extends Seeder
                     'type' => $faker->randomElement(['contract', 'agreement', 'specification']),
                     'status' => $faker->randomElement(['active', 'completed', 'draft']),
                     'subject' => 'Выполнение строительно-монтажных работ',
-                    'total_amount' => $faker->randomFloat(2, 500000, 2000000),
+                    'work_type_category' => $faker->randomElement(['smr', 'supply', 'services']),
+                    'payment_terms' => 'Оплата в течение 10 дней после подписания актов',
+                    'total_amount' => $totalAmount,
+                    'gp_percentage' => $gpPercentage,
+                    'planned_advance_amount' => $plannedAdvanceAmount,
+                    'actual_advance_amount' => $actualAdvanceAmount,
                     'start_date' => $faker->dateTimeBetween('-3 months', 'now'),
                     'end_date' => $faker->dateTimeBetween('+1 month', '+6 months'),
                     'notes' => 'Договор на выполнение строительных работ',
