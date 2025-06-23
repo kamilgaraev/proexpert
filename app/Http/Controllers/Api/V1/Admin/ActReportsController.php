@@ -136,7 +136,7 @@ class ActReportsController extends Controller
                 'contract.organization',
                 'completedWorks.workType',
                 'completedWorks.materials',
-                'completedWorks.executor'
+                'completedWorks.user'
             ])->findOrFail($actId);
 
             return response()->json([
