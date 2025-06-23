@@ -114,7 +114,7 @@ class ContractService
             'completedWorks:id,contract_id,work_type_id,user_id,quantity,total_amount,status,completion_date',
             'completedWorks.workType:id,name',
             'completedWorks.user:id,name',
-            'completedWorks.materials:id,completed_work_id,total_amount'
+            'completedWorks.materials'
         ]);
 
         // Аналитика на основе загруженных связей (не новых запросов!)
@@ -230,7 +230,7 @@ class ContractService
                 'status' => $work->status,
                 'completion_date' => $work->completion_date,
                 'materials_count' => $work->materials->count() ?? 0,
-                'materials_amount' => (float) ($work->materials->sum('total_amount') ?? 0),
+                'materials_amount' => (float) ($work->materials->sum('pivot.total_amount') ?? 0),
             ];
         })->toArray();
     }
