@@ -10,6 +10,7 @@ use App\Services\Export\ExcelExporterService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
 use Exception;
 
 class ActReportsController extends Controller
@@ -154,9 +155,16 @@ class ActReportsController extends Controller
     /**
      * Экспорт акта в PDF
      */
-    public function exportPdf(int $actId)
+    public function exportPdf(Request $request, int $actId)
     {
         try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId) {
+                return response()->json(['error' => 'Не определена организация пользователя'], 400);
+            }
+
             $act = ContractPerformanceAct::with([
                 'contract.project',
                 'contract.contractor',
@@ -164,15 +172,17 @@ class ActReportsController extends Controller
                 'completedWorks.workType',
                 'completedWorks.materials',
                 'completedWorks.executor'
-            ])->findOrFail($actId);
+            ])->whereHas('contract', function ($q) use ($organizationId) {
+                $q->where('organization_id', $organizationId);
+            })->findOrFail($actId);
 
             $data = [
                 'act' => $act,
                 'contract' => $act->contract,
-                'project' => $act->contract->project,
-                'contractor' => $act->contract->contractor,
-                'works' => $act->completedWorks,
-                'total_amount' => $act->amount,
+                'project' => $act->contract->project ?? (object)['name' => 'Не указан'],
+                'contractor' => $act->contract->contractor ?? (object)['name' => 'Не указан'],
+                'works' => $act->completedWorks ?? collect(),
+                'total_amount' => $act->amount ?? 0,
                 'generated_at' => now()->format('d.m.Y H:i')
             ];
 
@@ -184,6 +194,12 @@ class ActReportsController extends Controller
             return $pdf->download($filename);
 
         } catch (Exception $e) {
+            Log::error('Ошибка экспорта PDF акта из отчетов', [
+                'act_id' => $actId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return response()->json([
                 'error' => 'Ошибка при экспорте в PDF',
                 'message' => $e->getMessage()
@@ -194,16 +210,25 @@ class ActReportsController extends Controller
     /**
      * Экспорт акта в Excel
      */
-    public function exportExcel(int $actId)
+    public function exportExcel(Request $request, int $actId)
     {
         try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId) {
+                return response()->json(['error' => 'Не определена организация пользователя'], 400);
+            }
+
             $act = ContractPerformanceAct::with([
                 'contract.project',
                 'contract.contractor',
                 'completedWorks.workType',
                 'completedWorks.materials',
                 'completedWorks.executor'
-            ])->findOrFail($actId);
+            ])->whereHas('contract', function ($q) use ($organizationId) {
+                $q->where('organization_id', $organizationId);
+            })->findOrFail($actId);
 
             $headers = [
                 'Наименование работы',
@@ -217,7 +242,9 @@ class ActReportsController extends Controller
             ];
 
             $exportData = [];
-            foreach ($act->completedWorks as $work) {
+            $completedWorks = $act->completedWorks ?? collect();
+            
+            foreach ($completedWorks as $work) {
                 $materials = '';
                 if ($work->materials && $work->materials->isNotEmpty()) {
                     $materials = $work->materials->map(function ($material) {
@@ -234,12 +261,26 @@ class ActReportsController extends Controller
                 $exportData[] = [
                     $workTypeName,
                     $work->unit ?? '',
-                    number_format($work->quantity ?? 0, 2, ',', ' '),
-                    number_format($work->unit_price ?? 0, 2, ',', ' '),
-                    number_format($work->total_amount ?? 0, 2, ',', ' '),
+                    $work->quantity ?? 0,
+                    $work->unit_price ?? 0,
+                    $work->total_amount ?? 0,
                     $materials,
                     $completionDate,
                     $executorName
+                ];
+            }
+
+            // Если нет работ, добавляем пустую строку
+            if (empty($exportData)) {
+                $exportData[] = [
+                    'Нет выполненных работ',
+                    '-',
+                    0,
+                    0,
+                    0,
+                    '-',
+                    '-',
+                    '-'
                 ];
             }
 
@@ -248,6 +289,12 @@ class ActReportsController extends Controller
             return $this->excelExporter->streamDownload($filename, $headers, $exportData);
 
         } catch (Exception $e) {
+            Log::error('Ошибка экспорта Excel акта из отчетов', [
+                'act_id' => $actId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return response()->json([
                 'error' => 'Ошибка при экспорте в Excel',
                 'message' => $e->getMessage()
@@ -322,13 +369,13 @@ class ActReportsController extends Controller
                         $act->contract->project->name ?? '',
                         $act->contract->contractor->name ?? '',
                         $act->act_date ? $act->act_date->format('d.m.Y') : '',
-                        number_format($act->amount ?? 0, 2, ',', ' '),
+                        $act->amount ?? 0,
                         $act->is_approved ? 'Утвержден' : 'Не утвержден',
                         $workTypeName,
                         $work->unit ?? '',
-                        number_format($work->quantity ?? 0, 2, ',', ' '),
-                        number_format($work->unit_price ?? 0, 2, ',', ' '),
-                        number_format($work->total_amount ?? 0, 2, ',', ' '),
+                        $work->quantity ?? 0,
+                        $work->unit_price ?? 0,
+                        $work->total_amount ?? 0,
                         $materials,
                         $completionDate,
                         $executorName

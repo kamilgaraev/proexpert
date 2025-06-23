@@ -131,19 +131,19 @@
         </div>
         <div class="info-row">
             <span class="info-label">Проект:</span>
-            <span class="info-value">{{ $project->name }}</span>
+            <span class="info-value">{{ $project->name ?? 'Не указан' }}</span>
         </div>
         <div class="info-row">
             <span class="info-label">Подрядчик:</span>
-            <span class="info-value">{{ $contractor->name }}</span>
+            <span class="info-value">{{ $contractor->name ?? 'Не указан' }}</span>
         </div>
         <div class="info-row">
             <span class="info-label">Договор:</span>
-            <span class="info-value">№ {{ $contract->contract_number }} от {{ $contract->contract_date?->format('d.m.Y') }}</span>
+            <span class="info-value">№ {{ $contract->contract_number ?? 'Не указан' }} от {{ $contract->contract_date?->format('d.m.Y') ?? 'Не указана' }}</span>
         </div>
         <div class="info-row">
             <span class="info-label">Период выполнения:</span>
-            <span class="info-value">{{ $contract->start_date?->format('d.m.Y') }} - {{ $contract->end_date?->format('d.m.Y') }}</span>
+            <span class="info-value">{{ $contract->start_date?->format('d.m.Y') ?? 'Не указана' }} - {{ $contract->end_date?->format('d.m.Y') ?? 'Не указана' }}</span>
         </div>
     </div>
 
@@ -160,27 +160,35 @@
             </tr>
         </thead>
         <tbody>
-            @foreach($works as $index => $work)
+            @if($works && $works->count() > 0)
+                @foreach($works as $index => $work)
+                    <tr>
+                        <td class="number-col">{{ $index + 1 }}</td>
+                        <td class="work-name-col">
+                            {{ $work->workType->name ?? 'Не указано' }}
+                            @if($work->materials && $work->materials->isNotEmpty())
+                                <div class="materials-list">
+                                    <strong>Материалы:</strong>
+                                    @foreach($work->materials as $material)
+                                        {{ $material->name ?? 'Не указан' }} ({{ $material->pivot->quantity ?? 0 }} {{ $material->unit ?? '' }}){{ !$loop->last ? ', ' : '' }}
+                                    @endforeach
+                                </div>
+                            @endif
+                        </td>
+                        <td class="unit-col">{{ $work->unit ?? '' }}</td>
+                        <td class="quantity-col">{{ number_format($work->quantity ?? 0, 2, ',', ' ') }}</td>
+                        <td class="price-col">{{ number_format($work->unit_price ?? 0, 2, ',', ' ') }} ₽</td>
+                        <td class="amount-col">{{ number_format($work->total_amount ?? 0, 2, ',', ' ') }} ₽</td>
+                        <td class="date-col">{{ $work->completion_date?->format('d.m.Y') ?? 'Не указана' }}</td>
+                    </tr>
+                @endforeach
+            @else
                 <tr>
-                    <td class="number-col">{{ $index + 1 }}</td>
-                    <td class="work-name-col">
-                        {{ $work->workType->name }}
-                        @if($work->materials->isNotEmpty())
-                            <div class="materials-list">
-                                <strong>Материалы:</strong>
-                                @foreach($work->materials as $material)
-                                    {{ $material->name }} ({{ $material->pivot->quantity }} {{ $material->unit }}){{ !$loop->last ? ', ' : '' }}
-                                @endforeach
-                            </div>
-                        @endif
+                    <td colspan="7" style="text-align: center; padding: 20px; font-style: italic; color: #666;">
+                        Нет выполненных работ
                     </td>
-                    <td class="unit-col">{{ $work->unit }}</td>
-                    <td class="quantity-col">{{ number_format($work->quantity, 2, ',', ' ') }}</td>
-                    <td class="price-col">{{ number_format($work->unit_price, 2, ',', ' ') }} ₽</td>
-                    <td class="amount-col">{{ number_format($work->total_amount, 2, ',', ' ') }} ₽</td>
-                    <td class="date-col">{{ $work->completion_date?->format('d.m.Y') }}</td>
                 </tr>
-            @endforeach
+            @endif
         </tbody>
         <tfoot>
             <tr class="total-row">
