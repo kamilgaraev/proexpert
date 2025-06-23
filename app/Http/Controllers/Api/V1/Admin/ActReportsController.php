@@ -22,6 +22,9 @@ class ActReportsController extends Controller
     public function __construct(ExcelExporterService $excelExporter)
     {
         $this->excelExporter = $excelExporter;
+        $this->middleware('auth:api_admin');
+        $this->middleware('organization.context');
+        $this->middleware('can:access-admin-panel');
     }
 
     /**
