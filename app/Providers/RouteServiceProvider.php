@@ -7,6 +7,7 @@ use Illuminate\Foundation\Support\Providers\RouteServiceProvider as ServiceProvi
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Log;
 
 class RouteServiceProvider extends ServiceProvider
 {
@@ -28,17 +29,36 @@ class RouteServiceProvider extends ServiceProvider
         Route::bind('act', function ($value) {
             $user = request()->user();
             if (!$user) {
+                Log::error('RouteServiceProvider: No authenticated user for act binding', ['act_id' => $value]);
                 abort(401);
             }
             
             $organizationId = $user->organization_id ?? $user->current_organization_id;
             if (!$organizationId) {
+                Log::error('RouteServiceProvider: No organization for user', ['user_id' => $user->id, 'act_id' => $value]);
                 abort(400, 'Не определена организация пользователя');
             }
             
-            return \App\Models\ContractPerformanceAct::whereHas('contract', function ($q) use ($organizationId) {
+            Log::info('RouteServiceProvider: Searching for act', [
+                'act_id' => $value,
+                'user_id' => $user->id,
+                'organization_id' => $organizationId
+            ]);
+            
+            $act = \App\Models\ContractPerformanceAct::whereHas('contract', function ($q) use ($organizationId) {
                 $q->where('organization_id', $organizationId);
-            })->findOrFail($value);
+            })->find($value);
+            
+            if (!$act) {
+                Log::error('RouteServiceProvider: Act not found or access denied', [
+                    'act_id' => $value,
+                    'user_id' => $user->id,
+                    'organization_id' => $organizationId
+                ]);
+                abort(404, 'Акт не найден');
+            }
+            
+            return $act;
         });
 
         $this->routes(function () {
