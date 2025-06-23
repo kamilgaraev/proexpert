@@ -8,6 +8,9 @@ use App\Http\Requests\Api\V1\Admin\Contract\StoreContractRequest; // Созда�
 use App\Http\Requests\Api\V1\Admin\Contract\UpdateContractRequest; // Создадим позже
 use App\Http\Resources\Api\V1\Admin\Contract\ContractResource; // Создадим позже
 use App\Http\Resources\Api\V1\Admin\Contract\ContractCollection; // Создадим позже
+use App\Http\Resources\Api\V1\Admin\Contract\ContractMiniResource;
+use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
+use App\Http\Resources\Api\V1\Admin\Contract\Payment\ContractPaymentResource;
 use App\Models\Organization; // Для получения ID организации, например, из аутентифицированного пользователя
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -227,17 +230,18 @@ class ContractController extends Controller
 
         try {
             $fullDetails = $this->contractService->getFullContractDetails($contractId, $organizationId);
+            $contract = $fullDetails['contract'];
             
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'contract' => new ContractResource($fullDetails['contract']),
+                    'contract' => new ContractResource($contract),
                     'analytics' => $fullDetails['analytics'],
                     'works_statistics' => $fullDetails['works_statistics'],
                     'recent_works' => $fullDetails['recent_works'],
-                    'performance_acts' => $fullDetails['performance_acts'],
-                    'payments' => $fullDetails['payments'],
-                    'child_contracts' => $fullDetails['child_contracts'],
+                    'performance_acts' => ContractPerformanceActResource::collection($contract->performanceActs),
+                    'payments' => ContractPaymentResource::collection($contract->payments),
+                    'child_contracts' => ContractMiniResource::collection($contract->childContracts),
                 ]
             ]);
         } catch (Exception $e) {

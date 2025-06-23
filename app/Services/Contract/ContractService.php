@@ -97,10 +97,10 @@ class ContractService
      */
     public function getFullContractDetails(int $contractId, int $organizationId): array
     {
-        // Получаем контракт с загруженными связями
-        $contract = $this->getContractById($contractId, $organizationId);
+        // Получаем контракт напрямую с необходимыми связями
+        $contract = $this->contractRepository->find($contractId);
         
-        if (!$contract) {
+        if (!$contract || $contract->organization_id !== $organizationId) {
             throw new Exception('Contract not found or does not belong to organization.');
         }
 
@@ -128,9 +128,6 @@ class ContractService
             'analytics' => $analytics,
             'works_statistics' => $worksStatistics,
             'recent_works' => $this->formatRecentWorks($recentWorks),
-            'performance_acts' => $this->formatPerformanceActs($contract->performanceActs),
-            'payments' => $this->formatPayments($contract->payments),
-            'child_contracts' => $this->formatChildContracts($contract->childContracts),
         ];
     }
 

@@ -6,6 +6,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use App\Http\Resources\Api\V1\Admin\Project\ProjectMiniResource;
 use App\Http\Resources\Api\V1\Admin\Contractor\ContractorMiniResource;
+use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
+use App\Http\Resources\Api\V1\Admin\Contract\Payment\ContractPaymentResource;
 
 class ContractResource extends JsonResource
 {
@@ -61,8 +63,8 @@ class ContractResource extends JsonResource
 
             // Связанные данные (если загружены)
             'child_contracts' => ContractMiniResource::collection($this->whenLoaded('childContracts')),
-            // 'performance_acts' => PerformanceActResource::collection($this->whenLoaded('performanceActs')), 
-            // 'payments' => PaymentResource::collection($this->whenLoaded('payments')),
+            'performance_acts' => ContractPerformanceActResource::collection($this->whenLoaded('performanceActs')), 
+            'payments' => ContractPaymentResource::collection($this->whenLoaded('payments')),
         ];
     }
 } 
