@@ -239,9 +239,12 @@ class ContractController extends Controller
                     'analytics' => $fullDetails['analytics'],
                     'works_statistics' => $fullDetails['works_statistics'],
                     'recent_works' => $fullDetails['recent_works'],
-                    'performance_acts' => ContractPerformanceActResource::collection($contract->performanceActs),
-                    'payments' => ContractPaymentResource::collection($contract->payments),
-                    'child_contracts' => ContractMiniResource::collection($contract->childContracts),
+                    'performance_acts' => $contract->relationLoaded('performanceActs') ? 
+                        ContractPerformanceActResource::collection($contract->performanceActs) : [],
+                    'payments' => $contract->relationLoaded('payments') ? 
+                        ContractPaymentResource::collection($contract->payments) : [],
+                    'child_contracts' => $contract->relationLoaded('childContracts') ? 
+                        ContractMiniResource::collection($contract->childContracts) : [],
                 ]
             ]);
         } catch (Exception $e) {

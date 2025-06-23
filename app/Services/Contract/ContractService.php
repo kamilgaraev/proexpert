@@ -9,6 +9,7 @@ use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
 use App\DTOs\Contract\ContractDTO; // Создадим его позже
 use App\Models\Contract;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Exception;
 
@@ -104,11 +105,7 @@ class ContractService
             throw new Exception('Contract not found or does not belong to organization.');
         }
 
-        // Принудительно очищаем и перезагружаем связи
-        $contract->unsetRelation('performanceActs');
-        $contract->unsetRelation('payments');
-        $contract->unsetRelation('childContracts');
-        
+        // Загружаем все связи для ресурса
         $contract->load([
             'contractor:id,name,legal_address,inn,kpp,phone,email',
             'project:id,name,address,description',
@@ -116,6 +113,17 @@ class ContractService
             'childContracts:id,number,total_amount,status',
             'performanceActs:id,act_document_number,act_date,amount,description,is_approved,approval_date',
             'payments:id,payment_date,amount,payment_type,reference_document_number,description'
+        ]);
+
+        // Временный debug
+        Log::info('After load - Contract relations:', [
+            'contract_id' => $contract->id,
+            'performanceActs_loaded' => $contract->relationLoaded('performanceActs'),
+            'payments_loaded' => $contract->relationLoaded('payments'),
+            'childContracts_loaded' => $contract->relationLoaded('childContracts'),
+            'performanceActs_count' => $contract->performanceActs ? $contract->performanceActs->count() : 'null',
+            'payments_count' => $contract->payments ? $contract->payments->count() : 'null',
+            'childContracts_count' => $contract->childContracts ? $contract->childContracts->count() : 'null',
         ]);
 
 
