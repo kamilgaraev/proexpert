@@ -9,13 +9,9 @@ Route::prefix('act-reports')->group(function () {
     Route::get('/', [ActReportsController::class, 'index'])
         ->name('act-reports.index');
     
-    // Получить детали конкретного акта
-    Route::get('{act}', [ActReportsController::class, 'show'])
-        ->name('act-reports.show');
-    
-    // Обновить основную информацию акта
-    Route::put('{act}', [ActReportsController::class, 'update'])
-        ->name('act-reports.update');
+    // Массовый экспорт актов в Excel (должен быть перед {act} маршрутами)
+    Route::post('bulk-export/excel', [ActReportsController::class, 'bulkExportExcel'])
+        ->name('act-reports.bulk-export.excel');
     
     // Получить доступные работы для включения в акт
     Route::get('{act}/available-works', [ActReportsController::class, 'getAvailableWorks'])
@@ -33,7 +29,11 @@ Route::prefix('act-reports')->group(function () {
     Route::get('{act}/export/excel', [ActReportsController::class, 'exportExcel'])
         ->name('act-reports.export.excel');
     
-    // Массовый экспорт актов в Excel
-    Route::post('bulk-export/excel', [ActReportsController::class, 'bulkExportExcel'])
-        ->name('act-reports.bulk-export.excel');
+    // Получить детали конкретного акта
+    Route::get('{act}', [ActReportsController::class, 'show'])
+        ->name('act-reports.show');
+    
+    // Обновить основную информацию акта
+    Route::put('{act}', [ActReportsController::class, 'update'])
+        ->name('act-reports.update');
 }); 
