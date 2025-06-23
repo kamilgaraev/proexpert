@@ -18,6 +18,14 @@ class ContractResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        // Работаем только с загруженными связями, НЕ используем accessors
+        $confirmedWorks = $this->whenLoaded('completedWorks', function() {
+            return $this->completedWorks->where('status', 'confirmed');
+        }, collect());
+        
+        $completedWorksAmount = $confirmedWorks instanceof \Illuminate\Support\Collection 
+            ? $confirmedWorks->sum('total_amount') : 0;
+
         return [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
@@ -52,14 +60,19 @@ class ContractResource extends JsonResource
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
 
-            // Аналитические данные контракта
-            'completed_works_amount' => (float) $this->completed_works_amount,
-            'remaining_amount' => (float) $this->remaining_amount,
-            'completion_percentage' => (float) $this->completion_percentage,
-            'total_performed_amount' => (float) $this->total_performed_amount,
-            'total_paid_amount' => (float) $this->total_paid_amount,
-            'is_nearing_limit' => $this->isNearingLimit(),
-            'can_add_work' => $this->canAddWork(0),
+            // Аналитические данные из загруженных связей (НЕ accessors!)
+            'completed_works_amount' => (float) $completedWorksAmount,
+            'remaining_amount' => (float) max(0, $this->total_amount - $completedWorksAmount),
+            'completion_percentage' => $this->total_amount > 0 ? 
+                round(($completedWorksAmount / $this->total_amount) * 100, 2) : 0.0,
+            'total_performed_amount' => (float) $this->whenLoaded('performanceActs', function() {
+                return $this->performanceActs->where('is_approved', true)->sum('amount');
+            }, 0),
+            'total_paid_amount' => (float) $this->whenLoaded('payments', function() {
+                return $this->payments->sum('amount');
+            }, 0),
+            'is_nearing_limit' => $completedWorksAmount >= ($this->total_amount * 0.9),
+            'can_add_work' => !in_array($this->status->value, ['completed', 'terminated']),
 
             // Связанные данные (если загружены)
             'child_contracts' => ContractMiniResource::collection($this->whenLoaded('childContracts')),
