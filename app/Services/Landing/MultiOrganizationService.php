@@ -106,7 +106,7 @@ class MultiOrganizationService
         $userOrg = Organization::find($userOrgId);
 
         if (!$userOrg) {
-            return collect([]);
+            return new Collection([]);
         }
 
         if ($userOrg->is_holding ?? false) {
@@ -116,10 +116,10 @@ class MultiOrganizationService
         }
 
         if ($userOrg->parent_organization_id) {
-            return collect([$userOrg]);
+            return new Collection([$userOrg]);
         }
 
-        return collect([$userOrg]);
+        return new Collection([$userOrg]);
     }
 
     public function hasAccessToOrganization(User $user, int $targetOrgId, string $permission = 'read'): bool

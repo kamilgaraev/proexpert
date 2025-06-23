@@ -22,7 +22,8 @@ class MultiOrganizationHelper
     public static function getAccessibleOrganizations(User $user): array
     {
         $service = app(MultiOrganizationService::class);
-        return $service->getAccessibleOrganizations($user)->toArray();
+        $organizations = $service->getAccessibleOrganizations($user);
+        return $organizations->toArray();
     }
 
     public static function canCreateHolding(User $user): bool
