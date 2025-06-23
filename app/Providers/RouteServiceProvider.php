@@ -25,40 +25,9 @@ class RouteServiceProvider extends ServiceProvider
     {
         $this->configureRateLimiting();
         
-        // Route Model Binding для актов с проверкой принадлежности организации
+        // Route Model Binding для актов - проверка принадлежности организации будет в контроллере
         Route::bind('act', function ($value) {
-            $user = request()->user();
-            if (!$user) {
-                Log::error('RouteServiceProvider: No authenticated user for act binding', ['act_id' => $value]);
-                abort(401);
-            }
-            
-            $organizationId = $user->organization_id ?? $user->current_organization_id;
-            if (!$organizationId) {
-                Log::error('RouteServiceProvider: No organization for user', ['user_id' => $user->id, 'act_id' => $value]);
-                abort(400, 'Не определена организация пользователя');
-            }
-            
-            Log::info('RouteServiceProvider: Searching for act', [
-                'act_id' => $value,
-                'user_id' => $user->id,
-                'organization_id' => $organizationId
-            ]);
-            
-            $act = \App\Models\ContractPerformanceAct::whereHas('contract', function ($q) use ($organizationId) {
-                $q->where('organization_id', $organizationId);
-            })->find($value);
-            
-            if (!$act) {
-                Log::error('RouteServiceProvider: Act not found or access denied', [
-                    'act_id' => $value,
-                    'user_id' => $user->id,
-                    'organization_id' => $organizationId
-                ]);
-                abort(404, 'Акт не найден');
-            }
-            
-            return $act;
+            return \App\Models\ContractPerformanceAct::findOrFail($value);
         });
 
         $this->routes(function () {
