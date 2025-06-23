@@ -9,6 +9,7 @@ use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
 use App\DTOs\Contract\ContractDTO; // Создадим его позже
 use App\Models\Contract;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Exception;
 
@@ -115,6 +116,16 @@ class ContractService
             'completedWorks.workType:id,name',
             'completedWorks.user:id,name',
             'completedWorks.materials'
+        ]);
+
+        // Временная диагностика дочерних контрактов
+        Log::info('Contract child contracts check:', [
+            'contract_id' => $contract->id,
+            'contract_number' => $contract->number,
+            'childContracts_loaded' => $contract->relationLoaded('childContracts'),
+            'childContracts_count' => $contract->childContracts->count(),
+            'childContracts_ids' => $contract->childContracts->pluck('id')->toArray(),
+            'db_children_check' => \App\Models\Contract::where('parent_contract_id', $contract->id)->pluck('id')->toArray(),
         ]);
 
         // Аналитика на основе загруженных связей (не новых запросов!)
