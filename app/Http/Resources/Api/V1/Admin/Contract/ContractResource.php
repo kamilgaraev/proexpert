@@ -62,9 +62,6 @@ class ContractResource extends JsonResource
 
             // Аналитические данные из загруженных связей (НЕ accessors!)
             'completed_works_amount' => (float) ($completedWorksAmount ?? 0),
-            'remaining_amount' => (float) max(0, ($this->total_amount ?? 0) - ($completedWorksAmount ?? 0)),
-            'completion_percentage' => ($this->total_amount ?? 0) > 0 ? 
-                round((($completedWorksAmount ?? 0) / ($this->total_amount ?? 0)) * 100, 2) : 0.0,
             'total_performed_amount' => (float) $this->whenLoaded('performanceActs', function() {
                 $totalAmount = 0;
                 foreach ($this->performanceActs->where('is_approved', true) as $act) {
@@ -78,10 +75,43 @@ class ContractResource extends JsonResource
                 }
                 return $totalAmount;
             }, 0),
+            'remaining_amount' => (float) max(0, ($this->total_amount ?? 0) - ($this->whenLoaded('performanceActs', function() {
+                $totalAmount = 0;
+                foreach ($this->performanceActs->where('is_approved', true) as $act) {
+                    if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                        $totalAmount += $act->completedWorks->sum('pivot.included_amount');
+                    } else {
+                        $totalAmount += $act->amount ?? 0;
+                    }
+                }
+                return $totalAmount;
+            }, 0))),
+            'completion_percentage' => ($this->total_amount ?? 0) > 0 ? 
+                round((($this->whenLoaded('performanceActs', function() {
+                    $totalAmount = 0;
+                    foreach ($this->performanceActs->where('is_approved', true) as $act) {
+                        if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                            $totalAmount += $act->completedWorks->sum('pivot.included_amount');
+                        } else {
+                            $totalAmount += $act->amount ?? 0;
+                        }
+                    }
+                    return $totalAmount;
+                }, 0)) / ($this->total_amount ?? 0)) * 100, 2) : 0.0,
             'total_paid_amount' => (float) $this->whenLoaded('payments', function() {
                 return $this->payments->sum('amount') ?? 0;
             }, 0),
-            'is_nearing_limit' => ($completedWorksAmount ?? 0) >= (($this->total_amount ?? 0) * 0.9),
+            'is_nearing_limit' => ($this->whenLoaded('performanceActs', function() {
+                $totalAmount = 0;
+                foreach ($this->performanceActs->where('is_approved', true) as $act) {
+                    if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                        $totalAmount += $act->completedWorks->sum('pivot.included_amount');
+                    } else {
+                        $totalAmount += $act->amount ?? 0;
+                    }
+                }
+                return $totalAmount;
+            }, 0)) >= (($this->total_amount ?? 0) * 0.9),
             'can_add_work' => !in_array($this->status->value, ['completed', 'terminated']),
 
             // Связанные данные (если загружены)

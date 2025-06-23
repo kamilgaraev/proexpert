@@ -197,9 +197,9 @@ class ContractService
                 'gp_amount' => (float) $contract->gp_amount,
                 'total_amount_with_gp' => (float) $contract->total_amount_with_gp,
                 'completed_works_amount' => (float) $completedWorksAmount,
-                'remaining_amount' => (float) max(0, $contract->total_amount - $completedWorksAmount),
+                'remaining_amount' => (float) max(0, $contract->total_amount - $totalPerformedAmount),
                 'completion_percentage' => $contract->total_amount > 0 ? 
-                    round(($completedWorksAmount / $contract->total_amount) * 100, 2) : 0.0,
+                    round(($totalPerformedAmount / $contract->total_amount) * 100, 2) : 0.0,
                 'total_paid_amount' => (float) $totalPaidAmount,
                 'total_performed_amount' => (float) $totalPerformedAmount,
                 'planned_advance_amount' => (float) $contract->planned_advance_amount,
@@ -210,7 +210,7 @@ class ContractService
             ],
             'status' => [
                 'current_status' => $contract->status->value,
-                'is_nearing_limit' => $completedWorksAmount >= ($contract->total_amount * 0.9),
+                'is_nearing_limit' => $totalPerformedAmount >= ($contract->total_amount * 0.9),
                 'can_add_work' => !in_array($contract->status->value, ['completed', 'terminated']),
                 'is_overdue' => $contract->end_date && $contract->end_date->isPast(),
                 'days_until_deadline' => $contract->end_date ? now()->diffInDays($contract->end_date, false) : null,
