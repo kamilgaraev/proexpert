@@ -189,7 +189,7 @@ class ActReportsController extends Controller
             $pdf = Pdf::loadView('reports.act-report-pdf', $data);
             $pdf->setPaper('A4', 'portrait');
 
-            $filename = "act_{$act->act_document_number}_" . now()->format('Y-m-d') . ".pdf";
+            $filename = "act_" . preg_replace('/[^A-Za-z0-9\-_]/', '_', $act->act_document_number) . "_" . now()->format('Y-m-d') . ".pdf";
 
             return $pdf->download($filename);
 
@@ -284,7 +284,7 @@ class ActReportsController extends Controller
                 ];
             }
 
-            $filename = "act_{$act->act_document_number}_" . now()->format('Y-m-d') . ".xlsx";
+            $filename = "act_" . preg_replace('/[^A-Za-z0-9\-_]/', '_', $act->act_document_number) . "_" . now()->format('Y-m-d') . ".xlsx";
 
             return $this->excelExporter->streamDownload($filename, $headers, $exportData);
 
