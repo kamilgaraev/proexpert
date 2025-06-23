@@ -326,7 +326,8 @@ class ContractSeeder extends Seeder
             ]);
         }
 
-        if ($contract->status === ContractStatusEnum::ACTIVE || $contract->status === ContractStatusEnum::COMPLETED) {
+        // Промежуточные платежи для всех контрактов кроме DRAFT
+        if ($contract->status !== ContractStatusEnum::DRAFT) {
             $paymentsCount = $faker->numberBetween(1, 4);
             $remainingAmount = $contract->total_amount - $contract->actual_advance_amount;
             
@@ -353,7 +354,8 @@ class ContractSeeder extends Seeder
 
     private function createContractPerformanceActs(Contract $contract, $faker): void
     {
-        if ($contract->status === ContractStatusEnum::ACTIVE || $contract->status === ContractStatusEnum::COMPLETED) {
+        // Акты для всех контрактов кроме DRAFT
+        if ($contract->status !== ContractStatusEnum::DRAFT) {
             $actsCount = $faker->numberBetween(1, 3);
             
             for ($i = 0; $i < $actsCount; $i++) {

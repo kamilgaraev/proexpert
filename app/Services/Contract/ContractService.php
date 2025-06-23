@@ -104,16 +104,6 @@ class ContractService
             throw new Exception('Contract not found or does not belong to organization.');
         }
 
-        // Загружаем все связанные данные одним запросом
-        $contract->load([
-            'contractor:id,name,legal_address,inn,kpp,phone,email',
-            'project:id,name,address,description',
-            'parentContract:id,number,total_amount,status',
-            'childContracts:id,number,total_amount,status',
-            'performanceActs:id,act_document_number,act_date,amount,description,is_approved,approval_date',
-            'payments:id,payment_date,amount,payment_type,reference_document_number,description'
-        ]);
-
         // Получаем аналитические данные
         $analytics = $this->buildContractAnalytics($contract);
         
@@ -122,6 +112,16 @@ class ContractService
         
         // Получаем все работы по контракту
         $recentWorks = $this->contractRepository->getAllCompletedWorks($contractId);
+
+        // Загружаем все связанные данные ПОСЛЕ аналитики
+        $contract->load([
+            'contractor:id,name,legal_address,inn,kpp,phone,email',
+            'project:id,name,address,description',
+            'parentContract:id,number,total_amount,status',
+            'childContracts:id,number,total_amount,status',
+            'performanceActs:id,act_document_number,act_date,amount,description,is_approved,approval_date',
+            'payments:id,payment_date,amount,payment_type,reference_document_number,description'
+        ]);
         
         return [
             'contract' => $contract,
