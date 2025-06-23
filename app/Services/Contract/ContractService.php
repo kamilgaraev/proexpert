@@ -109,7 +109,6 @@ class ContractService
             'contractor:id,name,legal_address,inn,kpp,phone,email',
             'project:id,name,address,description',
             'parentContract:id,number,total_amount,status',
-            'childContracts:id,number,total_amount,status',
             'performanceActs:id,contract_id,act_document_number,act_date,amount,description,is_approved,approval_date',
             'payments:id,contract_id,payment_date,amount,payment_type,reference_document_number,description',
             'completedWorks:id,contract_id,work_type_id,user_id,quantity,total_amount,status,completion_date',
@@ -117,6 +116,14 @@ class ContractService
             'completedWorks.user:id,name',
             'completedWorks.materials'
         ]);
+
+        // Принудительно загружаем дочерние контракты отдельно
+        $contract->setRelation('childContracts', 
+            Contract::where('parent_contract_id', $contract->id)
+                   ->where('organization_id', $contract->organization_id)
+                   ->select('id', 'number', 'total_amount', 'status')
+                   ->get()
+        );
 
         // Временная диагностика дочерних контрактов
         $dbChildren = \App\Models\Contract::where('parent_contract_id', $contract->id)->get();
