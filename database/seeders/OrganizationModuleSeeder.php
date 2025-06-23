@@ -142,6 +142,20 @@ class OrganizationModuleSeeder extends Seeder
                 'display_order' => 1,
             ],
 
+            // Организационная структура
+            [
+                'name' => 'Мультиорганизация',
+                'slug' => 'multi_organization',
+                'description' => 'Создание холдинговой структуры с дочерними организациями',
+                'price' => 14900,
+                'features' => ['Неограниченные дочерние организации', 'Консолидированные отчеты', 'Централизованное управление', 'Иерархия доступов'],
+                'permissions' => ['multi_org.create', 'multi_org.manage', 'multi_org.reports', 'multi_org.access_all'],
+                'category' => 'organization',
+                'icon' => 'building-office-2',
+                'is_premium' => true,
+                'display_order' => 1,
+            ],
+
             // Бесплатные модули
             [
                 'name' => 'Базовые отчеты',

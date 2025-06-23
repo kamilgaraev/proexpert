@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use App\Models\OrganizationBalance;
 
 class Organization extends Model
@@ -39,6 +40,12 @@ class Organization extends Model
         'verification_data',
         'verification_status',
         'verification_notes',
+        'parent_organization_id',
+        'organization_type',
+        'is_holding',
+        'multi_org_settings',
+        'hierarchy_level',
+        'hierarchy_path',
     ];
 
     /**
@@ -52,6 +59,9 @@ class Organization extends Model
         'is_verified' => 'boolean',
         'verified_at' => 'datetime',
         'verification_data' => 'array',
+        'multi_org_settings' => 'array',
+        'is_holding' => 'boolean',
+        'hierarchy_level' => 'integer',
     ];
 
     /**
@@ -94,6 +104,62 @@ class Organization extends Model
     public function balance(): HasOne
     {
         return $this->hasOne(OrganizationBalance::class, 'organization_id');
+    }
+
+    /**
+     * Получить родительскую организацию.
+     */
+    public function parentOrganization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class, 'parent_organization_id');
+    }
+
+    /**
+     * Получить дочерние организации.
+     */
+    public function childOrganizations(): HasMany
+    {
+        return $this->hasMany(Organization::class, 'parent_organization_id');
+    }
+
+    /**
+     * Получить группу организации.
+     */
+    public function organizationGroup(): HasOne
+    {
+        return $this->hasOne(OrganizationGroup::class, 'parent_organization_id');
+    }
+
+    /**
+     * Получить разрешения доступа, предоставленные этой организации.
+     */
+    public function accessPermissionsGranted(): HasMany
+    {
+        return $this->hasMany(OrganizationAccessPermission::class, 'granted_to_organization_id');
+    }
+
+    /**
+     * Получить разрешения доступа, полученные этой организацией.
+     */
+    public function accessPermissionsReceived(): HasMany
+    {
+        return $this->hasMany(OrganizationAccessPermission::class, 'target_organization_id');
+    }
+
+    /**
+     * Получить проекты, связанные с организацией.
+     */
+    public function projects(): HasMany
+    {
+        return $this->hasMany(Project::class);
+    }
+
+    /**
+     * Получить контракты, связанные с организацией.
+     */
+    public function contracts(): HasMany
+    {
+        return $this->hasMany(Contract::class);
     }
 
     /**
