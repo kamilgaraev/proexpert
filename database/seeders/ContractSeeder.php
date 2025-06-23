@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Project;
@@ -28,6 +29,12 @@ class ContractSeeder extends Seeder
     {
         $this->command->info('Начинаем создание контрактов...');
 
+        // Проверяем структуру таблиц перед выполнением
+        if (!$this->checkTablesStructure()) {
+            $this->command->error('Структура таблиц не соответствует ожидаемой!');
+            return;
+        }
+
         $organization = Organization::first();
         if (!$organization) {
             $this->command->error('Не найдена организация! Запустите сначала BasicDataSeeder');
@@ -49,6 +56,33 @@ class ContractSeeder extends Seeder
 
         $this->command->info('Создание контрактов завершено!');
         $this->command->info('Создано контрактов: ' . $contracts->count());
+    }
+
+    private function checkTablesStructure(): bool
+    {
+        // Проверяем обязательные поля в таблицах
+        $requiredColumns = [
+            'projects' => ['id', 'organization_id', 'name', 'address', 'description', 'start_date', 'end_date', 'status'],
+            'contractors' => ['id', 'organization_id', 'name', 'contact_person', 'phone', 'email', 'legal_address', 'inn', 'kpp'],
+            'contracts' => ['id', 'organization_id', 'project_id', 'contractor_id', 'number', 'date', 'type', 'total_amount', 'gp_percentage', 'planned_advance_amount', 'actual_advance_amount'],
+        ];
+
+        foreach ($requiredColumns as $table => $columns) {
+            if (!Schema::hasTable($table)) {
+                $this->command->error("Таблица {$table} не существует!");
+                return false;
+            }
+
+            foreach ($columns as $column) {
+                if (!Schema::hasColumn($table, $column)) {
+                    $this->command->error("Колонка {$column} не существует в таблице {$table}!");
+                    return false;
+                }
+            }
+        }
+
+        $this->command->info('Структура таблиц проверена успешно');
+        return true;
     }
 
     private function ensureProjectsAndContractors($faker): void
@@ -84,8 +118,7 @@ class ContractSeeder extends Seeder
                     'description' => 'Строительство объекта: ' . $name,
                     'start_date' => $faker->dateTimeBetween('-2 years', '-6 months'),
                     'end_date' => $faker->dateTimeBetween('+6 months', '+2 years'),
-                    'total_budget' => $faker->randomFloat(2, 5000000, 50000000),
-                    'status' => $faker->randomElement(['planning', 'active', 'completed']),
+                    'status' => $faker->randomElement(['active', 'completed', 'paused']),
                 ]
             );
         }
@@ -138,7 +171,7 @@ class ContractSeeder extends Seeder
                     'legal_address' => $faker->address,
                     'inn' => $faker->numerify($data['type'] === 'ИП' ? '############' : '##########'),
                     'kpp' => $data['type'] === 'ИП' ? null : $faker->numerify('#########'),
-                    'specialization' => $data['specialization'],
+                    'notes' => $data['specialization'], // Используем notes вместо specialization
                 ]
             );
         }
