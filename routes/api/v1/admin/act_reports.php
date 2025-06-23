@@ -13,6 +13,18 @@ Route::prefix('act-reports')->group(function () {
     Route::get('{act}', [ActReportsController::class, 'show'])
         ->name('act-reports.show');
     
+    // Обновить основную информацию акта
+    Route::put('{act}', [ActReportsController::class, 'update'])
+        ->name('act-reports.update');
+    
+    // Получить доступные работы для включения в акт
+    Route::get('{act}/available-works', [ActReportsController::class, 'getAvailableWorks'])
+        ->name('act-reports.available-works');
+    
+    // Обновить состав работ в акте
+    Route::put('{act}/works', [ActReportsController::class, 'updateWorks'])
+        ->name('act-reports.update-works');
+    
     // Экспорт акта в PDF
     Route::get('{act}/export/pdf', [ActReportsController::class, 'exportPdf'])
         ->name('act-reports.export.pdf');

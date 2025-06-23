@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ContractPerformanceAct;
+use App\Models\CompletedWork;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActCollection;
 use App\Services\Export\ExcelExporterService;
@@ -11,6 +12,7 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Exception;
 
 class ActReportsController extends Controller
@@ -393,5 +395,193 @@ class ActReportsController extends Controller
                 'message' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Получить доступные работы для включения в акт
+     */
+    public function getAvailableWorks(Request $request, int $actId): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId) {
+                return response()->json(['error' => 'Не определена организация пользователя'], 400);
+            }
+
+            $act = ContractPerformanceAct::with('completedWorks')->whereHas('contract', function ($q) use ($organizationId) {
+                $q->where('organization_id', $organizationId);
+            })->findOrFail($actId);
+
+            // Получаем подтвержденные работы по контракту которые еще не включены в утвержденные акты
+            $works = CompletedWork::where('contract_id', $act->contract_id)
+                ->where('status', 'confirmed')
+                ->with(['workType:id,name', 'user:id,name'])
+                ->get();
+
+            $availableWorks = $works->map(function ($work) use ($act) {
+                return [
+                    'id' => $work->id,
+                    'work_type_name' => $work->workType->name ?? 'Не указано',
+                    'user_name' => $work->user->name ?? 'Не указано',
+                    'quantity' => (float) $work->quantity,
+                    'price' => (float) $work->price,
+                    'total_amount' => (float) $work->total_amount,
+                    'completion_date' => $work->completion_date,
+                    'is_included_in_approved_act' => $this->isWorkIncludedInApprovedAct($work->id),
+                    'is_included_in_current_act' => $act->completedWorks->contains('id', $work->id),
+                ];
+            });
+
+            return response()->json([
+                'data' => $availableWorks,
+                'message' => 'Доступные работы получены успешно'
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Ошибка получения доступных работ для акта', [
+                'act_id' => $actId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Ошибка при получении доступных работ',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обновить состав работ в акте
+     */
+    public function updateWorks(Request $request, int $actId): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId) {
+                return response()->json(['error' => 'Не определена организация пользователя'], 400);
+            }
+
+            $act = ContractPerformanceAct::whereHas('contract', function ($q) use ($organizationId) {
+                $q->where('organization_id', $organizationId);
+            })->findOrFail($actId);
+
+            $workIds = $request->input('work_ids', []);
+            
+            // Проверяем что все работы принадлежат тому же контракту
+            $validWorks = CompletedWork::whereIn('id', $workIds)
+                ->where('contract_id', $act->contract_id)
+                ->where('status', 'confirmed')
+                ->pluck('id')
+                ->toArray();
+
+            DB::transaction(function () use ($act, $validWorks) {
+                // Синхронизируем работы с актом
+                $act->completedWorks()->sync($validWorks);
+                
+                // Пересчитываем сумму акта
+                $totalAmount = $act->completedWorks()->sum('total_amount');
+                $act->update(['amount' => $totalAmount]);
+            });
+
+            $act->load([
+                'completedWorks.workType',
+                'completedWorks.user',
+                'completedWorks.materials'
+            ]);
+
+            return response()->json([
+                'data' => new ContractPerformanceActResource($act),
+                'message' => 'Состав работ акта обновлен успешно'
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Ошибка обновления работ в акте', [
+                'act_id' => $actId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Ошибка при обновлении работ в акте',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Обновить основную информацию акта
+     */
+    public function update(Request $request, int $actId): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId) {
+                return response()->json(['error' => 'Не определена организация пользователя'], 400);
+            }
+
+            $act = ContractPerformanceAct::whereHas('contract', function ($q) use ($organizationId) {
+                $q->where('organization_id', $organizationId);
+            })->findOrFail($actId);
+
+            $request->validate([
+                'act_document_number' => 'sometimes|string|max:255',
+                'act_date' => 'sometimes|date',
+                'description' => 'sometimes|string|nullable',
+                'is_approved' => 'sometimes|boolean',
+            ]);
+
+            $updateData = $request->only([
+                'act_document_number',
+                'act_date', 
+                'description',
+                'is_approved'
+            ]);
+
+            $act->update($updateData);
+
+            $act->load([
+                'contract.project',
+                'contract.contractor',
+                'completedWorks.workType',
+                'completedWorks.user',
+                'completedWorks.materials'
+            ]);
+
+            return response()->json([
+                'data' => new ContractPerformanceActResource($act),
+                'message' => 'Акт обновлен успешно'
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Ошибка обновления акта', [
+                'act_id' => $actId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Ошибка при обновлении акта',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Проверить включена ли работа в утвержденный акт
+     */
+    protected function isWorkIncludedInApprovedAct(int $workId): bool
+    {
+        return DB::table('performance_act_completed_works')
+            ->join('contract_performance_acts', 'performance_act_completed_works.performance_act_id', '=', 'contract_performance_acts.id')
+            ->where('performance_act_completed_works.completed_work_id', $workId)
+            ->where('contract_performance_acts.is_approved', true)
+            ->exists();
     }
 } 
