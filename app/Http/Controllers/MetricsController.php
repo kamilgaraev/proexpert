@@ -16,9 +16,23 @@ class MetricsController extends Controller
 
     public function metrics(): Response
     {
-        $metrics = $this->prometheus->renderMetrics();
-        
-        return response($metrics, 200, [
+        try {
+            $metrics = $this->prometheus->renderMetrics();
+            
+            return response($metrics, 200, [
+                'Content-Type' => 'text/plain; charset=utf-8'
+            ]);
+        } catch (\Exception $e) {
+            // Отладочная информация
+            return response("Error: " . $e->getMessage() . "\n" . $e->getTraceAsString(), 500, [
+                'Content-Type' => 'text/plain; charset=utf-8'
+            ]);
+        }
+    }
+
+    public function test(): Response
+    {
+        return response("# Test metrics endpoint\ntest_metric 1\n", 200, [
             'Content-Type' => 'text/plain; charset=utf-8'
         ]);
     }

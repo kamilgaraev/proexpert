@@ -11,3 +11,4 @@ Route::get('/login', function () {
 })->name('login');
 
 Route::get('/metrics', [App\Http\Controllers\MetricsController::class, 'metrics']);
+Route::get('/test-metrics', [App\Http\Controllers\MetricsController::class, 'test']);
