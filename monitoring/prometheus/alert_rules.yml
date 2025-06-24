@@ -1,0 +1,84 @@
+groups:
+  - name: laravel_alerts
+    rules:
+      # Высокая частота ошибок
+      - alert: HighErrorRate
+        expr: (rate(laravel_http_requests_total{status=~"5.."}[5m]) / rate(laravel_http_requests_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Высокая частота ошибок Laravel"
+          description: "Частота ошибок {{ $value }} больше 10% за последние 5 минут"
+
+      # Медленные ответы
+      - alert: SlowResponseTime
+        expr: laravel_http_request_duration_seconds{quantile="0.95"} > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Медленные ответы Laravel"
+          description: "95-й процентиль времени ответа: {{ $value }}s"
+
+      # Высокое использование памяти
+      - alert: HighMemoryUsage
+        expr: laravel_memory_usage_bytes / 1024 / 1024 > 512
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокое использование памяти Laravel"
+          description: "Использование памяти: {{ $value }}MB"
+
+      # Большое количество активных подключений к БД
+      - alert: HighDatabaseConnections
+        expr: laravel_database_connections_active > 80
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Много активных подключений к БД"
+          description: "Активных подключений: {{ $value }}"
+
+  - name: system_alerts
+    rules:
+      # Высокое использование CPU
+      - alert: HighCpuUsage
+        expr: 100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Высокое использование CPU"
+          description: "CPU usage: {{ $value }}%"
+
+      # Мало свободной памяти
+      - alert: LowMemoryAvailable
+        expr: (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Мало свободной памяти"
+          description: "Свободной памяти: {{ $value }}%"
+
+      # Мало свободного места на диске
+      - alert: LowDiskSpace
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Мало свободного места на диске"
+          description: "Свободного места: {{ $value }}%"
+
+      # Сервис недоступен
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Сервис недоступен"
+          description: "{{ $labels.job }} на {{ $labels.instance }} недоступен" 

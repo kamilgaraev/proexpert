@@ -1,0 +1,124 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Laravel API логи (JSON формат)
+  - job_name: laravel_api
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: laravel_api
+          __path__: /var/log/laravel/api/*.log
+    pipeline_stages:
+      - json:
+          expressions:
+            timestamp: timestamp
+            level: level
+            message: message
+            context: context
+            type: type
+            request_id: request_id
+            user_id: user_id
+            url: url
+            method: method
+            status: status
+      - timestamp:
+          source: timestamp
+          format: "2006-01-02 15:04:05"
+      - labels:
+          level:
+          type:
+          method:
+          request_id:
+
+  # Laravel основные логи
+  - job_name: laravel_general
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: laravel_general
+          __path__: /var/log/laravel/laravel.log
+    pipeline_stages:
+      - regex:
+          expression: '^\[(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (?P<env>\w+)\.(?P<level>\w+): (?P<message>.*)'
+      - timestamp:
+          source: timestamp
+          format: "2006-01-02 15:04:05"
+      - labels:
+          level:
+          env:
+
+  # Laravel телеметрия
+  - job_name: laravel_telemetry
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: laravel_telemetry
+          __path__: /var/log/laravel/telemetry/*.log
+    pipeline_stages:
+      - json:
+          expressions:
+            timestamp: timestamp
+            operation: operation
+            duration: duration
+            context: context
+      - timestamp:
+          source: timestamp
+          format: "2006-01-02 15:04:05"
+      - labels:
+          operation:
+
+  # Системные логи Ubuntu
+  - job_name: system_logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: system
+          __path__: /var/log/host/syslog
+    pipeline_stages:
+      - regex:
+          expression: '^(?P<timestamp>\w{3} \d{1,2} \d{2}:\d{2}:\d{2}) (?P<hostname>\S+) (?P<service>\S+): (?P<message>.*)'
+      - timestamp:
+          source: timestamp
+          format: "Jan _2 15:04:05"
+      - labels:
+          hostname:
+          service:
+
+  # Nginx логи (если используется)
+  - job_name: nginx_access
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: nginx_access
+          __path__: /var/log/host/nginx/access.log
+    pipeline_stages:
+      - regex:
+          expression: '^(?P<remote_addr>\S+) - (?P<remote_user>\S+) \[(?P<timestamp>[^\]]+)\] "(?P<method>\S+) (?P<path>\S+) (?P<protocol>\S+)" (?P<status>\d+) (?P<bytes_sent>\d+) "(?P<http_referer>[^"]*)" "(?P<http_user_agent>[^"]*)"'
+      - timestamp:
+          source: timestamp
+          format: "02/Jan/2006:15:04:05 -0700"
+      - labels:
+          method:
+          status:
+          remote_addr:
+
+  - job_name: nginx_error
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: nginx_error
+          __path__: /var/log/host/nginx/error.log 

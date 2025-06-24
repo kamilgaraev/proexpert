@@ -10,6 +10,7 @@ use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 use Symfony\Component\Routing\Exception\RouteNotFoundException;
+use App\Services\Monitoring\PrometheusService;
 
 class Handler extends ExceptionHandler
 {
@@ -110,5 +111,15 @@ class Handler extends ExceptionHandler
                 return response()->json($response, $statusCode);
             }
         });
+    }
+
+    public function report(Throwable $exception)
+    {
+        if (app()->bound(PrometheusService::class)) {
+            $prometheus = app(PrometheusService::class);
+            $prometheus->incrementExceptions(get_class($exception));
+        }
+
+        parent::report($exception);
     }
 } 

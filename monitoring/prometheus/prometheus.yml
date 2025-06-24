@@ -1,0 +1,68 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "alert_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+scrape_configs:
+  # Laravel приложение метрики (через веб-сервер)
+  - job_name: 'laravel-app'
+    static_configs:
+      - targets: ['host.docker.internal:80']  # Стандартный HTTP порт
+    metrics_path: /metrics
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    honor_labels: true
+    params:
+      format: ['prometheus']
+
+  # Альтернативно через HTTPS (если настроен SSL)
+  # - job_name: 'laravel-app-https'
+  #   static_configs:
+  #     - targets: ['host.docker.internal:443']
+  #   metrics_path: /metrics
+  #   scrape_interval: 10s
+  #   scheme: https
+  #   tls_config:
+  #     insecure_skip_verify: true
+
+  # Системные метрики Ubuntu
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 15s
+
+  # Prometheus сам себя
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # PHP-FPM метрики (если установлен экспортер)
+  # - job_name: 'php-fpm'
+  #   static_configs:
+  #     - targets: ['host.docker.internal:9253']
+  #   scrape_interval: 30s
+
+  # Nginx метрики (если установлен nginx_exporter)
+  # - job_name: 'nginx'
+  #   static_configs:
+  #     - targets: ['host.docker.internal:9113']
+  #   scrape_interval: 30s
+
+  # MySQL/PostgreSQL метрики (если установлен экспортер)
+  # - job_name: 'database'
+  #   static_configs:
+  #     - targets: ['host.docker.internal:9104']
+  #   scrape_interval: 30s
+
+  # Redis метрики (если установлен redis_exporter)
+  # - job_name: 'redis'
+  #   static_configs:
+  #     - targets: ['host.docker.internal:9121']
+  #   scrape_interval: 30s 

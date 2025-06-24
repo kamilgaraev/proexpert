@@ -9,3 +9,5 @@ Route::get('/', function () {
 Route::get('/login', function () {
     return response()->json(['message' => 'Please use API endpoints for authentication'], 401);
 })->name('login');
+
+Route::get('/metrics', [App\Http\Controllers\MetricsController::class, 'metrics']);
