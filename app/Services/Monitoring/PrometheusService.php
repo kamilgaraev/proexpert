@@ -31,16 +31,9 @@ class PrometheusService
     public function setDatabaseConnections(): void
     {
         try {
-            $connections = 0;
-            foreach (config('database.connections') as $name => $config) {
-                try {
-                    DB::connection($name)->select('SELECT 1');
-                    $connections++;
-                } catch (\Exception $e) {
-                    // Соединение недоступно
-                }
-            }
-            $this->setGauge('database_connections_active', $connections);
+            // Проверяем только основное соединение
+            DB::select('SELECT 1');
+            $this->setGauge('database_connections_active', 1);
         } catch (\Exception $e) {
             $this->setGauge('database_connections_active', 0);
         }
@@ -55,8 +48,13 @@ class PrometheusService
     public function setQueueSize(string $queue = 'default'): void
     {
         try {
-            $size = DB::table('jobs')->where('queue', $queue)->count();
-            $this->setGauge("queue_size{queue=\"{$queue}\"}", $size);
+            // Проверяем есть ли таблица jobs
+            if (DB::getSchemaBuilder()->hasTable('jobs')) {
+                $size = DB::table('jobs')->where('queue', $queue)->count();
+                $this->setGauge("queue_size{queue=\"{$queue}\"}", $size);
+            } else {
+                $this->setGauge("queue_size{queue=\"{$queue}\"}", 0);
+            }
         } catch (\Exception $e) {
             $this->setGauge("queue_size{queue=\"{$queue}\"}", 0);
         }
