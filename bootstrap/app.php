@@ -25,8 +25,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'module.access' => \App\Http\Middleware\CheckModuleAccessMiddleware::class,
         ]);
 
-        // Глобальные middleware (если нужны)
+        // Глобальные middleware
         $middleware->prepend(\App\Http\Middleware\CorsMiddleware::class);
+        $middleware->append(\App\Http\Middleware\PrometheusMiddleware::class);
 
         // Группы middleware (например, для API)
         $middleware->api([
@@ -91,6 +92,16 @@ return Application::configure(basePath: dirname(__DIR__))
                 );
                 */
              }
+        });
+
+        // Добавляем трекинг исключений в Prometheus
+        $exceptions->reportable(function (Throwable $e) {
+            try {
+                $prometheus = app(\App\Services\Monitoring\PrometheusService::class);
+                $prometheus->incrementExceptions(get_class($e));
+            } catch (\Exception $ignored) {
+                // Игнорируем ошибки в мониторинге чтобы не сломать основное приложение
+            }
         });
 
     })->create();

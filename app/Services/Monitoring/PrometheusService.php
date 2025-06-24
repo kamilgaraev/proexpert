@@ -6,6 +6,15 @@ class PrometheusService
 {
     private array $metrics = [];
     private string $namespace = 'laravel';
+    private string $storageDir;
+
+    public function __construct()
+    {
+        $this->storageDir = storage_path('prometheus');
+        if (!is_dir($this->storageDir)) {
+            mkdir($this->storageDir, 0775, true);
+        }
+    }
 
     public function incrementHttpRequests(string $method, string $route, int $status): void
     {
@@ -33,7 +42,7 @@ class PrometheusService
 
     public function incrementExceptions(string $exceptionClass, string $type = 'uncaught'): void
     {
-        $key = "exceptions_total{class=\"{$exceptionClass}\",type=\"{$type}\"}";
+        $key = "exceptions_total{class=\"" . str_replace('\\', '_', $exceptionClass) . "\",type=\"{$type}\"}";
         $this->incrementCounter($key);
     }
 
@@ -53,6 +62,7 @@ class PrometheusService
     public function renderMetrics(): string
     {
         $this->collectSystemMetrics();
+        $this->loadCountersFromStorage();
         
         $output = [];
         
@@ -85,15 +95,45 @@ class PrometheusService
 
     private function incrementCounter(string $key): void
     {
-        // Простой счетчик без кеша
-        if (!isset($this->metrics[$key])) {
-            $this->metrics[$key] = 0;
+        $filename = $this->storageDir . '/' . md5($key) . '.counter';
+        $current = 0;
+        
+        if (file_exists($filename)) {
+            $current = (int) file_get_contents($filename);
         }
-        $this->metrics[$key]++;
+        
+        $current++;
+        file_put_contents($filename, $current, LOCK_EX);
+        $this->saveMetricName($key);
+        $this->metrics[$key] = $current;
     }
 
     private function setGauge(string $key, float $value): void
     {
         $this->metrics[$key] = $value;
+    }
+
+    private function loadCountersFromStorage(): void
+    {
+        $files = glob($this->storageDir . '/*.counter');
+        
+        foreach ($files as $file) {
+            $basename = basename($file, '.counter');
+            $metricFiles = glob($this->storageDir . '/' . $basename . '.metric');
+            
+            if (!empty($metricFiles)) {
+                $metricName = file_get_contents($metricFiles[0]);
+                $value = (int) file_get_contents($file);
+                $this->metrics[$metricName] = $value;
+            }
+        }
+    }
+
+    private function saveMetricName(string $key): void
+    {
+        $filename = $this->storageDir . '/' . md5($key) . '.metric';
+        if (!file_exists($filename)) {
+            file_put_contents($filename, $key, LOCK_EX);
+        }
     }
 } 
