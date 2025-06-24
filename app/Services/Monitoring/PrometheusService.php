@@ -2,130 +2,63 @@
 
 namespace App\Services\Monitoring;
 
-use Prometheus\CollectorRegistry;
-use Prometheus\Storage\InMemory;
-use Prometheus\Counter;
-use Prometheus\Histogram;
-use Prometheus\Gauge;
-use Prometheus\RenderTextFormat;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 
 class PrometheusService
 {
-    private CollectorRegistry $registry;
-    private Counter $requestsTotal;
-    private Histogram $requestDuration;
-    private Gauge $memoryUsage;
-    private Gauge $databaseConnections;
-    private Counter $exceptionsTotal;
-    private Gauge $queueSize;
-
-    public function __construct()
-    {
-        $this->registry = new CollectorRegistry(new InMemory());
-        $this->initializeMetrics();
-    }
-
-    private function initializeMetrics()
-    {
-        $this->requestsTotal = $this->registry->getOrRegisterCounter(
-            'laravel',
-            'http_requests_total',
-            'Total number of HTTP requests',
-            ['method', 'route', 'status']
-        );
-
-        $this->requestDuration = $this->registry->getOrRegisterHistogram(
-            'laravel',
-            'http_request_duration_seconds',
-            'Duration of HTTP requests in seconds',
-            ['method', 'route'],
-            [0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]
-        );
-
-        $this->memoryUsage = $this->registry->getOrRegisterGauge(
-            'laravel',
-            'memory_usage_bytes',
-            'Current memory usage in bytes'
-        );
-
-        $this->databaseConnections = $this->registry->getOrRegisterGauge(
-            'laravel',
-            'database_connections_active',
-            'Number of active database connections'
-        );
-
-        $this->exceptionsTotal = $this->registry->getOrRegisterCounter(
-            'laravel',
-            'exceptions_total',
-            'Total number of exceptions',
-            ['class', 'type']
-        );
-
-        $this->queueSize = $this->registry->getOrRegisterGauge(
-            'laravel',
-            'queue_size',
-            'Number of jobs in queue',
-            ['queue']
-        );
-    }
+    private array $metrics = [];
+    private string $namespace = 'laravel';
 
     public function incrementHttpRequests(string $method, string $route, int $status): void
     {
-        $this->requestsTotal->inc([
-            'method' => $method,
-            'route' => $route,
-            'status' => (string)$status
-        ]);
+        $key = "http_requests_total{method=\"{$method}\",route=\"{$route}\",status=\"{$status}\"}";
+        $this->incrementCounter($key);
     }
 
     public function observeRequestDuration(string $method, string $route, float $duration): void
     {
-        $this->requestDuration->observe($duration, [
-            'method' => $method,
-            'route' => $route
-        ]);
+        $key = "http_request_duration_seconds{method=\"{$method}\",route=\"{$route}\"}";
+        $this->addHistogramObservation($key, $duration);
     }
 
     public function setMemoryUsage(): void
     {
-        $this->memoryUsage->set(memory_get_usage(true));
+        $key = 'memory_usage_bytes';
+        $this->setGauge($key, memory_get_usage(true));
     }
 
     public function setDatabaseConnections(): void
     {
         try {
-            $connections = collect(config('database.connections'))
-                ->keys()
-                ->sum(function ($connection) {
-                    try {
-                        return DB::connection($connection)->select('SELECT 1')[0] ? 1 : 0;
-                    } catch (\Exception $e) {
-                        return 0;
-                    }
-                });
-            
-            $this->databaseConnections->set($connections);
+            $connections = 0;
+            foreach (config('database.connections') as $name => $config) {
+                try {
+                    DB::connection($name)->select('SELECT 1');
+                    $connections++;
+                } catch (\Exception $e) {
+                    // Соединение недоступно
+                }
+            }
+            $this->setGauge('database_connections_active', $connections);
         } catch (\Exception $e) {
-            $this->databaseConnections->set(0);
+            $this->setGauge('database_connections_active', 0);
         }
     }
 
     public function incrementExceptions(string $exceptionClass, string $type = 'uncaught'): void
     {
-        $this->exceptionsTotal->inc([
-            'class' => $exceptionClass,
-            'type' => $type
-        ]);
+        $key = "exceptions_total{class=\"{$exceptionClass}\",type=\"{$type}\"}";
+        $this->incrementCounter($key);
     }
 
     public function setQueueSize(string $queue = 'default'): void
     {
         try {
             $size = DB::table('jobs')->where('queue', $queue)->count();
-            $this->queueSize->set($size, ['queue' => $queue]);
+            $this->setGauge("queue_size{queue=\"{$queue}\"}", $size);
         } catch (\Exception $e) {
-            $this->queueSize->set(0, ['queue' => $queue]);
+            $this->setGauge("queue_size{queue=\"{$queue}\"}", 0);
         }
     }
 
@@ -140,12 +73,82 @@ class PrometheusService
     {
         $this->collectSystemMetrics();
         
-        $renderer = new RenderTextFormat();
-        return $renderer->render($this->registry->getMetricFamilySamples());
+        $output = [];
+        
+        // Добавляем HELP и TYPE комментарии
+        $output[] = '# HELP laravel_http_requests_total Total number of HTTP requests';
+        $output[] = '# TYPE laravel_http_requests_total counter';
+        
+        $output[] = '# HELP laravel_http_request_duration_seconds Duration of HTTP requests in seconds';
+        $output[] = '# TYPE laravel_http_request_duration_seconds histogram';
+        
+        $output[] = '# HELP laravel_memory_usage_bytes Current memory usage in bytes';
+        $output[] = '# TYPE laravel_memory_usage_bytes gauge';
+        
+        $output[] = '# HELP laravel_database_connections_active Number of active database connections';
+        $output[] = '# TYPE laravel_database_connections_active gauge';
+        
+        $output[] = '# HELP laravel_exceptions_total Total number of exceptions';
+        $output[] = '# TYPE laravel_exceptions_total counter';
+        
+        $output[] = '# HELP laravel_queue_size Number of jobs in queue';
+        $output[] = '# TYPE laravel_queue_size gauge';
+        
+        // Добавляем метрики
+        foreach ($this->metrics as $name => $value) {
+            if (is_array($value)) {
+                // Для гистограмм
+                foreach ($value as $label => $val) {
+                    $output[] = "{$this->namespace}_{$name}_{$label} {$val}";
+                }
+            } else {
+                $output[] = "{$this->namespace}_{$name} {$value}";
+            }
+        }
+        
+        return implode("\n", $output) . "\n";
     }
 
-    public function getRegistry(): CollectorRegistry
+    private function incrementCounter(string $key): void
     {
-        return $this->registry;
+        $cacheKey = "prometheus_counter_{$key}";
+        $current = Cache::get($cacheKey, 0);
+        Cache::put($cacheKey, $current + 1, now()->addHours(24));
+        $this->metrics[$key] = $current + 1;
+    }
+
+    private function setGauge(string $key, float $value): void
+    {
+        $this->metrics[$key] = $value;
+    }
+
+    private function addHistogramObservation(string $key, float $value): void
+    {
+        $buckets = [0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, '+Inf'];
+        
+        $cacheKey = "prometheus_histogram_{$key}";
+        $data = Cache::get($cacheKey, [
+            'count' => 0,
+            'sum' => 0,
+            'buckets' => array_fill_keys($buckets, 0)
+        ]);
+        
+        $data['count']++;
+        $data['sum'] += $value;
+        
+        foreach ($buckets as $bucket) {
+            if ($bucket === '+Inf' || $value <= (float)$bucket) {
+                $data['buckets'][$bucket]++;
+            }
+        }
+        
+        Cache::put($cacheKey, $data, now()->addHours(24));
+        
+        // Формируем вывод гистограммы
+        foreach ($data['buckets'] as $bucket => $count) {
+            $this->metrics["{$key}_bucket{le=\"{$bucket}\"}"] = $count;
+        }
+        $this->metrics["{$key}_count"] = $data['count'];
+        $this->metrics["{$key}_sum"] = $data['sum'];
     }
 } 
