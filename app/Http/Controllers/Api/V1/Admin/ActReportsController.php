@@ -276,6 +276,21 @@ class ActReportsController extends Controller
     public function show(ContractPerformanceAct $act): JsonResponse
     {
         try {
+            $user = request()->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId) {
+                return response()->json(['error' => 'Не определена организация пользователя'], 400);
+            }
+
+            // Загружаем связь contract для проверки
+            $act->load('contract');
+            
+            // Проверяем принадлежность акта организации
+            if ($act->contract->organization_id !== $organizationId) {
+                return response()->json(['error' => 'Доступ запрещен'], 403);
+            }
+
             $act->load([
                 'contract.project',
                 'contract.contractor',
