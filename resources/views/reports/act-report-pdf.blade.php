@@ -133,11 +133,11 @@
 
     <div class="parties-section">
         <div class="party-info">
-            <strong>Исполнитель:</strong> {{ $contractor->name ?? '{{Название компании должно быть заполнено}}' }}, в лице директора {{ $contractor->director_name ?? '{{Имя директора должно быть заполнено}}' }}, действующего на основании Устава. {{ $contractor->details ?? '{{Реквизиты компании должны быть заполнены}}' }}
+            <strong>Исполнитель:</strong> {{ $contractor->name ?? '[Название компании должно быть заполнено]' }}, в лице директора {{ $contractor->director_name ?? '[Имя директора должно быть заполнено]' }}, действующего на основании Устава. {{ $contractor->details ?? '[Реквизиты компании должны быть заполнены]' }}
         </div>
         
         <div class="party-info">
-            <strong>Заказчик:</strong> {{ $contract->organization->name ?? '{{Название организации должно быть заполнено}}' }}, в лице {{ $contract->organization->representative_name ?? '{{Имя представителя должно быть заполнено}}' }}, действующего на основании {{ $contract->organization->authority_basis ?? '{{Основание полномочий должно быть заполнено}}' }}.
+            <strong>Заказчик:</strong> {{ $contract->organization->name ?? '[Название организации должно быть заполнено]' }}, в лице {{ $contract->organization->representative_name ?? '[Имя представителя должно быть заполнено]' }}, действующего на основании {{ $contract->organization->authority_basis ?? '[Основание полномочий должно быть заполнено]' }}.
         </div>
     </div>
 
@@ -157,8 +157,8 @@
                 @foreach($works as $index => $work)
                     <tr>
                         <td>{{ $index + 1 }}</td>
-                        <td>{{ $work->workType->name ?? '{{Название работы должно быть заполнено}}' }}</td>
-                        <td>{{ $work->unit ?? '{{Единица измерения должна быть заполнена}}' }}</td>
+                        <td>{{ $work->workType->name ?? '[Название работы должно быть заполнено]' }}</td>
+                        <td>{{ $work->unit ?? '[Единица измерения должна быть заполнена]' }}</td>
                         <td>{{ number_format($work->quantity ?? 0, 0, ',', ' ') }}</td>
                         <td>{{ number_format($work->unit_price ?? 0, 2, ',', ' ') }}</td>
                         <td>{{ number_format($work->total_amount ?? 0, 2, ',', ' ') }}</td>
@@ -181,7 +181,7 @@
     </table>
 
     <div style="margin-top: 25px;">
-        Всего выполнено работ на сумму: <strong>{{ number_format($total_amount, 2, ',', ' ') }} ({{ $total_amount_words ?? '{{Сумма прописью должна быть заполнена}}' }}) рублей 00 копеек</strong>
+        Всего выполнено работ на сумму: <strong>{{ number_format($total_amount, 2, ',', ' ') }} ({{ $total_amount_words ?? '[Сумма прописью должна быть заполнена]' }}) рублей 00 копеек</strong>
     </div>
     
     <div style="margin-top: 20px;">
@@ -193,9 +193,9 @@
             <tr>
                 <td style="width: 50%; border: none; vertical-align: top;">
                     <div><strong>Заказчик:</strong></div>
-                    <div style="margin-top: 15px;">{{ $contract->organization->name ?? '{{Название организации должно быть заполнено}}' }}</div>
+                    <div style="margin-top: 15px;">{{ $contract->organization->name ?? '[Название организации должно быть заполнено]' }}</div>
                     <div style="margin-top: 40px;">
-                        _________________ {{ $contract->organization->representative_name ?? '{{Имя представителя должно быть заполнено}}' }}
+                        _________________ {{ $contract->organization->representative_name ?? '[Имя представителя должно быть заполнено]' }}
                     </div>
                     <div style="margin-top: 5px; font-size: 10px; text-align: center;">
                         (подпись)
@@ -203,9 +203,9 @@
                 </td>
                 <td style="width: 50%; border: none; vertical-align: top;">
                     <div><strong>Исполнитель:</strong></div>
-                    <div style="margin-top: 15px;">{{ $contractor->name ?? '{{Название компании должно быть заполнено}}' }}</div>
+                    <div style="margin-top: 15px;">{{ $contractor->name ?? '[Название компании должно быть заполнено]' }}</div>
                     <div style="margin-top: 40px;">
-                        _________________ {{ $contractor->director_name ?? '{{Имя директора должно быть заполнено}}' }}
+                        _________________ {{ $contractor->director_name ?? '[Имя директора должно быть заполнено]' }}
                     </div>
                     <div style="margin-top: 5px; font-size: 10px; text-align: center;">
                         (подпись)
