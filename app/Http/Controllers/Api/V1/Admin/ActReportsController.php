@@ -719,8 +719,20 @@ class ActReportsController extends Controller
             // Загружаем связь contract для проверки
             $act->load('contract');
             
+            Log::info('Проверка доступа к акту в getAvailableWorks', [
+                'act_id' => $act->id,
+                'act_contract_org_id' => $act->contract->organization_id,
+                'user_org_id' => $organizationId,
+                'contract_id' => $act->contract_id
+            ]);
+            
             // Проверяем принадлежность акта организации
             if ($act->contract->organization_id !== $organizationId) {
+                Log::warning('Доступ к акту запрещен в getAvailableWorks', [
+                    'act_id' => $act->id,
+                    'expected_org_id' => $organizationId,
+                    'actual_org_id' => $act->contract->organization_id
+                ]);
                 return response()->json(['error' => 'Доступ запрещен'], 403);
             }
 
