@@ -516,9 +516,9 @@ class ActReportsController extends Controller
                 $exportData[] = [
                     $workTypeName,
                     $work->unit ?? '',
-                    $work->quantity ?? 0,
-                    $work->unit_price ?? 0,
-                    $work->total_amount ?? 0,
+                    (float)($work->quantity ?? 0),
+                    (float)($work->unit_price ?? 0),
+                    (float)($work->total_amount ?? 0),
                     $materials,
                     $completionDate,
                     $executorName
@@ -530,9 +530,9 @@ class ActReportsController extends Controller
                 $exportData[] = [
                     'Нет выполненных работ',
                     '-',
-                    0,
-                    0,
-                    0,
+                    0.0,
+                    0.0,
+                    0.0,
                     '-',
                     '-',
                     '-'
@@ -678,37 +678,60 @@ class ActReportsController extends Controller
 
             $exportData = [];
             foreach ($acts as $act) {
-                foreach ($act->completedWorks as $work) {
-                    $materials = '';
-                    if ($work->materials && $work->materials->isNotEmpty()) {
-                        $materials = $work->materials->map(function ($material) {
-                            $quantity = $material->pivot->quantity ?? 0;
-                            $unit = $material->unit ?? '';
-                            return $material->name . ' (' . $quantity . ' ' . $unit . ')';
-                        })->join(', ');
-                    }
-
-                    $workTypeName = $work->workType ? $work->workType->name : 'Не указан';
-                    $executorName = $work->user ? $work->user->name : 'Не указан';
-                    $completionDate = $work->completion_date ? $work->completion_date->format('d.m.Y') : 'Не указана';
-
+                $completedWorks = $act->completedWorks ?? collect();
+                
+                if ($completedWorks->isEmpty()) {
+                    // Если в акте нет работ, добавляем одну строку с информацией об акте
                     $exportData[] = [
                         $act->act_document_number,
                         $act->contract->contract_number ?? '',
                         $act->contract->project->name ?? '',
                         $act->contract->contractor->name ?? '',
                         $act->act_date ? $act->act_date->format('d.m.Y') : '',
-                        $act->amount ?? 0,
+                        (float)($act->amount ?? 0),
                         $act->is_approved ? 'Утвержден' : 'Не утвержден',
-                        $workTypeName,
-                        $work->unit ?? '',
-                        $work->quantity ?? 0,
-                        $work->unit_price ?? 0,
-                        $work->total_amount ?? 0,
-                        $materials,
-                        $completionDate,
-                        $executorName
+                        'Нет выполненных работ',
+                        '-',
+                        0.0,
+                        0.0,
+                        0.0,
+                        '-',
+                        '-',
+                        '-'
                     ];
+                } else {
+                    foreach ($completedWorks as $work) {
+                        $materials = '';
+                        if ($work->materials && $work->materials->isNotEmpty()) {
+                            $materials = $work->materials->map(function ($material) {
+                                $quantity = $material->pivot->quantity ?? 0;
+                                $unit = $material->unit ?? '';
+                                return $material->name . ' (' . $quantity . ' ' . $unit . ')';
+                            })->join(', ');
+                        }
+
+                        $workTypeName = $work->workType ? $work->workType->name : 'Не указан';
+                        $executorName = $work->user ? $work->user->name : 'Не указан';
+                        $completionDate = $work->completion_date ? $work->completion_date->format('d.m.Y') : 'Не указана';
+
+                        $exportData[] = [
+                            $act->act_document_number,
+                            $act->contract->contract_number ?? '',
+                            $act->contract->project->name ?? '',
+                            $act->contract->contractor->name ?? '',
+                            $act->act_date ? $act->act_date->format('d.m.Y') : '',
+                            (float)($act->amount ?? 0),
+                            $act->is_approved ? 'Утвержден' : 'Не утвержден',
+                            $workTypeName,
+                            $work->unit ?? '',
+                            (float)($work->quantity ?? 0),
+                            (float)($work->unit_price ?? 0),
+                            (float)($work->total_amount ?? 0),
+                            $materials,
+                            $completionDate,
+                            $executorName
+                        ];
+                    }
                 }
             }
 
