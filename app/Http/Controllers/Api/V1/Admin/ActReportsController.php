@@ -383,9 +383,34 @@ class ActReportsController extends Controller
 
             // Сохраняем в S3 (в фоне)
             try {
-                // Генерируем Excel контент через временный файл
+                // Генерируем Excel контент через PhpSpreadsheet
+                $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+                $sheet = $spreadsheet->getActiveSheet();
+
+                // Заголовки
+                $colIndex = 0;
+                foreach ($headers as $header) {
+                    $cell = chr(65 + $colIndex) . '1';
+                    $sheet->setCellValue($cell, $header);
+                    $colIndex++;
+                }
+
+                // Данные
+                $rowIndex = 2;
+                foreach ($exportData as $rowArray) {
+                    $colIndex = 0;
+                    foreach ($rowArray as $value) {
+                        $cell = chr(65 + $colIndex) . $rowIndex;
+                        $sheet->setCellValue($cell, $value);
+                        $colIndex++;
+                    }
+                    $rowIndex++;
+                }
+
+                // Генерируем Excel в память
+                $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
                 $tempFile = tempnam(sys_get_temp_dir(), 'act_excel_');
-                $this->excelExporter->export($tempFile, $headers, $exportData);
+                $writer->save($tempFile);
                 $excelContent = file_get_contents($tempFile);
                 unlink($tempFile);
 
