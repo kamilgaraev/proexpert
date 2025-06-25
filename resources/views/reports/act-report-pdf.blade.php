@@ -125,6 +125,12 @@
         {{ $act->act_date->format('Y') }} г.</div>
     </div>
 
+    @if($act->description)
+    <div class="description-section">
+        {{ $act->description }}
+    </div>
+    @endif
+
     <div class="parties-section">
         <div class="party-info">
             <strong>Исполнитель:</strong> {{ $contractor->name ?? 'ООО «АЛП СТРОЙК»' }}, в лице директора {{ $contractor->director_name ?? 'Нуртдинова Х.Х.' }}, действующего на основании Устава. {{ $contractor->details ?? 'ИНН 1603085641, КПП 160301001, р/с 40702810055000129602 в КБ ЛОКО-Банк г. Казань, к/с 30101810000000000797, БИК 049205797' }}
@@ -134,12 +140,6 @@
             <strong>Заказчик:</strong> {{ $contract->organization->name ?? 'Не указан' }}, в лице {{ $contract->organization->representative_name ?? 'представителя' }}, действующего на основании {{ $contract->organization->authority_basis ?? 'Устава' }}.
         </div>
     </div>
-
-    @if($act->description)
-    <div class="description-section">
-        {{ $act->description }}
-    </div>
-    @endif
 
     <table class="works-table">
         <thead>
