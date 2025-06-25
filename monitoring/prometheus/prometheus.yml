@@ -1,6 +1,9 @@
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
+  external_labels:
+    monitor: 'laravel-monitor'
+    env: 'production'
 
 rule_files:
   - "alert_rules.yml"
@@ -14,55 +17,193 @@ scrape_configs:
   # Laravel приложение метрики (через веб-сервер)
   - job_name: 'laravel-app'
     static_configs:
-      - targets: ['host.docker.internal:80']  # Стандартный HTTP порт
+      - targets: ['host.docker.internal:80']
     metrics_path: /metrics
     scrape_interval: 10s
     scrape_timeout: 5s
     honor_labels: true
     params:
       format: ['prometheus']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'laravel-main'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'laravel'
 
-  # Альтернативно через HTTPS (если настроен SSL)
-  # - job_name: 'laravel-app-https'
-  #   static_configs:
-  #     - targets: ['host.docker.internal:443']
-  #   metrics_path: /metrics
-  #   scrape_interval: 10s
-  #   scheme: https
-  #   tls_config:
-  #     insecure_skip_verify: true
+  # Laravel через HTTPS (если настроен SSL)
+  - job_name: 'laravel-app-https'
+    static_configs:
+      - targets: ['host.docker.internal:443']
+    metrics_path: /metrics
+    scrape_interval: 10s
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'laravel-ssl'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'laravel'
 
   # Системные метрики Ubuntu
   - job_name: 'node-exporter'
     static_configs:
       - targets: ['node-exporter:9100']
     scrape_interval: 15s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'ubuntu-server'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'system'
 
   # Prometheus сам себя
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'prometheus-server'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'monitoring'
 
-  # PHP-FPM метрики (если установлен экспортер)
-  # - job_name: 'php-fpm'
-  #   static_configs:
-  #     - targets: ['host.docker.internal:9253']
-  #   scrape_interval: 30s
+  # Grafana метрики
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'grafana-server'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'monitoring'
 
-  # Nginx метрики (если установлен nginx_exporter)
-  # - job_name: 'nginx'
-  #   static_configs:
-  #     - targets: ['host.docker.internal:9113']
-  #   scrape_interval: 30s
+  # Loki метрики
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['loki:3100']
+    metrics_path: /metrics
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'loki-server'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'logging'
 
-  # MySQL/PostgreSQL метрики (если установлен экспортер)
-  # - job_name: 'database'
-  #   static_configs:
-  #     - targets: ['host.docker.internal:9104']
-  #   scrape_interval: 30s
+  # Docker Engine метрики (для мониторинга контейнеров)
+  - job_name: 'docker'
+    static_configs:
+      - targets: ['host.docker.internal:9323']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'docker-daemon'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'docker'
+
+  # cAdvisor для контейнерных метрик (если установлен)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['host.docker.internal:8080']
+    scrape_interval: 30s
+    metrics_path: /metrics
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'cadvisor'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'containers'
+
+  # MySQL/MariaDB метрики (если установлен mysqld_exporter)
+  - job_name: 'mysql'
+    static_configs:
+      - targets: ['host.docker.internal:9104']
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'mysql-server'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'database'
+
+  # PostgreSQL метрики (если установлен postgres_exporter)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['host.docker.internal:9187']
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'postgres-server'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'database'
 
   # Redis метрики (если установлен redis_exporter)
-  # - job_name: 'redis'
-  #   static_configs:
-  #     - targets: ['host.docker.internal:9121']
-  #   scrape_interval: 30s 
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['host.docker.internal:9121']
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'redis-server'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'cache'
+
+  # Nginx метрики (если установлен nginx_exporter)
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['host.docker.internal:9113']
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'nginx-server'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'webserver'
+
+  # Apache метрики (если установлен apache_exporter)
+  - job_name: 'apache'
+    static_configs:
+      - targets: ['host.docker.internal:9117']
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'apache-server'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'webserver'
+
+  # PHP-FPM метрики (если установлен phpfpm_exporter)
+  - job_name: 'php-fpm'
+    static_configs:
+      - targets: ['host.docker.internal:9253']
+    scrape_interval: 30s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'php-fpm'
+      - source_labels: [__address__]
+        target_label: service
+        replacement: 'php' 
