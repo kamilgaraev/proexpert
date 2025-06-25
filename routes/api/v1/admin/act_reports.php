@@ -30,6 +30,10 @@ Route::prefix('act-reports')->group(function () {
     Route::get('{act}/export/pdf', [ActReportsController::class, 'exportPdf'])
         ->name('act-reports.export.pdf');
     
+    // Скачивание сохраненного PDF акта
+    Route::get('{act}/download-pdf/{file}', [ActReportsController::class, 'downloadPdf'])
+        ->name('act-reports.download-pdf');
+    
     // Экспорт акта в Excel
     Route::get('{act}/export/excel', [ActReportsController::class, 'exportExcel'])
         ->name('act-reports.export.excel');

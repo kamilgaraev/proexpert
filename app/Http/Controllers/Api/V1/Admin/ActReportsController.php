@@ -14,6 +14,8 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Exception;
+use Illuminate\Support\Facades\Storage;
+use App\Models\File;
 
 class ActReportsController extends Controller
 {
@@ -170,7 +172,6 @@ class ActReportsController extends Controller
                 return response()->json(['error' => 'Не определена организация пользователя'], 400);
             }
 
-            // Проверяем принадлежность акта организации
             if ($act->contract->organization_id !== $organizationId) {
                 return response()->json(['error' => 'Доступ запрещен'], 403);
             }
@@ -198,8 +199,61 @@ class ActReportsController extends Controller
             $pdf->setPaper('A4', 'portrait');
 
             $filename = "act_" . preg_replace('/[^A-Za-z0-9\-_]/', '_', $act->act_document_number) . "_" . now()->format('Y-m-d') . ".pdf";
+            $path = "documents/acts/{$organizationId}/{$filename}";
 
-            return $pdf->download($filename);
+            // Проверяем существует ли уже файл для этого акта
+            $existingFile = File::where('fileable_type', ContractPerformanceAct::class)
+                ->where('fileable_id', $act->id)
+                ->where('type', 'pdf_export')
+                ->where('organization_id', $organizationId)
+                ->first();
+
+            if ($existingFile && Storage::disk('s3')->exists($existingFile->path)) {
+                // Возвращаем существующий файл
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Акт уже существует',
+                    'file_url' => Storage::disk('s3')->url($existingFile->path),
+                    'file_id' => $existingFile->id
+                ]);
+            }
+
+            // Генерируем и сохраняем PDF
+            $pdfContent = $pdf->output();
+            
+            // Сохраняем в S3
+            Storage::disk('s3')->put($path, $pdfContent, 'public');
+
+            // Создаем запись в базе данных
+            $fileRecord = File::create([
+                'organization_id' => $organizationId,
+                'fileable_id' => $act->id,
+                'fileable_type' => ContractPerformanceAct::class,
+                'user_id' => $user->id,
+                'name' => $filename,
+                'original_name' => "Акт_{$act->act_document_number}.pdf",
+                'path' => $path,
+                'mime_type' => 'application/pdf',
+                'size' => strlen($pdfContent),
+                'disk' => 's3',
+                'type' => 'pdf_export',
+                'category' => 'act_report'
+            ]);
+
+            Log::info('PDF акт сохранен в S3', [
+                'act_id' => $act->id,
+                'file_id' => $fileRecord->id,
+                'path' => $path,
+                'organization_id' => $organizationId
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Акт успешно создан и сохранен',
+                'file_url' => Storage::disk('s3')->url($path),
+                'file_id' => $fileRecord->id,
+                'download_url' => route('act-reports.download-pdf', ['act' => $act->id, 'file' => $fileRecord->id])
+            ]);
 
         } catch (Exception $e) {
             Log::error('Ошибка экспорта PDF акта из отчетов', [
@@ -210,6 +264,43 @@ class ActReportsController extends Controller
             
             return response()->json([
                 'error' => 'Ошибка при экспорте в PDF',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Скачать сохраненный PDF акт
+     */
+    public function downloadPdf(Request $request, ContractPerformanceAct $act, File $file)
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId || $file->organization_id !== $organizationId) {
+                return response()->json(['error' => 'Доступ запрещен'], 403);
+            }
+
+            if ($file->fileable_id !== $act->id || $file->fileable_type !== ContractPerformanceAct::class) {
+                return response()->json(['error' => 'Файл не принадлежит данному акту'], 403);
+            }
+
+            if (!Storage::disk($file->disk)->exists($file->path)) {
+                return response()->json(['error' => 'Файл не найден в хранилище'], 404);
+            }
+
+            return Storage::disk($file->disk)->download($file->path, $file->original_name);
+
+        } catch (Exception $e) {
+            Log::error('Ошибка скачивания PDF акта', [
+                'act_id' => $act->id,
+                'file_id' => $file->id,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'error' => 'Ошибка при скачивании файла',
                 'message' => $e->getMessage()
             ], 500);
         }
