@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\ContractPerformanceAct;
 use App\Models\CompletedWork;
+use App\Models\Contract;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActCollection;
 use App\Services\Export\ExcelExporterService;
@@ -126,6 +127,144 @@ class ActReportsController extends Controller
         } catch (Exception $e) {
             return response()->json([
                 'error' => 'Ошибка при получении актов',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить список контрактов для создания актов
+     */
+    public function getContracts(Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId) {
+                return response()->json(['error' => 'Не определена организация пользователя'], 400);
+            }
+
+            $contracts = Contract::with(['project', 'contractor'])
+                ->where('organization_id', $organizationId)
+                ->where('status', 'active')
+                ->get()
+                ->map(function ($contract) {
+                    return [
+                        'id' => $contract->id,
+                        'contract_number' => $contract->contract_number,
+                        'project_name' => $contract->project->name ?? 'Не указан',
+                        'contractor_name' => $contract->contractor->name ?? 'Не указан',
+                        'contract_date' => $contract->contract_date?->format('d.m.Y'),
+                        'start_date' => $contract->start_date?->format('d.m.Y'),
+                        'end_date' => $contract->end_date?->format('d.m.Y'),
+                    ];
+                });
+
+            return response()->json([
+                'data' => $contracts,
+                'message' => 'Контракты получены успешно'
+            ]);
+
+        } catch (Exception $e) {
+            return response()->json([
+                'error' => 'Ошибка при получении контрактов',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Создать новый акт
+     */
+    public function store(Request $request): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId) {
+                return response()->json(['error' => 'Не определена организация пользователя'], 400);
+            }
+
+            $request->validate([
+                'contract_id' => 'required|integer|exists:contracts,id',
+                'act_document_number' => 'required|string|max:255',
+                'act_date' => 'required|date',
+                'description' => 'nullable|string',
+                'work_ids' => 'nullable|array',
+                'work_ids.*' => 'integer|exists:completed_works,id'
+            ]);
+
+            // Проверяем что контракт принадлежит организации
+            $contract = Contract::where('id', $request->contract_id)
+                ->where('organization_id', $organizationId)
+                ->first();
+
+            if (!$contract) {
+                return response()->json(['error' => 'Контракт не найден или доступ запрещен'], 403);
+            }
+
+            DB::beginTransaction();
+
+            // Создаем акт
+            $act = ContractPerformanceAct::create([
+                'contract_id' => $contract->id,
+                'act_document_number' => $request->act_document_number,
+                'act_date' => $request->act_date,
+                'description' => $request->description,
+                'amount' => 0,
+                'is_approved' => false
+            ]);
+
+            // Если переданы работы - прикрепляем их
+            if ($request->has('work_ids') && !empty($request->work_ids)) {
+                $validWorks = CompletedWork::whereIn('id', $request->work_ids)
+                    ->where('contract_id', $contract->id)
+                    ->where('status', 'confirmed')
+                    ->get();
+
+                $pivotData = [];
+                $totalAmount = 0;
+
+                foreach ($validWorks as $work) {
+                    $pivotData[$work->id] = [
+                        'included_quantity' => $work->quantity,
+                        'included_amount' => $work->total_amount,
+                        'notes' => null,
+                    ];
+                    $totalAmount += $work->total_amount;
+                }
+
+                $act->completedWorks()->attach($pivotData);
+                $act->update(['amount' => $totalAmount]);
+            }
+
+            DB::commit();
+
+            $act->load([
+                'contract.project',
+                'contract.contractor',
+                'contract.organization',
+                'completedWorks.workType',
+                'completedWorks.user',
+                'completedWorks.materials'
+            ]);
+
+            return response()->json([
+                'data' => new ContractPerformanceActResource($act),
+                'message' => 'Акт создан успешно'
+            ], 201);
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            Log::error('Ошибка создания акта из отчетов', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Ошибка при создании акта',
                 'message' => $e->getMessage()
             ], 500);
         }

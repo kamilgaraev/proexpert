@@ -14,6 +14,14 @@ Route::prefix('act-reports')->group(function () {
     Route::get('/', [ActReportsController::class, 'index'])
         ->name('act-reports.index');
     
+    // Получить список контрактов для создания актов
+    Route::get('contracts', [ActReportsController::class, 'getContracts'])
+        ->name('act-reports.contracts');
+    
+    // Создать новый акт
+    Route::post('/', [ActReportsController::class, 'store'])
+        ->name('act-reports.store');
+    
     // Массовый экспорт актов в Excel (должен быть перед {act} маршрутами)
     Route::post('bulk-export/excel', [ActReportsController::class, 'bulkExportExcel'])
         ->name('act-reports.bulk-export.excel');
