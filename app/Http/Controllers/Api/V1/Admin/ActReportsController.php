@@ -192,6 +192,7 @@ class ActReportsController extends Controller
                 'contractor' => $act->contract->contractor ?? (object)['name' => 'Не указан'],
                 'works' => $act->completedWorks ?? collect(),
                 'total_amount' => $act->amount ?? 0,
+                'total_amount_words' => $this->numberToWords($act->amount ?? 0),
                 'generated_at' => now()->format('d.m.Y H:i')
             ];
 
@@ -769,5 +770,90 @@ class ActReportsController extends Controller
             ->where('performance_act_completed_works.completed_work_id', $workId)
             ->where('contract_performance_acts.is_approved', true)
             ->exists();
+    }
+
+    /**
+     * Преобразование числа в слова (рубли)
+     */
+    protected function numberToWords(float $number): string
+    {
+        if ($number == 0) {
+            return 'ноль';
+        }
+
+        $units = ['', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'];
+        $teens = ['десять', 'одиннадцать', 'двенадцать', 'тринадцать', 'четырнадцать', 'пятнадцать', 'шестнадцать', 'семнадцать', 'восемнадцать', 'девятнадцать'];
+        $tens = ['', '', 'двадцать', 'тридцать', 'сорок', 'пятьдесят', 'шестьдесят', 'семьдесят', 'восемьдесят', 'девяносто'];
+        $hundreds = ['', 'сто', 'двести', 'триста', 'четыреста', 'пятьсот', 'шестьсот', 'семьсот', 'восемьсот', 'девятьсот'];
+
+        $result = '';
+        $int_number = (int) $number;
+
+        // Миллионы
+        $millions = (int) ($int_number / 1000000);
+        if ($millions > 0) {
+            $result .= $this->convertHundreds($millions) . ' миллион';
+            if ($millions % 10 >= 2 && $millions % 10 <= 4 && ($millions % 100 < 10 || $millions % 100 >= 20)) {
+                $result .= 'а ';
+            } elseif ($millions % 10 >= 5 || $millions % 10 == 0 || ($millions % 100 >= 10 && $millions % 100 <= 20)) {
+                $result .= 'ов ';
+            } else {
+                $result .= ' ';
+            }
+            $int_number %= 1000000;
+        }
+
+        // Тысячи
+        $thousands = (int) ($int_number / 1000);
+        if ($thousands > 0) {
+            if ($thousands == 1) {
+                $result .= 'одна тысяча ';
+            } elseif ($thousands == 2) {
+                $result .= 'две тысячи ';
+            } else {
+                $result .= $this->convertHundreds($thousands) . ' тысяч ';
+            }
+            $int_number %= 1000;
+        }
+
+        // Сотни, десятки, единицы
+        if ($int_number > 0) {
+            $result .= $this->convertHundreds($int_number);
+        }
+
+        return trim($result);
+    }
+
+    /**
+     * Вспомогательный метод для преобразования сотен
+     */
+    protected function convertHundreds(int $number): string
+    {
+        $units = ['', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'];
+        $teens = ['десять', 'одиннадцать', 'двенадцать', 'тринадцать', 'четырнадцать', 'пятнадцать', 'шестнадцать', 'семнадцать', 'восемнадцать', 'девятнадцать'];
+        $tens = ['', '', 'двадцать', 'тридцать', 'сорок', 'пятьдесят', 'шестьдесят', 'семьдесят', 'восемьдесят', 'девяносто'];
+        $hundreds = ['', 'сто', 'двести', 'триста', 'четыреста', 'пятьсот', 'шестьсот', 'семьсот', 'восемьсот', 'девятьсот'];
+
+        $result = '';
+        $h = (int) ($number / 100) % 10;
+        $t = (int) ($number / 10) % 10;
+        $u = $number % 10;
+
+        if ($h > 0) {
+            $result .= $hundreds[$h] . ' ';
+        }
+
+        if ($t == 1) {
+            $result .= $teens[$u] . ' ';
+        } else {
+            if ($t > 1) {
+                $result .= $tens[$t] . ' ';
+            }
+            if ($u > 0) {
+                $result .= $units[$u] . ' ';
+            }
+        }
+
+        return trim($result);
     }
 } 

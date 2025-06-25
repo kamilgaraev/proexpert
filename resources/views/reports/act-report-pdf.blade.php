@@ -9,35 +9,34 @@
             font-family: 'DejaVu Sans', sans-serif;
             font-size: 12px;
             line-height: 1.4;
-            color: #333;
+            color: #000;
             margin: 0;
-            padding: 20px;
+            padding: 30px;
         }
         .header {
             text-align: center;
             margin-bottom: 30px;
-            border-bottom: 2px solid #333;
-            padding-bottom: 15px;
         }
         .title {
-            font-size: 18px;
+            font-size: 16px;
             font-weight: bold;
             margin-bottom: 10px;
         }
-        .info-section {
+        .act-number {
+            font-size: 14px;
             margin-bottom: 20px;
         }
-        .info-row {
-            display: flex;
-            margin-bottom: 8px;
+        .parties-section {
+            margin-bottom: 25px;
+            line-height: 1.6;
         }
-        .info-label {
-            font-weight: bold;
-            min-width: 150px;
-            display: inline-block;
+        .party-info {
+            margin-bottom: 15px;
         }
-        .info-value {
-            flex: 1;
+        .description-section {
+            margin: 25px 0;
+            text-align: justify;
+            line-height: 1.6;
         }
         .works-table {
             width: 100%;
@@ -120,71 +119,63 @@
 </head>
 <body>
     <div class="header">
-        <div class="title">АКТ ВЫПОЛНЕННЫХ РАБОТ</div>
-        <div>№ {{ $act->act_document_number }} от {{ $act->act_date->format('d.m.Y') }}</div>
+        <div class="title">АКТ № {{ $act->act_document_number }} от «{{ $act->act_date->format('d') }}» 
+        @php
+            $months = ['', 'января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+            echo $months[(int)$act->act_date->format('n')];
+        @endphp 
+        {{ $act->act_date->format('Y') }} г.</div>
     </div>
 
-    <div class="info-section">
-        <div class="info-row">
-            <span class="info-label">Организация:</span>
-            <span class="info-value">{{ $contract->organization->name ?? 'Не указана' }}</span>
+    <div class="parties-section">
+        <div class="party-info">
+            <strong>Исполнитель:</strong> {{ $contractor->name ?? 'ООО «АЛП СТРОЙК»' }}, в лице директора {{ $contractor->director_name ?? 'Нуртдинова Х.Х.' }}, действующего на основании Устава. {{ $contractor->details ?? 'ИНН 1603085641, КПП 160301001, р/с 40702810055000129602 в КБ ЛОКО-Банк г. Казань, к/с 30101810000000000797, БИК 049205797' }}
         </div>
-        <div class="info-row">
-            <span class="info-label">Проект:</span>
-            <span class="info-value">{{ $project->name ?? 'Не указан' }}</span>
-        </div>
-        <div class="info-row">
-            <span class="info-label">Подрядчик:</span>
-            <span class="info-value">{{ $contractor->name ?? 'Не указан' }}</span>
-        </div>
-        <div class="info-row">
-            <span class="info-label">Договор:</span>
-            <span class="info-value">№ {{ $contract->contract_number ?? 'Не указан' }} от {{ $contract->contract_date?->format('d.m.Y') ?? 'Не указана' }}</span>
-        </div>
-        <div class="info-row">
-            <span class="info-label">Период выполнения:</span>
-            <span class="info-value">{{ $contract->start_date?->format('d.m.Y') ?? 'Не указана' }} - {{ $contract->end_date?->format('d.m.Y') ?? 'Не указана' }}</span>
+        
+        <div class="party-info">
+            <strong>Заказчик:</strong> {{ $contract->organization->name ?? 'Не указан' }}, в лице {{ $contract->organization->representative_name ?? 'представителя' }}, действующего на основании {{ $contract->organization->authority_basis ?? 'Устава' }}.
         </div>
     </div>
+
+    @if($act->description)
+    <div class="description-section">
+        {{ $act->description }}
+    </div>
+    @endif
 
     <table class="works-table">
         <thead>
             <tr>
-                <th class="number-col">№</th>
-                <th class="work-name-col">Наименование работы</th>
-                <th class="unit-col">Ед. изм.</th>
-                <th class="quantity-col">Количество</th>
-                <th class="price-col">Цена за ед.</th>
-                <th class="amount-col">Сумма</th>
-                <th class="date-col">Дата выполнения</th>
+                <th style="width: 8%;">№</th>
+                <th style="width: 42%;">Наименование работ (услуг), спецификация и характеристика работ</th>
+                <th style="width: 10%;">Ед. изм.</th>
+                <th style="width: 12%;">Количество</th>
+                <th style="width: 14%;">Цена</th>
+                <th style="width: 14%;">Сумма</th>
             </tr>
         </thead>
         <tbody>
             @if($works && $works->count() > 0)
                 @foreach($works as $index => $work)
                     <tr>
-                        <td class="number-col">{{ $index + 1 }}</td>
-                        <td class="work-name-col">
+                        <td style="text-align: center;">{{ $index + 1 }}</td>
+                        <td>
                             {{ $work->workType->name ?? 'Не указано' }}
                             @if($work->materials && $work->materials->isNotEmpty())
-                                <div class="materials-list">
-                                    <strong>Материалы:</strong>
-                                    @foreach($work->materials as $material)
-                                        {{ $material->name ?? 'Не указан' }} ({{ $material->pivot->quantity ?? 0 }} {{ $material->unit ?? '' }}){{ !$loop->last ? ', ' : '' }}
-                                    @endforeach
-                                </div>
+                                <br><small style="color: #666;">
+                                    Материалы: @foreach($work->materials as $material){{ $material->name ?? 'Не указан' }} ({{ $material->pivot->quantity ?? 0 }} {{ $material->unit ?? '' }}){{ !$loop->last ? ', ' : '' }}@endforeach
+                                </small>
                             @endif
                         </td>
-                        <td class="unit-col">{{ $work->unit ?? '' }}</td>
-                        <td class="quantity-col">{{ number_format($work->quantity ?? 0, 2, ',', ' ') }}</td>
-                        <td class="price-col">{{ number_format($work->unit_price ?? 0, 2, ',', ' ') }} ₽</td>
-                        <td class="amount-col">{{ number_format($work->total_amount ?? 0, 2, ',', ' ') }} ₽</td>
-                        <td class="date-col">{{ $work->completion_date?->format('d.m.Y') ?? 'Не указана' }}</td>
+                        <td style="text-align: center;">{{ $work->unit ?? 'шт.' }}</td>
+                        <td style="text-align: right;">{{ number_format($work->quantity ?? 0, 2, ',', ' ') }}</td>
+                        <td style="text-align: right;">{{ number_format($work->unit_price ?? 0, 2, ',', ' ') }}</td>
+                        <td style="text-align: right;">{{ number_format($work->total_amount ?? 0, 2, ',', ' ') }}</td>
                     </tr>
                 @endforeach
             @else
                 <tr>
-                    <td colspan="7" style="text-align: center; padding: 20px; font-style: italic; color: #666;">
+                    <td colspan="6" style="text-align: center; padding: 20px; font-style: italic;">
                         Нет выполненных работ
                     </td>
                 </tr>
@@ -192,40 +183,51 @@
         </tbody>
         <tfoot>
             <tr class="total-row">
-                <td colspan="5" style="text-align: right; font-weight: bold;">ИТОГО:</td>
-                <td class="amount-col">{{ number_format($total_amount, 2, ',', ' ') }} ₽</td>
-                <td></td>
+                <td colspan="5" style="text-align: right; font-weight: bold; padding: 8px;">ИТОГО:</td>
+                <td style="text-align: right; font-weight: bold; padding: 8px;">{{ number_format($total_amount, 2, ',', ' ') }}</td>
             </tr>
         </tfoot>
     </table>
 
-    <div class="footer">
-        <div>
-            <strong>Всего выполнено работ на сумму:</strong> {{ number_format($total_amount, 2, ',', ' ') }} рублей
-        </div>
-        
-        @if($act->description)
-            <div style="margin-top: 15px;">
-                <strong>Примечания:</strong> {{ $act->description }}
-            </div>
-        @endif
-
-        <div class="signatures">
-            <div class="signature-block">
-                <div>Представитель заказчика:</div>
-                <div class="signature-line"></div>
-                <div style="text-align: center; font-size: 10px;">(подпись, ФИО)</div>
-            </div>
-            <div class="signature-block">
-                <div>Представитель подрядчика:</div>
-                <div class="signature-line"></div>
-                <div style="text-align: center; font-size: 10px;">(подпись, ФИО)</div>
-            </div>
-        </div>
+    <div style="margin-top: 25px;">
+        Всего выполнено работ на сумму: <strong>{{ number_format($total_amount, 2, ',', ' ') }} ({{ $total_amount_words ?? 'Не указано' }}) рублей 00 копеек</strong>
+    </div>
+    
+    <div style="margin-top: 20px;">
+        Указанные в настоящем акте работы выполнены полностью с надлежащим качеством.
     </div>
 
-    <div class="generated-info">
-        Отчет сформирован: {{ $generated_at }}
+    <div style="margin-top: 40px;">
+        <table style="width: 100%; border: none;">
+            <tr>
+                <td style="width: 50%; border: none; vertical-align: top;">
+                    <div><strong>Подрядчик:</strong></div>
+                    <div style="margin-top: 15px;">{{ $contractor->name ?? 'ООО «АЛП СТРОЙК»' }}</div>
+                    <div style="margin-top: 40px;">
+                        _________________ {{ $contractor->director_name ?? 'Нуртдинова Х.Х.' }}
+                    </div>
+                    <div style="margin-top: 5px; font-size: 10px; text-align: center; color: #666;">
+                        (подпись)
+                    </div>
+                    <div style="margin-top: 15px;">
+                        МП
+                    </div>
+                </td>
+                <td style="width: 50%; border: none; vertical-align: top;">
+                    <div><strong>Заказчик:</strong></div>
+                    <div style="margin-top: 15px;">{{ $contract->organization->name ?? 'Организация' }}</div>
+                    <div style="margin-top: 40px;">
+                        _________________ {{ $contract->organization->representative_name ?? 'Представитель' }}
+                    </div>
+                    <div style="margin-top: 5px; font-size: 10px; text-align: center; color: #666;">
+                        (подпись)
+                    </div>
+                    <div style="margin-top: 15px;">
+                        МП
+                    </div>
+                </td>
+            </tr>
+        </table>
     </div>
 </body>
 </html> 
