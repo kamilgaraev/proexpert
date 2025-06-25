@@ -857,6 +857,9 @@ class ActReportsController extends Controller
                 return response()->json(['error' => 'Не определена организация пользователя'], 400);
             }
 
+            // Загружаем связь contract для проверки
+            $act->load('contract');
+            
             // Проверяем принадлежность акта организации
             if ($act->contract->organization_id !== $organizationId) {
                 return response()->json(['error' => 'Доступ запрещен'], 403);
