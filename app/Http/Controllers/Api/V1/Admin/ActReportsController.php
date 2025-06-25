@@ -201,59 +201,52 @@ class ActReportsController extends Controller
             $filename = "act_" . preg_replace('/[^A-Za-z0-9\-_]/', '_', $act->act_document_number) . "_" . now()->format('Y-m-d') . ".pdf";
             $path = "documents/acts/{$organizationId}/{$filename}";
 
-            // Проверяем существует ли уже файл для этого акта
-            $existingFile = File::where('fileable_type', ContractPerformanceAct::class)
-                ->where('fileable_id', $act->id)
-                ->where('type', 'pdf_export')
-                ->where('organization_id', $organizationId)
-                ->first();
-
-            if ($existingFile && Storage::disk('s3')->exists($existingFile->path)) {
-                // Возвращаем существующий файл
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Акт уже существует',
-                    'file_url' => Storage::disk('s3')->url($existingFile->path),
-                    'file_id' => $existingFile->id
-                ]);
-            }
-
-            // Генерируем и сохраняем PDF
+            // Генерируем PDF контент
             $pdfContent = $pdf->output();
             
-            // Сохраняем в S3
-            Storage::disk('s3')->put($path, $pdfContent, 'public');
+            // Сохраняем в S3 (в фоне)
+            try {
+                Storage::disk('s3')->put($path, $pdfContent, 'public');
 
-            // Создаем запись в базе данных
-            $fileRecord = File::create([
-                'organization_id' => $organizationId,
-                'fileable_id' => $act->id,
-                'fileable_type' => ContractPerformanceAct::class,
-                'user_id' => $user->id,
-                'name' => $filename,
-                'original_name' => "Акт_{$act->act_document_number}.pdf",
-                'path' => $path,
-                'mime_type' => 'application/pdf',
-                'size' => strlen($pdfContent),
-                'disk' => 's3',
-                'type' => 'pdf_export',
-                'category' => 'act_report'
-            ]);
+                // Создаем запись в БД только если файла еще нет
+                $existingFile = File::where('fileable_type', ContractPerformanceAct::class)
+                    ->where('fileable_id', $act->id)
+                    ->where('type', 'pdf_export')
+                    ->where('organization_id', $organizationId)
+                    ->first();
 
-            Log::info('PDF акт сохранен в S3', [
-                'act_id' => $act->id,
-                'file_id' => $fileRecord->id,
-                'path' => $path,
-                'organization_id' => $organizationId
-            ]);
+                if (!$existingFile) {
+                    File::create([
+                        'organization_id' => $organizationId,
+                        'fileable_id' => $act->id,
+                        'fileable_type' => ContractPerformanceAct::class,
+                        'user_id' => $user->id,
+                        'name' => $filename,
+                        'original_name' => "Акт_{$act->act_document_number}.pdf",
+                        'path' => $path,
+                        'mime_type' => 'application/pdf',
+                        'size' => strlen($pdfContent),
+                        'disk' => 's3',
+                        'type' => 'pdf_export',
+                        'category' => 'act_report'
+                    ]);
+                }
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Акт успешно создан и сохранен',
-                'file_url' => Storage::disk('s3')->url($path),
-                'file_id' => $fileRecord->id,
-                'download_url' => route('act-reports.download-pdf', ['act' => $act->id, 'file' => $fileRecord->id])
-            ]);
+                Log::info('PDF акт сохранен в S3', [
+                    'act_id' => $act->id,
+                    'path' => $path,
+                    'organization_id' => $organizationId
+                ]);
+            } catch (Exception $e) {
+                Log::error('Ошибка сохранения акта в S3', [
+                    'act_id' => $act->id,
+                    'error' => $e->getMessage()
+                ]);
+                // Продолжаем выполнение - фронт все равно получит файл
+            }
+
+            // Возвращаем файл для скачивания как раньше
+            return $pdf->download($filename);
 
         } catch (Exception $e) {
             Log::error('Ошибка экспорта PDF акта из отчетов', [
@@ -319,7 +312,6 @@ class ActReportsController extends Controller
                 return response()->json(['error' => 'Не определена организация пользователя'], 400);
             }
 
-            // Проверяем принадлежность акта организации
             if ($act->contract->organization_id !== $organizationId) {
                 return response()->json(['error' => 'Доступ запрещен'], 403);
             }
@@ -387,7 +379,56 @@ class ActReportsController extends Controller
             }
 
             $filename = "act_" . preg_replace('/[^A-Za-z0-9\-_]/', '_', $act->act_document_number) . "_" . now()->format('Y-m-d') . ".xlsx";
+            $path = "documents/acts/{$organizationId}/{$filename}";
 
+            // Сохраняем в S3 (в фоне)
+            try {
+                // Генерируем Excel контент через временный файл
+                $tempFile = tempnam(sys_get_temp_dir(), 'act_excel_');
+                $this->excelExporter->export($tempFile, $headers, $exportData);
+                $excelContent = file_get_contents($tempFile);
+                unlink($tempFile);
+
+                Storage::disk('s3')->put($path, $excelContent, 'public');
+
+                // Создаем запись в БД только если файла еще нет
+                $existingFile = File::where('fileable_type', ContractPerformanceAct::class)
+                    ->where('fileable_id', $act->id)
+                    ->where('type', 'excel_export')
+                    ->where('organization_id', $organizationId)
+                    ->first();
+
+                if (!$existingFile) {
+                    File::create([
+                        'organization_id' => $organizationId,
+                        'fileable_id' => $act->id,
+                        'fileable_type' => ContractPerformanceAct::class,
+                        'user_id' => $user->id,
+                        'name' => $filename,
+                        'original_name' => "Акт_{$act->act_document_number}.xlsx",
+                        'path' => $path,
+                        'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                        'size' => strlen($excelContent),
+                        'disk' => 's3',
+                        'type' => 'excel_export',
+                        'category' => 'act_report'
+                    ]);
+                }
+
+                Log::info('Excel акт сохранен в S3', [
+                    'act_id' => $act->id,
+                    'path' => $path,
+                    'organization_id' => $organizationId
+                ]);
+            } catch (Exception $e) {
+                Log::error('Ошибка сохранения Excel акта в S3', [
+                    'act_id' => $act->id,
+                    'error' => $e->getMessage()
+                ]);
+                // Продолжаем выполнение - фронт все равно получит файл
+            }
+
+            // Возвращаем файл для скачивания как раньше
             return $this->excelExporter->streamDownload($filename, $headers, $exportData);
 
         } catch (Exception $e) {
