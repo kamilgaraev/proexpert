@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ $act->title ?? 'Акт выполненных работ' }}</title>
     <style>
         body {
-            font-family: 'DejaVu Sans', sans-serif;
+            font-family: 'DejaVu Sans', 'Arial Unicode MS', Arial, sans-serif;
             font-size: 12px;
             line-height: 1.4;
             color: #000;
@@ -42,54 +43,51 @@
             width: 100%;
             border-collapse: collapse;
             margin: 20px 0;
+            font-size: 11px;
         }
         .works-table th,
         .works-table td {
-            border: 1px solid #333;
-            padding: 8px;
-            text-align: left;
-            vertical-align: top;
+            border: 1px solid #000;
+            padding: 6px;
+            text-align: center;
+            vertical-align: middle;
+            line-height: 1.2;
         }
         .works-table th {
-            background-color: #f5f5f5;
             font-weight: bold;
             text-align: center;
+            background-color: #f9f9f9;
         }
-        .works-table .number-col {
+        .works-table td:first-child {
+            text-align: center;
             width: 5%;
+        }
+        .works-table td:nth-child(2) {
+            text-align: left;
+            width: 55%;
+            padding-left: 8px;
+        }
+        .works-table td:nth-child(3) {
             text-align: center;
+            width: 8%;
         }
-        .works-table .work-name-col {
-            width: 30%;
-        }
-        .works-table .unit-col {
+        .works-table td:nth-child(4) {
+            text-align: center;
             width: 10%;
-            text-align: center;
         }
-        .works-table .quantity-col {
+        .works-table td:nth-child(5) {
+            text-align: right;
+            width: 12%;
+        }
+        .works-table td:nth-child(6) {
+            text-align: right;
             width: 10%;
-            text-align: right;
-        }
-        .works-table .price-col {
-            width: 15%;
-            text-align: right;
-        }
-        .works-table .amount-col {
-            width: 15%;
-            text-align: right;
-        }
-        .works-table .date-col {
-            width: 15%;
-            text-align: center;
         }
         .total-row {
             font-weight: bold;
-            background-color: #f0f0f0;
         }
-        .materials-list {
-            font-size: 10px;
-            color: #666;
-            margin-top: 4px;
+        .total-row td {
+            border-top: 2px solid #000;
         }
         .footer {
             margin-top: 30px;
@@ -146,31 +144,24 @@
     <table class="works-table">
         <thead>
             <tr>
-                <th style="width: 8%;">№</th>
-                <th style="width: 42%;">Наименование работ (услуг), спецификация и характеристика работ</th>
-                <th style="width: 10%;">Ед. изм.</th>
-                <th style="width: 12%;">Количество</th>
-                <th style="width: 14%;">Цена</th>
-                <th style="width: 14%;">Сумма</th>
+                <th>№ п/п</th>
+                <th>Наименование работ (услуг), спецификация и характеристика работ</th>
+                <th>Ед. изм.</th>
+                <th>Кол-во</th>
+                <th>Цена</th>
+                <th>Сумма</th>
             </tr>
         </thead>
         <tbody>
             @if($works && $works->count() > 0)
                 @foreach($works as $index => $work)
                     <tr>
-                        <td style="text-align: center;">{{ $index + 1 }}</td>
-                        <td>
-                            {{ $work->workType->name ?? 'Не указано' }}
-                            @if($work->materials && $work->materials->isNotEmpty())
-                                <br><small style="color: #666;">
-                                    Материалы: @foreach($work->materials as $material){{ $material->name ?? 'Не указан' }} ({{ $material->pivot->quantity ?? 0 }} {{ $material->unit ?? '' }}){{ !$loop->last ? ', ' : '' }}@endforeach
-                                </small>
-                            @endif
-                        </td>
-                        <td style="text-align: center;">{{ $work->unit ?? 'шт.' }}</td>
-                        <td style="text-align: right;">{{ number_format($work->quantity ?? 0, 2, ',', ' ') }}</td>
-                        <td style="text-align: right;">{{ number_format($work->unit_price ?? 0, 2, ',', ' ') }}</td>
-                        <td style="text-align: right;">{{ number_format($work->total_amount ?? 0, 2, ',', ' ') }}</td>
+                        <td>{{ $index + 1 }}</td>
+                        <td>{{ $work->workType->name ?? 'Не указано' }}</td>
+                        <td>{{ $work->unit ?? 'шт.' }}</td>
+                        <td>{{ number_format($work->quantity ?? 0, 0, ',', ' ') }}</td>
+                        <td>{{ number_format($work->unit_price ?? 0, 2, ',', ' ') }}</td>
+                        <td>{{ number_format($work->total_amount ?? 0, 2, ',', ' ') }}</td>
                     </tr>
                 @endforeach
             @else
@@ -183,8 +174,8 @@
         </tbody>
         <tfoot>
             <tr class="total-row">
-                <td colspan="5" style="text-align: right; font-weight: bold; padding: 8px;">ИТОГО:</td>
-                <td style="text-align: right; font-weight: bold; padding: 8px;">{{ number_format($total_amount, 2, ',', ' ') }}</td>
+                <td colspan="5" style="text-align: right; font-weight: bold;">ИТОГО:</td>
+                <td style="text-align: right; font-weight: bold;">{{ number_format($total_amount, 2, ',', ' ') }}</td>
             </tr>
         </tfoot>
     </table>
@@ -201,29 +192,23 @@
         <table style="width: 100%; border: none;">
             <tr>
                 <td style="width: 50%; border: none; vertical-align: top;">
-                    <div><strong>Подрядчик:</strong></div>
-                    <div style="margin-top: 15px;">{{ $contractor->name ?? 'ООО «АЛП СТРОЙК»' }}</div>
-                    <div style="margin-top: 40px;">
-                        _________________ {{ $contractor->director_name ?? 'Нуртдинова Х.Х.' }}
-                    </div>
-                    <div style="margin-top: 5px; font-size: 10px; text-align: center; color: #666;">
-                        (подпись)
-                    </div>
-                    <div style="margin-top: 15px;">
-                        МП
-                    </div>
-                </td>
-                <td style="width: 50%; border: none; vertical-align: top;">
                     <div><strong>Заказчик:</strong></div>
                     <div style="margin-top: 15px;">{{ $contract->organization->name ?? 'Организация' }}</div>
                     <div style="margin-top: 40px;">
                         _________________ {{ $contract->organization->representative_name ?? 'Представитель' }}
                     </div>
-                    <div style="margin-top: 5px; font-size: 10px; text-align: center; color: #666;">
+                    <div style="margin-top: 5px; font-size: 10px; text-align: center;">
                         (подпись)
                     </div>
-                    <div style="margin-top: 15px;">
-                        МП
+                </td>
+                <td style="width: 50%; border: none; vertical-align: top;">
+                    <div><strong>Исполнитель:</strong></div>
+                    <div style="margin-top: 15px;">{{ $contractor->name ?? 'ООО «АЛП СТРОЙК»' }}</div>
+                    <div style="margin-top: 40px;">
+                        _________________ {{ $contractor->director_name ?? 'Нуртдинова Х.Х.' }}
+                    </div>
+                    <div style="margin-top: 5px; font-size: 10px; text-align: center;">
+                        (подпись)
                     </div>
                 </td>
             </tr>

@@ -352,6 +352,12 @@ class ActReportsController extends Controller
 
             $pdf = Pdf::loadView('reports.act-report-pdf', $data);
             $pdf->setPaper('A4', 'portrait');
+            $pdf->setOptions([
+                'defaultFont' => 'DejaVu Sans',
+                'isRemoteEnabled' => true,
+                'isHtml5ParserEnabled' => true,
+                'isPhpEnabled' => true
+            ]);
 
             $filename = "act_" . preg_replace('/[^A-Za-z0-9\-_]/', '_', $act->act_document_number) . "_" . now()->format('Y-m-d') . ".pdf";
             $path = "documents/acts/{$organizationId}/{$filename}";
