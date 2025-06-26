@@ -5,7 +5,7 @@ use Illuminate\Support\Facades\Route;
 // Роуты для холдинговых поддоменов (исключая служебные)
 Route::domain('{holding}.' . config('app.domain', 'prohelper.pro'))
     ->middleware(['holding.subdomain'])
-    ->where('holding', '^(?!www|lk|api|admin|mail|ftp).*$')
+    ->where(['holding' => '^(?!www|lk|api|admin|mail|ftp).*$'])
     ->group(function () {
         require __DIR__ . '/holding.php';
     });
