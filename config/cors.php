@@ -17,6 +17,7 @@ return [
         'api/v1/landing/*',
         'api/v1/mobile/*',
         'api/v1/admin/*',
+        'api/v1/holding-api/*',
         // '*'  // Убираем или оставляем только для крайних случаев в разработке, если allow_any_origin_in_dev не используется
     ],
 

@@ -4,6 +4,8 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AdvanceAccountTransactionController;
 use App\Http\Controllers\Api\UserController;
+use App\Http\Controllers\Api\V1\Landing\MultiOrganizationController;
+use App\Http\Controllers\Api\V1\HoldingApiController;
 
 /*
 |--------------------------------------------------------------------------
@@ -251,5 +253,24 @@ Route::prefix('superadmin')->name('superadmin.')->group(function () {
     //     // require __DIR__ . '/api/v1/superadmin/dashboard.php';
     // });
 });
+
+    // API роуты для фронтенда холдингов (используются ЛК сервером)
+    Route::prefix('holding-api')->name('holdingApi.')->group(function () {
+        
+        // Публичные данные холдинга (без авторизации)
+        Route::get('{slug}', [HoldingApiController::class, 'getPublicData'])->name('publicData');
+        
+        // Защищенные эндпоинты (требуют авторизации)
+        Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])->group(function () {
+            Route::get('{slug}/dashboard', [HoldingApiController::class, 'getDashboardData'])->name('dashboard');
+            Route::get('{slug}/organizations', [HoldingApiController::class, 'getOrganizations'])->name('organizations');
+            Route::get('{slug}/organization/{organizationId}', [HoldingApiController::class, 'getOrganizationData'])->name('organizationData');
+            
+            // Добавление дочерней организации (только владельцы)
+            Route::middleware(['role:organization_owner'])->group(function () {
+                Route::post('{slug}/add-child', [MultiOrganizationController::class, 'addChildOrganization'])->name('addChild');
+            });
+        });
+    });
 
 }); // Закрываем группу v1

@@ -224,6 +224,7 @@ GET /api/v1/landing/multi-organization/accessible
     {
       "id": 123,
       "name": "Строительный холдинг АБВ",
+      "slug": "stroitelnyy-kholding-abv",
       "organization_type": "parent",
       "is_holding": true,
       "hierarchy_level": 0
@@ -303,11 +304,15 @@ POST /api/v1/landing/multi-organization/switch-context
 https://{slug}.prohelper.pro/
 ```
 
-### API эндпоинты для поддоменов
+Фронтенд находится на ЛК сервере (89.111.152.112), а данные получает через API запросы к API серверу (89.111.153.146).
 
-#### Главная страница холдинга (публичная)
+### API эндпоинты для фронтенда холдингов
+
+**Базовый URL для API:** `https://api.prohelper.pro/api/v1/holding-api/`
+
+#### 1. Публичные данные холдинга
 ```http
-GET https://{slug}.prohelper.pro/
+GET https://api.prohelper.pro/api/v1/holding-api/{slug}
 ```
 
 **Ответ:**
@@ -319,28 +324,234 @@ GET https://{slug}.prohelper.pro/
       "id": 1,
       "name": "Строительный холдинг АБВ",
       "slug": "stroitelnyy-kholding-abv",
-      "description": "Группа строительных компаний"
+      "description": "Группа строительных компаний",
+      "parent_organization_id": 123,
+      "status": "active",
+      "created_at": "2025-06-26T15:30:00.000000Z"
+    },
+    "parent_organization": {
+      "id": 123,
+      "name": "Строительный холдинг АБВ",
+      "legal_name": "ООО \"Строительный холдинг АБВ\"",
+      "tax_number": "1234567890",
+      "registration_number": "123456789",
+      "address": "г. Москва, ул. Строительная, 1",
+      "phone": "+7 (495) 123-45-67",
+      "email": "info@holding-abv.ru",
+      "city": "Москва",
+      "description": "Ведущий холдинг в сфере строительства"
     },
     "stats": {
       "total_child_organizations": 2,
       "total_users": 45,
       "total_projects": 12,
-      "total_contracts_value": 125000000
+      "total_contracts": 8,
+      "total_contracts_value": 125000000,
+      "active_contracts_count": 6
     }
   }
 }
 ```
 
-#### Панель управления холдингом (требует авторизации)
+#### 2. Панель управления холдингом (требует авторизации)
 ```http
-GET https://{slug}.prohelper.pro/dashboard
+GET https://api.prohelper.pro/api/v1/holding-api/{slug}/dashboard
 Authorization: Bearer {JWT_TOKEN}
 ```
 
-#### Список дочерних организаций
+**Ответ:**
+```json
+{
+  "success": true,
+  "data": {
+    "holding": {
+      "id": 1,
+      "name": "Строительный холдинг АБВ",
+      "slug": "stroitelnyy-kholding-abv",
+      "description": "Группа строительных компаний",
+      "parent_organization_id": 123,
+      "status": "active"
+    },
+    "hierarchy": {
+      "parent": {...},
+      "children": [...],
+      "total_stats": {...}
+    },
+    "user": {
+      "id": 456,
+      "name": "Иван Иванов",
+      "email": "ivan@example.com"
+    },
+    "consolidated_stats": {
+      "total_child_organizations": 2,
+      "total_users": 45,
+      "total_projects": 12,
+      "total_contracts": 8,
+      "total_contracts_value": 125000000,
+      "active_contracts_count": 6,
+      "recent_activity": [
+        {
+          "type": "project_created",
+          "organization_name": "ООО Строитель-1",
+          "description": "Создан проект: Жилой комплекс",
+          "date": "2025-06-25T14:30:00.000000Z"
+        }
+      ],
+      "performance_metrics": {
+        "monthly_growth": 0,
+        "efficiency_score": 0,
+        "satisfaction_index": 0
+      }
+    }
+  }
+}
+```
+
+#### 3. Список дочерних организаций
 ```http
-GET https://{slug}.prohelper.pro/organizations
+GET https://api.prohelper.pro/api/v1/holding-api/{slug}/organizations
 Authorization: Bearer {JWT_TOKEN}
+```
+
+**Ответ:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": 124,
+      "name": "ООО Строитель-1",
+      "description": "Дочерняя строительная компания",
+      "organization_type": "child",
+      "hierarchy_level": 1,
+      "tax_number": "9876543210",
+      "registration_number": "987654321",
+      "address": "г. Москва, ул. Дочерняя, 2",
+      "phone": "+7 (495) 987-65-43",
+      "email": "info@stroitel1.ru",
+      "created_at": "2025-06-26T16:00:00.000000Z",
+      "stats": {
+        "users_count": 15,
+        "projects_count": 4,
+        "contracts_count": 3,
+        "active_contracts_value": 2500000
+      }
+    }
+  ]
+}
+```
+
+#### 4. Данные конкретной организации
+```http
+GET https://api.prohelper.pro/api/v1/holding-api/{slug}/organization/{organizationId}
+Authorization: Bearer {JWT_TOKEN}
+```
+
+#### 5. Добавление дочерней организации
+```http
+POST https://api.prohelper.pro/api/v1/holding-api/{slug}/add-child
+Authorization: Bearer {JWT_TOKEN}
+```
+
+**Тело запроса:** (такое же как в основном API)
+
+## 🎨 Фронтенд интерфейс для поддоменов
+
+**ВАЖНО:** Сейчас поддомены возвращают raw JSON. Нужно создать фронтенд интерфейс!
+
+### Публичная страница холдинга
+Создать красивую лендинг-страницу по адресу `https://{slug}.prohelper.pro/` которая:
+
+1. **Загружает данные** через API `GET /`
+2. **Отображает информацию о холдинге**:
+   - Название и описание холдинга
+   - Контактную информацию родительской организации
+   - Общую статистику (количество компаний, проектов, стоимость контрактов)
+3. **Включает элементы дизайна**:
+   - Корпоративный стиль
+   - Адаптивная верстка
+   - SEO-оптимизация
+
+### Панель управления холдингом
+Создать административную панель по адресу `https://{slug}.prohelper.pro/dashboard` которая:
+
+1. **Проверяет авторизацию** - при отсутствии JWT токена перенаправляет на вход
+2. **Загружает данные** через API `GET /dashboard`
+3. **Отображает**:
+   - Консолидированную статистику
+   - Список дочерних организаций с возможностью перехода
+   - Управление настройками холдинга
+   - Добавление новых дочерних организаций
+
+### Пример структуры фронтенда:
+
+```
+public_html/holdings/
+├── index.html          # Публичная страница (шаблон)
+├── dashboard.html      # Панель управления (шаблон)
+├── organizations.html  # Список дочерних организаций
+├── css/
+│   ├── holding-public.css
+│   ├── holding-admin.css
+├── js/
+│   ├── holding-public.js
+│   ├── holding-admin.js
+│   ├── auth.js
+└── assets/
+```
+
+### JavaScript для публичной страницы:
+
+```javascript
+// holding-public.js
+document.addEventListener('DOMContentLoaded', async function() {
+    try {
+        const response = await fetch('/');
+        const data = await response.json();
+        
+        if (data.success) {
+            document.getElementById('holding-name').textContent = data.data.holding.name;
+            document.getElementById('holding-description').textContent = data.data.holding.description;
+            document.getElementById('total-companies').textContent = data.data.stats.total_child_organizations;
+            document.getElementById('total-projects').textContent = data.data.stats.total_projects;
+            // ... остальные поля
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки данных холдинга:', error);
+    }
+});
+```
+
+### JavaScript для панели управления:
+
+```javascript
+// holding-admin.js
+document.addEventListener('DOMContentLoaded', async function() {
+    const token = localStorage.getItem('jwt_token');
+    
+    if (!token) {
+        window.location.href = '/login';
+        return;
+    }
+    
+    try {
+        const response = await fetch('/dashboard', {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+        
+        if (response.status === 401) {
+            window.location.href = '/login';
+            return;
+        }
+        
+        const data = await response.json();
+        // Отобразить данные панели управления
+    } catch (error) {
+        console.error('Ошибка загрузки панели управления:', error);
+    }
+});
 ```
 
 ## ⚠️ Обработка ошибок
@@ -402,6 +613,11 @@ Authorization: Bearer {JWT_TOKEN}
 ### Шаг 4: Переключение между организациями
 1. Получить доступные организации: `GET /api/v1/landing/multi-organization/accessible`
 2. При переключении использовать: `POST /api/v1/landing/multi-organization/switch-context`
+
+### Шаг 5: Создание фронтенда для поддоменов
+1. Создать публичную страницу холдинга
+2. Создать панель управления с авторизацией
+3. Реализовать обработку данных и отображение статистики
 
 ## 💡 Рекомендации по UX
 
