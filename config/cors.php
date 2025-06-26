@@ -40,6 +40,7 @@ return [
 
     'allowed_origins_patterns' => [
         '/^https?:\/\/.*\.prohelper\.pro$/',
+        '/^https?:\/\/(?!www|api|admin|mail|ftp)[a-z0-9-]+\.prohelper\.pro$/',
     ],
 
     'allowed_methods' => [
