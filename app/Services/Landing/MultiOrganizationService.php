@@ -85,10 +85,14 @@ class MultiOrganizationService
 
     public function getOrganizationHierarchy(int $organizationId): array
     {
-        $organization = Organization::with(['childOrganizations', 'parentOrganization'])->findOrFail($organizationId);
+        $organization = Organization::with([
+            'childOrganizations', 
+            'parentOrganization',
+            'organizationGroup'
+        ])->findOrFail($organizationId);
         
         if ($organization->organization_type === 'child') {
-            $organization = $organization->parentOrganization;
+            $organization = $organization->parentOrganization->load('organizationGroup');
         }
 
         return [
@@ -221,7 +225,7 @@ class MultiOrganizationService
 
     private function formatOrganizationData(Organization $organization): array
     {
-        return [
+        $data = [
             'id' => $organization->id,
             'name' => $organization->name,
             'organization_type' => $organization->organization_type ?? 'single',
@@ -232,6 +236,12 @@ class MultiOrganizationService
             'address' => $organization->address,
             'created_at' => $organization->created_at,
         ];
+
+        if ($organization->is_holding && $organization->organizationGroup) {
+            $data['slug'] = $organization->organizationGroup->slug;
+        }
+
+        return $data;
     }
 
     private function getHierarchyStats(Organization $parentOrg): array
