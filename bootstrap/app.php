@@ -23,6 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'organization_context' => SetOrganizationContext::class,
             'subscription.limit' => \App\Http\Middleware\CheckSubscriptionLimitsMiddleware::class,
             'module.access' => \App\Http\Middleware\CheckModuleAccessMiddleware::class,
+            'holding.subdomain' => \App\Http\Middleware\DetectHoldingSubdomain::class,
         ]);
 
         // Глобальные middleware
