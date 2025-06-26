@@ -21,3 +21,9 @@ yarn-error.log
 /.nova
 /.vscode
 /.zed
+scripts/nginx-config-admin.conf
+scripts/nginx-config-lk.conf
+scripts/SETUP_OTHER_SERVERS_INSTRUCTIONS.md
+scripts/ssl-setup-lk.sh
+scripts/ssl-setup-admin.sh
+scripts/nginx-config-lk.conf    
