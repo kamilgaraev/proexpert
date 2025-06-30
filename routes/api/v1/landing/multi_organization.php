@@ -29,6 +29,12 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
         Route::post('/switch-context', [MultiOrganizationController::class, 'switchOrganizationContext'])
             ->name('switchContext');
         
+        Route::get('/dashboard', [MultiOrganizationController::class, 'getHoldingDashboard'])
+            ->name('dashboard');
+
+        Route::get('/child-organizations', [MultiOrganizationController::class, 'getChildOrganizations'])
+            ->name('getChildOrganizations');
+
         // Только для владельцев организации
         Route::middleware(['role:organization_owner'])
             ->group(function () {
@@ -40,5 +46,29 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
                 // Добавление дочерней организации
                 Route::post('/add-child', [MultiOrganizationController::class, 'addChildOrganization'])
                     ->name('addChild');
+
+                Route::put('/child-organizations/{childOrgId}', [MultiOrganizationController::class, 'updateChildOrganization'])
+                    ->name('updateChildOrganization');
+
+                Route::delete('/child-organizations/{childOrgId}', [MultiOrganizationController::class, 'deleteChildOrganization'])
+                    ->name('deleteChildOrganization');
+
+                Route::get('/child-organizations/{childOrgId}/stats', [MultiOrganizationController::class, 'getChildOrganizationStats'])
+                    ->name('getChildOrganizationStats');
+
+                Route::get('/child-organizations/{childOrgId}/users', [MultiOrganizationController::class, 'getChildOrganizationUsers'])
+                    ->name('getChildOrganizationUsers');
+
+                Route::post('/child-organizations/{childOrgId}/users', [MultiOrganizationController::class, 'addUserToChildOrganization'])
+                    ->name('addUserToChildOrganization');
+
+                Route::put('/child-organizations/{childOrgId}/users/{userId}', [MultiOrganizationController::class, 'updateUserInChildOrganization'])
+                    ->name('updateUserInChildOrganization');
+
+                Route::delete('/child-organizations/{childOrgId}/users/{userId}', [MultiOrganizationController::class, 'removeUserFromChildOrganization'])
+                    ->name('removeUserFromChildOrganization');
+
+                Route::put('/holding-settings', [MultiOrganizationController::class, 'updateHoldingSettings'])
+                    ->name('updateHoldingSettings');
             });
     }); 

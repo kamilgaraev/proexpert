@@ -264,4 +264,417 @@ class MultiOrganizationService
             'last_user_added' => $organization->users()->latest('pivot_created_at')->first()?->pivot?->created_at,
         ];
     }
+
+    public function getChildOrganizations(int $parentOrgId, array $filters = []): array
+    {
+        $organization = Organization::findOrFail($parentOrgId);
+        
+        if (!($organization->is_holding ?? false)) {
+            throw new \Exception('Организация не является холдингом');
+        }
+
+        $query = $organization->childOrganizations()->with(['users']);
+
+        if (!empty($filters['search'])) {
+            $query->where(function ($q) use ($filters) {
+                $q->where('name', 'like', '%' . $filters['search'] . '%')
+                  ->orWhere('tax_number', 'like', '%' . $filters['search'] . '%');
+            });
+        }
+
+        if (!empty($filters['status']) && $filters['status'] !== 'all') {
+            $active = $filters['status'] === 'active';
+            $query->where('is_active', $active);
+        }
+
+        switch ($filters['sort_by'] ?? 'name') {
+            case 'created_at':
+                $query->orderBy('created_at', $filters['sort_direction'] ?? 'asc');
+                break;
+            case 'users_count':
+                $query->withCount('users')->orderBy('users_count', $filters['sort_direction'] ?? 'asc');
+                break;
+            case 'projects_count':
+                $query->withCount('projects')->orderBy('projects_count', $filters['sort_direction'] ?? 'asc');
+                break;
+            default:
+                $query->orderBy('name', $filters['sort_direction'] ?? 'asc');
+        }
+
+        $perPage = $filters['per_page'] ?? 15;
+        $paginated = $query->paginate($perPage);
+
+        return [
+            'organizations' => $paginated->map(function ($org) {
+                return array_merge($this->formatOrganizationData($org), [
+                    'users_count' => $org->users()->count(),
+                    'projects_count' => $org->projects()->count(),
+                    'contracts_count' => $org->contracts()->count(),
+                    'is_active' => $org->is_active ?? true,
+                ]);
+            }),
+            'pagination' => [
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
+            ],
+        ];
+    }
+
+    public function updateChildOrganization(int $parentOrgId, int $childOrgId, array $data, User $user): array
+    {
+        $parentOrg = Organization::findOrFail($parentOrgId);
+        $childOrg = Organization::findOrFail($childOrgId);
+
+        if (!($parentOrg->is_holding ?? false)) {
+            throw new \Exception('Родительская организация не является холдингом');
+        }
+
+        if ($childOrg->parent_organization_id !== $parentOrgId) {
+            throw new \Exception('Организация не является дочерней для данного холдинга');
+        }
+
+        $updateData = [];
+        $allowedFields = ['name', 'description', 'tax_number', 'registration_number', 'address', 'phone', 'email', 'is_active'];
+        
+        foreach ($allowedFields as $field) {
+            $requestField = $field === 'tax_number' ? 'inn' : ($field === 'registration_number' ? 'kpp' : $field);
+            if (array_key_exists($requestField, $data)) {
+                $updateData[$field] = $data[$requestField];
+            }
+        }
+
+        if (array_key_exists('settings', $data)) {
+            $currentSettings = $childOrg->multi_org_settings ?? [];
+            $updateData['multi_org_settings'] = array_merge($currentSettings, $data['settings']);
+        }
+
+        $childOrg->update($updateData);
+
+        return $this->formatOrganizationData($childOrg->fresh());
+    }
+
+    public function deleteChildOrganization(int $parentOrgId, int $childOrgId, User $user, ?int $transferDataTo = null): void
+    {
+        $parentOrg = Organization::findOrFail($parentOrgId);
+        $childOrg = Organization::findOrFail($childOrgId);
+
+        if (!($parentOrg->is_holding ?? false)) {
+            throw new \Exception('Родительская организация не является холдингом');
+        }
+
+        if ($childOrg->parent_organization_id !== $parentOrgId) {
+            throw new \Exception('Организация не является дочерней для данного холдинга');
+        }
+
+        if ($childOrg->users()->count() > 0 && !$transferDataTo) {
+            throw new \Exception('Нельзя удалить организацию с пользователями без указания организации для перевода данных');
+        }
+
+        DB::transaction(function () use ($childOrg, $transferDataTo) {
+            if ($transferDataTo) {
+                $targetOrg = Organization::findOrFail($transferDataTo);
+                
+                $childOrg->projects()->update(['organization_id' => $transferDataTo]);
+                $childOrg->contracts()->update(['organization_id' => $transferDataTo]);
+                
+                foreach ($childOrg->users as $user) {
+                    if (!$targetOrg->users()->where('user_id', $user->id)->exists()) {
+                        $targetOrg->users()->attach($user->id, [
+                            'is_owner' => false,
+                            'is_active' => true,
+                        ]);
+                    }
+                }
+            }
+
+            $childOrg->users()->detach();
+            $childOrg->accessPermissionsGranted()->delete();
+            $childOrg->accessPermissionsReceived()->delete();
+            $childOrg->delete();
+        });
+    }
+
+    public function getChildOrganizationUsers(int $parentOrgId, int $childOrgId, array $filters = []): array
+    {
+        $parentOrg = Organization::findOrFail($parentOrgId);
+        $childOrg = Organization::findOrFail($childOrgId);
+
+        if (!($parentOrg->is_holding ?? false)) {
+            throw new \Exception('Родительская организация не является холдингом');
+        }
+
+        if ($childOrg->parent_organization_id !== $parentOrgId) {
+            throw new \Exception('Организация не является дочерней для данного холдинга');
+        }
+
+        $query = $childOrg->users()->withPivot(['is_owner', 'is_active', 'settings']);
+
+        if (!empty($filters['search'])) {
+            $query->where(function ($q) use ($filters) {
+                $q->where('name', 'like', '%' . $filters['search'] . '%')
+                  ->orWhere('email', 'like', '%' . $filters['search'] . '%');
+            });
+        }
+
+        if (!empty($filters['status']) && $filters['status'] !== 'all') {
+            $active = $filters['status'] === 'active';
+            $query->wherePivot('is_active', $active);
+        }
+
+        $perPage = $filters['per_page'] ?? 15;
+        $paginated = $query->paginate($perPage);
+
+        return [
+            'users' => $paginated->map(function ($user) {
+                return [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'is_owner' => $user->pivot->is_owner,
+                    'is_active' => $user->pivot->is_active,
+                    'role' => $user->pivot->settings['role'] ?? 'employee',
+                    'joined_at' => $user->pivot->created_at,
+                ];
+            }),
+            'pagination' => [
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
+            ],
+        ];
+    }
+
+    public function addUserToChildOrganization(int $parentOrgId, int $childOrgId, array $data, User $currentUser): array
+    {
+        $parentOrg = Organization::findOrFail($parentOrgId);
+        $childOrg = Organization::findOrFail($childOrgId);
+
+        if (!($parentOrg->is_holding ?? false)) {
+            throw new \Exception('Родительская организация не является холдингом');
+        }
+
+        if ($childOrg->parent_organization_id !== $parentOrgId) {
+            throw new \Exception('Организация не является дочерней для данного холдинга');
+        }
+
+        $user = User::where('email', $data['email'])->firstOrFail();
+
+        if ($childOrg->users()->where('user_id', $user->id)->exists()) {
+            throw new \Exception('Пользователь уже состоит в этой организации');
+        }
+
+        $settings = [
+            'role' => $data['role'],
+            'permissions' => $data['permissions'] ?? [],
+            'added_by' => $currentUser->id,
+        ];
+
+        $childOrg->users()->attach($user->id, [
+            'is_owner' => $data['role'] === 'admin',
+            'is_active' => true,
+            'settings' => $settings,
+        ]);
+
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $data['role'],
+            'is_active' => true,
+        ];
+    }
+
+    public function updateUserInChildOrganization(int $parentOrgId, int $childOrgId, int $userId, array $data, User $currentUser): array
+    {
+        $parentOrg = Organization::findOrFail($parentOrgId);
+        $childOrg = Organization::findOrFail($childOrgId);
+
+        if (!($parentOrg->is_holding ?? false)) {
+            throw new \Exception('Родительская организация не является холдингом');
+        }
+
+        if ($childOrg->parent_organization_id !== $parentOrgId) {
+            throw new \Exception('Организация не является дочерней для данного холдинга');
+        }
+
+        $user = User::findOrFail($userId);
+        $pivot = $childOrg->users()->where('user_id', $userId)->first();
+
+        if (!$pivot) {
+            throw new \Exception('Пользователь не состоит в этой организации');
+        }
+
+        $updateData = [];
+        $settings = $pivot->pivot->settings ?? [];
+
+        if (array_key_exists('role', $data)) {
+            $settings['role'] = $data['role'];
+            $updateData['is_owner'] = $data['role'] === 'admin';
+        }
+
+        if (array_key_exists('permissions', $data)) {
+            $settings['permissions'] = $data['permissions'];
+        }
+
+        if (array_key_exists('is_active', $data)) {
+            $updateData['is_active'] = $data['is_active'];
+        }
+
+        $updateData['settings'] = $settings;
+
+        $childOrg->users()->updateExistingPivot($userId, $updateData);
+
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $settings['role'] ?? 'employee',
+            'is_active' => $updateData['is_active'] ?? $pivot->pivot->is_active,
+        ];
+    }
+
+    public function removeUserFromChildOrganization(int $parentOrgId, int $childOrgId, int $userId, User $currentUser): void
+    {
+        $parentOrg = Organization::findOrFail($parentOrgId);
+        $childOrg = Organization::findOrFail($childOrgId);
+
+        if (!($parentOrg->is_holding ?? false)) {
+            throw new \Exception('Родительская организация не является холдингом');
+        }
+
+        if ($childOrg->parent_organization_id !== $parentOrgId) {
+            throw new \Exception('Организация не является дочерней для данного холдинга');
+        }
+
+        if (!$childOrg->users()->where('user_id', $userId)->exists()) {
+            throw new \Exception('Пользователь не состоит в этой организации');
+        }
+
+        if ($childOrg->users()->where('user_id', $userId)->wherePivot('is_owner', true)->exists()) {
+            if ($childOrg->users()->wherePivot('is_owner', true)->count() <= 1) {
+                throw new \Exception('Нельзя удалить единственного владельца организации');
+            }
+        }
+
+        $childOrg->users()->detach($userId);
+    }
+
+    public function getChildOrganizationStats(int $parentOrgId, int $childOrgId): array
+    {
+        $parentOrg = Organization::findOrFail($parentOrgId);
+        $childOrg = Organization::with(['users', 'projects', 'contracts'])->findOrFail($childOrgId);
+
+        if (!($parentOrg->is_holding ?? false)) {
+            throw new \Exception('Родительская организация не является холдингом');
+        }
+
+        if ($childOrg->parent_organization_id !== $parentOrgId) {
+            throw new \Exception('Организация не является дочерней для данного холдинга');
+        }
+
+        return [
+            'users' => [
+                'total' => $childOrg->users()->count(),
+                'active' => $childOrg->users()->wherePivot('is_active', true)->count(),
+                'owners' => $childOrg->users()->wherePivot('is_owner', true)->count(),
+            ],
+            'projects' => [
+                'total' => $childOrg->projects()->count(),
+                'active' => $childOrg->projects()->where('status', 'active')->count(),
+                'completed' => $childOrg->projects()->where('status', 'completed')->count(),
+            ],
+            'contracts' => [
+                'total' => $childOrg->contracts()->count(),
+                'active' => $childOrg->contracts()->where('status', 'active')->count(),
+                'total_value' => $childOrg->contracts()->sum('total_amount'),
+                'active_value' => $childOrg->contracts()->where('status', 'active')->sum('total_amount'),
+            ],
+            'financial' => [
+                'balance' => $childOrg->balance?->current_balance ?? 0,
+                'monthly_expenses' => $childOrg->contracts()
+                    ->where('created_at', '>=', now()->startOfMonth())
+                    ->sum('total_amount'),
+            ],
+        ];
+    }
+
+    public function updateHoldingSettings(int $groupId, array $data, User $user): OrganizationGroup
+    {
+        $group = OrganizationGroup::findOrFail($groupId);
+
+        if ($group->parent_organization_id !== $user->current_organization_id) {
+            throw new \Exception('Нет прав для изменения настроек данного холдинга');
+        }
+
+        $updateData = [];
+        $allowedFields = ['name', 'description', 'max_child_organizations'];
+        
+        foreach ($allowedFields as $field) {
+            if (array_key_exists($field, $data)) {
+                $updateData[$field] = $data[$field];
+            }
+        }
+
+        if (array_key_exists('name', $data)) {
+            $updateData['slug'] = Str::slug($data['name']);
+        }
+
+        if (array_key_exists('settings', $data)) {
+            $currentSettings = $group->settings ?? [];
+            $updateData['settings'] = array_merge($currentSettings, $data['settings']);
+        }
+
+        if (array_key_exists('permissions_config', $data)) {
+            $currentPermissions = $group->permissions_config ?? [];
+            $updateData['permissions_config'] = array_merge($currentPermissions, $data['permissions_config']);
+        }
+
+        $group->update($updateData);
+
+        return $group->fresh();
+    }
+
+    public function getHoldingDashboard(int $organizationId): array
+    {
+        $organization = Organization::with(['childOrganizations', 'organizationGroup'])->findOrFail($organizationId);
+
+        if (!($organization->is_holding ?? false)) {
+            throw new \Exception('Организация не является холдингом');
+        }
+
+        $childOrgs = $organization->childOrganizations;
+        
+        return [
+            'holding_info' => [
+                'name' => $organization->name,
+                'group_name' => $organization->organizationGroup?->name,
+                'total_child_organizations' => $childOrgs->count(),
+                'max_child_organizations' => $organization->organizationGroup?->max_child_organizations ?? 10,
+                'created_at' => $organization->created_at,
+            ],
+            'summary_stats' => [
+                'total_users' => $organization->users()->count() + $childOrgs->sum(fn($org) => $org->users()->count()),
+                'total_projects' => $organization->projects()->count() + $childOrgs->sum(fn($org) => $org->projects()->count()),
+                'total_contracts' => $organization->contracts()->count() + $childOrgs->sum(fn($org) => $org->contracts()->count()),
+                'total_balance' => $organization->balance?->current_balance ?? 0 + $childOrgs->sum(fn($org) => $org->balance?->current_balance ?? 0),
+            ],
+            'child_organizations' => $childOrgs->map(function ($org) {
+                return [
+                    'id' => $org->id,
+                    'name' => $org->name,
+                    'is_active' => $org->is_active ?? true,
+                    'users_count' => $org->users()->count(),
+                    'projects_count' => $org->projects()->count(),
+                    'created_at' => $org->created_at,
+                ];
+            }),
+            'recent_activity' => [
+                'last_child_added' => $childOrgs->sortByDesc('created_at')->first()?->created_at,
+                'most_active_child' => $childOrgs->sortByDesc(fn($org) => $org->projects()->count())->first(),
+            ],
+        ];
+    }
 } 
