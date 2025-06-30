@@ -1,4 +1,4 @@
-# API Модуля "Мультиорганизация"
+# API Модуля "Мультиорганизация" (Расширенная версия)
 
 ## Обзор
 
@@ -40,6 +40,58 @@ GET /api/v1/landing/multi-organization/check-availability
   "available": false,
   "message": "Модуль \"Мультиорганизация\" не активирован",
   "required_module": "multi_organization"
+}
+```
+
+---
+
+## Дашборд холдинга
+
+### 2. Дашборд холдинга
+
+```http
+GET /api/v1/landing/multi-organization/dashboard
+```
+
+**Описание:** Получает общую сводку по холдингу с ключевыми метриками.
+
+**Ответ:**
+```json
+{
+  "success": true,
+  "data": {
+    "holding_info": {
+      "name": "Главная компания",
+      "group_name": "Холдинг АБВ",
+      "total_child_organizations": 5,
+      "max_child_organizations": 20,
+      "created_at": "2024-01-01T00:00:00Z"
+    },
+    "summary_stats": {
+      "total_users": 45,
+      "total_projects": 28,
+      "total_contracts": 15,
+      "total_balance": 2500000.00
+    },
+    "child_organizations": [
+      {
+        "id": 124,
+        "name": "ООО Строитель",
+        "is_active": true,
+        "users_count": 8,
+        "projects_count": 5,
+        "created_at": "2024-01-15T10:00:00Z"
+      }
+    ],
+    "recent_activity": {
+      "last_child_added": "2024-01-15T10:00:00Z",
+      "most_active_child": {
+        "id": 124,
+        "name": "ООО Строитель",
+        "projects_count": 5
+      }
+    }
+  }
 }
 ```
 

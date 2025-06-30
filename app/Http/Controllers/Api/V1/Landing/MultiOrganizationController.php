@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Landing;
 use App\Http\Controllers\Controller;
 use App\Services\Landing\MultiOrganizationService;
 use App\Services\Landing\OrganizationModuleService;
+use App\Services\Landing\ChildOrganizationUserService;
 use App\Models\OrganizationGroup;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -15,13 +16,16 @@ class MultiOrganizationController extends Controller
 {
     protected MultiOrganizationService $multiOrgService;
     protected OrganizationModuleService $moduleService;
+    protected ChildOrganizationUserService $childUserService;
 
     public function __construct(
         MultiOrganizationService $multiOrgService,
-        OrganizationModuleService $moduleService
+        OrganizationModuleService $moduleService,
+        ChildOrganizationUserService $childUserService
     ) {
         $this->multiOrgService = $multiOrgService;
         $this->moduleService = $moduleService;
+        $this->childUserService = $childUserService;
     }
 
     public function checkAvailability(Request $request): JsonResponse
@@ -305,26 +309,38 @@ class MultiOrganizationController extends Controller
     public function addUserToChildOrganization(Request $request, int $childOrgId): JsonResponse
     {
         $request->validate([
-            'email' => 'required|email|exists:users,email',
-            'role' => 'required|string|in:admin,manager,employee',
-            'permissions' => 'sometimes|array',
+            'name' => 'required|string|max:255',
+            'email' => 'required|email|max:255',
+            'password' => 'sometimes|string|min:8',
+            'auto_verify' => 'sometimes|boolean',
             'send_invitation' => 'sometimes|boolean',
+            'role_data' => 'required|array',
+            'role_data.template' => 'sometimes|string|in:administrator,project_manager,foreman,accountant,sales_manager,worker,observer',
+            'role_data.name' => 'required_without:role_data.template|string|max:255',
+            'role_data.description' => 'sometimes|string|max:1000',
+            'role_data.permissions' => 'required_without:role_data.template|array',
+            'role_data.permissions.*' => 'string',
+            'role_data.color' => 'sometimes|string|regex:/^#[0-9A-Fa-f]{6}$/',
         ]);
 
         $user = Auth::user();
         $parentOrgId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
 
         try {
-            $result = $this->multiOrgService->addUserToChildOrganization(
-                $parentOrgId, 
-                $childOrgId, 
-                $request->all(), 
-                $user
-            );
+            if (!$this->multiOrgService->hasAccessToOrganization($user, $parentOrgId)) {
+                throw new \Exception('Нет доступа к родительской организации');
+            }
+
+            $childOrg = \App\Models\Organization::findOrFail($childOrgId);
+            if ($childOrg->parent_organization_id !== $parentOrgId) {
+                throw new \Exception('Организация не является дочерней для данного холдинга');
+            }
+
+            $result = $this->childUserService->createUserWithRole($childOrgId, $request->all(), $user);
 
             return response()->json([
                 'success' => true,
-                'message' => 'Пользователь добавлен в дочернюю организацию',
+                'message' => 'Пользователь добавлен в дочернюю организацию с персональной ролью',
                 'data' => $result,
             ]);
         } catch (\Exception $e) {
@@ -437,5 +453,159 @@ class MultiOrganizationController extends Controller
         } catch (\Exception $e) {
             return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
         }
+    }
+
+    public function getRoleTemplates(Request $request): JsonResponse
+    {
+        try {
+            $templates = $this->childUserService->getAvailableRoleTemplates();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'templates' => $templates,
+                    'permissions_groups' => $this->getPermissionsGroups(),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+        }
+    }
+
+    public function getChildOrganizationRoles(Request $request, int $childOrgId): JsonResponse
+    {
+        $user = Auth::user();
+        $parentOrgId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+
+        try {
+            $childOrg = \App\Models\Organization::findOrFail($childOrgId);
+            if ($childOrg->parent_organization_id !== $parentOrgId) {
+                throw new \Exception('Организация не является дочерней для данного холдинга');
+            }
+
+            $roles = \App\Models\OrganizationRole::forOrganization($childOrgId)
+                ->withCount('users')
+                ->ordered()
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => $roles->map(function ($role) {
+                    return [
+                        'id' => $role->id,
+                        'name' => $role->name,
+                        'slug' => $role->slug,
+                        'description' => $role->description,
+                        'color' => $role->color,
+                        'permissions' => $role->permissions ?? [],
+                        'permissions_count' => count($role->permissions ?? []),
+                        'users_count' => $role->users_count,
+                        'is_system' => $role->is_system,
+                        'is_active' => $role->is_active,
+                        'created_at' => $role->created_at,
+                    ];
+                }),
+            ]);
+        } catch (\Exception $e) {
+            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+        }
+    }
+
+    public function createBulkUsers(Request $request, int $childOrgId): JsonResponse
+    {
+        $request->validate([
+            'users' => 'required|array|min:1|max:20',
+            'users.*.name' => 'required|string|max:255',
+            'users.*.email' => 'required|email|max:255',
+            'users.*.password' => 'sometimes|string|min:8',
+            'users.*.auto_verify' => 'sometimes|boolean',
+            'users.*.send_invitation' => 'sometimes|boolean',
+            'users.*.role_data' => 'required|array',
+            'users.*.role_data.template' => 'sometimes|string|in:administrator,project_manager,foreman,accountant,sales_manager,worker,observer',
+            'users.*.role_data.name' => 'required_without:users.*.role_data.template|string|max:255',
+            'users.*.role_data.permissions' => 'required_without:users.*.role_data.template|array',
+        ]);
+
+        $user = Auth::user();
+        $parentOrgId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+
+        try {
+            $childOrg = \App\Models\Organization::findOrFail($childOrgId);
+            if ($childOrg->parent_organization_id !== $parentOrgId) {
+                throw new \Exception('Организация не является дочерней для данного холдинга');
+            }
+
+            $results = $this->childUserService->createBulkUsers($childOrgId, $request->input('users'), $user);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Обработано пользователей: {$results['total']}, успешно: {$results['successful']}, ошибок: {$results['failed']}",
+                'data' => $results,
+            ]);
+        } catch (\Exception $e) {
+            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+        }
+    }
+
+    private function getPermissionsGroups(): array
+    {
+        return [
+            'Пользователи' => [
+                'users.view' => 'Просмотр пользователей',
+                'users.create' => 'Создание пользователей',
+                'users.edit' => 'Редактирование пользователей',
+                'users.delete' => 'Удаление пользователей',
+            ],
+            'Роли' => [
+                'roles.view' => 'Просмотр ролей',
+                'roles.create' => 'Создание ролей',
+                'roles.edit' => 'Редактирование ролей',
+                'roles.delete' => 'Удаление ролей',
+            ],
+            'Проекты' => [
+                'projects.view' => 'Просмотр проектов',
+                'projects.create' => 'Создание проектов',
+                'projects.edit' => 'Редактирование проектов',
+                'projects.delete' => 'Удаление проектов',
+            ],
+            'Договоры' => [
+                'contracts.view' => 'Просмотр договоров',
+                'contracts.create' => 'Создание договоров',
+                'contracts.edit' => 'Редактирование договоров',
+                'contracts.delete' => 'Удаление договоров',
+            ],
+            'Материалы' => [
+                'materials.view' => 'Просмотр материалов',
+                'materials.create' => 'Создание материалов',
+                'materials.edit' => 'Редактирование материалов',
+                'materials.delete' => 'Удаление материалов',
+            ],
+            'Отчеты' => [
+                'reports.view' => 'Просмотр отчетов',
+                'reports.create' => 'Создание отчетов',
+                'reports.export' => 'Экспорт отчетов',
+            ],
+            'Финансы' => [
+                'finance.view' => 'Просмотр финансов',
+                'finance.edit' => 'Управление финансами',
+            ],
+            'Работы' => [
+                'work_types.view' => 'Просмотр видов работ',
+                'work_types.create' => 'Создание видов работ',
+                'work_types.edit' => 'Редактирование видов работ',
+                'completed_work.view' => 'Просмотр выполненных работ',
+                'completed_work.create' => 'Добавление выполненных работ',
+                'completed_work.edit' => 'Редактирование выполненных работ',
+            ],
+            'Клиенты' => [
+                'clients.view' => 'Просмотр клиентов',
+                'clients.create' => 'Создание клиентов',
+                'clients.edit' => 'Редактирование клиентов',
+            ],
+            'Учет времени' => [
+                'time_tracking.create' => 'Создание записей времени',
+                'time_tracking.edit' => 'Редактирование записей времени',
+            ],
+        ];
     }
 } 

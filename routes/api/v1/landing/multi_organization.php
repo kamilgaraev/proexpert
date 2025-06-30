@@ -35,6 +35,9 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
         Route::get('/child-organizations', [MultiOrganizationController::class, 'getChildOrganizations'])
             ->name('getChildOrganizations');
 
+        Route::get('/role-templates', [MultiOrganizationController::class, 'getRoleTemplates'])
+            ->name('getRoleTemplates');
+
         // Только для владельцев организации
         Route::middleware(['role:organization_owner'])
             ->group(function () {
@@ -56,11 +59,17 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
                 Route::get('/child-organizations/{childOrgId}/stats', [MultiOrganizationController::class, 'getChildOrganizationStats'])
                     ->name('getChildOrganizationStats');
 
+                Route::get('/child-organizations/{childOrgId}/roles', [MultiOrganizationController::class, 'getChildOrganizationRoles'])
+                    ->name('getChildOrganizationRoles');
+
                 Route::get('/child-organizations/{childOrgId}/users', [MultiOrganizationController::class, 'getChildOrganizationUsers'])
                     ->name('getChildOrganizationUsers');
 
                 Route::post('/child-organizations/{childOrgId}/users', [MultiOrganizationController::class, 'addUserToChildOrganization'])
                     ->name('addUserToChildOrganization');
+
+                Route::post('/child-organizations/{childOrgId}/users/bulk', [MultiOrganizationController::class, 'createBulkUsers'])
+                    ->name('createBulkUsers');
 
                 Route::put('/child-organizations/{childOrgId}/users/{userId}', [MultiOrganizationController::class, 'updateUserInChildOrganization'])
                     ->name('updateUserInChildOrganization');
