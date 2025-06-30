@@ -31,6 +31,7 @@ class CorsMiddleware
         
         // Получаем конфигурацию CORS
         $allowedOrigins = Config::get('cors.allowed_origins', []);
+        $allowedOriginsPatterns = Config::get('cors.allowed_origins_patterns', []);
         $allowedMethods = Config::get('cors.allowed_methods', ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
         $allowedHeaders = Config::get('cors.allowed_headers', ['Content-Type', 'X-Auth-Token', 'Origin', 'Authorization', 'X-Requested-With']);
         $exposedHeaders = Config::get('cors.exposed_headers', []);
@@ -48,10 +49,24 @@ class CorsMiddleware
         } 
         // Иначе проверяем по списку разрешенных
         else if ($origin) {
+            $originMatched = false;
+            
             if (in_array($origin, $allowedOrigins)) {
                 $allowedOrigin = $origin;
                 $allowCredentials = 'true';
+                $originMatched = true;
             } else {
+                foreach ($allowedOriginsPatterns as $pattern) {
+                    if (preg_match($pattern, $origin)) {
+                        $allowedOrigin = $origin;
+                        $allowCredentials = 'true';
+                        $originMatched = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (!$originMatched) {
                 // В режиме разработки можем быть более снисходительными
                 if (app()->environment('local')) {
                     Log::warning('CORS: Принимаем запрос с неуказанного origin в режиме разработки', [
@@ -62,7 +77,8 @@ class CorsMiddleware
                 } else {
                     Log::warning('CORS: Отклонен запрос с недопустимого origin', [
                         'origin' => $origin,
-                        'allowed_origins' => $allowedOrigins
+                        'allowed_origins' => $allowedOrigins,
+                        'allowed_patterns' => $allowedOriginsPatterns
                     ]);
                 }
             }

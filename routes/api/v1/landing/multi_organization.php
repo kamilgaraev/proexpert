@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\MultiOrganizationController;
 
-Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'module.access:multi_organization'])
+Route::middleware(['auth:api_landing', 'auth.jwt', 'organization.context', 'module.access:multi_organization'])
     ->prefix('multi-organization')
     ->name('multiOrganization.')
     ->group(function () {
