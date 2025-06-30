@@ -10,6 +10,8 @@ use App\Services\Organization\OrganizationContext;
 use App\Services\FileService;
 use App\Services\Export\ExcelExporterService;
 use App\Services\Report\MaterialReportService;
+use App\Services\Landing\ChildOrganizationUserService;
+use App\Services\OrganizationRoleService;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -30,6 +32,10 @@ class AppServiceProvider extends ServiceProvider
         // Регистрируем MaterialReportService как singleton
         $this->app->singleton(MaterialReportService::class, function ($app) {
             return new MaterialReportService();
+        });
+
+        $this->app->singleton(ChildOrganizationUserService::class, function ($app) {
+            return new ChildOrganizationUserService($app->make(OrganizationRoleService::class));
         });
         
         // Здесь могут быть другие связывания
