@@ -1,0 +1,31 @@
+type: object
+properties:
+  material_id:
+    type: integer
+  material_name:
+    type: string
+  measurement_unit:
+    type: string
+    nullable: true
+  quantity:
+    type: number
+    format: float
+  unit_price:
+    type: number
+    format: float
+    nullable: true
+  total_amount:
+    type: number
+    format: float
+    nullable: true
+  notes:
+    type: string
+    nullable: true
+  created_at:
+    type: string
+    format: date-time
+    nullable: true
+  updated_at:
+    type: string
+    format: date-time
+    nullable: true 

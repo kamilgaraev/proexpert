@@ -1,0 +1,50 @@
+type: object
+required:
+  - project_id
+  - work_type_id
+  - user_id
+  - quantity
+  - completion_date
+  - status
+properties:
+  project_id:
+    type: integer
+  contract_id:
+    type: integer
+    nullable: true
+  work_type_id:
+    type: integer
+  user_id:
+    type: integer
+  quantity:
+    type: number
+    format: float
+    minimum: 0.001
+  price:
+    type: number
+    format: float
+    minimum: 0
+    nullable: true
+  total_amount:
+    type: number
+    format: float
+    minimum: 0
+    nullable: true
+  completion_date:
+    type: string
+    format: date
+  notes:
+    type: string
+    maxLength: 65535
+    nullable: true
+  status:
+    type: string
+    enum: [draft, confirmed, cancelled]
+  additional_info:
+    type: object
+    nullable: true
+  materials:
+    type: array
+    items:
+      $ref: './CompletedWorkMaterial.yaml'
+    nullable: true 

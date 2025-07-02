@@ -19,4 +19,13 @@
 /projects:
   $ref: './projects.yaml#/~1projects'
 /projects/{id}:
-  $ref: './projects.yaml#/~1projects~1{id}' 
+  $ref: './projects.yaml#/~1projects~1{id}'
+
+/completed-works:
+  $ref: './completed_works.yaml#/~1completed-works'
+/completed-works/{id}:
+  $ref: './completed_works.yaml#/~1completed-works~1{id}'
+/completed-works/{id}/sync-materials:
+  $ref: './completed_works.yaml#/~1completed-works~1{id}~1sync-materials'
+/completed-works/work-type-material-defaults:
+  $ref: './completed_works.yaml#/~1completed-works~1work-type-material-defaults' 

@@ -1,0 +1,8 @@
+type: object
+required:
+  - materials
+properties:
+  materials:
+    type: array
+    items:
+      $ref: './CompletedWorkMaterial.yaml' 

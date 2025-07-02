@@ -1,0 +1,144 @@
+/completed-works:
+  get:
+    tags: [CompletedWorks]
+    summary: Получить список выполненных работ
+    responses:
+      "200":
+        description: Список выполненных работ
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/CompletedWork.yaml'
+  post:
+    tags: [CompletedWorks]
+    summary: Создать запись о выполненной работе
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CompletedWorkCreateRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CompletedWorkResponse.yaml'
+      "422":
+        description: Неверный запрос
+
+/completed-works/{id}:
+  get:
+    tags: [CompletedWorks]
+    summary: Получить выполненную работу
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Запись о выполненной работе
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CompletedWorkResponse.yaml'
+  put:
+    tags: [CompletedWorks]
+    summary: Обновить выполненную работу
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CompletedWorkCreateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CompletedWorkResponse.yaml'
+      "422":
+        description: Неверный запрос
+  delete:
+    tags: [CompletedWorks]
+    summary: Удалить выполненную работу
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено
+
+/completed-works/{id}/sync-materials:
+  post:
+    tags: [CompletedWorks]
+    summary: Синхронизировать материалы выполненной работы
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CompletedWorkSyncMaterialsRequest.yaml'
+    responses:
+      "200":
+        description: Материалы синхронизированы
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CompletedWorkResponse.yaml'
+      "422":
+        description: Неверный запрос
+
+/completed-works/work-type-material-defaults:
+  get:
+    tags: [CompletedWorks]
+    summary: Получить материалы по умолчанию для типа работы
+    parameters:
+      - in: query
+        name: work_type_id
+        required: true
+        schema:
+          type: integer
+        description: ID типа работы
+    responses:
+      "200":
+        description: Список материалов по умолчанию
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/WorkTypeMaterialDefault.yaml'
+      "422":
+        description: Неверный запрос 

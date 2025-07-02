@@ -1,0 +1,82 @@
+type: object
+properties:
+  id:
+    type: integer
+  organization_id:
+    type: integer
+  project:
+    $ref: './Project.yaml'
+  contract:
+    type: object
+    nullable: true
+    properties:
+      id:
+        type: integer
+      number:
+        type: string
+      date:
+        type: string
+        format: date
+      total_amount:
+        type: number
+        format: float
+      status:
+        type: string
+      status_label:
+        type: string
+  work_type:
+    type: object
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+      category:
+        type: string
+        nullable: true
+      isActive:
+        type: boolean
+      measurementUnit:
+        type: object
+        nullable: true
+        properties:
+          id:
+            type: integer
+          name:
+            type: string
+          code:
+            type: string
+  user:
+    $ref: './UserSimple.yaml'
+  quantity:
+    type: number
+    format: float
+  price:
+    type: number
+    format: float
+    nullable: true
+  total_amount:
+    type: number
+    format: float
+    nullable: true
+  completion_date:
+    type: string
+    format: date
+  notes:
+    type: string
+    nullable: true
+  status:
+    type: string
+  additional_info:
+    type: object
+    nullable: true
+  materials:
+    type: array
+    items:
+      $ref: './CompletedWorkMaterial.yaml'
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time 
