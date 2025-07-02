@@ -17,13 +17,25 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DEPLOY}}
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: 'npm'
+
+      - name: Install NPM deps & build docs
+        run: |
+          npm ci --silent
+          npm run docs:build
+
+      - name: Copy docs to server
+        run: |
+          scp -o StrictHostKeyChecking=no -r public/docs root@89.111.153.146:/var/www/prohelper/public/
+
       - name: Deploy via SSH
         run: |
           ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
             cd /var/www/prohelper && \
             git pull origin main && \
             composer install --no-interaction --prefer-dist --optimize-autoloader && \
-            (command -v npm >/dev/null 2>&1 || curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && apt-get install -y nodejs) && \
-            npm ci --silent && \
-            npm run docs:build && \
             php artisan migrate --force" 
