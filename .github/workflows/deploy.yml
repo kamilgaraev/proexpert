@@ -38,4 +38,7 @@ jobs:
             cd /var/www/prohelper && \
             git pull origin main && \
             composer install --no-interaction --prefer-dist --optimize-autoloader && \
-            php artisan migrate --force" 
+            php artisan migrate --force && \
+            php artisan route:cache && \
+            php artisan config:cache && \
+            php artisan view:cache" 
