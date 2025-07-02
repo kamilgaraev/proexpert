@@ -41,7 +41,7 @@
                     data:
                       $ref: '../components/schemas/UserSimple.yaml'
       "401":
-        $ref: '#/components/responses/UnauthorizedError'
+        $ref: '../components/responses/UnauthorizedError.yaml'
 
 /auth/refresh:
   post:
@@ -65,7 +65,7 @@
                         token:
                           type: string
       "401":
-        $ref: '#/components/responses/UnauthorizedError'
+        $ref: '../components/responses/UnauthorizedError.yaml'
 
 /auth/logout:
   post:
@@ -81,4 +81,4 @@
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
       "401":
-        $ref: '#/components/responses/UnauthorizedError' 
+        $ref: '../components/responses/UnauthorizedError.yaml' 
