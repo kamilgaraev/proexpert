@@ -1,0 +1,59 @@
+type: object
+required:
+  - contractor_id
+  - number
+  - date
+  - type
+  - total_amount
+  - status
+properties:
+  project_id:
+    type: integer
+    nullable: true
+  contractor_id:
+    type: integer
+  parent_contract_id:
+    type: integer
+    nullable: true
+  number:
+    type: string
+    maxLength: 255
+  date:
+    type: string
+    format: date
+  type:
+    type: string
+  subject:
+    type: string
+    nullable: true
+  work_type_category:
+    type: string
+    nullable: true
+  payment_terms:
+    type: string
+    nullable: true
+  total_amount:
+    type: number
+    format: float
+    minimum: 0
+  gp_percentage:
+    type: number
+    format: float
+    nullable: true
+  planned_advance_amount:
+    type: number
+    format: float
+    nullable: true
+  status:
+    type: string
+  start_date:
+    type: string
+    format: date
+    nullable: true
+  end_date:
+    type: string
+    format: date
+    nullable: true
+  notes:
+    type: string
+    nullable: true 

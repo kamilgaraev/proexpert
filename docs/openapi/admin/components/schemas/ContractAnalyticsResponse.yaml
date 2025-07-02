@@ -1,0 +1,30 @@
+allOf:
+  - $ref: './ApiResponse.yaml'
+  - type: object
+    properties:
+      data:
+        type: object
+        properties:
+          contract_id:
+            type: integer
+          total_amount:
+            type: number
+            format: float
+          completed_works_amount:
+            type: number
+            format: float
+          remaining_amount:
+            type: number
+            format: float
+          completion_percentage:
+            type: number
+            format: float
+          total_paid_amount:
+            type: number
+            format: float
+          status:
+            type: string
+          is_nearing_limit:
+            type: boolean
+          can_add_work:
+            type: boolean 

@@ -76,4 +76,15 @@
 /act-reports/{id}/download-pdf/{fileId}:
   $ref: './act_reports.yaml#/~1act-reports~1{id}~1download-pdf~1{fileId}'
 /act-reports/{id}/export/excel:
-  $ref: './act_reports.yaml#/~1act-reports~1{id}~1export~1excel' 
+  $ref: './act_reports.yaml#/~1act-reports~1{id}~1export~1excel'
+
+/contracts:
+  $ref: './contracts.yaml#/~1contracts'
+/contracts/{id}:
+  $ref: './contracts.yaml#/~1contracts~1{id}'
+/contracts/{id}/analytics:
+  $ref: './contracts.yaml#/~1contracts~1{id}~1analytics'
+/contracts/{id}/completed-works:
+  $ref: './contracts.yaml#/~1contracts~1{id}~1completed-works'
+/contracts/{id}/full:
+  $ref: './contracts.yaml#/~1contracts~1{id}~1full' 

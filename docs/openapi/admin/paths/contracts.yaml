@@ -1,0 +1,198 @@
+/contracts:
+  get:
+    tags: [Contracts]
+    summary: Получить список контрактов
+    parameters:
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+      - in: query
+        name: contractor_id
+        schema:
+          type: integer
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+      - in: query
+        name: status
+        schema:
+          type: string
+      - in: query
+        name: type
+        schema:
+          type: string
+      - in: query
+        name: number
+        schema:
+          type: string
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+    responses:
+      "200":
+        description: Список контрактов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/Contract.yaml'
+  post:
+    tags: [Contracts]
+    summary: Создать контракт
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ContractCreateRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractResponse.yaml'
+      "422":
+        description: Неверный запрос
+
+/contracts/{id}:
+  get:
+    tags: [Contracts]
+    summary: Получить контракт
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Контракт
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractResponse.yaml'
+  put:
+    tags: [Contracts]
+    summary: Обновить контракт
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ContractCreateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractResponse.yaml'
+      "422":
+        description: Неверный запрос
+  delete:
+    tags: [Contracts]
+    summary: Удалить контракт
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено
+
+/contracts/{id}/analytics:
+  get:
+    tags: [Contracts]
+    summary: Получить аналитику по контракту
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Аналитика
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractAnalyticsResponse.yaml'
+
+/contracts/{id}/completed-works:
+  get:
+    tags: [Contracts]
+    summary: Получить выполненные работы контракта
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Список работ
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/CompletedWork.yaml'
+
+/contracts/{id}/full:
+  get:
+    tags: [Contracts]
+    summary: Получить полную информацию по контракту
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Полная информация
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractResponse.yaml' 
