@@ -1,12 +1,13 @@
-features:
-  openapi:
-    lint:
-      extends:
-        - recommended
-      rules:
-        operation-parameters: off
+lint:
+  extends:
+    - recommended
+  rules:
+    operation-parameters: off
 
 apis:
-  adminApi: docs/openapi/admin/openapi.yaml
-  lkApi: docs/openapi/lk/openapi.yaml
-  mobileApi: docs/openapi/mobile/openapi.yaml 
+  adminApi:
+    root: docs/openapi/admin/openapi.yaml
+  lkApi:
+    root: docs/openapi/lk/openapi.yaml
+  mobileApi:
+    root: docs/openapi/mobile/openapi.yaml 
