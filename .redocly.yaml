@@ -1,13 +1,10 @@
-lint:
-  extends:
-    - recommended
-  rules:
-    operation-parameters: off
+rules:
+  operation-parameters: off
 
 apis:
-  adminApi:
+  admin@v1:
     root: docs/openapi/admin/openapi.yaml
-  lkApi:
+  lk@v1:
     root: docs/openapi/lk/openapi.yaml
-  mobileApi:
+  mobile@v1:
     root: docs/openapi/mobile/openapi.yaml 
