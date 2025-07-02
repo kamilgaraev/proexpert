@@ -1,0 +1,20 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  address:
+    type: string
+  description:
+    type: string
+  start_date:
+    type: string
+    format: date
+  end_date:
+    type: string
+    format: date
+  status:
+    type: string
+  is_archived:
+    type: boolean 

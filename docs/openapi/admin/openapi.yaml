@@ -11,8 +11,8 @@ servers:
     description: "Local development"
 paths:
   $ref: './paths/auth.yaml'
-  catalogs:
-    $ref: './paths/catalogs.yaml'
+  <<: { $ref: './paths/catalogs.yaml' }
+  <<: { $ref: './paths/projects.yaml' }
 
 components:
   securitySchemes:

@@ -1,0 +1,15 @@
+type: object
+required: [name]
+properties:
+  name:
+    type: string
+  address:
+    type: string
+  description:
+    type: string
+  start_date:
+    type: string
+    format: date
+  end_date:
+    type: string
+    format: date 

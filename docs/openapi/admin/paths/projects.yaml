@@ -1,0 +1,86 @@
+/projects:
+  get:
+    tags: [Projects]
+    summary: Получить список проектов
+    responses:
+      "200":
+        description: Список проектов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/Project.yaml'
+  post:
+    tags: [Projects]
+    summary: Создать проект
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ProjectCreateRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ProjectResponse.yaml'
+
+/projects/{id}:
+  get:
+    tags: [Projects]
+    summary: Получить проект
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Проект
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ProjectResponse.yaml'
+  put:
+    tags: [Projects]
+    summary: Обновить проект
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ProjectCreateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ProjectResponse.yaml'
+  delete:
+    tags: [Projects]
+    summary: Удалить проект
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено 

@@ -1,0 +1,5 @@
+allOf:
+  - $ref: './ApiResponse.yaml'
+properties:
+  data:
+    $ref: './Project.yaml' 
