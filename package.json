@@ -8,7 +8,7 @@
         "api-docs:build": "redocly build-docs docs/api/openapi.yaml -o docs/api/index.html",
         "api-docs:serve": "npx http-server docs/api -o -c-1",
         "docs:lint": "redocly lint docs/openapi/**/openapi.yaml",
-        "docs:build": "redocly bundle docs/openapi/admin/openapi.yaml -o public/docs/admin_api.json && redoc-cli build public/docs/admin_api.json -o public/docs/admin_api.html && redocly bundle docs/openapi/lk/openapi.yaml -o public/docs/lk_api.json && redoc-cli build public/docs/lk_api.json -o public/docs/lk_api.html && redocly bundle docs/openapi/mobile/openapi.yaml -o public/docs/mobile_api.json && redoc-cli build public/docs/mobile_api.json -o public/docs/mobile_api.html"
+        "docs:build": "redocly bundle docs/openapi/admin/openapi.yaml -o public/docs/admin_api.json && redoc-cli build public/docs/admin_api.json -o public/docs/admin_api.html && redocly bundle docs/openapi/lk/openapi.yaml -o public/docs/lk_api.json && redoc-cli build public/docs/lk_api.json -o public/docs/lk_api.html && redocly bundle docs/openapi/mobile/openapi.yaml -o public/docs/mobile_api.json && redoc-cli build public/docs/mobile_api.json -o public/docs/mobile_api.html && mkdir -p public/docs/admin public/docs/lk public/docs/mobile && cp public/docs/admin_api.html public/docs/admin/index.html && cp public/docs/lk_api.html public/docs/lk/index.html && cp public/docs/mobile_api.html public/docs/mobile/index.html"
     },
     "devDependencies": {
         "@redocly/cli": "^1.34.2",
