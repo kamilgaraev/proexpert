@@ -28,4 +28,9 @@
 /completed-works/{id}/sync-materials:
   $ref: './completed_works.yaml#/~1completed-works~1{id}~1sync-materials'
 /completed-works/work-type-material-defaults:
-  $ref: './completed_works.yaml#/~1completed-works~1work-type-material-defaults' 
+  $ref: './completed_works.yaml#/~1completed-works~1work-type-material-defaults'
+
+/rate-coefficients:
+  $ref: './rate_coefficients.yaml#/~1rate-coefficients'
+/rate-coefficients/{id}:
+  $ref: './rate_coefficients.yaml#/~1rate-coefficients~1{id}' 

@@ -1,0 +1,46 @@
+type: object
+required:
+  - name
+  - value
+  - type
+  - applies_to
+  - scope
+properties:
+  name:
+    type: string
+    maxLength: 255
+  code:
+    type: string
+    maxLength: 100
+    nullable: true
+  value:
+    type: number
+    format: float
+    minimum: 0
+  type:
+    type: string
+    enum: [percentage, fixed_addition]
+  applies_to:
+    type: string
+    enum: [material_norms, work_costs, labor_hours, general]
+  scope:
+    type: string
+    enum: [global_org, project, work_type_category, work_type, material_category, material]
+  description:
+    type: string
+    maxLength: 2000
+    nullable: true
+  is_active:
+    type: boolean
+    nullable: true
+  valid_from:
+    type: string
+    format: date
+    nullable: true
+  valid_to:
+    type: string
+    format: date
+    nullable: true
+  conditions:
+    type: object
+    nullable: true 

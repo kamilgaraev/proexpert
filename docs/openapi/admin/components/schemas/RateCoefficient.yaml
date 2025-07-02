@@ -1,0 +1,45 @@
+type: object
+properties:
+  id:
+    type: integer
+  organization_id:
+    type: integer
+  name:
+    type: string
+  code:
+    type: string
+    nullable: true
+  value:
+    type: number
+    format: float
+  type:
+    type: string
+    enum: [percentage, fixed_addition]
+  applies_to:
+    type: string
+    enum: [material_norms, work_costs, labor_hours, general]
+  scope:
+    type: string
+    enum: [global_org, project, work_type_category, work_type, material_category, material]
+  description:
+    type: string
+    nullable: true
+  is_active:
+    type: boolean
+  valid_from:
+    type: string
+    format: date
+    nullable: true
+  valid_to:
+    type: string
+    format: date
+    nullable: true
+  conditions:
+    type: object
+    nullable: true
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time 

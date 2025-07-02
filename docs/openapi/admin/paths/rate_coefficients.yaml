@@ -1,0 +1,139 @@
+/rate-coefficients:
+  get:
+    tags: [RateCoefficients]
+    summary: Получить список коэффициентов
+    parameters:
+      - in: query
+        name: page
+        schema:
+          type: integer
+        description: Номер страницы
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+        description: Количество элементов на страницу
+      - in: query
+        name: name
+        schema:
+          type: string
+        description: Фильтр по названию
+      - in: query
+        name: code
+        schema:
+          type: string
+        description: Фильтр по коду
+      - in: query
+        name: type
+        schema:
+          type: string
+          enum: [percentage, fixed_addition]
+      - in: query
+        name: applies_to
+        schema:
+          type: string
+          enum: [material_norms, work_costs, labor_hours, general]
+      - in: query
+        name: scope
+        schema:
+          type: string
+          enum: [global_org, project, work_type_category, work_type, material_category, material]
+      - in: query
+        name: is_active
+        schema:
+          type: boolean
+      - in: query
+        name: sort_by
+        schema:
+          type: string
+      - in: query
+        name: sort_direction
+        schema:
+          type: string
+          enum: [asc, desc]
+    responses:
+      "200":
+        description: Список коэффициентов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/RateCoefficient.yaml'
+  post:
+    tags: [RateCoefficients]
+    summary: Создать коэффициент
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/RateCoefficientCreateRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/RateCoefficientResponse.yaml'
+      "422":
+        description: Неверный запрос
+
+/rate-coefficients/{id}:
+  get:
+    tags: [RateCoefficients]
+    summary: Получить коэффициент
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Коэффициент
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/RateCoefficientResponse.yaml'
+  put:
+    tags: [RateCoefficients]
+    summary: Обновить коэффициент
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/RateCoefficientCreateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/RateCoefficientResponse.yaml'
+      "422":
+        description: Неверный запрос
+  delete:
+    tags: [RateCoefficients]
+    summary: Удалить коэффициент
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено 
