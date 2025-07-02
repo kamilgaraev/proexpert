@@ -1,0 +1,118 @@
+/contractors:
+  get:
+    tags: [Contractors]
+    summary: Получить список подрядчиков
+    parameters:
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+      - in: query
+        name: name
+        schema:
+          type: string
+        description: Фильтр по имени
+      - in: query
+        name: inn
+        schema:
+          type: string
+        description: Фильтр по ИНН
+      - in: query
+        name: sort_by
+        schema:
+          type: string
+      - in: query
+        name: sort_direction
+        schema:
+          type: string
+          enum: [asc, desc]
+    responses:
+      "200":
+        description: Список подрядчиков
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/Contractor.yaml'
+  post:
+    tags: [Contractors]
+    summary: Создать подрядчика
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ContractorCreateRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractorResponse.yaml'
+      "422":
+        description: Неверный запрос
+
+/contractors/{id}:
+  get:
+    tags: [Contractors]
+    summary: Получить подрядчика
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Подрядчик
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractorResponse.yaml'
+  put:
+    tags: [Contractors]
+    summary: Обновить подрядчика
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ContractorCreateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractorResponse.yaml'
+      "422":
+        description: Неверный запрос
+  delete:
+    tags: [Contractors]
+    summary: Удалить подрядчика
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено 

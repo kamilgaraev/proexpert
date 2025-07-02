@@ -33,4 +33,9 @@
 /rate-coefficients:
   $ref: './rate_coefficients.yaml#/~1rate-coefficients'
 /rate-coefficients/{id}:
-  $ref: './rate_coefficients.yaml#/~1rate-coefficients~1{id}' 
+  $ref: './rate_coefficients.yaml#/~1rate-coefficients~1{id}'
+
+/contractors:
+  $ref: './contractors.yaml#/~1contractors'
+/contractors/{id}:
+  $ref: './contractors.yaml#/~1contractors~1{id}' 

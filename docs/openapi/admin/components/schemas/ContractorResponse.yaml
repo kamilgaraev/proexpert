@@ -1,0 +1,6 @@
+allOf:
+  - $ref: './ApiResponse.yaml'
+  - type: object
+    properties:
+      data:
+        $ref: './Contractor.yaml' 
