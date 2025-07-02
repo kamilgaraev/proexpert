@@ -10,10 +10,7 @@ servers:
   - url: "http://localhost:8000/api/v1/admin"
     description: "Local development"
 paths:
-  <<:
-    - $ref: './paths/auth.yaml'
-    - $ref: './paths/catalogs.yaml'
-    - $ref: './paths/projects.yaml'
+  $ref: './paths/index.yaml'
 
 components:
   securitySchemes:
