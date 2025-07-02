@@ -271,6 +271,6 @@ Route::prefix('superadmin')->name('superadmin.')->group(function () {
                 Route::post('{slug}/add-child', [MultiOrganizationController::class, 'addChildOrganization'])->name('addChild');
             });
         });
-    });
+});
 
 }); // Закрываем группу v1

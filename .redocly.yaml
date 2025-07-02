@@ -1,0 +1,19 @@
+lint:
+  extends:
+    - recommended
+rules:
+  operation-parameters: off
+
+apis:
+  adminApi:
+    root: docs/openapi/admin/openapi.yaml
+  lkApi:
+    root: docs/openapi/lk/openapi.yaml
+  mobileApi:
+    root: docs/openapi/mobile/openapi.yaml
+
+output:
+  # Команда `redocly build-docs` или `bundle` будет брать каждую API и класть в соответствующий каталог
+  admin: public/docs/admin_api.html
+  lk: public/docs/lk_api.html
+  mobile: public/docs/mobile_api.html 

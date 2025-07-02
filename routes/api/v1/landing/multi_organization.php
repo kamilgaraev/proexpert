@@ -80,4 +80,16 @@ Route::middleware(['auth:api_landing', 'auth.jwt', 'organization.context', 'modu
                 Route::put('/holding-settings', [MultiOrganizationController::class, 'updateHoldingSettings'])
                     ->name('updateHoldingSettings');
             });
+
+        // Сводные отчёты по холдингу
+        Route::prefix('reports')->name('reports.')->group(function () {
+            Route::get('/contracts', [MultiOrganizationController::class, 'getHoldingContracts'])
+                ->name('contracts');
+            Route::get('/contracts/summary', [MultiOrganizationController::class, 'getHoldingContractsSummary'])
+                ->name('contractsSummary');
+            Route::get('/acts', [MultiOrganizationController::class, 'getHoldingActs'])
+                ->name('acts');
+            Route::get('/movements', [MultiOrganizationController::class, 'getHoldingMovements'])
+                ->name('movements');
+        });
     }); 

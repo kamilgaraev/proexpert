@@ -27,3 +27,13 @@ Route::get('/simple-test', function () {
 
 Route::get('/metrics', [App\Http\Controllers\MetricsController::class, 'metrics']);
 Route::get('/test-metrics', [App\Http\Controllers\MetricsController::class, 'test']);
+
+Route::get('/docs/{type?}', function (string $type = 'lk') {
+    $allowed = ['lk', 'admin', 'mobile'];
+    $type = in_array($type, $allowed) ? $type : 'lk';
+    $path = public_path("docs/{$type}_api.html");
+    if (!file_exists($path)) {
+        abort(404, 'Документация не найдена');
+    }
+    return response()->file($path);
+});

@@ -1,0 +1,17 @@
+openapi: 3.1.0
+info:
+  title: "ProHelper Admin API"
+  description: |
+    Базовая спецификация Admin API. Добавляйте пути через `$ref` в папку `paths/`.
+  version: "1.0.0"
+servers:
+  - url: "/api/v1/admin"
+    description: "Production server"
+  - url: "http://localhost:8000/api/v1/admin"
+    description: "Local development"
+paths: {}
+components:
+  schemas: {}
+  parameters: {}
+  responses: {}
+  securitySchemes: {} 

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Services\Landing\MultiOrganizationService;
 use App\Services\Landing\OrganizationModuleService;
 use App\Services\Landing\ChildOrganizationUserService;
+use App\Services\Landing\HoldingReportService;
 use App\Models\OrganizationGroup;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -17,15 +18,18 @@ class MultiOrganizationController extends Controller
     protected MultiOrganizationService $multiOrgService;
     protected OrganizationModuleService $moduleService;
     protected ChildOrganizationUserService $childUserService;
+    protected HoldingReportService $holdingReportService;
 
     public function __construct(
         MultiOrganizationService $multiOrgService,
         OrganizationModuleService $moduleService,
-        ChildOrganizationUserService $childUserService
+        ChildOrganizationUserService $childUserService,
+        HoldingReportService $holdingReportService
     ) {
         $this->multiOrgService = $multiOrgService;
         $this->moduleService = $moduleService;
         $this->childUserService = $childUserService;
+        $this->holdingReportService = $holdingReportService;
     }
 
     public function checkAvailability(Request $request): JsonResponse
@@ -545,6 +549,74 @@ class MultiOrganizationController extends Controller
         } catch (\Exception $e) {
             return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
         }
+    }
+
+    public function getHoldingContracts(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        $orgIds = $this->multiOrgService->getAccessibleOrganizations($user)->pluck('id')->all();
+
+        $contracts = $this->holdingReportService->getConsolidatedContracts($orgIds, [
+            'date_from' => $request->input('date_from'),
+            'date_to' => $request->input('date_to'),
+            'status' => $request->input('status'),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => \App\Http\Resources\Api\V1\Landing\Report\ConsolidatedContractResource::collection($contracts),
+        ]);
+    }
+
+    public function getHoldingContractsSummary(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        $orgIds = $this->multiOrgService->getAccessibleOrganizations($user)->pluck('id')->all();
+
+        $summary = $this->holdingReportService->getContractsSummary($orgIds, [
+            'date_from' => $request->input('date_from'),
+            'date_to' => $request->input('date_to'),
+            'status' => $request->input('status'),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $summary,
+        ]);
+    }
+
+    public function getHoldingActs(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        $orgIds = $this->multiOrgService->getAccessibleOrganizations($user)->pluck('id')->all();
+
+        $acts = $this->holdingReportService->getConsolidatedActs($orgIds, [
+            'date_from' => $request->input('date_from'),
+            'date_to' => $request->input('date_to'),
+            'is_approved' => $request->input('is_approved'),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => \App\Http\Resources\Api\V1\Landing\Report\ConsolidatedActResource::collection($acts),
+        ]);
+    }
+
+    public function getHoldingMovements(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        $orgIds = $this->multiOrgService->getAccessibleOrganizations($user)->pluck('id')->all();
+
+        $movements = $this->holdingReportService->getMoneyMovements($orgIds, [
+            'date_from' => $request->input('date_from'),
+            'date_to' => $request->input('date_to'),
+            'type' => $request->input('type'),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => \App\Http\Resources\Billing\BalanceTransactionResource::collection($movements),
+        ]);
     }
 
     private function getPermissionsGroups(): array

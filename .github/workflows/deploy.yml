@@ -19,4 +19,11 @@ jobs:
 
       - name: Deploy via SSH
         run: |
-          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "cd /var/www/prohelper && git pull origin main && composer install --no-interaction --prefer-dist --optimize-autoloader && php artisan migrate --force" 
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            git pull origin main && \
+            composer install --no-interaction --prefer-dist --optimize-autoloader && \
+            (command -v npm >/dev/null 2>&1 || curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && apt-get install -y nodejs) && \
+            npm ci --silent && \
+            npm run docs:build && \
+            php artisan migrate --force" 
