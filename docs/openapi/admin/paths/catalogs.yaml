@@ -1,0 +1,116 @@
+/materials:
+  get:
+    tags: [Catalogs]
+    summary: Получить список материалов
+    responses:
+      "200":
+        description: Список материалов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/Material.yaml'
+  post:
+    tags: [Catalogs]
+    summary: Создать материал
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/MaterialCreateRequest.yaml'
+    responses:
+      "201":
+        description: Материал создан
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/MaterialResponse.yaml'
+
+/materials/{id}:
+  get:
+    tags: [Catalogs]
+    summary: Получить материал по ID
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Материал
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/MaterialResponse.yaml'
+  put:
+    tags: [Catalogs]
+    summary: Обновить материал
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/MaterialCreateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/MaterialResponse.yaml'
+  delete:
+    tags: [Catalogs]
+    summary: Удалить материал
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено
+
+/materials/import:
+  post:
+    tags: [Catalogs]
+    summary: Импортировать материалы из файла CSV/XLSX
+    requestBody:
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              file:
+                type: string
+                format: binary
+    responses:
+      "200":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+
+/materials/import-template:
+  get:
+    tags: [Catalogs]
+    summary: Скачать шаблон импорта материалов
+    responses:
+      "200":
+        description: Файл шаблона
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary 

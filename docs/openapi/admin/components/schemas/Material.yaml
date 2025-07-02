@@ -1,0 +1,13 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  code:
+    type: string
+  unit:
+    type: string
+  price:
+    type: number
+    format: float 
