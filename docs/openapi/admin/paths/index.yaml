@@ -1,4 +1,22 @@
-<<:
-  - $ref: './auth.yaml#/'
-  - $ref: './catalogs.yaml#/'
-  - $ref: './projects.yaml#/' 
+/auth/login:
+  $ref: './auth.yaml#/~1auth~1login'
+/auth/me:
+  $ref: './auth.yaml#/~1auth~1me'
+/auth/refresh:
+  $ref: './auth.yaml#/~1auth~1refresh'
+/auth/logout:
+  $ref: './auth.yaml#/~1auth~1logout'
+
+/materials:
+  $ref: './catalogs.yaml#/~1materials'
+/materials/{id}:
+  $ref: './catalogs.yaml#/~1materials~1{id}'
+/materials/import:
+  $ref: './catalogs.yaml#/~1materials~1import'
+/materials/import-template:
+  $ref: './catalogs.yaml#/~1materials~1import-template'
+
+/projects:
+  $ref: './projects.yaml#/~1projects'
+/projects/{id}:
+  $ref: './projects.yaml#/~1projects~1{id}' 
