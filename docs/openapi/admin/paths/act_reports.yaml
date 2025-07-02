@@ -1,0 +1,278 @@
+/act-reports:
+  get:
+    tags: [ActReports]
+    summary: Получить список актов
+    parameters:
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+      - in: query
+        name: contract_id
+        schema:
+          type: integer
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+      - in: query
+        name: contractor_id
+        schema:
+          type: integer
+      - in: query
+        name: is_approved
+        schema:
+          type: boolean
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: search
+        schema:
+          type: string
+    responses:
+      "200":
+        description: Список актов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/PerformanceAct.yaml'
+  post:
+    tags: [ActReports]
+    summary: Создать акт
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/PerformanceActCreateRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/PerformanceActResponse.yaml'
+      "422":
+        description: Неверный запрос
+
+/act-reports/contracts:
+  get:
+    tags: [ActReports]
+    summary: Получить контракты для актов
+    responses:
+      "200":
+        description: Список контрактов
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  contract_number:
+                    type: string
+                  project_name:
+                    type: string
+                  contractor_name:
+                    type: string
+                  contract_date:
+                    type: string
+                  start_date:
+                    type: string
+                  end_date:
+                    type: string
+
+/act-reports/bulk-export/excel:
+  post:
+    tags: [ActReports]
+    summary: Массовый экспорт актов в Excel
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              act_ids:
+                type: array
+                items:
+                  type: integer
+    responses:
+      "200":
+        description: Файл Excel
+        content:
+          application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+            schema:
+              type: string
+              format: binary
+
+/act-reports/{id}:
+  get:
+    tags: [ActReports]
+    summary: Получить акт
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Акт
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/PerformanceActResponse.yaml'
+  put:
+    tags: [ActReports]
+    summary: Обновить акт
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/PerformanceActUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/PerformanceActResponse.yaml'
+      "422":
+        description: Неверный запрос
+
+/act-reports/{id}/available-works:
+  get:
+    tags: [ActReports]
+    summary: Получить доступные работы для акта
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Список работ
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../components/schemas/CompletedWork.yaml'
+
+/act-reports/{id}/works:
+  put:
+    tags: [ActReports]
+    summary: Обновить состав работ акта
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/PerformanceActUpdateWorksRequest.yaml'
+    responses:
+      "200":
+        description: Обновленный акт
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/PerformanceActResponse.yaml'
+      "422":
+        description: Неверный запрос
+
+/act-reports/{id}/export/pdf:
+  get:
+    tags: [ActReports]
+    summary: Экспорт акта в PDF
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: PDF файл
+        content:
+          application/pdf:
+            schema:
+              type: string
+              format: binary
+
+/act-reports/{id}/download-pdf/{fileId}:
+  get:
+    tags: [ActReports]
+    summary: Скачать PDF акта
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - in: path
+        name: fileId
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: PDF файл
+        content:
+          application/pdf:
+            schema:
+              type: string
+              format: binary
+
+/act-reports/{id}/export/excel:
+  get:
+    tags: [ActReports]
+    summary: Экспорт акта в Excel
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Файл Excel
+        content:
+          application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+            schema:
+              type: string
+              format: binary 

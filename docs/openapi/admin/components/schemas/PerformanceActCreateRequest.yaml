@@ -1,0 +1,22 @@
+type: object
+required:
+  - contract_id
+  - act_document_number
+  - act_date
+properties:
+  contract_id:
+    type: integer
+  act_document_number:
+    type: string
+    maxLength: 255
+  act_date:
+    type: string
+    format: date
+  description:
+    type: string
+    nullable: true
+  work_ids:
+    type: array
+    items:
+      type: integer
+    nullable: true 

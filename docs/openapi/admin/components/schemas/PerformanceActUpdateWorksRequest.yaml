@@ -1,0 +1,8 @@
+type: object
+required:
+  - work_ids
+properties:
+  work_ids:
+    type: array
+    items:
+      type: integer 

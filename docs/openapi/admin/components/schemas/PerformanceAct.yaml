@@ -1,0 +1,41 @@
+type: object
+properties:
+  id:
+    type: integer
+  contract_id:
+    type: integer
+  act_document_number:
+    type: string
+  act_date:
+    type: string
+    format: date
+  description:
+    type: string
+    nullable: true
+  amount:
+    type: number
+    format: float
+  is_approved:
+    type: boolean
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time
+  contract:
+    type: object
+    description: Краткая информация о контракте
+    properties:
+      id:
+        type: integer
+      contract_number:
+        type: string
+      project_name:
+        type: string
+      contractor_name:
+        type: string
+  completed_works:
+    type: array
+    items:
+      $ref: './CompletedWork.yaml' 

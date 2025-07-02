@@ -1,0 +1,13 @@
+type: object
+properties:
+  act_document_number:
+    type: string
+    maxLength: 255
+  act_date:
+    type: string
+    format: date
+  description:
+    type: string
+    nullable: true
+  is_approved:
+    type: boolean 
