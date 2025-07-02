@@ -1,0 +1,10 @@
+type: object
+properties:
+  material_id:
+    type: integer
+  default_quantity:
+    type: number
+    format: float
+  notes:
+    type: string
+    nullable: true 

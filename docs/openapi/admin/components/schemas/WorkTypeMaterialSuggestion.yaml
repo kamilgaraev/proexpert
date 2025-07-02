@@ -1,0 +1,12 @@
+type: object
+properties:
+  material_id:
+    type: integer
+  material_name:
+    type: string
+  suggested_quantity:
+    type: number
+    format: float
+  measurement_unit:
+    type: string
+    nullable: true 

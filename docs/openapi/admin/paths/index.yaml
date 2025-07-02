@@ -50,4 +50,11 @@
 /advance-transactions/available-users:
   $ref: './advance_transactions.yaml#/~1advance-transactions~1available-users'
 /advance-transactions/available-projects:
-  $ref: './advance_transactions.yaml#/~1advance-transactions~1available-projects' 
+  $ref: './advance_transactions.yaml#/~1advance-transactions~1available-projects'
+
+/work-types/{work_type}/materials:
+  $ref: './work_type_materials.yaml#/~1work-types~1{work_type}~1materials'
+/work-types/{work_type}/materials/{material_id}:
+  $ref: './work_type_materials.yaml#/~1work-types~1{work_type}~1materials~1{material_id}'
+/work-types/{work_type}/suggest-materials:
+  $ref: './work_type_materials.yaml#/~1work-types~1{work_type}~1suggest-materials' 

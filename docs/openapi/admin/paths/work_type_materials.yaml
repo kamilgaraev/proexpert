@@ -1,0 +1,93 @@
+/work-types/{work_type}/materials:
+  get:
+    tags: [WorkTypeMaterials]
+    summary: Получить материалы вида работ
+    parameters:
+      - in: path
+        name: work_type
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Список материалов
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../components/schemas/Material.yaml'
+  post:
+    tags: [WorkTypeMaterials]
+    summary: Синхронизировать материалы вида работ
+    parameters:
+      - in: path
+        name: work_type
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/WorkTypeMaterialSyncRequest.yaml'
+    responses:
+      "200":
+        description: Обновленный список материалов
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../components/schemas/Material.yaml'
+      "422":
+        description: Неверный запрос
+
+/work-types/{work_type}/materials/{material_id}:
+  delete:
+    tags: [WorkTypeMaterials]
+    summary: Удалить материал из вида работ
+    parameters:
+      - in: path
+        name: work_type
+        required: true
+        schema:
+          type: integer
+      - in: path
+        name: material_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено
+
+/work-types/{work_type}/suggest-materials:
+  get:
+    tags: [WorkTypeMaterials]
+    summary: Получить предложенные материалы для объема
+    parameters:
+      - in: path
+        name: work_type
+        required: true
+        schema:
+          type: integer
+      - in: query
+        name: quantity
+        required: true
+        schema:
+          type: number
+          format: float
+        description: Объем работ
+    responses:
+      "200":
+        description: Список предложенных материалов
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../components/schemas/WorkTypeMaterialSuggestion.yaml'
+      "422":
+        description: Неверный запрос 
