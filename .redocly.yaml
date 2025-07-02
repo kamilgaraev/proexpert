@@ -1,5 +1,5 @@
 rules:
-  operation-parameters: off
+  rule/operation-parameters: off
 
 apis:
   admin@v1:
