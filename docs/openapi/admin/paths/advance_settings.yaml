@@ -1,0 +1,29 @@
+/advance-settings:
+  get:
+    tags: [AdvanceSettings]
+    summary: Получить текущие настройки подотчетных средств
+    responses:
+      "200":
+        description: Настройки
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceAccountSettingResponse.yaml'
+  post:
+    tags: [AdvanceSettings]
+    summary: Создать или обновить настройки подотчетных средств
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/AdvanceAccountSettingRequest.yaml'
+    responses:
+      "200":
+        description: Настройки обновлены
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceAccountSettingResponse.yaml'
+      "422":
+        description: Неверный запрос 

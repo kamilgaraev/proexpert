@@ -1,0 +1,30 @@
+type: object
+properties:
+  max_single_issue_amount:
+    type: number
+    format: float
+    nullable: true
+  report_submission_deadline_days:
+    type: integer
+    nullable: true
+  dual_authorization_threshold:
+    type: number
+    format: float
+    nullable: true
+  require_project_for_expense:
+    type: boolean
+  notify_admin_on_overdue_report:
+    type: boolean
+  notify_admin_on_high_value_transaction:
+    type: boolean
+  high_value_notification_threshold:
+    type: number
+    format: float
+    nullable: true
+  notify_user_on_transaction_approval:
+    type: boolean
+  notify_user_on_transaction_rejection:
+    type: boolean
+  send_report_reminder_days_before:
+    type: integer
+    nullable: true 

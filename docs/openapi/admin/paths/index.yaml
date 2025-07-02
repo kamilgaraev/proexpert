@@ -38,4 +38,7 @@
 /contractors:
   $ref: './contractors.yaml#/~1contractors'
 /contractors/{id}:
-  $ref: './contractors.yaml#/~1contractors~1{id}' 
+  $ref: './contractors.yaml#/~1contractors~1{id}'
+
+/advance-settings:
+  $ref: './advance_settings.yaml#/~1advance-settings' 
