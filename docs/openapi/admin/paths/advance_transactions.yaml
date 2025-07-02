@@ -1,0 +1,284 @@
+/advance-transactions/available-users:
+  get:
+    tags: [AdvanceTransactions]
+    summary: Получить пользователей для транзакций
+    parameters:
+      - in: query
+        name: search
+        schema:
+          type: string
+        description: Поиск по имени
+    responses:
+      "200":
+        description: Список пользователей
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/UserSimple.yaml'
+
+/advance-transactions/available-projects:
+  get:
+    tags: [AdvanceTransactions]
+    summary: Получить проекты для транзакций
+    parameters:
+      - in: query
+        name: user_id
+        schema:
+          type: integer
+        description: Фильтрация по пользователю
+      - in: query
+        name: search
+        schema:
+          type: string
+    responses:
+      "200":
+        description: Список проектов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/Project.yaml'
+
+/advance-transactions:
+  get:
+    tags: [AdvanceTransactions]
+    summary: Получить список транзакций
+    parameters:
+      - in: query
+        name: page
+        schema:
+          type: integer
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+      - in: query
+        name: user_id
+        schema:
+          type: integer
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+      - in: query
+        name: type
+        schema:
+          type: string
+          enum: [issue, expense, return]
+      - in: query
+        name: reporting_status
+        schema:
+          type: string
+          enum: [pending, reported, approved]
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+    responses:
+      "200":
+        description: Список транзакций
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/AdvanceTransaction.yaml'
+  post:
+    tags: [AdvanceTransactions]
+    summary: Создать транзакцию
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/AdvanceTransactionCreateRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+      "422":
+        description: Неверный запрос
+
+/advance-transactions/{id}:
+  get:
+    tags: [AdvanceTransactions]
+    summary: Получить транзакцию
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Транзакция
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+  put:
+    tags: [AdvanceTransactions]
+    summary: Обновить транзакцию
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/AdvanceTransactionUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+      "422":
+        description: Неверный запрос
+  delete:
+    tags: [AdvanceTransactions]
+    summary: Удалить транзакцию
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено
+
+/advance-transactions/{id}/report:
+  post:
+    tags: [AdvanceTransactions]
+    summary: Отчитаться по транзакции
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/AdvanceTransactionReportRequest.yaml'
+    responses:
+      "200":
+        description: Транзакция отмечена как отчитанная
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+      "422":
+        description: Неверный запрос
+
+/advance-transactions/{id}/approve:
+  post:
+    tags: [AdvanceTransactions]
+    summary: Утвердить транзакцию
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/AdvanceTransactionApprovalRequest.yaml'
+    responses:
+      "200":
+        description: Транзакция утверждена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+
+/advance-transactions/{id}/attachments:
+  post:
+    tags: [AdvanceTransactions]
+    summary: Прикрепить файлы к транзакции
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              files:
+                type: array
+                items:
+                  type: string
+                  format: binary
+    responses:
+      "200":
+        description: Файлы прикреплены
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+
+/advance-transactions/{id}/attachments/{fileId}:
+  delete:
+    tags: [AdvanceTransactions]
+    summary: Удалить файл транзакции
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+      - in: path
+        name: fileId
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Файл удален
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceTransactionResponse.yaml' 

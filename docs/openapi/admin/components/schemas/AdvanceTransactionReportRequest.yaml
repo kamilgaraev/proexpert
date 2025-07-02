@@ -1,0 +1,21 @@
+type: object
+required:
+  - description
+  - document_number
+  - document_date
+properties:
+  description:
+    type: string
+    maxLength: 255
+  document_number:
+    type: string
+    maxLength: 100
+  document_date:
+    type: string
+    format: date
+  files:
+    type: array
+    items:
+      type: string
+      format: binary
+    nullable: true 

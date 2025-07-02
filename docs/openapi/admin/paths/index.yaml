@@ -41,4 +41,13 @@
   $ref: './contractors.yaml#/~1contractors~1{id}'
 
 /advance-settings:
-  $ref: './advance_settings.yaml#/~1advance-settings' 
+  $ref: './advance_settings.yaml#/~1advance-settings'
+
+/advance-transactions:
+  $ref: './advance_transactions.yaml#/~1advance-transactions'
+/advance-transactions/{id}:
+  $ref: './advance_transactions.yaml#/~1advance-transactions~1{id}'
+/advance-transactions/available-users:
+  $ref: './advance_transactions.yaml#/~1advance-transactions~1available-users'
+/advance-transactions/available-projects:
+  $ref: './advance_transactions.yaml#/~1advance-transactions~1available-projects' 

@@ -1,0 +1,5 @@
+type: object
+properties:
+  accounting_data:
+    type: object
+    nullable: true 

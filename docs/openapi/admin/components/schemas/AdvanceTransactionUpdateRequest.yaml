@@ -1,0 +1,21 @@
+type: object
+properties:
+  description:
+    type: string
+    maxLength: 255
+    nullable: true
+  document_number:
+    type: string
+    maxLength: 100
+    nullable: true
+  document_date:
+    type: string
+    format: date
+    nullable: true
+  external_code:
+    type: string
+    maxLength: 100
+    nullable: true
+  accounting_data:
+    type: object
+    nullable: true 
