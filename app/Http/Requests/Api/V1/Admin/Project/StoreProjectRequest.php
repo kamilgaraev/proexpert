@@ -18,8 +18,6 @@ class StoreProjectRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        // Доступ к контроллеру уже проверен middleware 'can:access-admin-panel'
-        // Дополнительно можно проверить, что пользователь аутентифицирован, если это не гарантируется ранее
         return Auth::check(); 
     }
 

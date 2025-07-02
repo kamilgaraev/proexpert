@@ -1,15 +1,54 @@
 type: object
-required: [name]
+required:
+  - name
+  - status
 properties:
   name:
     type: string
+    maxLength: 255
   address:
     type: string
+    maxLength: 1000
+    nullable: true
   description:
     type: string
+    maxLength: 2000
+    nullable: true
+  customer:
+    type: string
+    maxLength: 255
+    nullable: true
+  designer:
+    type: string
+    maxLength: 255
+    nullable: true
   start_date:
     type: string
     format: date
+    nullable: true
   end_date:
     type: string
-    format: date 
+    format: date
+    nullable: true
+  status:
+    type: string
+    enum: [active, completed, paused, cancelled]
+  is_archived:
+    type: boolean
+    nullable: true
+  additional_info:
+    type: object
+    nullable: true
+  external_code:
+    type: string
+    maxLength: 100
+    nullable: true
+  cost_category_id:
+    type: integer
+    nullable: true
+  accounting_data:
+    type: object
+    nullable: true
+  use_in_accounting_reports:
+    type: boolean
+    nullable: true 

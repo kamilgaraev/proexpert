@@ -32,6 +32,8 @@
           application/json:
             schema:
               $ref: '../components/schemas/MaterialResponse.yaml'
+      "422":
+        description: Неверный запрос
 
 /materials/{id}:
   get:
@@ -72,6 +74,8 @@
           application/json:
             schema:
               $ref: '../components/schemas/MaterialResponse.yaml'
+      "422":
+        description: Неверный запрос
   delete:
     tags: [Catalogs]
     summary: Удалить материал

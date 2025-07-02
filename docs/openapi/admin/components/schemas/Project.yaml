@@ -2,19 +2,52 @@ type: object
 properties:
   id:
     type: integer
+  organization_id:
+    type: integer
   name:
     type: string
   address:
     type: string
+    nullable: true
   description:
     type: string
+    nullable: true
+  customer:
+    type: string
+    nullable: true
+  designer:
+    type: string
+    nullable: true
   start_date:
     type: string
     format: date
+    nullable: true
   end_date:
     type: string
     format: date
+    nullable: true
   status:
     type: string
+    enum: [active, completed, paused, cancelled]
   is_archived:
-    type: boolean 
+    type: boolean
+  additional_info:
+    type: object
+    nullable: true
+  external_code:
+    type: string
+    nullable: true
+  cost_category_id:
+    type: integer
+    nullable: true
+  accounting_data:
+    type: object
+    nullable: true
+  use_in_accounting_reports:
+    type: boolean
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time 

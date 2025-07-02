@@ -1,12 +1,61 @@
 type: object
-required: [name, unit]
+required:
+  - name
+  - measurement_unit_id
 properties:
   name:
     type: string
+    maxLength: 255
   code:
     type: string
-  unit:
+    maxLength: 50
+    nullable: true
+  measurement_unit_id:
+    type: integer
+  description:
     type: string
-  price:
+    maxLength: 1000
+    nullable: true
+  category:
+    type: string
+    maxLength: 100
+    nullable: true
+  default_price:
     type: number
-    format: float 
+    format: float
+    minimum: 0
+    nullable: true
+  additional_properties:
+    type: object
+    nullable: true
+  is_active:
+    type: boolean
+    nullable: true
+  external_code:
+    type: string
+    maxLength: 100
+    nullable: true
+  sbis_nomenclature_code:
+    type: string
+    maxLength: 100
+    nullable: true
+  sbis_unit_code:
+    type: string
+    maxLength: 100
+    nullable: true
+  consumption_rates:
+    type: array
+    items:
+      type: number
+      minimum: 0
+    nullable: true
+  accounting_data:
+    type: object
+    nullable: true
+  use_in_accounting_reports:
+    type: boolean
+    nullable: true
+  accounting_account:
+    type: string
+    maxLength: 50
+    nullable: true 

@@ -2,12 +2,55 @@ type: object
 properties:
   id:
     type: integer
+  organization_id:
+    type: integer
   name:
     type: string
   code:
     type: string
-  unit:
+    nullable: true
+  measurement_unit_id:
+    type: integer
+  description:
     type: string
-  price:
+    nullable: true
+  category:
+    type: string
+    nullable: true
+  default_price:
     type: number
-    format: float 
+    format: float
+    nullable: true
+  additional_properties:
+    type: object
+    nullable: true
+  is_active:
+    type: boolean
+  external_code:
+    type: string
+    nullable: true
+  sbis_nomenclature_code:
+    type: string
+    nullable: true
+  sbis_unit_code:
+    type: string
+    nullable: true
+  consumption_rates:
+    type: array
+    items:
+      type: number
+    nullable: true
+  accounting_data:
+    type: object
+    nullable: true
+  use_in_accounting_reports:
+    type: boolean
+  accounting_account:
+    type: string
+    nullable: true
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time 
