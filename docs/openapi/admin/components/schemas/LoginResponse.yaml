@@ -1,0 +1,19 @@
+allOf:
+  - $ref: './ApiResponse.yaml'
+properties:
+  data:
+    type: object
+    properties:
+      token:
+        type: string
+      user:
+        $ref: './UserSimple.yaml'
+example:
+  success: true
+  message: 'Вход выполнен успешно'
+  data:
+    token: 'jwt_token_here'
+    user:
+      id: 1
+      name: 'Admin'
+      email: 'admin@example.com' 

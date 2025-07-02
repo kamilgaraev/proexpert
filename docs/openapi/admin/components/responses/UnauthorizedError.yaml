@@ -1,0 +1,5 @@
+description: Не авторизован
+content:
+  application/json:
+    schema:
+      $ref: '../schemas/ErrorResponse.yaml' 

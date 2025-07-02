@@ -1,0 +1,11 @@
+type: object
+properties:
+  success:
+    type: boolean
+    description: Флаг успешности запроса
+  message:
+    type: string
+    description: Сообщение для пользователя
+  data:
+    description: Полезная нагрузка (может быть объектом любого типа или null)
+    nullable: true 

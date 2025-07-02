@@ -9,9 +9,24 @@ servers:
     description: "Production server"
   - url: "http://localhost:8000/api/v1/admin"
     description: "Local development"
-paths: {}
+paths:
+  $ref: './paths/auth.yaml'
+
 components:
-  schemas: {}
+  securitySchemes:
+    $ref: './components/securitySchemes.yaml'
+  schemas:
+    ApiResponse:
+      $ref: './components/schemas/ApiResponse.yaml'
+    ErrorResponse:
+      $ref: './components/schemas/ErrorResponse.yaml'
+    LoginRequest:
+      $ref: './components/schemas/LoginRequest.yaml'
+    LoginResponse:
+      $ref: './components/schemas/LoginResponse.yaml'
+    UserSimple:
+      $ref: './components/schemas/UserSimple.yaml'
   parameters: {}
-  responses: {}
-  securitySchemes: {} 
+  responses:
+    UnauthorizedError:
+      $ref: './components/responses/UnauthorizedError.yaml' 

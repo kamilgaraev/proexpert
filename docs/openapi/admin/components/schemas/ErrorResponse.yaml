@@ -1,0 +1,15 @@
+type: object
+allOf:
+  - $ref: './ApiResponse.yaml'
+properties:
+  success:
+    type: boolean
+    enum: [false]
+  message:
+    type: string
+    example: Ошибка валидации
+  data:
+    nullable: true
+    oneOf:
+      - type: object
+      - type: 'null' 

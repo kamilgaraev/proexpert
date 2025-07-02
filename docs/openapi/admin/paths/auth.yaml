@@ -1,0 +1,84 @@
+/auth/login:
+  post:
+    tags: [Auth]
+    summary: Вход администратора
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/LoginRequest.yaml'
+    responses:
+      "200":
+        description: Успешный вход
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/LoginResponse.yaml'
+      "401":
+        description: Неверные учётные данные
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ErrorResponse.yaml'
+
+/auth/me:
+  get:
+    security:
+      - bearerAuth: []
+    tags: [Auth]
+    summary: Получить профиль текущего администратора
+    responses:
+      "200":
+        description: Данные пользователя
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/UserSimple.yaml'
+      "401":
+        $ref: '#/components/responses/UnauthorizedError'
+
+/auth/refresh:
+  post:
+    security:
+      - bearerAuth: []
+    tags: [Auth]
+    summary: Обновить JWT токен
+    responses:
+      "200":
+        description: Новый токен
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        token:
+                          type: string
+      "401":
+        $ref: '#/components/responses/UnauthorizedError'
+
+/auth/logout:
+  post:
+    security:
+      - bearerAuth: []
+    tags: [Auth]
+    summary: Выход (инвалидация токена)
+    responses:
+      "200":
+        description: Успешный выход
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "401":
+        $ref: '#/components/responses/UnauthorizedError' 
