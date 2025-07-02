@@ -1,4 +1,4 @@
 <<:
-  - $ref: './auth.yaml'
-  - $ref: './catalogs.yaml'
-  - $ref: './projects.yaml' 
+  - $ref: './auth.yaml#/'
+  - $ref: './catalogs.yaml#/'
+  - $ref: './projects.yaml#/' 
