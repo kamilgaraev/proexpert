@@ -5,9 +5,9 @@
 The API is divided into three parts: Mobile, Admin, and Landing.
 OpenAPI 3.0 (Swagger) documentation for each part is available in the project root:
 
-*   `openapi_mobile.yaml`: Documentation for the Mobile App API (for foremen).
-*   `openapi_admin.yaml`: Documentation for the Admin Panel API.
-*   `openapi_landing.yaml`: Documentation for the Landing/Main Application API (registration, user profile, etc.).
+*   https://your-domain/docs/lk
+*   https://your-domain/docs/admin
+*   https://your-domain/docs/mobile.
 
 ### Viewing Documentation
 
