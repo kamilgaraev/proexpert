@@ -21,4 +21,12 @@
 /dadata/suggest/addresses:
   $ref: './organization.yaml#/~1dadata~1suggest~1addresses'
 /dadata/clean/address:
-  $ref: './organization.yaml#/~1dadata~1clean~1address' 
+  $ref: './organization.yaml#/~1dadata~1clean~1address'
+/roles:
+  $ref: './organization_roles.yaml#/~1roles'
+/roles/{roleId}:
+  $ref: './organization_roles.yaml#/~1roles~1{roleId}'
+/roles/permissions/available:
+  $ref: './organization_roles.yaml#/~1roles~1permissions~1available'
+/roles/{roleId}/duplicate:
+  $ref: './organization_roles.yaml#/~1roles~1{roleId}~1duplicate' 

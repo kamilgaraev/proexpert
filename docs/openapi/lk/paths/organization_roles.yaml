@@ -1,0 +1,156 @@
+/roles:
+  get:
+    tags: [OrganizationRoles]
+    summary: Список ролей организации (кастомные + системные)
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Список ролей
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        custom_roles:
+                          type: array
+                          items:
+                            $ref: '../components/schemas/OrganizationRole.yaml'
+                        system_roles:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              slug:
+                                type: string
+                              name:
+                                type: string
+  post:
+    tags: [OrganizationRoles]
+    summary: Создать новую роль
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/StoreOrganizationRoleRequest.yaml'
+    responses:
+      "201":
+        description: Роль создана
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationRole.yaml'
+/roles/{roleId}:
+  parameters:
+    - name: roleId
+      in: path
+      required: true
+      schema:
+        type: integer
+  get:
+    tags: [OrganizationRoles]
+    summary: Получить роль по ID
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Роль
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationRole.yaml'
+  put:
+    tags: [OrganizationRoles]
+    summary: Обновить роль
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/UpdateOrganizationRoleRequest.yaml'
+    responses:
+      "200":
+        description: Роль обновлена
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationRole.yaml'
+  delete:
+    tags: [OrganizationRoles]
+    summary: Удалить роль
+    security:
+      - bearerAuth: []
+    responses:
+      "204":
+        description: Роль удалена
+/roles/permissions/available:
+  get:
+    tags: [OrganizationRoles]
+    summary: Доступные разрешения для ролей
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Список разрешений
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/roles/{roleId}/duplicate:
+  post:
+    tags: [OrganizationRoles]
+    summary: Дублировать роль
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: roleId
+        in: path
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              name:
+                type: string
+    responses:
+      "201":
+        description: Новая роль создана на основе существующей
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationRole.yaml' 

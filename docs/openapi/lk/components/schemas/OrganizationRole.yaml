@@ -1,0 +1,58 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  slug:
+    type: string
+  description:
+    type: string
+    nullable: true
+  color:
+    type: string
+  is_active:
+    type: boolean
+  is_system:
+    type: boolean
+  display_order:
+    type: integer
+  permissions:
+    type: array
+    items:
+      type: string
+  permissions_formatted:
+    type: array
+    items:
+      type: string
+  users_count:
+    type: integer
+    nullable: true
+  users:
+    type: array
+    items:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+        assigned_at:
+          type: string
+          format: date-time
+          nullable: true
+        assigned_by:
+          type: integer
+          nullable: true
+    nullable: true
+  created_at:
+    type: string
+    format: date-time
+    nullable: true
+  updated_at:
+    type: string
+    format: date-time
+    nullable: true
+required: [id, name, slug, color, is_active, is_system] 

@@ -1,0 +1,31 @@
+type: object
+properties:
+  name:
+    type: string
+    minLength: 2
+    maxLength: 100
+  slug:
+    type: string
+    pattern: '^[a-z0-9_-]+$'
+    nullable: true
+  description:
+    type: string
+    maxLength: 500
+    nullable: true
+  permissions:
+    type: array
+    items:
+      type: string
+    nullable: true
+  color:
+    type: string
+    pattern: '^#[0-9A-Fa-f]{6}$'
+    nullable: true
+  is_active:
+    type: boolean
+    nullable: true
+  display_order:
+    type: integer
+    minimum: 0
+    nullable: true
+required: [] 
