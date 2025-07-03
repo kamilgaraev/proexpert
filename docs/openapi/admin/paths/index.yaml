@@ -63,8 +63,6 @@
 
 /advance-transactions:
   $ref: './advance_transactions.yaml#/~1advance-transactions'
-/advance-transactions/{id}:
-  $ref: './advance_transactions.yaml#/~1advance-transactions~1{id}'
 /advance-transactions/available-users:
   $ref: './advance_transactions.yaml#/~1advance-transactions~1available-users'
 /advance-transactions/available-projects:
@@ -88,18 +86,18 @@
   $ref: './act_reports.yaml#/~1act-reports~1contracts'
 /act-reports/bulk-export/excel:
   $ref: './act_reports.yaml#/~1act-reports~1bulk-export~1excel'
-/act-reports/{id}:
-  $ref: './act_reports.yaml#/~1act-reports~1{id}'
-/act-reports/{id}/available-works:
-  $ref: './act_reports.yaml#/~1act-reports~1{id}~1available-works'
-/act-reports/{id}/works:
-  $ref: './act_reports.yaml#/~1act-reports~1{id}~1works'
-/act-reports/{id}/export/pdf:
-  $ref: './act_reports.yaml#/~1act-reports~1{id}~1export~1pdf'
-/act-reports/{id}/download-pdf/{fileId}:
-  $ref: './act_reports.yaml#/~1act-reports~1{id}~1download-pdf~1{fileId}'
-/act-reports/{id}/export/excel:
-  $ref: './act_reports.yaml#/~1act-reports~1{id}~1export~1excel'
+/act-reports/{act}:
+  $ref: './act_reports.yaml#/~1act-reports~1{act}'
+/act-reports/{act}/available-works:
+  $ref: './act_reports.yaml#/~1act-reports~1{act}~1available-works'
+/act-reports/{act}/works:
+  $ref: './act_reports.yaml#/~1act-reports~1{act}~1works'
+/act-reports/{act}/export/pdf:
+  $ref: './act_reports.yaml#/~1act-reports~1{act}~1export~1pdf'
+/act-reports/{act}/download-pdf/{file}:
+  $ref: './act_reports.yaml#/~1act-reports~1{act}~1download-pdf~1{file}'
+/act-reports/{act}/export/excel:
+  $ref: './act_reports.yaml#/~1act-reports~1{act}~1export~1excel'
 
 /contracts:
   $ref: './contracts.yaml#/~1contracts'
@@ -189,4 +187,15 @@
 /cost-categories/{id}:
   $ref: './cost_categories.yaml#/~1cost-categories~1{id}'
 /cost-categories/import:
-  $ref: './cost_categories.yaml#/~1cost-categories~1import' 
+  $ref: './cost_categories.yaml#/~1cost-categories~1import'
+
+/advance-transactions/{transaction}:
+  $ref: './advance_transactions.yaml#/~1advance-transactions~1{transaction}'
+/advance-transactions/{transaction}/report:
+  $ref: './advance_transactions.yaml#/~1advance-transactions~1{transaction}~1report'
+/advance-transactions/{transaction}/approve:
+  $ref: './advance_transactions.yaml#/~1advance-transactions~1{transaction}~1approve'
+/advance-transactions/{transaction}/attachments:
+  $ref: './advance_transactions.yaml#/~1advance-transactions~1{transaction}~1attachments'
+/advance-transactions/{transaction}/attachments/{fileId}:
+  $ref: './advance_transactions.yaml#/~1advance-transactions~1{transaction}~1attachments~1{fileId}' 

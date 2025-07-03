@@ -41,7 +41,9 @@ class OpenApiDiffService
                         if (!in_array($method, ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])) {
                             continue;
                         }
-                        $routes->push($method . ' ' . $prefix . '/' . ltrim($path, '/'));
+                        $normalizedPath = preg_replace('/\{[^}]+\}/', '{param}', $prefix . '/' . ltrim($path, '/'));
+                        $canonicalMethod = $method === 'PATCH' ? 'PUT' : $method;
+                        $routes->push($canonicalMethod . ' ' . $normalizedPath);
                     }
                 }
             }
@@ -58,7 +60,9 @@ class OpenApiDiffService
                 if ($method === 'HEAD') {
                     continue;
                 }
-                $result->push($method . ' /' . $route->uri());
+                $canonicalMethod = $method === 'PATCH' ? 'PUT' : $method;
+                $normalizedPath = preg_replace('/\{[^}]+\}/', '{param}', '/' . $route->uri());
+                $result->push($canonicalMethod . ' ' . $normalizedPath);
             }
         }
         return $result->unique();

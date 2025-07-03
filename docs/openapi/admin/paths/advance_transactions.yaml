@@ -126,13 +126,13 @@
       "422":
         description: Неверный запрос
 
-/advance-transactions/{id}:
+/advance-transactions/{transaction}:
   get:
     tags: [AdvanceTransactions]
     summary: Получить транзакцию
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
@@ -148,7 +148,7 @@
     summary: Обновить транзакцию
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
@@ -172,7 +172,7 @@
     summary: Удалить транзакцию
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
@@ -180,13 +180,13 @@
       "204":
         description: Успешно удалено
 
-/advance-transactions/{id}/report:
+/advance-transactions/{transaction}/report:
   post:
     tags: [AdvanceTransactions]
     summary: Отчитаться по транзакции
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
@@ -206,13 +206,13 @@
       "422":
         description: Неверный запрос
 
-/advance-transactions/{id}/approve:
+/advance-transactions/{transaction}/approve:
   post:
     tags: [AdvanceTransactions]
     summary: Утвердить транзакцию
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
@@ -230,13 +230,13 @@
             schema:
               $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
 
-/advance-transactions/{id}/attachments:
+/advance-transactions/{transaction}/attachments:
   post:
     tags: [AdvanceTransactions]
     summary: Прикрепить файлы к транзакции
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
@@ -260,13 +260,13 @@
             schema:
               $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
 
-/advance-transactions/{id}/attachments/{fileId}:
+/advance-transactions/{transaction}/attachments/{fileId}:
   delete:
     tags: [AdvanceTransactions]
     summary: Удалить файл транзакции
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer

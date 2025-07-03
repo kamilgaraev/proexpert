@@ -127,13 +127,13 @@
               type: string
               format: binary
 
-/act-reports/{id}:
+/act-reports/{act}:
   get:
     tags: [ActReports]
     summary: Получить акт
     parameters:
       - in: path
-        name: id
+        name: act
         required: true
         schema:
           type: integer
@@ -149,7 +149,7 @@
     summary: Обновить акт
     parameters:
       - in: path
-        name: id
+        name: act
         required: true
         schema:
           type: integer
@@ -169,13 +169,13 @@
       "422":
         description: Неверный запрос
 
-/act-reports/{id}/available-works:
+/act-reports/{act}/available-works:
   get:
     tags: [ActReports]
     summary: Получить доступные работы для акта
     parameters:
       - in: path
-        name: id
+        name: act
         required: true
         schema:
           type: integer
@@ -189,13 +189,13 @@
               items:
                 $ref: '../components/schemas/CompletedWork.yaml'
 
-/act-reports/{id}/works:
+/act-reports/{act}/works:
   put:
     tags: [ActReports]
     summary: Обновить состав работ акта
     parameters:
       - in: path
-        name: id
+        name: act
         required: true
         schema:
           type: integer
@@ -215,13 +215,13 @@
       "422":
         description: Неверный запрос
 
-/act-reports/{id}/export/pdf:
+/act-reports/{act}/export/pdf:
   get:
     tags: [ActReports]
     summary: Экспорт акта в PDF
     parameters:
       - in: path
-        name: id
+        name: act
         required: true
         schema:
           type: integer
@@ -234,18 +234,18 @@
               type: string
               format: binary
 
-/act-reports/{id}/download-pdf/{fileId}:
+/act-reports/{act}/download-pdf/{file}:
   get:
     tags: [ActReports]
     summary: Скачать PDF акта
     parameters:
       - in: path
-        name: id
+        name: act
         required: true
         schema:
           type: integer
       - in: path
-        name: fileId
+        name: file
         required: true
         schema:
           type: integer
@@ -258,13 +258,13 @@
               type: string
               format: binary
 
-/act-reports/{id}/export/excel:
+/act-reports/{act}/export/excel:
   get:
     tags: [ActReports]
     summary: Экспорт акта в Excel
     parameters:
       - in: path
-        name: id
+        name: act
         required: true
         schema:
           type: integer
