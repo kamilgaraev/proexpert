@@ -1,0 +1,448 @@
+/materials/analytics/summary:
+  get:
+    tags: [MaterialAnalytics]
+    summary: Сводка использования материалов
+    parameters:
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+        description: Начальная дата фильтра
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+        description: Конечная дата фильтра
+    responses:
+      "200":
+        description: Сводная статистика
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        unique_materials_count:
+                          type: integer
+                        total_operations:
+                          type: integer
+                        total_received:
+                          type: number
+                          format: float
+                        total_used:
+                          type: number
+                          format: float
+                        total_received_value:
+                          type: number
+                          format: float
+                        total_used_value:
+                          type: number
+                          format: float
+
+/materials/analytics/usage-by-projects:
+  get:
+    tags: [MaterialAnalytics]
+    summary: Использование материалов по проектам
+    parameters:
+      - in: query
+        name: project_ids
+        schema:
+          type: string
+        description: Список ID проектов через запятую
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+    responses:
+      "200":
+        description: Использование по проектам
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          project_id:
+                            type: integer
+                          project_name:
+                            type: string
+                          material_id:
+                            type: integer
+                          material_name:
+                            type: string
+                          unit:
+                            type: string
+                          total_received:
+                            type: number
+                            format: float
+                          total_used:
+                            type: number
+                            format: float
+                          operations_count:
+                            type: integer
+                          last_operation_date:
+                            type: string
+                            format: date
+
+/materials/analytics/usage-by-suppliers:
+  get:
+    tags: [MaterialAnalytics]
+    summary: Использование материалов по поставщикам
+    parameters:
+      - in: query
+        name: supplier_ids
+        schema:
+          type: string
+        description: Список ID поставщиков через запятую
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+    responses:
+      "200":
+        description: Использование по поставщикам
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          supplier_id:
+                            type: integer
+                          supplier_name:
+                            type: string
+                          material_id:
+                            type: integer
+                          material_name:
+                            type: string
+                          unit:
+                            type: string
+                          total_received:
+                            type: number
+                            format: float
+                          total_used:
+                            type: number
+                            format: float
+                          average_price:
+                            type: number
+                            format: float
+                          operations_count:
+                            type: integer
+
+/materials/analytics/low-stock:
+  get:
+    tags: [MaterialAnalytics]
+    summary: Материалы с низким остатком
+    parameters:
+      - in: query
+        name: threshold
+        schema:
+          type: number
+          format: float
+          default: 10
+        description: Порог остатка
+    responses:
+      "200":
+        description: Список материалов с низким остатком
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          material_id:
+                            type: integer
+                          material_name:
+                            type: string
+                          unit:
+                            type: string
+                          stock_quantity:
+                            type: number
+                            format: float
+
+/materials/analytics/most-used:
+  get:
+    tags: [MaterialAnalytics]
+    summary: Наиболее используемые материалы
+    parameters:
+      - in: query
+        name: period
+        schema:
+          type: integer
+          default: 30
+        description: Период в днях
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          default: 10
+    responses:
+      "200":
+        description: Топ материалов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          material_id:
+                            type: integer
+                          material_name:
+                            type: string
+                          unit:
+                            type: string
+                          total_used:
+                            type: number
+                            format: float
+
+/materials/analytics/cost-history:
+  get:
+    tags: [MaterialAnalytics]
+    summary: История стоимости материала
+    parameters:
+      - in: query
+        name: material_id
+        schema:
+          type: integer
+        required: true
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+    responses:
+      "200":
+        description: История стоимости
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          date:
+                            type: string
+                            format: date
+                          unit_price:
+                            type: number
+                            format: float
+
+/materials/analytics/movement-report:
+  get:
+    tags: [MaterialAnalytics]
+    summary: Отчет по движению материалов
+    parameters:
+      - in: query
+        name: material_ids
+        schema:
+          type: string
+        description: Список ID материалов через запятую
+      - in: query
+        name: project_ids
+        schema:
+          type: string
+        description: Список ID проектов через запятую
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+    responses:
+      "200":
+        description: Данные отчета
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          date:
+                            type: string
+                            format: date
+                          material_id:
+                            type: integer
+                          material_name:
+                            type: string
+                          project_id:
+                            type: integer
+                          project_name:
+                            type: string
+                          operation_type:
+                            type: string
+                            enum: [receipt, write_off]
+                          quantity:
+                            type: number
+                            format: float
+                          unit_price:
+                            type: number
+                            format: float
+                          total_price:
+                            type: number
+                            format: float
+
+/materials/analytics/inventory-report:
+  get:
+    tags: [MaterialAnalytics]
+    summary: Инвентаризационный отчет
+    parameters:
+      - in: query
+        name: category_ids
+        schema:
+          type: string
+        description: ID категорий через запятую
+      - in: query
+        name: supplier_ids
+        schema:
+          type: string
+      - in: query
+        name: include_zero_balance
+        schema:
+          type: boolean
+      - in: query
+        name: only_low_stock
+        schema:
+          type: boolean
+      - in: query
+        name: stock_threshold
+        schema:
+          type: number
+          format: float
+    responses:
+      "200":
+        description: Список материалов на складе
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          material_id:
+                            type: integer
+                          material_name:
+                            type: string
+                          unit:
+                            type: string
+                          stock_quantity:
+                            type: number
+                            format: float
+                          category:
+                            type: string
+                          supplier_name:
+                            type: string
+
+/materials/analytics/cost-dynamics-report:
+  get:
+    tags: [MaterialAnalytics]
+    summary: Отчет по динамике стоимости материалов
+    parameters:
+      - in: query
+        name: material_ids
+        schema:
+          type: string
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: group_by
+        schema:
+          type: string
+          enum: [day, month]
+          default: month
+    responses:
+      "200":
+        description: Динамика стоимости
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        labels:
+                          type: array
+                          items:
+                            type: string
+                        values:
+                          type: array
+                          items:
+                            type: number
+                            format: float 

@@ -15,6 +15,24 @@
   $ref: './catalogs.yaml#/~1materials~1import'
 /materials/import-template:
   $ref: './catalogs.yaml#/~1materials~1import-template'
+/materials/analytics/summary:
+  $ref: './material_analytics.yaml#/~1materials~1analytics~1summary'
+/materials/analytics/usage-by-projects:
+  $ref: './material_analytics.yaml#/~1materials~1analytics~1usage-by-projects'
+/materials/analytics/usage-by-suppliers:
+  $ref: './material_analytics.yaml#/~1materials~1analytics~1usage-by-suppliers'
+/materials/analytics/low-stock:
+  $ref: './material_analytics.yaml#/~1materials~1analytics~1low-stock'
+/materials/analytics/most-used:
+  $ref: './material_analytics.yaml#/~1materials~1analytics~1most-used'
+/materials/analytics/cost-history:
+  $ref: './material_analytics.yaml#/~1materials~1analytics~1cost-history'
+/materials/analytics/movement-report:
+  $ref: './material_analytics.yaml#/~1materials~1analytics~1movement-report'
+/materials/analytics/inventory-report:
+  $ref: './material_analytics.yaml#/~1materials~1analytics~1inventory-report'
+/materials/analytics/cost-dynamics-report:
+  $ref: './material_analytics.yaml#/~1materials~1analytics~1cost-dynamics-report'
 
 /projects:
   $ref: './projects.yaml#/~1projects'
