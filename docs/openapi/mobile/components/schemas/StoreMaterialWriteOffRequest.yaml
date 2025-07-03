@@ -1,0 +1,18 @@
+type: object
+properties:
+  project_id: { type: integer }
+  material_id: { type: integer }
+  quantity:
+    type: number
+    minimum: 0.001
+  usage_date:
+    type: string
+    format: date
+  work_type_id:
+    type: integer
+    nullable: true
+  notes:
+    type: string
+    maxLength: 1000
+    nullable: true
+required: [project_id, material_id, quantity, usage_date] 

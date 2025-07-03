@@ -1,0 +1,23 @@
+type: object
+properties:
+  project_id: { type: integer }
+  work_type_id: { type: integer }
+  quantity:
+    type: number
+    minimum: 0.001
+  completion_date:
+    type: string
+    format: date
+  photo:
+    type: string
+    format: binary
+    nullable: true
+  performers_description:
+    type: string
+    maxLength: 500
+    nullable: true
+  notes:
+    type: string
+    maxLength: 1000
+    nullable: true
+required: [project_id, work_type_id, quantity, completion_date] 
