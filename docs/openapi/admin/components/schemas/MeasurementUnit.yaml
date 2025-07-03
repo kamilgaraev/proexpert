@@ -1,0 +1,17 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  code:
+    type: string
+  organization_id:
+    type: integer
+    nullable: true
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time 

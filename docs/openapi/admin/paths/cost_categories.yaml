@@ -1,0 +1,107 @@
+/cost-categories:
+  get:
+    tags: [CostCategories]
+    summary: Получить список категорий затрат
+    responses:
+      "200":
+        description: Список категорий
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/CostCategory.yaml'
+  post:
+    tags: [CostCategories]
+    summary: Создать категорию затрат
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CostCategoryCreateRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CostCategoryResponse.yaml'
+
+/cost-categories/{id}:
+  get:
+    tags: [CostCategories]
+    summary: Получить категорию затрат
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Категория затрат
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CostCategoryResponse.yaml'
+  put:
+    tags: [CostCategories]
+    summary: Обновить категорию затрат
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CostCategoryUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CostCategoryResponse.yaml'
+  delete:
+    tags: [CostCategories]
+    summary: Удалить категорию затрат
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено
+
+/cost-categories/import:
+  post:
+    tags: [CostCategories]
+    summary: Импорт категорий затрат из файла
+    requestBody:
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              file:
+                type: string
+                format: binary
+    responses:
+      "200":
+        description: Импорт завершён
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

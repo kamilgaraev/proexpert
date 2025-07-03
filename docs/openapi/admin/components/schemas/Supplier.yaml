@@ -1,0 +1,29 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  contactPerson:
+    type: string
+    nullable: true
+  phone:
+    type: string
+    nullable: true
+  email:
+    type: string
+    format: email
+    nullable: true
+  address:
+    type: string
+    nullable: true
+  isActive:
+    type: boolean
+  organizationId:
+    type: integer
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time 

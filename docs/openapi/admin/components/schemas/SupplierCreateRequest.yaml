@@ -1,0 +1,20 @@
+type: object
+required: [name]
+properties:
+  name:
+    type: string
+  contactPerson:
+    type: string
+    nullable: true
+  phone:
+    type: string
+    nullable: true
+  email:
+    type: string
+    format: email
+    nullable: true
+  address:
+    type: string
+    nullable: true
+  isActive:
+    type: boolean 

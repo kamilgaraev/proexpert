@@ -1,0 +1,108 @@
+/suppliers:
+  get:
+    tags: [Suppliers]
+    summary: Получить список поставщиков
+    responses:
+      "200":
+        description: Список поставщиков
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/Supplier.yaml'
+  post:
+    tags: [Suppliers]
+    summary: Создать поставщика
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/SupplierCreateRequest.yaml'
+    responses:
+      "201":
+        description: Поставщик создан
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SupplierResponse.yaml'
+
+/suppliers/{id}:
+  get:
+    tags: [Suppliers]
+    summary: Получить поставщика
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Поставщик
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SupplierResponse.yaml'
+  put:
+    tags: [Suppliers]
+    summary: Обновить поставщика
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/SupplierUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Поставщик обновлен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SupplierResponse.yaml'
+  patch:
+    tags: [Suppliers]
+    summary: Частичное обновление поставщика
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/SupplierUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Поставщик обновлен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SupplierResponse.yaml'
+  delete:
+    tags: [Suppliers]
+    summary: Удалить поставщика
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено 

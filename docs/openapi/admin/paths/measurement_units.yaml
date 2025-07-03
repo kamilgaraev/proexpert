@@ -1,0 +1,105 @@
+/measurement-units:
+  get:
+    tags: [MeasurementUnits]
+    summary: Получить список единиц измерения
+    responses:
+      "200":
+        description: Список единиц измерения
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/MeasurementUnit.yaml'
+  post:
+    tags: [MeasurementUnits]
+    summary: Создать единицу измерения
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/MeasurementUnitCreateRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/MeasurementUnitResponse.yaml'
+
+/measurement-units/{id}:
+  get:
+    tags: [MeasurementUnits]
+    summary: Получить единицу измерения
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Единица измерения
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/MeasurementUnitResponse.yaml'
+  put:
+    tags: [MeasurementUnits]
+    summary: Обновить единицу измерения
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/MeasurementUnitUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/MeasurementUnitResponse.yaml'
+  delete:
+    tags: [MeasurementUnits]
+    summary: Удалить единицу измерения
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено
+
+/measurement-units/material-units:
+  get:
+    tags: [MeasurementUnits]
+    summary: Получить единицы измерения материалов
+    responses:
+      "200":
+        description: Список единиц измерения
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/MeasurementUnit.yaml' 

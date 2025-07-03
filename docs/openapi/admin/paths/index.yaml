@@ -166,4 +166,22 @@
 /users/{id}/block:
   $ref: './users.yaml#/~1users~1{id}~1block'
 /users/{id}/unblock:
-  $ref: './users.yaml#/~1users~1{id}~1unblock' 
+  $ref: './users.yaml#/~1users~1{id}~1unblock'
+
+/suppliers:
+  $ref: './suppliers.yaml#/~1suppliers'
+/suppliers/{id}:
+  $ref: './suppliers.yaml#/~1suppliers~1{id}'
+
+/measurement-units:
+  $ref: './measurement_units.yaml#/~1measurement-units'
+/measurement-units/{id}:
+  $ref: './measurement_units.yaml#/~1measurement-units~1{id}'
+/measurement-units/material-units:
+  $ref: './measurement_units.yaml#/~1measurement-units~1material-units'
+/cost-categories:
+  $ref: './cost_categories.yaml#/~1cost-categories'
+/cost-categories/{id}:
+  $ref: './cost_categories.yaml#/~1cost-categories~1{id}'
+/cost-categories/import:
+  $ref: './cost_categories.yaml#/~1cost-categories~1import' 
