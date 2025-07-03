@@ -11,6 +11,7 @@ properties:
     nullable: true
   measurement_unit_id:
     type: integer
+    deprecated: true
   description:
     type: string
     nullable: true
@@ -53,4 +54,19 @@ properties:
     format: date-time
   updated_at:
     type: string
-    format: date-time 
+    format: date-time
+  measurement_unit:
+    $ref: './MeasurementUnit.yaml'
+    nullable: true
+  consumption_rates_with_work_types:
+    type: array
+    items:
+      type: object
+      properties:
+        work_type_id:
+          type: integer
+        consumption_rate:
+          type: number
+          format: float
+      required: [work_type_id, consumption_rate]
+    nullable: true 

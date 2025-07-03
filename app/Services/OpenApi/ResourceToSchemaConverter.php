@@ -24,21 +24,27 @@ class ResourceToSchemaConverter
         $request = Request::create('/');
 
         if (is_subclass_of($class, ResourceCollection::class)) {
-            $instance = new $class(collect([$this->dummy]));
-            $data = $instance->toArray($request);
-            // Для коллекции ожидаем список
-            if (!$data) {
-                return ['type' => 'array', 'items' => ['type' => 'object']];
+            // Попробуем определить базовый ресурс через свойство collects
+            $ref = new \ReflectionClass($class);
+            $defaults = $ref->getDefaultProperties();
+            $collectsClass = $defaults['collects'] ?? null;
+            if ($collectsClass && is_string($collectsClass)) {
+                $itemSchema = $this->convert($collectsClass);
+            } else {
+                $itemSchema = ['type' => 'object'];
             }
-            $first = is_array($data) ? reset($data) : null;
             return [
                 'type'  => 'array',
-                'items' => $this->convertDataToSchema($first),
+                'items' => $itemSchema ?: ['type' => 'object'],
             ];
         }
 
         $instance = new $class($this->dummy);
-        $data = $instance->toArray($request);
+        try {
+            $data = $instance->toArray($request);
+        } catch (\Throwable $e) {
+            return [];
+        }
         return $this->convertDataToSchema($data);
     }
 
@@ -87,6 +93,23 @@ class DummyModel extends \stdClass
 {
     public function __get($name)
     {
+        if (str_ends_with($name, '_at')) {
+            return new DummyDate();
+        }
         return null;
+    }
+
+    public function __call($name, $arguments)
+    {
+        if ($name === 'relationLoaded') {
+            return false;
+        }
+        return null;
+    }
+}
+
+class DummyDate {
+    public function format($format) {
+        return date($format, 0);
     }
 } 

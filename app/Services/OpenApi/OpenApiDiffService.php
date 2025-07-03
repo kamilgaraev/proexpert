@@ -139,7 +139,8 @@ class OpenApiDiffService
                 continue;
             }
 
-            if (!str_contains($file->getPathname(), '/components/schemas/')) {
+            $normalizedPath = str_replace('\\', '/', $file->getPathname());
+            if (!str_contains($normalizedPath, '/components/schemas/')) {
                 continue;
             }
 
@@ -189,7 +190,7 @@ class OpenApiDiffService
                     continue;
                 }
                 [$ctrlClass, $ctrlMethod] = explode('@', $action);
-                if (!class_exists($ctrlClass)) {
+                if (!$this->safeClassExists($ctrlClass)) {
                     continue;
                 }
 
@@ -229,7 +230,8 @@ class OpenApiDiffService
                 $cmp = $comparator->diff($formSchema, $specSchema);
 
                 if ($cmp['missing'] || $cmp['obsolete'] || $cmp['mismatched']) {
-                    $report[$key] = $cmp;
+                    $scope = $this->detectScopeFromRoute($normalizedPath);
+                    $report[$key] = array_merge($cmp, ['scope' => $scope]);
                 }
             }
         }
@@ -260,7 +262,7 @@ class OpenApiDiffService
                 $relative = str_replace(app_path() . DIRECTORY_SEPARATOR, '', $file->getPathname());
                 $class = 'App\\' . str_replace(['/', '.php', '\\'], ['\\', '', '\\'], $relative);
 
-                if (!class_exists($class)) {
+                if (!$this->safeClassExists($class)) {
                     continue;
                 }
 
@@ -268,16 +270,19 @@ class OpenApiDiffService
                 $name = class_basename($class);
                 $specSchema = $this->componentSchemas[$name] ?? [];
 
+                $scope = $this->detectScopeFromClass($class);
+
                 if (!$specSchema) {
                     $report[$name] = [
                         'missing_in_spec' => true,
+                        'scope' => $scope,
                     ];
                     continue;
                 }
 
                 $cmp = $comparator->diff($dtoSchema, $specSchema);
                 if ($cmp['missing'] || $cmp['obsolete'] || $cmp['mismatched']) {
-                    $report[$name] = $cmp;
+                    $report[$name] = array_merge($cmp, ['scope' => $scope]);
                 }
             }
         }
@@ -304,7 +309,7 @@ class OpenApiDiffService
             $relative = str_replace(app_path() . DIRECTORY_SEPARATOR, '', $file->getPathname());
             $class = 'App\\' . str_replace(['/', '.php', '\\'], ['\\', '', '\\'], $relative);
 
-            if (!class_exists($class)) {
+            if (!$this->safeClassExists($class)) {
                 continue;
             }
 
@@ -319,17 +324,53 @@ class OpenApiDiffService
 
             $specSchema = $this->componentSchemas[$componentName] ?? ($this->componentSchemas[$basename] ?? []);
 
+            $scope = $this->detectScopeFromClass($class);
+
             if (!$specSchema) {
-                $report[$basename] = ['missing_in_spec' => true];
+                $report[$basename] = ['missing_in_spec' => true, 'scope' => $scope];
                 continue;
             }
 
             $cmp = $comparator->diff($schema, $specSchema);
             if ($cmp['missing'] || $cmp['obsolete'] || $cmp['mismatched']) {
-                $report[$basename] = $cmp;
+                $report[$basename] = array_merge($cmp, ['scope' => $scope]);
             }
         }
 
         return $report;
+    }
+
+    private function safeClassExists(string $class): bool
+    {
+        try {
+            return class_exists($class);
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
+    private function detectScopeFromRoute(string $path): string
+    {
+        return $this->detectScopeStr($path);
+    }
+
+    private function detectScopeFromClass(string $class): string
+    {
+        return $this->detectScopeStr($class);
+    }
+
+    private function detectScopeStr(string $str): string
+    {
+        $lower = strtolower($str);
+        if (str_contains($lower, '/admin/') || str_contains($lower, '\\admin\\') || str_contains($lower, 'admin')) {
+            return 'admin';
+        }
+        if (str_contains($lower, '/landing/') || str_contains($lower, '/lk/') || str_contains($lower, '\\landing\\') || str_contains($lower, 'landing') || str_contains($lower, 'lk')) {
+            return 'lk';
+        }
+        if (str_contains($lower, '/mobile/') || str_contains($lower, '\\mobile\\') || str_contains($lower, 'mobile')) {
+            return 'mobile';
+        }
+        return 'common';
     }
 } 

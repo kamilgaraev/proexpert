@@ -10,18 +10,13 @@ properties:
   isActive:
     type: boolean
   measurementUnit:
-    type: object
+    $ref: './MeasurementUnit.yaml'
     nullable: true
-    properties:
-      id:
-        type: integer
-      name:
-        type: string
-      code:
-        type: string
   createdAt:
     type: string
     format: date-time
   updatedAt:
     type: string
-    format: date-time 
+    format: date-time
+  organizationId:
+    type: integer 

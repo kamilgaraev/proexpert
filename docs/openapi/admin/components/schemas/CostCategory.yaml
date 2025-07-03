@@ -16,6 +16,23 @@ properties:
   parent_id:
     type: integer
     nullable: true
+  additional_attributes:
+    type: object
+    nullable: true
+  parent:
+    $ref: './CostCategory.yaml'
+    nullable: true
+  children:
+    type: array
+    items:
+      $ref: './CostCategory.yaml'
+    nullable: true
+  projects_count:
+    type: integer
+    nullable: true
+  path:
+    type: string
+    nullable: true
   is_active:
     type: boolean
   sort_order:

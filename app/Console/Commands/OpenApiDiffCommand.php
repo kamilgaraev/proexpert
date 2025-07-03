@@ -25,7 +25,9 @@ class OpenApiDiffCommand extends Command
             if ($requests && !empty($deep['requests'])) {
                 $this->error('Несоответствия схем запросов:');
                 foreach ($deep['requests'] as $route => $issues) {
-                    $this->line($route);
+                    $scope = $issues['scope'] ?? 'common';
+                    unset($issues['scope']);
+                    $this->line("[$scope] $route");
                     foreach ($issues as $type => $fields) {
                         foreach ($fields as $field => $detail) {
                             if ($type === 'mismatched') {
@@ -41,14 +43,17 @@ class OpenApiDiffCommand extends Command
 
             if ($responses && !empty($deep['responses'])) {
                 $this->error('Несоответствия схем ответов (Resources):');
-                foreach ($deep['responses'] as $name => $issues) {
-                    if (isset($issues['missing_in_spec'])) {
-                        $this->line("$name отсутствует в OpenAPI");
+                foreach ($deep['responses'] as $name => $info) {
+                    $scope = $info['scope'] ?? 'common';
+                    unset($info['scope']);
+                    if (isset($info['missing_in_spec'])) {
+                        $this->line("[$scope] $name отсутствует в OpenAPI");
                         $hasIssues = true;
                         continue;
                     }
-                    $this->line($name);
-                    foreach ($issues as $type => $fields) {
+                    $this->line("[$scope] $name");
+                    foreach ($info as $type => $fields) {
+                        if (!in_array($type, ['missing','obsolete','mismatched'])) continue;
                         foreach ($fields as $field => $detail) {
                             if (is_array($detail) && isset($detail['expected'])) {
                                 $this->line("  [$type] $field => expected {$detail['expected']}, actual {$detail['actual']}");
@@ -63,14 +68,17 @@ class OpenApiDiffCommand extends Command
 
             if ($responses && !empty($deep['components'])) {
                 $this->error('Несоответствия DTO/Component схем:');
-                foreach ($deep['components'] as $name => $issues) {
-                    if (isset($issues['missing_in_spec'])) {
-                        $this->line("$name отсутствует в OpenAPI");
+                foreach ($deep['components'] as $name => $info) {
+                    $scope = $info['scope'] ?? 'common';
+                    unset($info['scope']);
+                    if (isset($info['missing_in_spec'])) {
+                        $this->line("[$scope] $name отсутствует в OpenAPI");
                         $hasIssues = true;
                         continue;
                     }
-                    $this->line($name);
-                    foreach ($issues as $type => $fields) {
+                    $this->line("[$scope] $name");
+                    foreach ($info as $type => $fields) {
+                        if (!in_array($type, ['missing','obsolete','mismatched'])) continue;
                         foreach ($fields as $field => $detail) {
                             if (is_array($detail) && isset($detail['expected'])) {
                                 $this->line("  [$type] $field => expected {$detail['expected']}, actual {$detail['actual']}");

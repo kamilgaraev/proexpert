@@ -4,8 +4,7 @@ properties:
     type: integer
   name:
     type: string
-  code:
+  inn:
     type: string
-  organization_id:
-    type: integer
-    nullable: true 
+    nullable: true
+required: [id, name] 
