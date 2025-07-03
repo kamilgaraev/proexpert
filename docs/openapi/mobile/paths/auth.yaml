@@ -1,0 +1,58 @@
+/auth/login:
+  post:
+    tags: [Auth]
+    summary: Авторизация пользователя
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../../lk/components/schemas/LoginRequest.yaml'
+    responses:
+      "200":
+        description: Успешная авторизация
+        content:
+          application/json:
+            schema:
+              $ref: '../../lk/components/schemas/LoginResponse.yaml'
+/auth/me:
+  get:
+    tags: [Auth]
+    summary: Данные текущего пользователя
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Профиль
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../../lk/components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../../lk/components/schemas/UserProfile.yaml'
+/auth/refresh:
+  post:
+    tags: [Auth]
+    summary: Обновить JWT
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Новый токен
+        content:
+          application/json:
+            schema:
+              $ref: '../../lk/components/schemas/LoginResponse.yaml'
+/auth/logout:
+  post:
+    tags: [Auth]
+    summary: Выход пользователя
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Выход выполнен
+        content:
+          application/json:
+            schema:
+              $ref: '../../lk/components/schemas/ApiResponse.yaml' 

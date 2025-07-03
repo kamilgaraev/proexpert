@@ -1,0 +1,36 @@
+/work-types:
+  get:
+    tags: [Catalogs]
+    summary: Справочник типов работ
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Типы работ
+        content:
+          application/json:
+            schema:
+              $ref: '../../lk/components/schemas/ApiResponse.yaml'
+/materials:
+  get:
+    tags: [Catalogs]
+    summary: Справочник материалов
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Материалы
+        content:
+          application/json:
+            schema:
+              $ref: '../../lk/components/schemas/ApiResponse.yaml'
+/suppliers:
+  get:
+    tags: [Catalogs]
+    summary: Справочник поставщиков
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Поставщики
+        content:
+          application/json:
+            schema:
+              $ref: '../../lk/components/schemas/ApiResponse.yaml' 

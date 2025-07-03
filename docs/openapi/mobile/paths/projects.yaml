@@ -1,0 +1,36 @@
+/projects:
+  get:
+    tags: [Projects]
+    summary: Список проектов, назначенных прорабу
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Проекты
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../../lk/components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../../lk/components/schemas/ProjectDTO.yaml'
+/projects/{projectId}/material-balances:
+  parameters:
+    - name: projectId
+      in: path
+      required: true
+      schema: { type: integer }
+  get:
+    tags: [Projects]
+    summary: Балансы материалов по проекту
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Балансы
+        content:
+          application/json:
+            schema:
+              $ref: '../../lk/components/schemas/ApiResponse.yaml' 

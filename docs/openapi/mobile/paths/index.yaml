@@ -1,0 +1,30 @@
+/auth/login:
+  $ref: './auth.yaml#/~1auth~1login'
+/auth/me:
+  $ref: './auth.yaml#/~1auth~1me'
+/auth/refresh:
+  $ref: './auth.yaml#/~1auth~1refresh'
+/auth/logout:
+  $ref: './auth.yaml#/~1auth~1logout'
+/projects:
+  $ref: './projects.yaml#/~1projects'
+/projects/{projectId}/material-balances:
+  $ref: './projects.yaml#/~1projects~1{projectId}~1material-balances'
+/work-types:
+  $ref: './catalogs.yaml#/~1work-types'
+/materials:
+  $ref: './catalogs.yaml#/~1materials'
+/suppliers:
+  $ref: './catalogs.yaml#/~1suppliers'
+/logs/material-receipts:
+  $ref: './log.yaml#/~1logs~1material-receipts'
+/logs/material-write-offs:
+  $ref: './log.yaml#/~1logs~1material-write-offs'
+/logs/work-completion:
+  $ref: './log.yaml#/~1logs~1work-completion'
+/site-requests:
+  $ref: './site_requests.yaml#/~1site-requests'
+/site-requests/{site_request}:
+  $ref: './site_requests.yaml#/~1site-requests~1{site_request}'
+/site-requests/{site_request}/attachments/{file}:
+  $ref: './site_requests.yaml#/~1site-requests~1{site_request}~1attachments~1{file}' 
