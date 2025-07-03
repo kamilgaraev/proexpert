@@ -1,0 +1,170 @@
+/organization:
+  get:
+    security:
+      - bearerAuth: []
+    tags: [Organization]
+    summary: Получить данные организации текущего контекста
+    responses:
+      "200":
+        description: Организация
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationProfile.yaml'
+  put:
+    security:
+      - bearerAuth: []
+    tags: [Organization]
+    summary: Обновить данные организации
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/OrganizationUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/organization/verification:
+  get:
+    security:
+      - bearerAuth: []
+    tags: [Organization]
+    summary: Получить статус верификации организации
+    responses:
+      "200":
+        description: Статус
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationVerification.yaml'
+  put:
+    security:
+      - bearerAuth: []
+    tags: [Organization]
+    summary: Обновить данные верификации организации
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/OrganizationVerificationUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/organization/verification/request:
+  post:
+    security:
+      - bearerAuth: []
+    tags: [Organization]
+    summary: Отправить запрос на верификацию
+    responses:
+      "200":
+        description: Запрос отправлен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/organization/verification/recommendations:
+  get:
+    security:
+      - bearerAuth: []
+    tags: [Organization]
+    summary: Получить рекомендации по верификации
+    responses:
+      "200":
+        description: Рекомендации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/dadata/suggest/organizations:
+  post:
+    security:
+      - bearerAuth: []
+    tags: [Organization]
+    summary: Подсказка организации по ИНН/названию
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              query:
+                type: string
+    responses:
+      "200":
+        description: Список организаций
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+dadata/suggest/addresses:
+  post:
+    security:
+      - bearerAuth: []
+    tags: [Organization]
+    summary: Подсказка адресов
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              query:
+                type: string
+    responses:
+      "200":
+        description: Список адресов
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+dadata/clean/address:
+  post:
+    security:
+      - bearerAuth: []
+    tags: [Organization]
+    summary: Очистка/нормализация адреса
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              address:
+                type: string
+    responses:
+      "200":
+        description: Очищенный адрес
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 
