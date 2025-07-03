@@ -1,1 +1,1 @@
-$ref: '../../admin/components/schemas/ApiResponse.yaml' 
+$ref: '../../../admin/components/schemas/ApiResponse.yaml' 

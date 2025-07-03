@@ -1,1 +1,1 @@
-$ref: '../../admin/components/schemas/UserProfile.yaml' 
+$ref: '../../../admin/components/schemas/UserProfile.yaml' 

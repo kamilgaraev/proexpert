@@ -1,1 +1,1 @@
-$ref: '../../admin/components/schemas/LoginResponse.yaml' 
+$ref: '../../../admin/components/schemas/LoginResponse.yaml' 
