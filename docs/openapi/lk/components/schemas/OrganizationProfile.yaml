@@ -44,7 +44,7 @@ properties:
     format: date-time
     nullable: true
   verification:
-    $ref: '#/components/schemas/OrganizationVerification'
+    $ref: './OrganizationVerification.yaml'
   created_at:
     type: string
     format: date-time
