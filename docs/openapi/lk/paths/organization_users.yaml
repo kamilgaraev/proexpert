@@ -1,0 +1,137 @@
+/organization-users:
+  get:
+    tags: [OrganizationUsers]
+    summary: Список пользователей организации
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Список пользователей
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/OrganizationUser.yaml'
+/organization-users/{userId}:
+  parameters:
+    - name: userId
+      in: path
+      required: true
+      schema: { type: integer }
+  get:
+    tags: [OrganizationUsers]
+    summary: Получить пользователя организации
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Пользователь
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationUser.yaml'
+  put:
+    tags: [OrganizationUsers]
+    summary: Обновить пользователя
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/UpdateOrganizationUserRequest.yaml'
+    responses:
+      "200":
+        description: Пользователь обновлён
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationUser.yaml'
+  delete:
+    tags: [OrganizationUsers]
+    summary: Удалить пользователя
+    security: [{ bearerAuth: [] }]
+    responses:
+      "204":
+        description: Удалено
+/organization-users/{userId}/toggle-status:
+  post:
+    tags: [OrganizationUsers]
+    summary: Переключить статус активности пользователя
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Статус изменён
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/organization-users/{userId}/roles:
+  get:
+    tags: [OrganizationUsers]
+    summary: Список ролей пользователя
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - { name: userId, in: path, required: true, schema: { type: integer } }
+    responses:
+      "200":
+        description: Роли
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+  post:
+    tags: [OrganizationUsers]
+    summary: Обновить роли пользователя
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - { name: userId, in: path, required: true, schema: { type: integer } }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              role_slugs:
+                type: array
+                items: { type: string }
+            required: [role_slugs]
+    responses:
+      "200":
+        description: Роли обновлены
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/user-limits:
+  get:
+    tags: [OrganizationUsers]
+    summary: Лимиты пользователя в рамках подписки
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Лимиты
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

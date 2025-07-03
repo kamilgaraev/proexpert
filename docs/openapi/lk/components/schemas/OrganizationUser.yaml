@@ -1,0 +1,17 @@
+type: object
+properties:
+  id: { type: integer }
+  name: { type: string }
+  email: { type: string, format: email }
+  phone: { type: string, nullable: true }
+  status:
+    type: string
+    description: 'active|blocked'
+  is_active: { type: boolean }
+  roles:
+    type: array
+    items:
+      $ref: './OrganizationRole.yaml'
+  created_at: { type: string, format: date-time, nullable: true }
+  updated_at: { type: string, format: date-time, nullable: true }
+required: [id, name, email, status, is_active] 

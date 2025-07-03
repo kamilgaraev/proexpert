@@ -1,0 +1,146 @@
+/invitations:
+  get:
+    tags: [UserInvitations]
+    summary: Список приглашений
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Список приглашений
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/UserInvitation.yaml'
+  post:
+    tags: [UserInvitations]
+    summary: Создать приглашение
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/StoreUserInvitationRequest.yaml'
+    responses:
+      "201":
+        description: Приглашение создано
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/UserInvitation.yaml'
+/invitations/{invitationId}:
+  parameters:
+    - name: invitationId
+      in: path
+      required: true
+      schema: { type: integer }
+  get:
+    tags: [UserInvitations]
+    summary: Получить приглашение
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Приглашение
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/UserInvitation.yaml'
+  delete:
+    tags: [UserInvitations]
+    summary: Удалить приглашение
+    security: [{ bearerAuth: [] }]
+    responses:
+      "204":
+        description: Удалено
+/invitations/{invitationId}/resend:
+  post:
+    tags: [UserInvitations]
+    summary: Повторно отправить приглашение
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - name: invitationId
+        in: path
+        required: true
+        schema: { type: integer }
+    responses:
+      "200":
+        description: Отправлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/invitations/stats/overview:
+  get:
+    tags: [UserInvitations]
+    summary: Статистика приглашений
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Статистика
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/invitation/{token}:
+  parameters:
+    - name: token
+      in: path
+      required: true
+      schema: { type: string }
+  get:
+    tags: [UserInvitations]
+    summary: Получить приглашение по токену (публичный)
+    responses:
+      "200":
+        description: Информация о приглашении
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/UserInvitation.yaml'
+/invitation/{token}/accept:
+  post:
+    tags: [UserInvitations]
+    summary: Принять приглашение (публичный)
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema: { type: string }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              password:
+                type: string
+            required: [password]
+    responses:
+      "200":
+        description: Приглашение принято
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

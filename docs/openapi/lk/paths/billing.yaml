@@ -1,0 +1,142 @@
+/billing/plans:
+  get:
+    tags: [Billing]
+    summary: Список тарифных планов
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Планы
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/BillingPlan.yaml'
+/billing/subscription:
+  get:
+    tags: [Billing]
+    summary: Текущая подписка пользователя
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Подписка
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/UserSubscription.yaml'
+/billing/subscribe:
+  post:
+    tags: [Billing]
+    summary: Оформить подписку
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/SubscribeRequest.yaml'
+    responses:
+      "201":
+        description: Подписка оформлена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/billing/subscription/cancel:
+  post:
+    tags: [Billing]
+    summary: Отменить подписку
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Отменена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/billing/balance:
+  get:
+    tags: [Billing]
+    summary: Баланс организации
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Баланс
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationBalance.yaml'
+/billing/balance/transactions:
+  get:
+    tags: [Billing]
+    summary: Транзакции баланса
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Транзакции
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/BalanceTransaction.yaml'
+/billing/balance/top-up:
+  post:
+    tags: [Billing]
+    summary: Пополнить баланс
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              amount:
+                type: number
+                format: float
+            required: [amount]
+    responses:
+      "200":
+        description: Пополнено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/billing/subscription/limits:
+  get:
+    tags: [Billing]
+    summary: Лимиты подписки
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Лимиты
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/SubscriptionLimits.yaml' 

@@ -1,0 +1,8 @@
+type: object
+properties:
+  max_users: { type: integer }
+  max_projects: { type: integer }
+  storage_quota_gb: { type: integer }
+  current_users: { type: integer }
+  current_projects: { type: integer }
+required: [max_users, max_projects, storage_quota_gb, current_users, current_projects] 

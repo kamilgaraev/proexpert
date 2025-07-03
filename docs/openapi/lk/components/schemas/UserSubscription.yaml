@@ -1,0 +1,8 @@
+type: object
+properties:
+  plan: { $ref: './BillingPlan.yaml' }
+  status: { type: string, description: 'active|cancelled|trial|expired' }
+  started_at: { type: string, format: date-time, nullable: true }
+  ends_at: { type: string, format: date-time, nullable: true }
+  cancel_at: { type: string, format: date-time, nullable: true }
+required: [plan, status] 

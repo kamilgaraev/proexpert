@@ -29,4 +29,42 @@
 /roles/permissions/available:
   $ref: './organization_roles.yaml#/~1roles~1permissions~1available'
 /roles/{roleId}/duplicate:
-  $ref: './organization_roles.yaml#/~1roles~1{roleId}~1duplicate' 
+  $ref: './organization_roles.yaml#/~1roles~1{roleId}~1duplicate'
+/invitations:
+  $ref: './user_invitations.yaml#/~1invitations'
+/invitations/{invitationId}:
+  $ref: './user_invitations.yaml#/~1invitations~1{invitationId}'
+/invitations/{invitationId}/resend:
+  $ref: './user_invitations.yaml#/~1invitations~1{invitationId}~1resend'
+/invitations/stats/overview:
+  $ref: './user_invitations.yaml#/~1invitations~1stats~1overview'
+/invitation/{token}:
+  $ref: './user_invitations.yaml#/~1invitation~1{token}'
+/invitation/{token}/accept:
+  $ref: './user_invitations.yaml#/~1invitation~1{token}~1accept'
+/organization-users:
+  $ref: './organization_users.yaml#/~1organization-users'
+/organization-users/{userId}:
+  $ref: './organization_users.yaml#/~1organization-users~1{userId}'
+/organization-users/{userId}/toggle-status:
+  $ref: './organization_users.yaml#/~1organization-users~1{userId}~1toggle-status'
+/organization-users/{userId}/roles:
+  $ref: './organization_users.yaml#/~1organization-users~1{userId}~1roles'
+/user-limits:
+  $ref: './organization_users.yaml#/~1user-limits'
+/billing/plans:
+  $ref: './billing.yaml#/~1billing~1plans'
+/billing/subscription:
+  $ref: './billing.yaml#/~1billing~1subscription'
+/billing/subscribe:
+  $ref: './billing.yaml#/~1billing~1subscribe'
+/billing/subscription/cancel:
+  $ref: './billing.yaml#/~1billing~1subscription~1cancel'
+/billing/balance:
+  $ref: './billing.yaml#/~1billing~1balance'
+/billing/balance/transactions:
+  $ref: './billing.yaml#/~1billing~1balance~1transactions'
+/billing/balance/top-up:
+  $ref: './billing.yaml#/~1billing~1balance~1top-up'
+/billing/subscription/limits:
+  $ref: './billing.yaml#/~1billing~1subscription~1limits' 

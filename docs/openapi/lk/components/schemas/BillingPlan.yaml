@@ -1,0 +1,9 @@
+type: object
+properties:
+  id: { type: integer }
+  name: { type: string }
+  price: { type: number, format: float }
+  currency: { type: string }
+  period: { type: string, description: 'month|year' }
+  description: { type: string, nullable: true }
+required: [id, name, price, currency, period] 

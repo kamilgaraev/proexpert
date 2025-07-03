@@ -1,0 +1,9 @@
+type: object
+properties:
+  id: { type: integer }
+  amount: { type: number, format: float }
+  currency: { type: string }
+  type: { type: string, description: 'top_up|payment|refund' }
+  description: { type: string, nullable: true }
+  created_at: { type: string, format: date-time }
+required: [id, amount, currency, type, created_at] 
