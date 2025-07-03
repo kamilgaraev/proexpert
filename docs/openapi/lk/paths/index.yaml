@@ -67,4 +67,18 @@
 /billing/balance/top-up:
   $ref: './billing.yaml#/~1billing~1balance~1top-up'
 /billing/subscription/limits:
-  $ref: './billing.yaml#/~1billing~1subscription~1limits' 
+  $ref: './billing.yaml#/~1billing~1subscription~1limits'
+/modules:
+  $ref: './modules.yaml#/~1modules'
+/modules/available:
+  $ref: './modules.yaml#/~1modules~1available'
+/modules/expiring:
+  $ref: './modules.yaml#/~1modules~1expiring'
+/modules/check-access:
+  $ref: './modules.yaml#/~1modules~1check-access'
+/modules/activate:
+  $ref: './modules.yaml#/~1modules~1activate'
+/modules/{moduleId}:
+  $ref: './modules.yaml#/~1modules~1{moduleId}'
+/modules/{moduleId}/renew:
+  $ref: './modules.yaml#/~1modules~1{moduleId}~1renew' 

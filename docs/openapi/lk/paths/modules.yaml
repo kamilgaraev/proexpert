@@ -1,0 +1,109 @@
+/modules:
+  get:
+    tags: [Modules]
+    summary: Список активных модулей организации
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Модули
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/Module.yaml'
+/modules/available:
+  get:
+    tags: [Modules]
+    summary: Доступные для активации модули
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Список
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/modules/expiring:
+  get:
+    tags: [Modules]
+    summary: Модули с ближайшим окончанием действия
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Список
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/modules/check-access:
+  post:
+    tags: [Modules]
+    summary: Проверить доступ к модулю
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ModuleCheckAccessRequest.yaml'
+    responses:
+      "200":
+        description: Доступ
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/modules/activate:
+  post:
+    tags: [Modules]
+    summary: Активировать модуль
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ModuleActivateRequest.yaml'
+    responses:
+      "201":
+        description: Активировано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/modules/{moduleId}:
+  parameters:
+    - { name: moduleId, in: path, required: true, schema: { type: integer } }
+  delete:
+    tags: [Modules]
+    summary: Деактивировать модуль
+    security: [{ bearerAuth: [] }]
+    responses:
+      "204":
+        description: Удалено
+/modules/{moduleId}/renew:
+  patch:
+    tags: [Modules]
+    summary: Продлить модуль
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - { name: moduleId, in: path, required: true, schema: { type: integer } }
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ModuleRenewRequest.yaml'
+    responses:
+      "200":
+        description: Продлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

@@ -1,0 +1,4 @@
+type: object
+properties:
+  period_months: { type: integer, minimum: 1 }
+required: [] 

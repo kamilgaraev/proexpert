@@ -1,0 +1,9 @@
+type: object
+properties:
+  id: { type: integer }
+  name: { type: string }
+  slug: { type: string }
+  is_active: { type: boolean }
+  expires_at: { type: string, format: date-time, nullable: true }
+  activated_at: { type: string, format: date-time, nullable: true }
+required: [id, name, slug, is_active] 

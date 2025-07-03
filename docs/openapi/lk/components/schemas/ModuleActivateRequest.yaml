@@ -1,0 +1,5 @@
+type: object
+properties:
+  module_slug: { type: string }
+  period_months: { type: integer, minimum: 1 }
+required: [module_slug] 

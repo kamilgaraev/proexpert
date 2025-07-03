@@ -1,0 +1,4 @@
+type: object
+properties:
+  module_slug: { type: string }
+required: [module_slug] 
