@@ -1,0 +1,126 @@
+/report-templates:
+  get:
+    tags: [ReportTemplates]
+    summary: Получить список шаблонов отчетов
+    responses:
+      "200":
+        description: Список шаблонов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/ReportTemplate.yaml'
+  post:
+    tags: [ReportTemplates]
+    summary: Создать шаблон отчета
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ReportTemplateCreateRequest.yaml'
+    responses:
+      "201":
+        description: Шаблон создан
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ReportTemplateResponse.yaml'
+
+/report-templates/{template_id}:
+  get:
+    tags: [ReportTemplates]
+    summary: Получить шаблон отчета
+    parameters:
+      - in: path
+        name: template_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Шаблон отчета
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ReportTemplateResponse.yaml'
+  put:
+    tags: [ReportTemplates]
+    summary: Обновить шаблон отчета
+    parameters:
+      - in: path
+        name: template_id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ReportTemplateUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Шаблон обновлен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ReportTemplateResponse.yaml'
+  patch:
+    tags: [ReportTemplates]
+    summary: Частичное обновление шаблона отчета
+    parameters:
+      - in: path
+        name: template_id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ReportTemplateUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Шаблон обновлен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ReportTemplateResponse.yaml'
+  delete:
+    tags: [ReportTemplates]
+    summary: Удалить шаблон отчета
+    parameters:
+      - in: path
+        name: template_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено
+
+/report-templates/{template_id}/set-default:
+  post:
+    tags: [ReportTemplates]
+    summary: Сделать шаблон отчетом по умолчанию
+    parameters:
+      - in: path
+        name: template_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Шаблон установлен по умолчанию
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ReportTemplateResponse.yaml' 

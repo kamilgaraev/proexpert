@@ -140,4 +140,21 @@
 /profile:
   $ref: './profile.yaml#/~1profile'
 /profile-settings:
-  $ref: './profile.yaml#/~1profile-settings' 
+  $ref: './profile.yaml#/~1profile-settings'
+
+/report-templates:
+  $ref: './report_templates.yaml#/~1report-templates'
+/report-templates/{template_id}:
+  $ref: './report_templates.yaml#/~1report-templates~1{template_id}'
+/report-templates/{template_id}/set-default:
+  $ref: './report_templates.yaml#/~1report-templates~1{template_id}~1set-default'
+/reports/material-usage:
+  $ref: './reports.yaml#/~1reports~1material-usage'
+/reports/work-completion:
+  $ref: './reports.yaml#/~1reports~1work-completion'
+/reports/foreman-activity:
+  $ref: './reports.yaml#/~1reports~1foreman-activity'
+/reports/project-status-summary:
+  $ref: './reports.yaml#/~1reports~1project-status-summary'
+/reports/official-material-usage:
+  $ref: './reports.yaml#/~1reports~1official-material-usage' 

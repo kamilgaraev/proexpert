@@ -1,0 +1,35 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  report_type:
+    type: string
+    enum: [material_usage, work_completion, foreman_activity, project_status_summary]
+  organization_id:
+    type: integer
+  user_id:
+    type: integer
+  columns_config:
+    type: array
+    items:
+      type: object
+      properties:
+        header:
+          type: string
+        data_key:
+          type: string
+        order:
+          type: integer
+        format_options:
+          type: object
+          nullable: true
+  is_default:
+    type: boolean
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time 

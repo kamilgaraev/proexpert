@@ -1,0 +1,154 @@
+/reports/material-usage:
+  get:
+    tags: [Reports]
+    summary: Отчет по расходу материалов
+    parameters:
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+      - in: query
+        name: material_id
+        schema:
+          type: integer
+      - in: query
+        name: user_id
+        schema:
+          type: integer
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+    responses:
+      "200":
+        description: Данные отчета
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/reports/work-completion:
+  get:
+    tags: [Reports]
+    summary: Отчет по выполненным работам
+    parameters:
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+      - in: query
+        name: work_type_id
+        schema:
+          type: integer
+      - in: query
+        name: user_id
+        schema:
+          type: integer
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+    responses:
+      "200":
+        description: Данные отчета
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/reports/foreman-activity:
+  get:
+    tags: [Reports]
+    summary: Отчет по активности прорабов
+    parameters:
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+      - in: query
+        name: user_id
+        schema:
+          type: integer
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+    responses:
+      "200":
+        description: Данные отчета
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/reports/project-status-summary:
+  get:
+    tags: [Reports]
+    summary: Сводный отчет по статусам проектов
+    parameters:
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum: [active, completed, planned, on_hold]
+      - in: query
+        name: is_archived
+        schema:
+          type: boolean
+    responses:
+      "200":
+        description: Данные отчета
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/reports/official-material-usage:
+  get:
+    tags: [Reports]
+    summary: Официальный отчет об использовании материалов, переданных Заказчиком
+    parameters:
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: format
+        schema:
+          type: string
+          enum: [json, xlsx, csv]
+    responses:
+      "200":
+        description: Данные отчета либо файл
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

@@ -1,0 +1,30 @@
+type: object
+required:
+  - name
+  - report_type
+  - columns_config
+properties:
+  name:
+    type: string
+    maxLength: 255
+  report_type:
+    type: string
+    enum: [material_usage, work_completion, foreman_activity, project_status_summary]
+  columns_config:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required: [header, data_key, order]
+      properties:
+        header:
+          type: string
+        data_key:
+          type: string
+        order:
+          type: integer
+        format_options:
+          type: object
+          nullable: true
+  is_default:
+    type: boolean 
