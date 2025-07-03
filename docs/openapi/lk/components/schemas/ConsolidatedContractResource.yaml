@@ -1,0 +1,19 @@
+type: object
+properties:
+  id:
+    type: string
+  organization:
+    type: object
+    properties:
+      id: { type: string }
+      name: { type: string }
+  number:
+    type: string
+  date:
+    type: string
+  total_amount:
+    type: number
+  gp_percentage:
+    type: number
+  status:
+    type: string

@@ -1,0 +1,21 @@
+type: object
+properties:
+  success:
+    type: boolean
+  chargeId:
+    type: string
+    nullable: true
+  status:
+    type: string
+  message:
+    type: string
+    nullable: true
+  redirectUrl:
+    type: string
+    nullable: true
+  gatewaySpecificResponse:
+    type: array
+    nullable: true
+required:
+  - success
+  - status

@@ -1,0 +1,56 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  legal_name:
+    type: string
+    nullable: true
+  tax_number:
+    type: string
+    nullable: true
+  registration_number:
+    type: string
+    nullable: true
+  phone:
+    type: string
+    nullable: true
+  email:
+    type: string
+    nullable: true
+  address:
+    type: string
+    nullable: true
+  city:
+    type: string
+    nullable: true
+  postal_code:
+    type: string
+    nullable: true
+  country:
+    type: string
+    nullable: true
+  description:
+    type: string
+    nullable: true
+  logo_path:
+    type: string
+    nullable: true
+  is_active:
+    type: boolean
+  subscription_expires_at:
+    type: string
+    format: date-time
+    nullable: true
+  verification:
+    $ref: '#/components/schemas/OrganizationVerification'
+  created_at:
+    type: string
+    format: date-time
+    nullable: true
+  updated_at:
+    type: string
+    format: date-time
+    nullable: true
+required: [id, name, is_active, verification] 

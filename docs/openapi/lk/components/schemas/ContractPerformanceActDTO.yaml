@@ -1,0 +1,24 @@
+type: object
+properties:
+  act_document_number:
+    type: string
+    nullable: true
+  act_date:
+    type: string
+  amount:
+    type: number
+  description:
+    type: string
+    nullable: true
+  is_approved:
+    type: boolean
+  approval_date:
+    type: string
+    nullable: true
+  completed_works:
+    type: array
+required:
+  - act_date
+  - amount
+  - is_approved
+  - completed_works

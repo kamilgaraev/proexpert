@@ -1,0 +1,19 @@
+type: object
+properties:
+  id:
+    type: string
+  organization:
+    type: object
+    properties:
+      id: { type: string }
+      name: { type: string }
+  contract_id:
+    type: string
+  act_document_number:
+    type: string
+  act_date:
+    type: string
+  amount:
+    type: number
+  is_approved:
+    type: boolean

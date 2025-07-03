@@ -1,0 +1,21 @@
+type: object
+properties:
+  material_id:
+    type: integer
+  default_quantity:
+    type: number
+  organization_id:
+    type: integer
+    nullable: true
+  work_type_id:
+    type: integer
+    nullable: true
+  notes:
+    type: string
+    nullable: true
+  id:
+    type: integer
+    nullable: true
+required:
+  - material_id
+  - default_quantity

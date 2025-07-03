@@ -1,0 +1,44 @@
+type: object
+properties:
+  id:
+    type: integer
+    nullable: true
+  organization_id:
+    type: integer
+  project_id:
+    type: integer
+  contract_id:
+    type: integer
+    nullable: true
+  work_type_id:
+    type: integer
+  user_id:
+    type: integer
+  quantity:
+    type: number
+  price:
+    type: number
+    nullable: true
+  total_amount:
+    type: number
+    nullable: true
+  completion_date: []
+  notes:
+    type: string
+    nullable: true
+  status:
+    type: string
+  additional_info:
+    type: array
+    nullable: true
+  materials:
+    type: array
+    nullable: true
+required:
+  - organization_id
+  - project_id
+  - work_type_id
+  - user_id
+  - quantity
+  - completion_date
+  - status

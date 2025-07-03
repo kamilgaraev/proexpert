@@ -1,0 +1,70 @@
+type: object
+properties:
+  project_id:
+    type: integer
+    nullable: true
+  contractor_id:
+    type: integer
+  parent_contract_id:
+    type: integer
+    nullable: true
+  number:
+    type: string
+  date:
+    type: string
+  type:
+    type: string
+    enum:
+      - contract
+      - agreement
+      - specification
+  subject:
+    type: string
+    nullable: true
+  work_type_category:
+    type: string
+    enum:
+      - smr
+      - supply
+      - services
+      - rent
+      - other
+    nullable: true
+  payment_terms:
+    type: string
+    nullable: true
+  total_amount:
+    type: number
+  gp_percentage:
+    type: number
+    nullable: true
+  planned_advance_amount:
+    type: number
+    nullable: true
+  actual_advance_amount:
+    type: number
+    nullable: true
+  status:
+    type: string
+    enum:
+      - draft
+      - active
+      - completed
+      - on_hold
+      - terminated
+  start_date:
+    type: string
+    nullable: true
+  end_date:
+    type: string
+    nullable: true
+  notes:
+    type: string
+    nullable: true
+required:
+  - contractor_id
+  - number
+  - date
+  - type
+  - total_amount
+  - status

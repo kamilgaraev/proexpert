@@ -1,0 +1,57 @@
+type: object
+properties:
+  name:
+    type: string
+  value:
+    type: number
+  type:
+    type: string
+    enum:
+      - percentage
+      - fixed_addition
+  applies_to:
+    type: string
+    enum:
+      - material_norms
+      - work_costs
+      - labor_hours
+      - general
+  scope:
+    type: string
+    enum:
+      - global_org
+      - project
+      - work_type_category
+      - work_type
+      - material_category
+      - material
+  organization_id:
+    type: integer
+    nullable: true
+  code:
+    type: string
+    nullable: true
+  description:
+    type: string
+    nullable: true
+  is_active:
+    type: boolean
+  valid_from:
+    $ref: '#/components/schemas/Carbon'
+    nullable: true
+  valid_to:
+    $ref: '#/components/schemas/Carbon'
+    nullable: true
+  conditions:
+    type: array
+    nullable: true
+  id:
+    type: integer
+    nullable: true
+required:
+  - name
+  - value
+  - type
+  - applies_to
+  - scope
+  - is_active

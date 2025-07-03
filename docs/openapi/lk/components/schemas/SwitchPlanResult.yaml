@@ -1,0 +1,18 @@
+type: object
+properties:
+  newSubscription:
+    type: integer
+  payment:
+    type: integer
+    nullable: true
+  requiresAction:
+    type: boolean
+  redirectUrl:
+    type: string
+    nullable: true
+  message:
+    type: string
+    nullable: true
+required:
+  - newSubscription
+  - requiresAction

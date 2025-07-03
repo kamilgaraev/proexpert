@@ -7,4 +7,18 @@
 /auth/refresh:
   $ref: './auth.yaml#/~1auth~1refresh'
 /auth/logout:
-  $ref: './auth.yaml#/~1auth~1logout' 
+  $ref: './auth.yaml#/~1auth~1logout'
+/organization:
+  $ref: './organization.yaml#/~1organization'
+/organization/verification:
+  $ref: './organization.yaml#/~1organization~1verification'
+/organization/verification/request:
+  $ref: './organization.yaml#/~1organization~1verification~1request'
+/organization/verification/recommendations:
+  $ref: './organization.yaml#/~1organization~1verification~1recommendations'
+/dadata/suggest/organizations:
+  $ref: './organization.yaml#/~1dadata~1suggest~1organizations'
+/dadata/suggest/addresses:
+  $ref: './organization.yaml#/~1dadata~1suggest~1addresses'
+/dadata/clean/address:
+  $ref: './organization.yaml#/~1dadata~1clean~1address' 

@@ -1,0 +1,18 @@
+type: object
+properties:
+  success:
+    type: boolean
+  gatewaySubscriptionId:
+    type: string
+    nullable: true
+  status:
+    type: string
+  message:
+    type: string
+    nullable: true
+  gatewaySpecificResponse:
+    type: array
+    nullable: true
+required:
+  - success
+  - status

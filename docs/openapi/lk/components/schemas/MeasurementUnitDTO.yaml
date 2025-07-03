@@ -1,0 +1,21 @@
+type: object
+properties:
+  name:
+    type: string
+  short_name:
+    type: string
+  type:
+    type: string
+    nullable: true
+  description:
+    type: string
+    nullable: true
+  is_default:
+    type: boolean
+    nullable: true
+  organization_id:
+    type: integer
+    nullable: true
+required:
+  - name
+  - short_name

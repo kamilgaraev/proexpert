@@ -1,0 +1,24 @@
+type: object
+properties:
+  is_verified:
+    type: boolean
+  verified_at:
+    type: string
+    format: date-time
+    nullable: true
+  verification_status:
+    type: string
+  verification_status_text:
+    type: string
+  verification_score:
+    type: number
+    format: float
+  verification_data:
+    type: object
+    nullable: true
+  verification_notes:
+    type: string
+    nullable: true
+  can_be_verified:
+    type: boolean
+required: [is_verified, verification_status, verification_status_text, verification_score, can_be_verified] 

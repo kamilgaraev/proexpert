@@ -1,0 +1,9 @@
+type: object
+properties:
+  verification_data:
+    type: object
+    description: "Произвольные данные/документы для верификации"
+  notes:
+    type: string
+    nullable: true
+required: [verification_data] 
