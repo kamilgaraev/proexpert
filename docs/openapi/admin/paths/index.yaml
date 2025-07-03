@@ -157,4 +157,13 @@
 /reports/project-status-summary:
   $ref: './reports.yaml#/~1reports~1project-status-summary'
 /reports/official-material-usage:
-  $ref: './reports.yaml#/~1reports~1official-material-usage' 
+  $ref: './reports.yaml#/~1reports~1official-material-usage'
+
+/users:
+  $ref: './users.yaml#/~1users'
+/users/{id}:
+  $ref: './users.yaml#/~1users~1{id}'
+/users/{id}/block:
+  $ref: './users.yaml#/~1users~1{id}~1block'
+/users/{id}/unblock:
+  $ref: './users.yaml#/~1users~1{id}~1unblock' 

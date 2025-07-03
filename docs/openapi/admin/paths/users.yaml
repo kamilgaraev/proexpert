@@ -1,0 +1,147 @@
+/users:
+  get:
+    tags: [Users]
+    summary: Получить список прорабов
+    parameters:
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+    responses:
+      "200":
+        description: Список прорабов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/ForemanUser.yaml'
+  post:
+    tags: [Users]
+    summary: Создать прораба
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/ForemanCreateRequest.yaml'
+        application/json:
+          schema:
+            $ref: '../components/schemas/ForemanCreateRequest.yaml'
+    responses:
+      "201":
+        description: Прораб создан
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ForemanResponse.yaml'
+
+/users/{id}:
+  get:
+    tags: [Users]
+    summary: Получить данные прораба
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Прораб
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ForemanResponse.yaml'
+  put:
+    tags: [Users]
+    summary: Обновить прораба
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/ForemanUpdateRequest.yaml'
+        application/json:
+          schema:
+            $ref: '../components/schemas/ForemanUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Прораб обновлен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ForemanResponse.yaml'
+  patch:
+    tags: [Users]
+    summary: Частичное обновление прораба
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/ForemanUpdateRequest.yaml'
+        application/json:
+          schema:
+            $ref: '../components/schemas/ForemanUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Прораб обновлен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ForemanResponse.yaml'
+
+/users/{id}/block:
+  post:
+    tags: [Users]
+    summary: Заблокировать прораба
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Прораб заблокирован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/users/{id}/unblock:
+  post:
+    tags: [Users]
+    summary: Разблокировать прораба
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Прораб разблокирован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

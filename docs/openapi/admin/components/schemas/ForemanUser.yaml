@@ -1,0 +1,30 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  email:
+    type: string
+    format: email
+  phone:
+    type: string
+    nullable: true
+  position:
+    type: string
+    nullable: true
+  avatar_path:
+    type: string
+    nullable: true
+  avatar_url:
+    type: string
+    format: uri
+    nullable: true
+  is_active:
+    type: boolean
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time 

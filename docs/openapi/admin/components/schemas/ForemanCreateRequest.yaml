@@ -1,0 +1,24 @@
+type: object
+required: [name, email, password, password_confirmation]
+properties:
+  name:
+    type: string
+  email:
+    type: string
+    format: email
+  password:
+    type: string
+    format: password
+  password_confirmation:
+    type: string
+    format: password
+  phone:
+    type: string
+    nullable: true
+  position:
+    type: string
+    nullable: true
+  avatar:
+    type: string
+    format: binary
+    nullable: true 
