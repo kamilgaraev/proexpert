@@ -1,0 +1,30 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  original_name:
+    type: string
+  mime_type:
+    type: string
+  size:
+    type: integer
+  disk:
+    type: string
+  url:
+    type: string
+  thumbnails:
+    type: object
+    additionalProperties:
+      type: string
+    description: Мапа суффикс → URL миниатюры
+  additional_info:
+    type: object
+    nullable: true
+  uploaded_at:
+    type: string
+    format: date-time
+  user_id:
+    type: integer
+required: [id, name, mime_type, size, url] 

@@ -2,13 +2,8 @@ type: object
 properties:
   id:
     type: integer
-  user_id:
-    type: integer
   organization_id:
     type: integer
-  project_id:
-    type: integer
-    nullable: true
   type:
     type: string
     enum: [issue, expense, return]
@@ -40,22 +35,11 @@ properties:
     type: string
     format: date-time
     nullable: true
-  created_by_user_id:
-    type: integer
-    nullable: true
-  approved_by_user_id:
-    type: integer
-    nullable: true
   external_code:
     type: string
     nullable: true
   accounting_data:
     type: object
-    nullable: true
-  attachment_ids:
-    type: array
-    items:
-      type: integer
     nullable: true
   created_at:
     type: string
