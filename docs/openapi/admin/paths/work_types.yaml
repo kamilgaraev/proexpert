@@ -1,0 +1,86 @@
+/work-types:
+  get:
+    tags: [WorkTypes]
+    summary: Получить список видов работ
+    responses:
+      "200":
+        description: Список видов работ
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/WorkType.yaml'
+  post:
+    tags: [WorkTypes]
+    summary: Создать вид работ
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/WorkTypeCreateRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/WorkTypeResponse.yaml'
+
+/work-types/{id}:
+  get:
+    tags: [WorkTypes]
+    summary: Получить вид работ
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Вид работ
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/WorkTypeResponse.yaml'
+  put:
+    tags: [WorkTypes]
+    summary: Обновить вид работ
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/WorkTypeUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/WorkTypeResponse.yaml'
+  delete:
+    tags: [WorkTypes]
+    summary: Удалить вид работ
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Успешно удалено 

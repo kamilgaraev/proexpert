@@ -1,0 +1,13 @@
+type: object
+required: [name]
+properties:
+  name:
+    type: string
+  category:
+    type: string
+    nullable: true
+  measurement_unit_id:
+    type: integer
+    nullable: true
+  isActive:
+    type: boolean 

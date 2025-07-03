@@ -117,4 +117,91 @@
           application/octet-stream:
             schema:
               type: string
-              format: binary 
+              format: binary
+
+/materials/{id}/balances:
+  get:
+    tags: [Catalogs]
+    summary: Получить балансы материала
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Балансы
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/materials/{id}/consumption-rates:
+  get:
+    tags: [Catalogs]
+    summary: Получить нормы списания для материала
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Нормы списания
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+  put:
+    tags: [Catalogs]
+    summary: Обновить нормы списания материала
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              rates:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    work_type_id:
+                      type: integer
+                    rate:
+                      type: number
+                      format: float
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/materials/{id}/validate-for-accounting:
+  get:
+    tags: [Catalogs]
+    summary: Проверить материал для бухгалтерии
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Результат проверки
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

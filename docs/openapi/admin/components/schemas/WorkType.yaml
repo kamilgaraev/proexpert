@@ -1,0 +1,27 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  category:
+    type: string
+    nullable: true
+  isActive:
+    type: boolean
+  measurementUnit:
+    type: object
+    nullable: true
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+      code:
+        type: string
+  createdAt:
+    type: string
+    format: date-time
+  updatedAt:
+    type: string
+    format: date-time 
