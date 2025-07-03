@@ -87,4 +87,29 @@
 /contracts/{id}/completed-works:
   $ref: './contracts.yaml#/~1contracts~1{id}~1completed-works'
 /contracts/{id}/full:
-  $ref: './contracts.yaml#/~1contracts~1{id}~1full' 
+  $ref: './contracts.yaml#/~1contracts~1{id}~1full'
+
+/dashboard:
+  $ref: './dashboard.yaml#/~1dashboard'
+/dashboard/timeseries:
+  $ref: './dashboard.yaml#/~1dashboard~1timeseries'
+/dashboard/top-entities:
+  $ref: './dashboard.yaml#/~1dashboard~1top-entities'
+/dashboard/history:
+  $ref: './dashboard.yaml#/~1dashboard~1history'
+/dashboard/limits:
+  $ref: './dashboard.yaml#/~1dashboard~1limits'
+/dashboard/contracts/requiring-attention:
+  $ref: './dashboard.yaml#/~1dashboard~1contracts~1requiring-attention'
+/dashboard/contracts/statistics:
+  $ref: './dashboard.yaml#/~1dashboard~1contracts~1statistics'
+/dashboard/contracts/top:
+  $ref: './dashboard.yaml#/~1dashboard~1contracts~1top'
+/dashboard/recent-activity:
+  $ref: './dashboard.yaml#/~1dashboard~1recent-activity'
+/filters/contracts:
+  $ref: './filters.yaml#/~1filters~1contracts'
+/filters/completed-works:
+  $ref: './filters.yaml#/~1filters~1completed-works'
+/filters/quick-stats:
+  $ref: './filters.yaml#/~1filters~1quick-stats' 

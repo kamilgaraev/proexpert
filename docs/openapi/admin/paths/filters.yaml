@@ -1,0 +1,175 @@
+/filters/contracts:
+  get:
+    tags: [Filters]
+    summary: Получить данные для фильтров контрактов
+    responses:
+      "200":
+        description: Набор опций для фильтрации контрактов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        statuses:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              value:
+                                type: string
+                              label:
+                                type: string
+                        types:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              value:
+                                type: string
+                              label:
+                                type: string
+                        projects:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              value:
+                                type: integer
+                              label:
+                                type: string
+                        contractors:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              value:
+                                type: integer
+                              label:
+                                type: string
+
+/filters/completed-works:
+  get:
+    tags: [Filters]
+    summary: Получить данные для фильтров выполненных работ
+    responses:
+      "200":
+        description: Набор опций для фильтрации выполненных работ
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        statuses:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              value:
+                                type: string
+                              label:
+                                type: string
+                        projects:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              value:
+                                type: integer
+                              label:
+                                type: string
+                        contracts:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              value:
+                                type: integer
+                              label:
+                                type: string
+                        work_types:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              value:
+                                type: integer
+                              label:
+                                type: string
+                        users:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              value:
+                                type: integer
+                              label:
+                                type: string
+                        contractors:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              value:
+                                type: integer
+                              label:
+                                type: string
+
+/filters/quick-stats:
+  get:
+    tags: [Filters]
+    summary: Получить быстрые статистики для дашборда фильтров
+    responses:
+      "200":
+        description: Статистики по контрактам и выполненным работам
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        contracts:
+                          type: object
+                          properties:
+                            draft:
+                              $ref: '#/components/schemas/CountAmount'
+                            active:
+                              $ref: '#/components/schemas/CountAmount'
+                            completed:
+                              $ref: '#/components/schemas/CountAmount'
+                            on_hold:
+                              $ref: '#/components/schemas/CountAmount'
+                            terminated:
+                              $ref: '#/components/schemas/CountAmount'
+                        completed_works:
+                          type: object
+                          properties:
+                            pending:
+                              $ref: '#/components/schemas/CountAmount'
+                            confirmed:
+                              $ref: '#/components/schemas/CountAmount'
+                            rejected:
+                              $ref: '#/components/schemas/CountAmount'
+components:
+  schemas:
+    CountAmount:
+      type: object
+      properties:
+        count:
+          type: integer
+        amount:
+          type: number
+          format: float 

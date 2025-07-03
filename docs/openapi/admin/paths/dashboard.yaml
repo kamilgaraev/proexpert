@@ -1,0 +1,393 @@
+/dashboard:
+  get:
+    tags: [Dashboard]
+    summary: Получить сводную информацию для дашборда
+    responses:
+      "200":
+        description: Сводная информация
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        users_count:
+                          type: integer
+                        projects_count:
+                          type: integer
+                        materials_count:
+                          type: integer
+                        suppliers_count:
+                          type: integer
+                        contracts_count:
+                          type: integer
+                        completed_works_count:
+                          type: integer
+
+/dashboard/timeseries:
+  get:
+    tags: [Dashboard]
+    summary: Получить временной ряд по выбранной метрике
+    parameters:
+      - in: query
+        name: metric
+        schema:
+          type: string
+          enum: [users, projects, materials, suppliers, contracts, completed_works]
+        description: Метрика, по которой строится ряд
+      - in: query
+        name: period
+        schema:
+          type: string
+          enum: [month]
+          default: month
+        description: Период агрегации
+      - in: query
+        name: organization_id
+        schema:
+          type: integer
+        description: Фильтр по организации
+    responses:
+      "200":
+        description: Временной ряд
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        labels:
+                          type: array
+                          items:
+                            type: string
+                        values:
+                          type: array
+                          items:
+                            type: integer
+                        metric:
+                          type: string
+
+/dashboard/top-entities:
+  get:
+    tags: [Dashboard]
+    summary: Получить топ-5 сущностей по активности/объёму
+    parameters:
+      - in: query
+        name: entity
+        schema:
+          type: string
+          enum: [projects]
+        description: Сущность для анализа (пока поддерживаются только проекты)
+      - in: query
+        name: period
+        schema:
+          type: string
+          enum: [month]
+          default: month
+      - in: query
+        name: organization_id
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Топ-5 сущностей
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: integer
+                          name:
+                            type: string
+                          materials_count:
+                            type: integer
+
+/dashboard/history:
+  get:
+    tags: [Dashboard]
+    summary: Получить историю последних действий
+    parameters:
+      - in: query
+        name: type
+        schema:
+          type: string
+          enum: [materials]
+          default: materials
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          default: 10
+      - in: query
+        name: organization_id
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: История действий
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: integer
+                          name:
+                            type: string
+                          created_at:
+                            type: string
+                            format: date-time
+
+/dashboard/limits:
+  get:
+    tags: [Dashboard]
+    summary: Получить информацию о лимитах
+    parameters:
+      - in: query
+        name: organization_id
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Лимиты
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        monthly_limit:
+                          type: number
+                        monthly_used:
+                          type: number
+                        yearly_limit:
+                          type: number
+                        yearly_used:
+                          type: number
+
+/dashboard/contracts/requiring-attention:
+  get:
+    tags: [Dashboard]
+    summary: Контракты, требующие внимания
+    responses:
+      "200":
+        description: Контракты
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: integer
+                          number:
+                            type: string
+                          project_name:
+                            type: string
+                          contractor_name:
+                            type: string
+                          total_amount:
+                            type: number
+                            format: float
+                          completed_works_amount:
+                            type: number
+                            format: float
+                          completion_percentage:
+                            type: number
+                            format: float
+                          remaining_amount:
+                            type: number
+                            format: float
+                          status:
+                            type: string
+                          end_date:
+                            type: string
+                            format: date
+                            nullable: true
+                          is_nearing_limit:
+                            type: boolean
+                          is_overdue:
+                            type: boolean
+                          is_completed:
+                            type: boolean
+                          attention_reason:
+                            type: array
+                            items:
+                              type: string
+                          priority:
+                            type: integer
+
+/dashboard/contracts/statistics:
+  get:
+    tags: [Dashboard]
+    summary: Общая статистика по контрактам
+    responses:
+      "200":
+        description: Статистика
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        contracts:
+                          type: object
+                          properties:
+                            total:
+                              type: integer
+                            active:
+                              type: integer
+                            completed:
+                              type: integer
+                            draft:
+                              type: integer
+                            requiring_attention:
+                              type: integer
+                            total_amount:
+                              type: number
+                              format: float
+                            avg_amount:
+                              type: number
+                              format: float
+                        completed_works:
+                          type: object
+                          properties:
+                            total:
+                              type: integer
+                            confirmed:
+                              type: integer
+                            confirmed_amount:
+                              type: number
+                              format: float
+
+/dashboard/contracts/top:
+  get:
+    tags: [Dashboard]
+    summary: Топ контрактов по сумме
+    parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          default: 5
+    responses:
+      "200":
+        description: Топ контрактов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: integer
+                          number:
+                            type: string
+                          project_name:
+                            type: string
+                          contractor_name:
+                            type: string
+                          total_amount:
+                            type: number
+                            format: float
+                          completed_works_amount:
+                            type: number
+                            format: float
+                          completion_percentage:
+                            type: number
+                            format: float
+                          status:
+                            type: string
+
+/dashboard/recent-activity:
+  get:
+    tags: [Dashboard]
+    summary: Последняя активность по выполненным работам
+    parameters:
+      - in: query
+        name: days
+        schema:
+          type: integer
+          default: 30
+    responses:
+      "200":
+        description: Список последних работ
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: integer
+                          project_name:
+                            type: string
+                          contract_number:
+                            type: string
+                          work_type_name:
+                            type: string
+                          user_name:
+                            type: string
+                          quantity:
+                            type: number
+                            format: float
+                          total_amount:
+                            type: number
+                            format: float
+                          status:
+                            type: string
+                          completion_date:
+                            type: string
+                            format: date
+                          created_at:
+                            type: string
+                            format: date-time 
