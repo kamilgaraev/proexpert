@@ -1,0 +1,10 @@
+/auth/register:
+  $ref: './auth.yaml#/~1auth~1register'
+/auth/login:
+  $ref: './auth.yaml#/~1auth~1login'
+/auth/me:
+  $ref: './auth.yaml#/~1auth~1me'
+/auth/refresh:
+  $ref: './auth.yaml#/~1auth~1refresh'
+/auth/logout:
+  $ref: './auth.yaml#/~1auth~1logout' 

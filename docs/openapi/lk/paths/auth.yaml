@@ -1,0 +1,99 @@
+/auth/register:
+  post:
+    tags: [Auth]
+    summary: Регистрация пользователя ЛК
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/RegisterRequest.yaml'
+    responses:
+      "201":
+        description: Успешная регистрация
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/LoginResponse.yaml'
+/auth/login:
+  post:
+    tags: [Auth]
+    summary: Авторизация пользователя ЛК
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/LoginRequest.yaml'
+    responses:
+      "200":
+        description: Успешный вход
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/LoginResponse.yaml'
+/auth/me:
+  get:
+    tags: [Auth]
+    summary: Получить профиль
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Профиль
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/UserProfile.yaml'
+  patch:
+    tags: [Auth]
+    summary: Обновить профиль
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/UpdateProfileRequest.yaml'
+        application/json:
+          schema:
+            $ref: '../components/schemas/UpdateProfileRequest.yaml'
+    responses:
+      "200":
+        description: Профиль обновлён
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/UserProfile.yaml'
+/auth/refresh:
+  post:
+    tags: [Auth]
+    summary: Обновить JWT
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Токен обновлён
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/LoginResponse.yaml'
+/auth/logout:
+  post:
+    tags: [Auth]
+    summary: Выход
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Успешный выход
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 
