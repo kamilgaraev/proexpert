@@ -1,0 +1,9 @@
+allOf:
+  - $ref: './ContractPaymentCreateRequest.yaml'
+  - type: object
+    properties:
+      id:
+        type: integer
+      contract_id:
+        type: integer
+required: [id, contract_id] 

@@ -1,0 +1,18 @@
+type: object
+properties:
+  payment_date:
+    type: string
+    format: date
+  amount:
+    type: number
+    format: float
+  payment_type:
+    type: string
+    enum: [advance, fact_payment, deferred_payment, other]
+  reference_document_number:
+    type: string
+    nullable: true
+  description:
+    type: string
+    nullable: true
+required: [payment_date, amount, payment_type] 

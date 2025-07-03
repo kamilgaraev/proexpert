@@ -1,0 +1,21 @@
+type: object
+properties:
+  user_id:
+    type: integer
+  name:
+    type: string
+  current_balance:
+    type: number
+    format: float
+  total_issued:
+    type: number
+    format: float
+  total_reported:
+    type: number
+    format: float
+  has_overdue_balance:
+    type: boolean
+  last_transaction_at:
+    type: string
+    nullable: true
+required: [user_id, current_balance, total_issued, total_reported, has_overdue_balance] 

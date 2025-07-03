@@ -1,0 +1,19 @@
+type: object
+properties:
+  amount:
+    type: number
+    format: float
+  project_id:
+    type: integer
+    nullable: true
+  description:
+    type: string
+    nullable: true
+  document_number:
+    type: string
+    nullable: true
+  document_date:
+    type: string
+    format: date
+    nullable: true
+required: [amount] 

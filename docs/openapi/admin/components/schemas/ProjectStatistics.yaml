@@ -1,0 +1,20 @@
+type: object
+properties:
+  project_id:
+    type: integer
+  total_materials:
+    type: integer
+  total_work_types:
+    type: integer
+  completed_works_count:
+    type: integer
+  total_cost:
+    type: number
+    format: float
+  start_date:
+    type: string
+    format: date
+  end_date:
+    type: string
+    format: date
+required: [project_id, total_materials, total_work_types, completed_works_count, total_cost] 
