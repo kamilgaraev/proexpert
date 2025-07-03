@@ -1,0 +1,138 @@
+/multi-organization/check-availability:
+  get:
+    tags: [MultiOrganization]
+    summary: Проверить, доступен ли модуль Multi-Organization
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Доступность
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/multi-organization/hierarchy:
+  get:
+    tags: [MultiOrganization]
+    summary: Получить иерархию холдинга
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Иерархия
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/HoldingHierarchy.yaml'
+/multi-organization/accessible:
+  get:
+    tags: [MultiOrganization]
+    summary: Список доступных организаций
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Организации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/multi-organization/organization/{organizationId}:
+  parameters:
+    - { name: organizationId, in: path, required: true, schema: { type: integer } }
+  get:
+    tags: [MultiOrganization]
+    summary: Данные организации
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Организация
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/multi-organization/switch-context:
+  post:
+    tags: [MultiOrganization]
+    summary: Переключить контекст организации
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/SwitchContextRequest.yaml'
+    responses:
+      "200":
+        description: Переключено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/multi-organization/dashboard:
+  get:
+    tags: [MultiOrganization]
+    summary: Дашборд холдинга
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Дашборд
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/HoldingDashboard.yaml'
+/multi-organization/child-organizations:
+  get:
+    tags: [MultiOrganization]
+    summary: Список дочерних организаций
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Список
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/multi-organization/create-holding:
+  post:
+    tags: [MultiOrganization]
+    summary: Создать холдинг
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CreateHoldingRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/multi-organization/add-child:
+  post:
+    tags: [MultiOrganization]
+    summary: Добавить дочернюю организацию
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/AddChildOrganizationRequest.yaml'
+    responses:
+      "201":
+        description: Добавлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

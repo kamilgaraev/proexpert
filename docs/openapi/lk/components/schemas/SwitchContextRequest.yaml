@@ -1,0 +1,4 @@
+type: object
+properties:
+  target_organization_id: { type: integer }
+required: [target_organization_id] 

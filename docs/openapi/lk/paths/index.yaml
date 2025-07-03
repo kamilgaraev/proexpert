@@ -81,4 +81,21 @@
 /modules/{moduleId}:
   $ref: './modules.yaml#/~1modules~1{moduleId}'
 /modules/{moduleId}/renew:
-  $ref: './modules.yaml#/~1modules~1{moduleId}~1renew' 
+  $ref: './modules.yaml#/~1modules~1{moduleId}~1renew'
+/multi-organization/check-availability:
+  $ref: './multi_organization.yaml#/~1multi-organization~1check-availability'
+/multi-organization/hierarchy:
+  $ref: './multi_organization.yaml#/~1multi-organization~1hierarchy'
+/multi-organization/accessible:
+  $ref: './multi_organization.yaml#/~1multi-organization~1accessible'
+/multi-organization/organization/{organizationId}:
+  $ref: './multi_organization.yaml#/~1multi-organization~1organization~1{organizationId}'
+/multi-organization/switch-context:
+  $ref: './multi_organization.yaml#/~1multi-organization~1switch-context'
+/multi-organization/dashboard:
+  $ref: './multi_organization.yaml#/~1multi-organization~1dashboard'
+/multi-organization/child-organizations:
+  $ref: './multi_organization.yaml#/~1multi-organization~1child-organizations'
+/multi-organization/create-holding:
+  $ref: './multi_organization.yaml#/~1multi-organization~1create-holding'
+/multi-organization/add-child: 

@@ -1,0 +1,6 @@
+type: object
+properties:
+  name: { type: string }
+  inn: { type: string }
+  owner_email: { type: string, format: email }
+required: [name, inn, owner_email] 

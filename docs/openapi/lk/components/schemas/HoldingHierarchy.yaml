@@ -1,0 +1,9 @@
+type: object
+properties:
+  id: { type: integer }
+  name: { type: string }
+  children:
+    type: array
+    items:
+      $ref: '#'
+required: [id, name] 

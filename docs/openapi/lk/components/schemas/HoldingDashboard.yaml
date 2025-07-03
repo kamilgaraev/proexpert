@@ -1,0 +1,7 @@
+type: object
+properties:
+  organizations_count: { type: integer }
+  total_revenue: { type: number, format: float }
+  contracts_active: { type: integer }
+  acts_active: { type: integer }
+required: [organizations_count, total_revenue] 
