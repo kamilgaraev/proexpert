@@ -1,14 +1,75 @@
 type: object
-required: [name, email, password, password_confirmation]
+required:
+  - name
+  - email
+  - password
+  - password_confirmation
+  - organization_name
 properties:
   name:
     type: string
+    maxLength: 255
   email:
     type: string
     format: email
+    maxLength: 255
   password:
     type: string
     format: password
+    minLength: 8
   password_confirmation:
     type: string
-    format: password 
+    format: password
+  phone:
+    type: string
+    maxLength: 20
+    nullable: true
+  position:
+    type: string
+    maxLength: 100
+    nullable: true
+  avatar:
+    type: string
+    format: binary
+    nullable: true
+  # Organization data
+  organization_name:
+    type: string
+    maxLength: 255
+  organization_legal_name:
+    type: string
+    maxLength: 255
+    nullable: true
+  organization_tax_number:
+    type: string
+    pattern: '^(\\d{10}|\\d{12})$'
+    nullable: true
+  organization_registration_number:
+    type: string
+    pattern: '^(\\d{13}|\\d{15})$'
+    nullable: true
+  organization_phone:
+    type: string
+    maxLength: 20
+    nullable: true
+  organization_email:
+    type: string
+    format: email
+    maxLength: 255
+    nullable: true
+  organization_address:
+    type: string
+    maxLength: 500
+    nullable: true
+  organization_city:
+    type: string
+    maxLength: 100
+    nullable: true
+  organization_postal_code:
+    type: string
+    pattern: '^\\d{6}$'
+    nullable: true
+  organization_country:
+    type: string
+    maxLength: 100
+    nullable: true 

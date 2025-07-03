@@ -5,6 +5,9 @@
     requestBody:
       required: true
       content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/RegisterRequest.yaml'
         application/json:
           schema:
             $ref: '../components/schemas/RegisterRequest.yaml'
