@@ -1,0 +1,27 @@
+type: object
+properties:
+  id:
+    type: integer
+  organization:
+    type: object
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+    required: [id, name]
+  contract_id:
+    type: integer
+  act_document_number:
+    type: string
+    nullable: true
+  act_date:
+    type: string
+    format: date
+    nullable: true
+  amount:
+    type: number
+    format: float
+  is_approved:
+    type: boolean
+required: [id, organization, amount, is_approved] 

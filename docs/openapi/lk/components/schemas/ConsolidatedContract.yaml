@@ -1,0 +1,27 @@
+type: object
+properties:
+  id:
+    type: integer
+  organization:
+    type: object
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+    required: [id, name]
+  number:
+    type: string
+  date:
+    type: string
+    format: date
+    nullable: true
+  total_amount:
+    type: number
+    format: float
+  gp_percentage:
+    type: number
+    format: float
+  status:
+    type: string
+required: [id, organization, number, total_amount, status] 
