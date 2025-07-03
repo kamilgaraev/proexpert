@@ -38,6 +38,16 @@
   $ref: './projects.yaml#/~1projects'
 /projects/{id}:
   $ref: './projects.yaml#/~1projects~1{id}'
+/projects/available-cost-categories:
+  $ref: './projects.yaml#/~1projects~1available-cost-categories'
+/projects/{id}/statistics:
+  $ref: './projects.yaml#/~1projects~1{id}~1statistics'
+/projects/{id}/materials:
+  $ref: './projects.yaml#/~1projects~1{id}~1materials'
+/projects/{id}/work-types:
+  $ref: './projects.yaml#/~1projects~1{id}~1work-types'
+/projects/{projectId}/foremen/{userId}:
+  $ref: './projects.yaml#/~1projects~1{projectId}~1foremen~1{userId}'
 
 /completed-works:
   $ref: './completed_works.yaml#/~1completed-works'
@@ -161,6 +171,16 @@
   $ref: './reports.yaml#/~1reports~1project-status-summary'
 /reports/official-material-usage:
   $ref: './reports.yaml#/~1reports~1official-material-usage'
+/reports/advance-accounts/summary:
+  $ref: './reports_advance_accounts.yaml#/~1reports~1advance-accounts~1summary'
+/reports/advance-accounts/users/{userId}:
+  $ref: './reports_advance_accounts.yaml#/~1reports~1advance-accounts~1users~1{userId}'
+/reports/advance-accounts/projects/{projectId}:
+  $ref: './reports_advance_accounts.yaml#/~1reports~1advance-accounts~1projects~1{projectId}'
+/reports/advance-accounts/overdue:
+  $ref: './reports_advance_accounts.yaml#/~1reports~1advance-accounts~1overdue'
+/reports/advance-accounts/export/{format}:
+  $ref: './reports_advance_accounts.yaml#/~1reports~1advance-accounts~1export~1{format}'
 
 /users:
   $ref: './users.yaml#/~1users'
@@ -170,6 +190,14 @@
   $ref: './users.yaml#/~1users~1{id}~1block'
 /users/{id}/unblock:
   $ref: './users.yaml#/~1users~1{id}~1unblock'
+/users/{id}/advance-balance:
+  $ref: './users.yaml#/~1users~1{id}~1advance-balance'
+/users/{id}/advance-transactions:
+  $ref: './users.yaml#/~1users~1{id}~1advance-transactions'
+/users/{id}/issue-funds:
+  $ref: './users.yaml#/~1users~1{id}~1issue-funds'
+/users/{id}/return-funds:
+  $ref: './users.yaml#/~1users~1{id}~1return-funds'
 
 /suppliers:
   $ref: './suppliers.yaml#/~1suppliers'
@@ -198,4 +226,25 @@
 /advance-transactions/{transaction}/attachments:
   $ref: './advance_transactions.yaml#/~1advance-transactions~1{transaction}~1attachments'
 /advance-transactions/{transaction}/attachments/{fileId}:
-  $ref: './advance_transactions.yaml#/~1advance-transactions~1{transaction}~1attachments~1{fileId}' 
+  $ref: './advance_transactions.yaml#/~1advance-transactions~1{transaction}~1attachments~1{fileId}'
+
+/accounting/import-users:
+  $ref: './accounting.yaml#/~1accounting~1import-users'
+/accounting/import-projects:
+  $ref: './accounting.yaml#/~1accounting~1import-projects'
+/accounting/import-materials:
+  $ref: './accounting.yaml#/~1accounting~1import-materials'
+/accounting/export-transactions:
+  $ref: './accounting.yaml#/~1accounting~1export-transactions'
+/accounting/sync-status:
+  $ref: './accounting.yaml#/~1accounting~1sync-status'
+
+/performance-acts/{performance_act}:
+  $ref: './performance_acts.yaml#/~1performance-acts~1{performance_act}'
+/contracts/{contract}/performance-acts/{performance_act}/export/pdf:
+  $ref: './performance_acts.yaml#/~1contracts~1{contract}~1performance-acts~1{performance_act}~1export~1pdf'
+/contracts/{contract}/performance-acts/{performance_act}/export/excel:
+  $ref: './performance_acts.yaml#/~1contracts~1{contract}~1performance-acts~1{performance_act}~1export~1excel'
+
+/payments/{payment}:
+  $ref: './payments.yaml#/~1payments~1{payment}' 

@@ -1,0 +1,99 @@
+/performance-acts/{performance_act}:
+  get:
+    tags: [PerformanceActs]
+    summary: Получить акт
+    parameters:
+      - in: path
+        name: performance_act
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Акт
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/PerformanceActResponse.yaml'
+  put:
+    tags: [PerformanceActs]
+    summary: Обновить акт
+    parameters:
+      - in: path
+        name: performance_act
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/PerformanceActUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/PerformanceActResponse.yaml'
+  delete:
+    tags: [PerformanceActs]
+    summary: Удалить акт
+    parameters:
+      - in: path
+        name: performance_act
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Удалено
+
+/contracts/{contract}/performance-acts/{performance_act}/export/pdf:
+  get:
+    tags: [PerformanceActs]
+    summary: Экспорт акта в PDF
+    parameters:
+      - in: path
+        name: contract
+        required: true
+        schema:
+          type: integer
+      - in: path
+        name: performance_act
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: PDF файл
+        content:
+          application/pdf:
+            schema:
+              type: string
+              format: binary
+
+/contracts/{contract}/performance-acts/{performance_act}/export/excel:
+  get:
+    tags: [PerformanceActs]
+    summary: Экспорт акта в Excel
+    parameters:
+      - in: path
+        name: contract
+        required: true
+        schema:
+          type: integer
+      - in: path
+        name: performance_act
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Excel файл
+        content:
+          application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+            schema:
+              type: string
+              format: binary 

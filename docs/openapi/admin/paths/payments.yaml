@@ -1,0 +1,51 @@
+/payments/{payment}:
+  get:
+    tags: [Payments]
+    summary: Получить платеж
+    parameters:
+      - in: path
+        name: payment
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Платеж
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentResponse.yaml'
+  put:
+    tags: [Payments]
+    summary: Обновить платеж
+    parameters:
+      - in: path
+        name: payment
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ContractPaymentCreateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentResponse.yaml'
+  delete:
+    tags: [Payments]
+    summary: Удалить платеж
+    parameters:
+      - in: path
+        name: payment
+        required: true
+        schema:
+          type: integer
+    responses:
+      "204":
+        description: Удалено 

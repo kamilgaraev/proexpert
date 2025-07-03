@@ -1,0 +1,79 @@
+/reports/advance-accounts/summary:
+  get:
+    tags: [AdvanceAccountReports]
+    summary: Сводный отчёт по подотчетным средствам
+    responses:
+      "200":
+        description: Отчёт
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/reports/advance-accounts/users/{userId}:
+  get:
+    tags: [AdvanceAccountReports]
+    summary: Отчёт по пользователю
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Отчёт пользователя
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/reports/advance-accounts/projects/{projectId}:
+  get:
+    tags: [AdvanceAccountReports]
+    summary: Отчёт по проекту
+    parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Отчёт проекта
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/reports/advance-accounts/overdue:
+  get:
+    tags: [AdvanceAccountReports]
+    summary: Отчёт по просроченным авансам
+    responses:
+      "200":
+        description: Отчёт
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/reports/advance-accounts/export/{format}:
+  get:
+    tags: [AdvanceAccountReports]
+    summary: Экспорт отчёта
+    parameters:
+      - in: path
+        name: format
+        required: true
+        schema:
+          type: string
+          enum: [xlsx, csv]
+    responses:
+      "200":
+        description: Файл отчёта
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary 

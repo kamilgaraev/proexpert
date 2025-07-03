@@ -1,0 +1,103 @@
+/accounting/import-users:
+  post:
+    tags: [Accounting]
+    summary: Импорт пользователей из бухгалтерии
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              file:
+                type: string
+                format: binary
+    responses:
+      "200":
+        description: Импорт выполнен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/accounting/import-projects:
+  post:
+    tags: [Accounting]
+    summary: Импорт проектов
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              file:
+                type: string
+                format: binary
+    responses:
+      "200":
+        description: Импорт выполнен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/accounting/import-materials:
+  post:
+    tags: [Accounting]
+    summary: Импорт материалов
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              file:
+                type: string
+                format: binary
+    responses:
+      "200":
+        description: Импорт выполнен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/accounting/export-transactions:
+  post:
+    tags: [Accounting]
+    summary: Экспорт транзакций подотчетных средств
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              date_from:
+                type: string
+                format: date
+              date_to:
+                type: string
+                format: date
+    responses:
+      "200":
+        description: Файл экспорта
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+
+/accounting/sync-status:
+  get:
+    tags: [Accounting]
+    summary: Статус синхронизации с бухгалтерской системой
+    responses:
+      "200":
+        description: Статус
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

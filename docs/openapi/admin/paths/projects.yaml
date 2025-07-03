@@ -83,4 +83,140 @@
           type: integer
     responses:
       "204":
-        description: Успешно удалено 
+        description: Успешно удалено
+
+/projects/available-cost-categories:
+  get:
+    tags: [Projects]
+    summary: Получить доступные категории затрат для проектов
+    responses:
+      "200":
+        description: Категории затрат
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/CostCategory.yaml'
+
+/projects/{id}/statistics:
+  get:
+    tags: [Projects]
+    summary: Получить статистику проекта
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Статистика проекта
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/ProjectStatistics.yaml'
+
+/projects/{id}/materials:
+  get:
+    tags: [Projects]
+    summary: Получить материалы проекта
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Материалы проекта
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/Material.yaml'
+
+/projects/{id}/work-types:
+  get:
+    tags: [Projects]
+    summary: Получить виды работ проекта
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Виды работ проекта
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/WorkType.yaml'
+
+/projects/{projectId}/foremen/{userId}:
+  post:
+    tags: [Projects]
+    summary: Назначить прораба на проект
+    parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: integer
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Прораб назначен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+  delete:
+    tags: [Projects]
+    summary: Открепить прораба от проекта
+    parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: integer
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Прораб откреплён
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

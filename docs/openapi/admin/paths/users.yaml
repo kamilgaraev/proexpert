@@ -144,4 +144,100 @@
         content:
           application/json:
             schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/users/{id}/advance-balance:
+  get:
+    tags: [Users]
+    summary: Получить баланс подотчетных средств пользователя
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Баланс пользователя
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/AdvanceBalance.yaml'
+
+/users/{id}/advance-transactions:
+  get:
+    tags: [Users]
+    summary: Получить транзакции подотчетных средств пользователя
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Транзакции пользователя
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/AdvanceTransaction.yaml'
+
+/users/{id}/issue-funds:
+  post:
+    tags: [Users]
+    summary: Выдать пользователю аванс
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/IssueFundsRequest.yaml'
+    responses:
+      "200":
+        description: Аванс выдан
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/users/{id}/return-funds:
+  post:
+    tags: [Users]
+    summary: Возврат пользователем средств
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ReturnFundsRequest.yaml'
+    responses:
+      "200":
+        description: Средства возвращены
+        content:
+          application/json:
+            schema:
               $ref: '../components/schemas/ApiResponse.yaml' 

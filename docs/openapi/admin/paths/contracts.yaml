@@ -195,4 +195,123 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ContractResponse.yaml' 
+              $ref: '../components/schemas/ContractResponse.yaml'
+
+/contracts/{id}/available-works-for-acts:
+  get:
+    tags: [Contracts]
+    summary: Получить доступные работы для актов по контракту
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Доступные работы
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/CompletedWork.yaml'
+
+/contracts/{id}/performance-acts:
+  get:
+    tags: [Contracts]
+    summary: Получить акты выполненных работ по контракту
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Актовые отчёты
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/PerformanceAct.yaml'
+  post:
+    tags: [Contracts]
+    summary: Создать акт по контракту
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/PerformanceActCreateRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/PerformanceActResponse.yaml'
+
+/contracts/{id}/payments:
+  get:
+    tags: [Contracts]
+    summary: Получить платежи контракта
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Платежи
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/ContractPayment.yaml'
+  post:
+    tags: [Contracts]
+    summary: Создать платеж
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ContractPaymentCreateRequest.yaml'
+    responses:
+      "201":
+        description: Платеж создан
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentResponse.yaml' 
