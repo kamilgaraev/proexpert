@@ -62,4 +62,21 @@ properties:
     format: date-time
   updated_at:
     type: string
-    format: date-time 
+    format: date-time
+  user:
+    $ref: './UserSimple.yaml'
+    nullable: true
+  project:
+    $ref: './Project.yaml'
+    nullable: true
+  created_by:
+    $ref: './UserSimple.yaml'
+    nullable: true
+  approved_by:
+    $ref: './UserSimple.yaml'
+    nullable: true
+  attachments:
+    type: array
+    items:
+      $ref: './File.yaml'
+    nullable: true 

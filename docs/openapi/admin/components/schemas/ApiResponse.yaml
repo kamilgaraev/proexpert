@@ -7,5 +7,6 @@ properties:
     type: string
     description: Сообщение для пользователя
   data:
+    type: object
     description: Полезная нагрузка (может быть объектом любого типа или null)
     nullable: true 
