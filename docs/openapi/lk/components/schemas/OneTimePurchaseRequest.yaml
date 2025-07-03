@@ -1,0 +1,7 @@
+type: object
+properties:
+  type: { type: string }
+  description: { type: string }
+  amount: { type: number, format: float }
+  currency: { type: string, default: RUB }
+required: [type, amount] 

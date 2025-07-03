@@ -1,0 +1,10 @@
+type: object
+properties:
+  id: { type: integer }
+  name: { type: string }
+  email: { type: string, format: email }
+  role_slug: { type: string }
+  is_active: { type: boolean }
+  created_at: { type: string, format: date-time }
+  updated_at: { type: string, format: date-time }
+required: [id, name, email] 

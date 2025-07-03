@@ -139,4 +139,136 @@
                 - type: object
                   properties:
                     data:
-                      $ref: '../components/schemas/SubscriptionLimits.yaml' 
+                      $ref: '../components/schemas/SubscriptionLimits.yaml'
+/billing/addons:
+  get:
+    tags: [Billing]
+    summary: Список доступных add-ons
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Список add-ons
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/billing/org-subscription:
+  get:
+    tags: [Billing]
+    summary: Подписка организации
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Подписка
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+  patch:
+    tags: [Billing]
+    summary: Обновить подписку организации
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/OrgSubscribeRequest.yaml'
+    responses:
+      "200":
+        description: Подписка обновлена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/billing/org-subscribe:
+  post:
+    tags: [Billing]
+    summary: Оформить/сменить подписку организации
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/OrgSubscribeRequest.yaml'
+    responses:
+      "201":
+        description: Подписка оформлена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/billing/org-addon:
+  post:
+    tags: [Billing]
+    summary: Подключить add-on
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/OrgAddonAttachRequest.yaml'
+    responses:
+      "201":
+        description: Add-on подключён
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/billing/org-addon/{id}:
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema: { type: integer }
+  delete:
+    tags: [Billing]
+    summary: Отключить add-on
+    security: [{ bearerAuth: [] }]
+    responses:
+      "204":
+        description: Add-on отключён
+/billing/org-one-time-purchase:
+  post:
+    tags: [Billing]
+    summary: Совершить одноразовую покупку
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/OneTimePurchaseRequest.yaml'
+    responses:
+      "201":
+        description: Покупка совершена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/billing/org-one-time-purchases:
+  get:
+    tags: [Billing]
+    summary: История одноразовых покупок
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: История
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/billing/org-dashboard:
+  get:
+    tags: [Billing]
+    summary: Дашборд организации
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Данные дашборда
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

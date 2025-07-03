@@ -1,0 +1,7 @@
+type: object
+properties:
+  plan_id: { type: integer }
+  addon_ids:
+    type: array
+    items: { type: integer }
+required: [plan_id] 

@@ -1,0 +1,4 @@
+type: object
+properties:
+  addon_id: { type: integer }
+required: [addon_id] 

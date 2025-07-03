@@ -1,0 +1,92 @@
+/adminPanelUsers:
+  get:
+    tags: [AdminPanelUsers]
+    summary: Список пользователей админ-панели
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Список пользователей
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/AdminPanelUser.yaml'
+  post:
+    tags: [AdminPanelUsers]
+    summary: Создать пользователя админ-панели
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/StoreAdminPanelUserRequest.yaml'
+    responses:
+      "201":
+        description: Пользователь создан
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/AdminPanelUser.yaml'
+/adminPanelUsers/{userId}:
+  parameters:
+    - name: userId
+      in: path
+      required: true
+      schema: { type: integer }
+  get:
+    tags: [AdminPanelUsers]
+    summary: Получить пользователя админ-панели
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Пользователь
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/AdminPanelUser.yaml'
+  put:
+    tags: [AdminPanelUsers]
+    summary: Обновить пользователя админ-панели
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/UpdateAdminPanelUserRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/AdminPanelUser.yaml'
+  delete:
+    tags: [AdminPanelUsers]
+    summary: Удалить пользователя админ-панели
+    security: [{ bearerAuth: [] }]
+    responses:
+      "204":
+        description: Удалено 

@@ -1,0 +1,7 @@
+type: object
+properties:
+  subject: { type: string }
+  message: { type: string }
+  email: { type: string, format: email }
+  name: { type: string }
+required: [subject, message] 

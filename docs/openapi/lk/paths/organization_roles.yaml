@@ -153,4 +153,52 @@
                 - type: object
                   properties:
                     data:
-                      $ref: '../components/schemas/OrganizationRole.yaml' 
+                      $ref: '../components/schemas/OrganizationRole.yaml'
+/roles/{roleId}/assign-user:
+  post:
+    tags: [OrganizationRoles]
+    summary: Назначить пользователя на роль
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - name: roleId
+        in: path
+        required: true
+        schema: { type: integer }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              user_id: { type: integer }
+            required: [user_id]
+    responses:
+      "200":
+        description: Пользователь назначен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/roles/{roleId}/remove-user:
+  delete:
+    tags: [OrganizationRoles]
+    summary: Удалить пользователя из роли
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - name: roleId
+        in: path
+        required: true
+        schema: { type: integer }
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              user_id: { type: integer }
+            required: [user_id]
+    responses:
+      "204":
+        description: Пользователь удалён 

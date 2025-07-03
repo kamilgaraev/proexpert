@@ -1,0 +1,7 @@
+type: object
+properties:
+  name: { type: string }
+  password: { type: string, format: password }
+  password_confirmation: { type: string, format: password }
+  role_slug: { type: string }
+# Все поля опциональны 

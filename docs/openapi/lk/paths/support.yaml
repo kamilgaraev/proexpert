@@ -1,0 +1,18 @@
+/support:
+  post:
+    tags: [Support]
+    summary: Отправить запрос в поддержку
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/SupportRequest.yaml'
+    responses:
+      "201":
+        description: Запрос отправлен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

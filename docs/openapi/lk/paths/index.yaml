@@ -98,4 +98,31 @@
   $ref: './multi_organization.yaml#/~1multi-organization~1child-organizations'
 /multi-organization/create-holding:
   $ref: './multi_organization.yaml#/~1multi-organization~1create-holding'
-/multi-organization/add-child: 
+/multi-organization/add-child:
+  $ref: './multi_organization.yaml#/~1multi-organization~1add-child'
+/support:
+  $ref: './support.yaml#/~1support'
+/adminPanelUsers:
+  $ref: './admin_panel_users.yaml#/~1adminPanelUsers'
+/adminPanelUsers/{userId}:
+  $ref: './admin_panel_users.yaml#/~1adminPanelUsers~1{userId}'
+/roles/{roleId}/assign-user:
+  $ref: './organization_roles.yaml#/~1roles~1{roleId}~1assign-user'
+/roles/{roleId}/remove-user:
+  $ref: './organization_roles.yaml#/~1roles~1{roleId}~1remove-user'
+/billing/addons:
+  $ref: './billing.yaml#/~1billing~1addons'
+/billing/org-subscription:
+  $ref: './billing.yaml#/~1billing~1org-subscription'
+/billing/org-subscribe:
+  $ref: './billing.yaml#/~1billing~1org-subscribe'
+/billing/org-addon:
+  $ref: './billing.yaml#/~1billing~1org-addon'
+/billing/org-addon/{id}:
+  $ref: './billing.yaml#/~1billing~1org-addon~1{id}'
+/billing/org-one-time-purchase:
+  $ref: './billing.yaml#/~1billing~1org-one-time-purchase'
+/billing/org-one-time-purchases:
+  $ref: './billing.yaml#/~1billing~1org-one-time-purchases'
+/billing/org-dashboard:
+  $ref: './billing.yaml#/~1billing~1org-dashboard' 
