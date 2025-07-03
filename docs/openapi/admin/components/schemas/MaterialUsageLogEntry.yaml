@@ -1,0 +1,36 @@
+type: object
+properties:
+  id:
+    type: integer
+  project_name:
+    type: string
+    nullable: true
+  material_name:
+    type: string
+    nullable: true
+  user_name:
+    type: string
+    nullable: true
+  supplier_name:
+    type: string
+    nullable: true
+  operation_type:
+    type: string
+    enum: [receipt, write_off]
+  quantity:
+    type: number
+    format: float
+  unit_price:
+    type: number
+    format: float
+    nullable: true
+  total_price:
+    type: number
+    format: float
+    nullable: true
+  usage_date:
+    type: string
+    format: date
+  created_at:
+    type: string
+    format: date-time 

@@ -1,0 +1,29 @@
+type: object
+properties:
+  id:
+    type: integer
+  project_name:
+    type: string
+    nullable: true
+  work_type_name:
+    type: string
+  user_name:
+    type: string
+    nullable: true
+  quantity:
+    type: number
+    format: float
+  unit_price:
+    type: number
+    format: float
+    nullable: true
+  total_price:
+    type: number
+    format: float
+    nullable: true
+  completion_date:
+    type: string
+    format: date
+  created_at:
+    type: string
+    format: date-time 

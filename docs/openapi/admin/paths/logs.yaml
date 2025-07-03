@@ -1,0 +1,136 @@
+/logs/material-usage:
+  get:
+    tags: [OperationLogs]
+    summary: Получить логи использования материалов
+    parameters:
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+      - in: query
+        name: material_id
+        schema:
+          type: integer
+      - in: query
+        name: user_id
+        schema:
+          type: integer
+      - in: query
+        name: supplier_id
+        schema:
+          type: integer
+      - in: query
+        name: operation_type
+        schema:
+          type: string
+          enum: [receipt, write_off]
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+      - in: query
+        name: page
+        schema:
+          type: integer
+          default: 1
+      - in: query
+        name: sort_by
+        schema:
+          type: string
+          enum: [id, usage_date, created_at, quantity]
+          default: usage_date
+      - in: query
+        name: sort_direction
+        schema:
+          type: string
+          enum: [asc, desc]
+          default: desc
+    responses:
+      "200":
+        description: Список логов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/MaterialUsageLogEntry.yaml'
+
+/logs/work-completion:
+  get:
+    tags: [OperationLogs]
+    summary: Получить логи выполнения работ
+    parameters:
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+      - in: query
+        name: work_type_id
+        schema:
+          type: integer
+      - in: query
+        name: user_id
+        schema:
+          type: integer
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+      - in: query
+        name: page
+        schema:
+          type: integer
+          default: 1
+      - in: query
+        name: sort_by
+        schema:
+          type: string
+          enum: [id, completion_date, created_at, quantity]
+          default: completion_date
+      - in: query
+        name: sort_direction
+        schema:
+          type: string
+          enum: [asc, desc]
+          default: desc
+    responses:
+      "200":
+        description: Список логов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/WorkCompletionLogEntry.yaml' 

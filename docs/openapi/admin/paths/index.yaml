@@ -130,4 +130,9 @@
 /filters/completed-works:
   $ref: './filters.yaml#/~1filters~1completed-works'
 /filters/quick-stats:
-  $ref: './filters.yaml#/~1filters~1quick-stats' 
+  $ref: './filters.yaml#/~1filters~1quick-stats'
+
+/logs/material-usage:
+  $ref: './logs.yaml#/~1logs~1material-usage'
+/logs/work-completion:
+  $ref: './logs.yaml#/~1logs~1work-completion' 
