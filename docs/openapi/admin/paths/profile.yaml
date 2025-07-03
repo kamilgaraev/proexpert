@@ -1,0 +1,80 @@
+/profile:
+  get:
+    tags: [Profile]
+    summary: Получить профиль текущего администратора
+    responses:
+      "200":
+        description: Профиль пользователя
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/UserProfile.yaml'
+  patch:
+    tags: [Profile]
+    summary: Обновить профиль
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/UpdateProfileRequest.yaml'
+        application/json:
+          schema:
+            $ref: '../components/schemas/UpdateProfileRequest.yaml'
+    responses:
+      "200":
+        description: Профиль обновлён
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/UserProfile.yaml'
+/profile-settings:
+  get:
+    tags: [Profile]
+    summary: (Alias) Получить профиль
+    responses:
+      "200":
+        description: Профиль пользователя
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/UserProfile.yaml'
+  patch:
+    tags: [Profile]
+    summary: (Alias) Обновить профиль
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/UpdateProfileRequest.yaml'
+        application/json:
+          schema:
+            $ref: '../components/schemas/UpdateProfileRequest.yaml'
+    responses:
+      "200":
+        description: Профиль обновлён
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/UserProfile.yaml' 

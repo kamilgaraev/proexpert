@@ -1,0 +1,23 @@
+type: object
+properties:
+  name:
+    type: string
+  email:
+    type: string
+    format: email
+  phone:
+    type: string
+  avatar:
+    type: string
+    format: binary
+    description: Файл изображения
+  remove_avatar:
+    type: boolean
+    description: Удалить существующий аватар
+  password:
+    type: string
+    format: password
+  password_confirmation:
+    type: string
+    format: password
+required: [] 

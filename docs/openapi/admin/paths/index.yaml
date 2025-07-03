@@ -135,4 +135,9 @@
 /logs/material-usage:
   $ref: './logs.yaml#/~1logs~1material-usage'
 /logs/work-completion:
-  $ref: './logs.yaml#/~1logs~1work-completion' 
+  $ref: './logs.yaml#/~1logs~1work-completion'
+
+/profile:
+  $ref: './profile.yaml#/~1profile'
+/profile-settings:
+  $ref: './profile.yaml#/~1profile-settings' 

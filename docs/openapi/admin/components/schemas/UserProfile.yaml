@@ -1,0 +1,37 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  email:
+    type: string
+    format: email
+  phone:
+    type: string
+    nullable: true
+  position:
+    type: string
+    nullable: true
+  avatar_url:
+    type: string
+    format: uri
+    nullable: true
+  is_active:
+    type: boolean
+  user_type:
+    type: string
+    description: Тип пользователя
+  current_organization_id:
+    type: integer
+    nullable: true
+  last_login_at:
+    type: string
+    format: date-time
+    nullable: true
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time 
