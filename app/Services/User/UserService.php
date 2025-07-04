@@ -15,6 +15,7 @@ use App\Exceptions\BusinessLogicException;
 use App\Services\BaseService;
 use Illuminate\Support\Facades\Log;
 use App\Services\Organization\OrganizationContext;
+use App\Interfaces\Billing\UserSubscriptionServiceInterface;
 
 /**
  * @property UserRepositoryInterface $userRepository
@@ -24,14 +25,17 @@ class UserService
 {
     protected UserRepositoryInterface $userRepository;
     protected RoleRepositoryInterface $roleRepository;
+    protected UserSubscriptionServiceInterface $subscriptionService;
 
     public function __construct(
         UserRepositoryInterface $userRepository,
-        RoleRepositoryInterface $roleRepository
+        RoleRepositoryInterface $roleRepository,
+        UserSubscriptionServiceInterface $subscriptionService
     )
     {
         $this->userRepository = $userRepository;
         $this->roleRepository = $roleRepository;
+        $this->subscriptionService = $subscriptionService;
     }
 
     // --- Helper Methods ---
@@ -930,5 +934,18 @@ class UserService
         $users = $this->userRepository->findByRolesInOrganization($intOrganizationId, $adminPanelRoles);
 
         return $users->unique('id'); // Возвращаем уникальных пользователей
+    }
+
+    /**
+     * Проверяет лимит пользователя согласно подписке.
+     * Шорткат, чтобы контроллеры не тянули SubscriptionService напрямую.
+     */
+    public function checkUserLimit(string $limitKey, int $valueToConsume = 1): bool
+    {
+        $user = Auth::user();
+        if (!$user) {
+            return false;
+        }
+        return $this->subscriptionService->checkUserLimit($user, $limitKey, $valueToConsume);
     }
 } 
