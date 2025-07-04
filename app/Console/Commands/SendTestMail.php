@@ -9,6 +9,8 @@ use Symfony\Component\Console\Attribute\AsCommand;
 #[AsCommand(name: 'mail:test', description: 'Отправляет тестовое письмо через текущий SMTP-драйвер.')]
 class SendTestMail extends Command
 {
+    protected $signature = 'mail:test {email : Email-адрес получателя}';
+
     public function handle(): int
     {
         $to = $this->argument('email');
