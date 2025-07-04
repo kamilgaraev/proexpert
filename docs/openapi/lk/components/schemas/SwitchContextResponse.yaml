@@ -1,8 +1,14 @@
-allOf:
-  - $ref: './ApiResponse.yaml'
-  - type: object
-    properties:
-      current_organization_id:
-        type: integer
-        description: ID текущей организации после переключения
-    required: [current_organization_id] 
+type: object
+properties:
+  success:
+    type: boolean
+    example: true
+  message:
+    type: string
+    example: 'Контекст организации изменен'
+    nullable: true
+  current_organization_id:
+    type: integer
+    description: ID текущей организации после переключения
+    example: 123
+required: [success, current_organization_id] 
