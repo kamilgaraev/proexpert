@@ -4,9 +4,19 @@ namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
+use App\Services\User\InvitationService;
+use Illuminate\Support\Facades\Auth;
+use App\Models\UserInvitation;
 
 class UserInvitationController extends Controller
 {
+    protected InvitationService $invitationService;
+
+    public function __construct(InvitationService $invitationService)
+    {
+        $this->invitationService = $invitationService;
+    }
+
     /**
      * Display a listing of the resource.
      */
@@ -28,7 +38,15 @@ class UserInvitationController extends Controller
      */
     public function store(Request $request)
     {
-        //
+        $data = $request->validate([
+            'email' => 'required|email',
+            'name' => 'required|string|max:255',
+        ]);
+
+        $creator = Auth::user();
+        $invitation = $this->invitationService->invite($data['email'], $data['name'], $creator);
+
+        return response()->json(['success'=>true,'data'=>$invitation]);
     }
 
     /**
@@ -61,5 +79,12 @@ class UserInvitationController extends Controller
     public function destroy(string $id)
     {
         //
+    }
+
+    public function resend(Request $request, int $invitationId)
+    {
+        $invitation = UserInvitation::findOrFail($invitationId);
+        $this->invitationService->resend($invitation);
+        return response()->json(['success'=>true]);
     }
 }
