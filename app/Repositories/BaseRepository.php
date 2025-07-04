@@ -36,13 +36,17 @@ class BaseRepository implements BaseRepositoryInterface
 
         // Простая обработка фильтров: [поле, оператор, значение] или [поле, значение]
         // или ассоциативный массив [поле => значение]
-        foreach ($filters as $key_or_array => $value_or_null) {
-            if (is_array($key_or_array) && count($key_or_array) === 3) {
-                $query->where($key_or_array[0], $key_or_array[1], $key_or_array[2]);
-            } elseif (is_array($key_or_array) && count($key_or_array) === 2) {
-                $query->where($key_or_array[0], $key_or_array[1]);
-            } elseif (is_string($key_or_array)) {
-                 $query->where($key_or_array, $value_or_null);
+        foreach ($filters as $key => $filter) {
+            // Формат: [['field','op','value'], ['field','value']] или ['field' => 'value']
+            if (is_array($filter)) {
+                $count = count($filter);
+                if ($count === 3) {
+                    $query->where($filter[0], $filter[1], $filter[2]);
+                } elseif ($count === 2) {
+                    $query->where($filter[0], $filter[1]);
+                }
+            } elseif (is_string($key)) {
+                $query->where($key, $filter);
             }
         }
         
@@ -61,13 +65,16 @@ class BaseRepository implements BaseRepositoryInterface
         
         // Простая обработка фильтров: [поле, оператор, значение] или [поле, значение]
         // или ассоциативный массив [поле => значение]
-        foreach ($filters as $key_or_array => $value_or_null) {
-            if (is_array($key_or_array) && count($key_or_array) === 3) {
-                $query->where($key_or_array[0], $key_or_array[1], $key_or_array[2]);
-            } elseif (is_array($key_or_array) && count($key_or_array) === 2) {
-                $query->where($key_or_array[0], $key_or_array[1]);
-            } elseif (is_string($key_or_array)) {
-                 $query->where($key_or_array, $value_or_null);
+        foreach ($filters as $key => $filter) {
+            if (is_array($filter)) {
+                $count = count($filter);
+                if ($count === 3) {
+                    $query->where($filter[0], $filter[1], $filter[2]);
+                } elseif ($count === 2) {
+                    $query->where($filter[0], $filter[1]);
+                }
+            } elseif (is_string($key)) {
+                $query->where($key, $filter);
             }
         }
         return $query->with($relations)->first($columns)?->append($appends);
