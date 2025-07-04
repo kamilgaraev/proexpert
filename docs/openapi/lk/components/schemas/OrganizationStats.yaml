@@ -1,0 +1,7 @@
+type: object
+properties:
+  users_count: { type: integer }
+  projects_count: { type: integer }
+  contracts_count: { type: integer }
+  active_contracts_value: { type: number, format: float }
+required: [users_count, projects_count, contracts_count] 

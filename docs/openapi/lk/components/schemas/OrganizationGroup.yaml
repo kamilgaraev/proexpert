@@ -1,0 +1,11 @@
+type: object
+properties:
+  id: { type: integer }
+  name: { type: string }
+  slug: { type: string }
+  description: { type: string, nullable: true }
+  parent_organization_id: { type: integer }
+  max_child_organizations: { type: integer }
+  settings: { type: object, nullable: true }
+  permissions_config: { type: object, nullable: true }
+required: [id, name, slug, parent_organization_id] 

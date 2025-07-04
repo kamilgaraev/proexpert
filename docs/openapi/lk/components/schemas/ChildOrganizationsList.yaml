@@ -1,0 +1,9 @@
+type: object
+properties:
+  organizations:
+    type: array
+    items:
+      $ref: './ChildOrganizationItem.yaml'
+  pagination:
+    $ref: './PaginationMeta.yaml'
+required: [organizations, pagination] 

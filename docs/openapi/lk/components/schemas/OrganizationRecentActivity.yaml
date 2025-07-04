@@ -1,0 +1,5 @@
+type: object
+properties:
+  last_project_created: { type: string, format: date-time, nullable: true }
+  last_contract_signed: { type: string, format: date-time, nullable: true }
+  last_user_added: { type: string, format: date-time, nullable: true } 

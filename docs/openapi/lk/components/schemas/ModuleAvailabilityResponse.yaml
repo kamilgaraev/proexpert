@@ -1,0 +1,21 @@
+allOf:
+  - $ref: './ApiResponse.yaml'
+  - type: object
+    properties:
+      available:
+        type: boolean
+        description: Доступен ли модуль
+      can_create_holding:
+        type: boolean
+        description: Может ли текущая организация создать холдинг
+      current_type:
+        type: string
+        description: Тип текущей организации (single | parent | child)
+      is_holding:
+        type: boolean
+        description: Является ли текущая организация холдингом
+      required_module:
+        type: string
+        description: Требуемый модуль (присутствует только при ошибке)
+        nullable: true
+    required: [available] 

@@ -9,7 +9,7 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              $ref: '../components/schemas/ModuleAvailabilityResponse.yaml'
 /multi-organization/hierarchy:
   get:
     tags: [MultiOrganization]
@@ -38,7 +38,14 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/OrganizationSummary.yaml'
 /multi-organization/organization/{organizationId}:
   parameters:
     - { name: organizationId, in: path, required: true, schema: { type: integer } }
@@ -52,7 +59,12 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationData.yaml'
 /multi-organization/switch-context:
   post:
     tags: [MultiOrganization]
@@ -70,7 +82,7 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              $ref: '../components/schemas/SwitchContextResponse.yaml'
 /multi-organization/dashboard:
   get:
     tags: [MultiOrganization]
@@ -99,7 +111,12 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/ChildOrganizationsList.yaml'
 /multi-organization/create-holding:
   post:
     tags: [MultiOrganization]
@@ -117,7 +134,12 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationGroup.yaml'
 /multi-organization/add-child:
   post:
     tags: [MultiOrganization]

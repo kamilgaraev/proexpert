@@ -1,0 +1,9 @@
+type: object
+properties:
+  organization:
+    $ref: './OrganizationProfile.yaml'
+  stats:
+    $ref: './OrganizationStats.yaml'
+  recent_activity:
+    $ref: './OrganizationRecentActivity.yaml'
+required: [organization] 

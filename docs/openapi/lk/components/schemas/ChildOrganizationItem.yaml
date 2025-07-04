@@ -1,0 +1,12 @@
+type: object
+properties:
+  id: { type: integer }
+  name: { type: string }
+  organization_type: { type: string }
+  is_holding: { type: boolean }
+  hierarchy_level: { type: integer }
+  users_count: { type: integer }
+  projects_count: { type: integer }
+  contracts_count: { type: integer }
+  is_active: { type: boolean }
+required: [id, name, organization_type, is_active] 

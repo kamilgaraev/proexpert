@@ -1,0 +1,7 @@
+type: object
+properties:
+  total: { type: integer }
+  per_page: { type: integer }
+  current_page: { type: integer }
+  last_page: { type: integer }
+required: [total, per_page, current_page, last_page] 
