@@ -34,11 +34,17 @@ class InvitationService
         }
 
         $invitation = UserInvitation::create([
-            'user_id' => $user->id,
-            'email' => $email,
-            'plain_password' => $plainPassword,
-            'status' => 'sent',
-            'sent_at' => now(),
+            'organization_id'      => $creator->current_organization_id ?? optional($creator->organizations()->first())->id,
+            'invited_by_user_id'   => $creator->id,
+            'user_id'              => $user->id,
+            'email'                => $email,
+            'name'                 => $name,
+            'role_slugs'           => [],
+            'token'                => Str::random(64),
+            'expires_at'           => now()->addDays(7),
+            'plain_password'       => $plainPassword,
+            'status'               => 'pending',
+            'sent_at'              => now(),
         ]);
 
         // send mail

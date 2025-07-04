@@ -10,15 +10,25 @@ class UserInvitation extends Model
     use HasFactory;
 
     protected $fillable = [
+        'organization_id',
+        'invited_by_user_id',
         'user_id',
         'email',
+        'name',
+        'role_slugs',
+        'token',
+        'expires_at',
         'plain_password',
         'status',
         'sent_at',
+        'metadata',
     ];
 
     protected $casts = [
-        'sent_at' => 'datetime',
+        'role_slugs' => 'array',
+        'expires_at' => 'datetime',
+        'sent_at'    => 'datetime',
+        'metadata'   => 'array',
     ];
 
     public function user()
