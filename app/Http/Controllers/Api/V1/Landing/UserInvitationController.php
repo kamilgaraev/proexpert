@@ -22,7 +22,23 @@ class UserInvitationController extends Controller
      */
     public function index()
     {
-        //
+        $user = Auth::user();
+
+        // Определяем организацию, по которой выводим приглашения
+        $organizationId = $user->current_organization_id ?? optional($user->organizations()->first())->id;
+
+        if (!$organizationId) {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        $invitations = \App\Models\UserInvitation::where('organization_id', $organizationId)
+            ->latest('created_at')
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data'    => $invitations,
+        ]);
     }
 
     /**
