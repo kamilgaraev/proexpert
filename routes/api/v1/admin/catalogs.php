@@ -43,6 +43,9 @@ Route::get('/materials/{id}/validate-for-accounting', [MaterialController::class
 // Маршрут для скачивания шаблона импорта материалов
 Route::get('/materials/import-template', [MaterialController::class, 'downloadImportTemplate'])->name('materials.import-template');
 
+// Поиск материалов (alias для index с параметрами q, limit)
+Route::get('/materials/search', [MaterialController::class, 'index'])->name('materials.search');
+
 Route::apiResource('materials', MaterialController::class);
 
 Route::apiResource('suppliers', SupplierController::class);
