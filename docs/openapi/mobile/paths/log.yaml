@@ -33,22 +33,4 @@
         content:
           application/json:
             schema:
-              $ref: '../../lk/components/schemas/ApiResponse.yaml'
-/logs/work-completion:
-  post:
-    tags: [Logs]
-    summary: Логировать выполнение работ
-    security: [{ bearerAuth: [] }]
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/StoreWorkCompletionRequest.yaml'
-    responses:
-      "201":
-        description: Записано
-        content:
-          application/json:
-            schema:
               $ref: '../../lk/components/schemas/ApiResponse.yaml' 

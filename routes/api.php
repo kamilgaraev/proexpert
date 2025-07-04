@@ -232,6 +232,10 @@ Route::prefix('mobile')->name('mobile.')->group(function () {
         if (file_exists(__DIR__ . '/api/v1/mobile/catalogs.php')) {
             require __DIR__ . '/api/v1/mobile/catalogs.php';
         }
+        // Подключаем маршруты выполненных работ для мобильного приложения
+        if (file_exists(__DIR__ . '/api/v1/mobile/completed_works.php')) {
+            require __DIR__ . '/api/v1/mobile/completed_works.php';
+        }
         // Подключаем маршруты для заявок с объекта
         if (file_exists(__DIR__ . '/api/v1/mobile/site_requests.php')) {
             require __DIR__ . '/api/v1/mobile/site_requests.php';

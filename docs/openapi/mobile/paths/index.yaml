@@ -20,8 +20,16 @@
   $ref: './log.yaml#/~1logs~1material-receipts'
 /logs/material-write-offs:
   $ref: './log.yaml#/~1logs~1material-write-offs'
-/logs/work-completion:
-  $ref: './log.yaml#/~1logs~1work-completion'
+# путь логирования выполнения работ удалён
+
+/completed-works:
+  $ref: './completed_works.yaml#/~1completed-works'
+/completed-works/{completed_work}:
+  $ref: './completed_works.yaml#/~1completed-works~1{completed_work}'
+/completed-works/{completed_work}/sync-materials:
+  $ref: './completed_works.yaml#/~1completed-works~1{completed_work}~1sync-materials'
+/completed-works/work-type-material-defaults:
+  $ref: './completed_works.yaml#/~1completed-works~1work-type-material-defaults'
 /site-requests:
   $ref: './site_requests.yaml#/~1site-requests'
 /site-requests/{site_request}:

@@ -1,0 +1,138 @@
+/completed-works:
+  get:
+    tags: [CompletedWorks]
+    summary: Получить список выполненных работ (моб.)
+    security: [{ bearerAuth: [] }]
+    responses:
+      "200":
+        description: Список выполненных работ
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../../admin/components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../../admin/components/schemas/CompletedWork.yaml'
+  post:
+    tags: [CompletedWorks]
+    summary: Создать запись о выполненной работе (моб.)
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../../admin/components/schemas/CompletedWorkCreateRequest.yaml'
+    responses:
+      "201":
+        description: Создано
+        content:
+          application/json:
+            schema:
+              $ref: '../../admin/components/schemas/CompletedWorkResponse.yaml'
+      "422":
+        description: Ошибка валидации
+
+/completed-works/{completed_work}:
+  get:
+    tags: [CompletedWorks]
+    summary: Получить выполненную работу (моб.)
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - in: path
+        name: completed_work
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Запись о выполненной работе
+        content:
+          application/json:
+            schema:
+              $ref: '../../admin/components/schemas/CompletedWorkResponse.yaml'
+  put:
+    tags: [CompletedWorks]
+    summary: Обновить выполненную работу (моб.)
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - in: path
+        name: completed_work
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../../admin/components/schemas/CompletedWorkCreateRequest.yaml'
+    responses:
+      "200":
+        description: Обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../../admin/components/schemas/CompletedWorkResponse.yaml'
+      "422":
+        description: Ошибка валидации
+
+/completed-works/{completed_work}/sync-materials:
+  post:
+    tags: [CompletedWorks]
+    summary: Синхронизировать материалы выполненной работы (моб.)
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - in: path
+        name: completed_work
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../../admin/components/schemas/CompletedWorkSyncMaterialsRequest.yaml'
+    responses:
+      "200":
+        description: Материалы синхронизированы
+        content:
+          application/json:
+            schema:
+              $ref: '../../admin/components/schemas/CompletedWorkResponse.yaml'
+      "422":
+        description: Ошибка валидации
+
+/completed-works/work-type-material-defaults:
+  get:
+    tags: [CompletedWorks]
+    summary: Получить материалы по умолчанию для типа работы (моб.)
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - in: query
+        name: work_type_id
+        required: true
+        schema:
+          type: integer
+        description: ID типа работы
+    responses:
+      "200":
+        description: Материалы по умолчанию
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../../admin/components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../../admin/components/schemas/WorkTypeMaterialDefault.yaml'
+      "422":
+        description: Ошибка валидации 
