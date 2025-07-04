@@ -71,4 +71,11 @@ properties:
     type: string
     format: date-time
     nullable: true
-required: [id, email, name, role_slugs, status, status_text, status_color, is_expired, can_be_accepted] 
+  plain_password:
+    type: string
+    description: Сгенерированный пароль
+  sent_at:
+    type: string
+    format: date-time
+    nullable: true
+required: [id, email, status, plain_password] 
