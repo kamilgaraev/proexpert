@@ -1,9 +1,19 @@
 type: object
 properties:
-  id: { type: integer }
-  name: { type: string }
+  id: { type: integer, example: 1 }
+  name: { type: string, example: "Головная организация" }
   children:
     type: array
     items:
       $ref: '#'
+    example:
+      - id: 2
+        name: "Дочерняя организация 1"
+        children: []
+      - id: 3
+        name: "Дочерняя организация 2"
+        children:
+          - id: 4
+            name: "Внучатая организация"
+            children: []
 required: [id, name] 
