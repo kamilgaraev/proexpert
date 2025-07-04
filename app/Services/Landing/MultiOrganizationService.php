@@ -9,6 +9,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Hash;
 
 class MultiOrganizationService
 {
@@ -48,13 +49,29 @@ class MultiOrganizationService
         });
     }
 
-    public function addChildOrganization(OrganizationGroup $group, array $organizationData, User $creator): Organization
+    public function addChildOrganization(OrganizationGroup $group, array $organizationData, User $creator): array
     {
         if (!$group->canAddChildOrganization()) {
             throw new \Exception('Достигнут лимит дочерних организаций');
         }
 
         return DB::transaction(function () use ($group, $organizationData, $creator) {
+            $ownerData = $organizationData['owner'] ?? null;
+            if (!$ownerData) {
+                throw new \Exception('Данные владельца не переданы');
+            }
+
+            // ищем или создаём пользователя-владельца
+            $owner = \App\Models\User::where('email', $ownerData['email'])->first();
+
+            if (!$owner) {
+                $owner = \App\Models\User::create([
+                    'name' => $ownerData['name'],
+                    'email' => $ownerData['email'],
+                    'password' => Hash::make($ownerData['password'] ?? Str::random(12)),
+                ]);
+            }
+
             $parentOrg = $group->parentOrganization;
             
             $childOrg = Organization::create([
@@ -74,12 +91,21 @@ class MultiOrganizationService
 
             $this->createDefaultAccessPermissions($parentOrg, $childOrg, $creator);
 
-            $childOrg->users()->attach($creator->id, [
+            // Привязываем владельца
+            $childOrg->users()->attach($owner->id, [
                 'is_owner' => true,
                 'is_active' => true,
+                'settings' => ['role' => 'organization_owner'],
             ]);
 
-            return $childOrg;
+            // Обновляем текущий контекст владельца
+            $owner->current_organization_id = $childOrg->id;
+            $owner->save();
+
+            return [
+                'organization' => $childOrg,
+                'owner_user' => $owner,
+            ];
         });
     }
 

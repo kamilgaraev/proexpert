@@ -95,6 +95,9 @@ class MultiOrganizationController extends Controller
             'address' => 'nullable|string|max:500',
             'phone' => 'nullable|string|max:20',
             'email' => 'nullable|email|max:255',
+            'owner.name' => 'required|string|max:255',
+            'owner.email' => 'required|email|max:255',
+            'owner.password' => 'nullable|string|min:8',
         ]);
 
         $user = Auth::user();
@@ -105,12 +108,12 @@ class MultiOrganizationController extends Controller
         }
 
         try {
-            $childOrg = $this->multiOrgService->addChildOrganization($group, $request->all(), $user);
+            $childData = $this->multiOrgService->addChildOrganization($group, $request->all(), $user);
             
             return response()->json([
                 'success' => true,
                 'message' => 'Дочерняя организация успешно добавлена',
-                'data' => $childOrg,
+                'data' => $childData,
             ]);
         } catch (\Exception $e) {
             return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);

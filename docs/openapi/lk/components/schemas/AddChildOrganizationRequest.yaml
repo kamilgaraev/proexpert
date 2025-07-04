@@ -1,6 +1,18 @@
 type: object
 properties:
+  group_id: { type: integer }
   name: { type: string }
-  inn: { type: string }
-  owner_email: { type: string, format: email }
-required: [name, inn, owner_email] 
+  description: { type: string, nullable: true }
+  inn: { type: string, nullable: true }
+  kpp: { type: string, nullable: true }
+  address: { type: string, nullable: true }
+  phone: { type: string, nullable: true }
+  email: { type: string, nullable: true }
+  owner:
+    type: object
+    properties:
+      name: { type: string }
+      email: { type: string, format: email }
+      password: { type: string, nullable: true }
+    required: [name, email]
+required: [group_id, name, owner] 

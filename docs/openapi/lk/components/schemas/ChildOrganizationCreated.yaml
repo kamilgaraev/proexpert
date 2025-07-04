@@ -1,0 +1,7 @@
+type: object
+properties:
+  organization:
+    $ref: './OrganizationProfile.yaml'
+  owner_user:
+    $ref: './UserProfile.yaml'
+required: [organization, owner_user] 
