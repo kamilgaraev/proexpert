@@ -1,0 +1,9 @@
+type: object
+properties:
+  all:
+    type: array
+    items: { $ref: './SubscriptionAddon.yaml' }
+  connected:
+    type: array
+    items: { $ref: './OrganizationSubscriptionAddon.yaml' }
+required: [all, connected] 

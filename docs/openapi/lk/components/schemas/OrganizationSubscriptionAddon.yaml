@@ -1,0 +1,8 @@
+type: object
+properties:
+  id: { type: integer }
+  addon: { $ref: './SubscriptionAddon.yaml' }
+  status: { type: string, description: 'active|expired|canceled' }
+  activated_at: { type: string, format: date-time }
+  expires_at: { type: string, format: date-time, nullable: true }
+required: [id, addon, status, activated_at] 

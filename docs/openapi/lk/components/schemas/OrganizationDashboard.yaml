@@ -1,0 +1,20 @@
+type: object
+properties:
+  plan:
+    type: object
+    nullable: true
+    properties:
+      name: { type: string }
+      ends_at: { type: string, format: date-time }
+      days_left: { type: integer, nullable: true }
+      max_foremen: { type: integer, nullable: true }
+      max_projects: { type: integer, nullable: true }
+      max_storage_gb: { type: integer, nullable: true }
+      used_foremen: { type: integer, nullable: true }
+      used_projects: { type: integer, nullable: true }
+      used_storage_gb: { type: integer, nullable: true }
+  addons:
+    type: array
+    items:
+      $ref: './OrganizationSubscriptionAddon.yaml'
+required: [plan, addons] 

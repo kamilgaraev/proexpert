@@ -1,0 +1,11 @@
+type: object
+properties:
+  id: { type: integer }
+  type: { type: string }
+  description: { type: string, nullable: true }
+  amount: { type: number, format: float }
+  currency: { type: string }
+  status: { type: string }
+  purchased_at: { type: string, format: date-time }
+  expires_at: { type: string, format: date-time, nullable: true }
+required: [id, type, amount, currency, status, purchased_at] 

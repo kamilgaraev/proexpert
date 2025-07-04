@@ -1,9 +1,9 @@
 type: object
 properties:
   newSubscription:
-    type: integer
+    $ref: './OrganizationSubscription.yaml'
   payment:
-    type: integer
+    $ref: './PaymentGatewayChargeResponse.yaml'
     nullable: true
   requiresAction:
     type: boolean

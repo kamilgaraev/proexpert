@@ -151,7 +151,12 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/AddonsResponse.yaml'
 /billing/org-subscription:
   get:
     tags: [Billing]
@@ -163,7 +168,12 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationSubscription.yaml'
   patch:
     tags: [Billing]
     summary: Обновить подписку организации
@@ -180,7 +190,12 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationSubscription.yaml'
 /billing/org-subscribe:
   post:
     tags: [Billing]
@@ -198,7 +213,12 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationSubscription.yaml'
 /billing/org-addon:
   post:
     tags: [Billing]
@@ -216,7 +236,12 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationSubscriptionAddon.yaml'
 /billing/org-addon/{id}:
   parameters:
     - name: id
@@ -247,7 +272,12 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationOneTimePurchase.yaml'
 /billing/org-one-time-purchases:
   get:
     tags: [Billing]
@@ -259,7 +289,14 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/OrganizationOneTimePurchase.yaml'
 /billing/org-dashboard:
   get:
     tags: [Billing]
@@ -271,4 +308,9 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml' 
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationDashboard.yaml' 

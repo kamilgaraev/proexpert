@@ -1,0 +1,14 @@
+type: object
+properties:
+  id: { type: integer }
+  plan: { $ref: './BillingPlan.yaml' }
+  status: { type: string }
+  trial_ends_at: { type: string, format: date-time, nullable: true }
+  starts_at: { type: string, format: date-time }
+  ends_at: { type: string, format: date-time }
+  next_billing_at: { type: string, format: date-time, nullable: true }
+  canceled_at: { type: string, format: date-time, nullable: true }
+  addons:
+    type: array
+    items: { $ref: './OrganizationSubscriptionAddon.yaml' }
+required: [id, plan, status, starts_at, ends_at] 
