@@ -95,7 +95,7 @@ class MultiOrganizationService
             $childOrg->users()->attach($owner->id, [
                 'is_owner' => true,
                 'is_active' => true,
-                'settings' => ['role' => 'organization_owner'],
+                'settings' => json_encode(['role' => 'organization_owner']),
             ]);
 
             // Обновляем текущий контекст владельца
@@ -454,13 +454,14 @@ class MultiOrganizationService
 
         return [
             'users' => $paginated->map(function ($user) {
+                $pivotSettings = json_decode($user->pivot->settings, true) ?? [];
                 return [
                     'id' => $user->id,
                     'name' => $user->name,
                     'email' => $user->email,
                     'is_owner' => $user->pivot->is_owner,
                     'is_active' => $user->pivot->is_active,
-                    'role' => $user->pivot->settings['role'] ?? 'employee',
+                    'role' => $pivotSettings['role'] ?? 'employee',
                     'joined_at' => $user->pivot->created_at,
                 ];
             }),
@@ -501,7 +502,7 @@ class MultiOrganizationService
         $childOrg->users()->attach($user->id, [
             'is_owner' => $data['role'] === 'admin',
             'is_active' => true,
-            'settings' => $settings,
+            'settings' => json_encode($settings),
         ]);
 
         return [
@@ -534,7 +535,7 @@ class MultiOrganizationService
         }
 
         $updateData = [];
-        $settings = $pivot->pivot->settings ?? [];
+        $settings = json_decode($pivot->pivot->settings, true) ?? [];
 
         if (array_key_exists('role', $data)) {
             $settings['role'] = $data['role'];
@@ -549,7 +550,7 @@ class MultiOrganizationService
             $updateData['is_active'] = $data['is_active'];
         }
 
-        $updateData['settings'] = $settings;
+        $updateData['settings'] = json_encode($settings);
 
         $childOrg->users()->updateExistingPivot($userId, $updateData);
 
