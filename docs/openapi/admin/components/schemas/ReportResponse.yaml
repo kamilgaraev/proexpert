@@ -1,0 +1,31 @@
+type: object
+allOf:
+  - $ref: './ApiResponse.yaml'
+  - type: object
+    properties:
+      data:
+        type: object
+        description: Содержимое отчета (агрегированные данные или массив записей)
+      title:
+        type: string
+        description: Название отчета
+      filters:
+        type: object
+        description: Применённые фильтры
+      pagination:
+        type: object
+        description: Пагинация (если применима)
+        nullable: true
+        properties:
+          total:
+            type: integer
+          per_page:
+            type: integer
+          current_page:
+            type: integer
+          last_page:
+            type: integer
+      generated_at:
+        type: string
+        format: date-time
+        description: Время генерации отчета 
