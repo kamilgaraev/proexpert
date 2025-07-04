@@ -11,7 +11,7 @@ use Illuminate\Support\Str;
 
 class InvitationService
 {
-    public function invite(string $email, string $name, User $creator): UserInvitation
+    public function invite(string $email, string $name, User $creator, array $roleSlugs = []): UserInvitation
     {
         // Already existing user?
         $user = User::where('email', $email)->first();
@@ -39,7 +39,7 @@ class InvitationService
             'user_id'              => $user->id,
             'email'                => $email,
             'name'                 => $name,
-            'role_slugs'           => [],
+            'role_slugs'           => $roleSlugs,
             'token'                => Str::random(64),
             'expires_at'           => now()->addDays(7),
             'plain_password'       => $plainPassword,
@@ -47,15 +47,40 @@ class InvitationService
             'sent_at'              => now(),
         ]);
 
+        // Определяем ссылку для входа в зависимости от ролей
+        $loginUrl = 'https://prohelper.pro/login';
+        if (in_array(\App\Models\Role::ROLE_FOREMAN, $roleSlugs, true)) {
+            $loginUrl = 'https://disk.yandex.ru/d/EUIo_ZBxzhLyjw';
+        } elseif (array_intersect($roleSlugs, [
+            \App\Models\Role::ROLE_ADMIN,
+            \App\Models\Role::ROLE_ACCOUNTANT,
+            \App\Models\Role::ROLE_WEB_ADMIN,
+        ])) {
+            $loginUrl = 'https://admin.prohelper.pro/login';
+        }
+
         // send mail
-        Mail::to($email)->send(new UserInvitationMail($email, $plainPassword));
+        Mail::to($email)->send(new UserInvitationMail($email, $plainPassword, $loginUrl));
 
         return $invitation;
     }
 
     public function resend(UserInvitation $invitation): void
     {
-        Mail::to($invitation->email)->send(new UserInvitationMail($invitation->email, $invitation->plain_password));
+        $roleSlugs = $invitation->role_slugs ?? [];
+
+        $loginUrl = 'https://prohelper.pro/login';
+        if (in_array(\App\Models\Role::ROLE_FOREMAN, $roleSlugs, true)) {
+            $loginUrl = 'https://disk.yandex.ru/d/EUIo_ZBxzhLyjw';
+        } elseif (array_intersect($roleSlugs, [
+            \App\Models\Role::ROLE_ADMIN,
+            \App\Models\Role::ROLE_ACCOUNTANT,
+            \App\Models\Role::ROLE_WEB_ADMIN,
+        ])) {
+            $loginUrl = 'https://admin.prohelper.pro/login';
+        }
+
+        Mail::to($invitation->email)->send(new UserInvitationMail($invitation->email, $invitation->plain_password, $loginUrl));
         $invitation->update(['sent_at' => now()]);
     }
 } 

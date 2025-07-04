@@ -57,10 +57,17 @@ class UserInvitationController extends Controller
         $data = $request->validate([
             'email' => 'required|email',
             'name' => 'required|string|max:255',
+            'roles' => 'array',
+            'roles.*' => 'string',
         ]);
 
         $creator = Auth::user();
-        $invitation = $this->invitationService->invite($data['email'], $data['name'], $creator);
+        $invitation = $this->invitationService->invite(
+            $data['email'],
+            $data['name'],
+            $creator,
+            $data['roles'] ?? []
+        );
 
         return response()->json(['success'=>true,'data'=>$invitation]);
     }

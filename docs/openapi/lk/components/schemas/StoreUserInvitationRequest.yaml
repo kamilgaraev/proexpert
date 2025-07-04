@@ -2,4 +2,15 @@ type: object
 properties:
   email: { type: string, format: email }
   name: { type: string, minLength: 2, maxLength: 100 }
+  roles:
+    type: array
+    items:
+      type: string
+    description: |
+      Слаги ролей, которые будут назначены приглашённому пользователю. 
+      От них зависит ссылка в письме:
+        • foreman → ссылка на APK 
+        • organization_admin / accountant / web_admin → admin.prohelper.pro
+        • organization_owner или пустой массив → prohelper.pro
+    example: ["organization_admin"]
 required: [email, name] 

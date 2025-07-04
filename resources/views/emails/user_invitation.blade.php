@@ -29,7 +29,8 @@
                             </tr>
                         </table>
                         <p style="text-align:center;">
-                            <a href="{{ config('app.url') }}" style="display:inline-block;padding:12px 24px;background-color:#ff7a00;color:#ffffff;text-decoration:none;border-radius:4px;font-weight:bold;">Войти в систему</a>
+                            <?php $btnText = str_contains($loginUrl, 'disk.yandex') ? 'Скачать приложение' : 'Войти в систему'; ?>
+                            <a href="{{ $loginUrl }}" style="display:inline-block;padding:12px 24px;background-color:#ff7a00;color:#ffffff;text-decoration:none;border-radius:4px;font-weight:bold;">{{ $btnText }}</a>
                         </p>
                         <p style="font-size:14px;color:#777777;">Рекомендуем изменить пароль после первого входа для безопасности.</p>
                     </td>
