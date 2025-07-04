@@ -10,6 +10,8 @@
   $ref: './projects.yaml#/~1projects'
 /projects/{projectId}/material-balances:
   $ref: './projects.yaml#/~1projects~1{projectId}~1material-balances'
+/projects/{projectId}/contracts:
+  $ref: './projects.yaml#/~1projects~1{projectId}~1contracts'
 /work-types:
   $ref: './catalogs.yaml#/~1work-types'
 /materials:

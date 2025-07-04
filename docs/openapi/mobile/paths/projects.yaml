@@ -33,4 +33,24 @@
         content:
           application/json:
             schema:
-              $ref: '../../lk/components/schemas/ApiResponse.yaml' 
+              $ref: '../../lk/components/schemas/ApiResponse.yaml'
+/projects/{projectId}/contracts:
+  get:
+    tags: [Projects, Contracts]
+    summary: Получить контракты проекта
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Список контрактов проекта
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../../admin/components/schemas/ContractMini.yaml' 

@@ -1,0 +1,16 @@
+type: object
+properties:
+  id:
+    type: integer
+  number:
+    type: string
+  date:
+    type: string
+    format: date
+  total_amount:
+    type: number
+    format: float
+  status:
+    type: string
+  status_label:
+    type: string 
