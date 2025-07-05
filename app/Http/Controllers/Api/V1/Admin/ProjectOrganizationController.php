@@ -29,9 +29,20 @@ class ProjectOrganizationController extends Controller
             if (!$project) {
                 return response()->json(['success' => false, 'message' => 'Проект не найден.'], 404);
             }
+            $attached = $project->organizations()->get(['organizations.id', 'organizations.name', 'project_organization.role'])->toArray();
+
+            // Добавляем головную организацию проекта
+            if ($project->organization) {
+                array_unshift($attached, [
+                    'id' => $project->organization->id,
+                    'name' => $project->organization->name,
+                    'role' => 'owner',
+                ]);
+            }
+
             return response()->json([
                 'success' => true,
-                'data' => $project->organizations()->get(['organizations.id', 'organizations.name', 'project_organization.role'])
+                'data' => $attached,
             ]);
         } catch (BusinessLogicException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
