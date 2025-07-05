@@ -162,4 +162,108 @@
                 - type: object
                   properties:
                     data:
-                      $ref: '../components/schemas/ChildOrganizationCreated.yaml' 
+                      $ref: '../components/schemas/ChildOrganizationCreated.yaml'
+/multi-organization/summary:
+  get:
+    tags: [MultiOrganization]
+    summary: Сводная информация по холдингу (все организации, проекты, договоры, акты, выполненные работы, статистика)
+    description: |
+      Возвращает агрегированную сводку по всем организациям холдинга. Поддерживает экспорт CSV по секциям (projects, contracts, acts, completed_works).
+      
+      Пример: `/multi-organization/summary?export=csv&section=projects`
+    security: [{ bearerAuth: [] }]
+    parameters:
+      - in: query
+        name: date_from
+        schema: { type: string, format: date }
+        required: false
+        description: Начальная дата фильтра
+      - in: query
+        name: date_to
+        schema: { type: string, format: date }
+        required: false
+        description: Конечная дата фильтра
+      - in: query
+        name: status
+        schema: { type: string }
+        required: false
+        description: Фильтр по статусу
+      - in: query
+        name: is_approved
+        schema: { type: boolean }
+        required: false
+        description: Фильтр по утверждённости акта
+      - in: query
+        name: export
+        schema: { type: string, enum: [csv] }
+        required: false
+        description: Если указан, возвращает CSV-файл
+      - in: query
+        name: section
+        schema: { type: string, enum: [projects, contracts, acts, completed_works] }
+        required: false
+        description: Секция для экспорта CSV
+    responses:
+      "200":
+        description: Сводная информация по холдингу
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                data:
+                  type: object
+                  properties:
+                    organizations:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id: { type: integer }
+                          name: { type: string }
+                          is_active: { type: boolean }
+                          projects_count: { type: integer }
+                          contracts_count: { type: integer }
+                    projects:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/ProjectDTO.yaml'
+                    contracts:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/ContractDTO.yaml'
+                    acts:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/ContractPerformanceActDTO.yaml'
+                    completed_works:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/CompletedWorkDTO.yaml'
+                    stats:
+                      type: object
+                      properties:
+                        contracts:
+                          type: object
+                          properties:
+                            count: { type: integer }
+                            total_amount: { type: number, format: float }
+                        acts:
+                          type: object
+                          properties:
+                            count: { type: integer }
+                            total_amount: { type: number, format: float }
+                        projects:
+                          type: object
+                          properties:
+                            count: { type: integer }
+      "400":
+        description: Ошибка запроса (например, неверная секция для экспорта)
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message: { type: string } 
