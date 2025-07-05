@@ -525,4 +525,86 @@ class ProjectService
 
         $project->organizations()->detach($organizationId);
     }
+
+    /**
+     * Получить полную информацию по проекту: финансы, статистика, разбивка по организациям.
+     */
+    public function getFullProjectDetails(int $projectId, Request $request): array
+    {
+        $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
+        if (!$project) {
+            throw new BusinessLogicException('Проект не найден или не принадлежит вашей организации.', 404);
+        }
+
+        // Загружаем организации и контракты с актами/платежами
+        $project->load([
+            'organizations:id,name',
+            'contracts:id,project_id,total_amount,status',
+            'contracts.performanceActs:id,contract_id,amount,is_approved',
+            'contracts.payments:id,contract_id,amount',
+        ]);
+
+        // Общие суммы
+        $totalContractsAmount = $project->contracts->sum('total_amount');
+        $totalPerformanceActsAmount = $project->contracts->flatMap(fn($c) => $c->performanceActs)->where('is_approved', true)->sum('amount');
+        $totalPaymentsAmount = $project->contracts->flatMap(fn($c) => $c->payments)->sum('amount');
+
+        // Сумма выполненных работ и материалов
+        $completedWorksQuery = DB::table('completed_works')
+            ->where('project_id', $projectId)
+            ->selectRaw('organization_id, COUNT(*) as works_count, SUM(total_amount) as works_amount')
+            ->groupBy('organization_id')
+            ->get();
+
+        $materialsQuery = DB::table('completed_work_materials as cwm')
+            ->join('completed_works as cw', 'cw.id', '=', 'cwm.completed_work_id')
+            ->where('cw.project_id', $projectId)
+            ->selectRaw('cw.organization_id, SUM(cwm.total_amount) as materials_amount')
+            ->groupBy('cw.organization_id')
+            ->get();
+
+        // Формируем словари для быстрого доступа
+        $worksByOrg = $completedWorksQuery->keyBy('organization_id');
+        $materialsByOrg = $materialsQuery->keyBy('organization_id');
+
+        $organizationsStats = $project->organizations->map(function ($org) use ($worksByOrg, $materialsByOrg) {
+            $works = $worksByOrg[$org->id] ?? null;
+            $materials = $materialsByOrg[$org->id] ?? null;
+
+            return [
+                'id' => $org->id,
+                'name' => $org->name,
+                'works_count' => (int) ($works->works_count ?? 0),
+                'works_amount' => (float) ($works->works_amount ?? 0),
+                'materials_amount' => (float) ($materials->materials_amount ?? 0),
+                'total_cost' => (float) (($works->works_amount ?? 0) + ($materials->materials_amount ?? 0)),
+            ];
+        })->toArray();
+
+        // Общая статистика по выполненным работам и материалам
+        $totalWorksAmount = array_sum(array_column($organizationsStats, 'works_amount'));
+        $totalMaterialsAmount = array_sum(array_column($organizationsStats, 'materials_amount'));
+
+        $analytics = [
+            'financial' => [
+                'contracts_total_amount' => (float) $totalContractsAmount,
+                'performed_amount_by_acts' => (float) $totalPerformanceActsAmount,
+                'received_payments_amount' => (float) $totalPaymentsAmount,
+                'works_total_amount' => (float) $totalWorksAmount,
+                'materials_total_amount' => (float) $totalMaterialsAmount,
+                'overall_cost' => (float) ($totalWorksAmount + $totalMaterialsAmount),
+            ],
+            'counts' => [
+                'organizations' => count($organizationsStats),
+                'contracts' => $project->contracts->count(),
+                'performance_acts' => $project->contracts->flatMap(fn($c) => $c->performanceActs)->count(),
+            ],
+        ];
+
+        return [
+            'project' => $project,
+            'analytics' => $analytics,
+            'organizations_stats' => $organizationsStats,
+        ];
+    }
 } 

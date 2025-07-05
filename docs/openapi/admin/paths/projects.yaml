@@ -219,4 +219,36 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml' 
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/projects/{id}/full:
+  get:
+    tags: [Projects]
+    summary: Получить полную сводку по проекту (финансы, статистика, организация)
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Полная информация
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        project:
+                          $ref: '../components/schemas/Project.yaml'
+                        analytics:
+                          type: object
+                        organizations_stats:
+                          type: array
+                          items:
+                            $ref: '../components/schemas/OrganizationInProject.yaml' 

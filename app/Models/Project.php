@@ -167,4 +167,12 @@ class Project extends Model
     {
         return $query->where('cost_category_id', $costCategoryId);
     }
+
+    /**
+     * Получить контракты, связанные с проектом.
+     */
+    public function contracts(): HasMany
+    {
+        return $this->hasMany(Contract::class);
+    }
 }

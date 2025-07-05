@@ -322,4 +322,32 @@ class ProjectController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Полная сводка по проекту.
+     */
+    public function fullDetails(Request $request, int $id): JsonResponse
+    {
+        try {
+            $details = $this->projectService->getFullProjectDetails($id, $request);
+            return response()->json([
+                'success' => true,
+                'data' => $details,
+            ]);
+        } catch (BusinessLogicException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('Error in ProjectController@fullDetails', [
+                'projectId' => $id,
+                'error' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Внутренняя ошибка сервера при получении полной информации по проекту.',
+            ], 500);
+        }
+    }
 } 

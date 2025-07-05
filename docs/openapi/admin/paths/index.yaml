@@ -50,6 +50,8 @@
   $ref: './projects.yaml#/~1projects~1{projectId}~1foremen~1{userId}'
 /projects/{id}/organizations:
   $ref: './project_organizations.yaml#/~1projects~1{id}~1organizations'
+/projects/{id}/full:
+  $ref: './projects.yaml#/~1projects~1{id}~1full'
 
 /completed-works:
   $ref: './completed_works.yaml#/~1completed-works'
