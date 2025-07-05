@@ -113,6 +113,7 @@ class ProjectService
         
         $dataToCreate = $projectDTO->toArray();
         $dataToCreate['organization_id'] = $organizationId;
+        $dataToCreate['is_head'] = true;
         
         return $this->projectRepository->create($dataToCreate);
     }
@@ -493,5 +494,35 @@ class ProjectService
             ]);
             throw new BusinessLogicException('Ошибка при получении видов работ проекта.', 500);
         }
+    }
+
+    /**
+     * Добавить дочернюю организацию к проекту.
+     */
+    public function addOrganizationToProject(int $projectId, int $organizationId, Request $request): void
+    {
+        $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
+        if (!$project) {
+            throw new BusinessLogicException('Проект не найден в вашей организации.', 404);
+        }
+
+        if ($project->organizations()->where('organizations.id', $organizationId)->exists()) {
+            throw new BusinessLogicException('Организация уже добавлена к проекту.', 409);
+        }
+
+        $project->organizations()->attach($organizationId, ['role' => 'collaborator']);
+    }
+
+    /**
+     * Удалить организацию из проекта.
+     */
+    public function removeOrganizationFromProject(int $projectId, int $organizationId, Request $request): void
+    {
+        $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
+        if (!$project) {
+            throw new BusinessLogicException('Проект не найден в вашей организации.', 404);
+        }
+
+        $project->organizations()->detach($organizationId);
     }
 } 

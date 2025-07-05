@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Project extends Model
 {
@@ -24,6 +25,7 @@ class Project extends Model
         'status',
         'additional_info',
         'is_archived',
+        'is_head',
         'external_code',
         'cost_category_id',
         'accounting_data',
@@ -39,6 +41,7 @@ class Project extends Model
         'end_date' => 'date',
         'additional_info' => 'array',
         'is_archived' => 'boolean',
+        'is_head' => 'boolean',
         'accounting_data' => 'array',
         'use_in_accounting_reports' => 'boolean',
         'contract_date' => 'date',
@@ -67,6 +70,16 @@ class Project extends Model
     {
         return $this->belongsToMany(User::class, 'project_user')
             ->withPivot('role')
+            ->withTimestamps();
+    }
+
+    /**
+     * Получить организации, участвующие в проекте.
+     */
+    public function organizations(): BelongsToMany
+    {
+        return $this->belongsToMany(Organization::class, 'project_organization')
+            ->withPivot(['role', 'permissions'])
             ->withTimestamps();
     }
 

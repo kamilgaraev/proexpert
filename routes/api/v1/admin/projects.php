@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\V1\Admin\ProjectController;
+use App\Http\Controllers\Api\V1\Admin\ProjectOrganizationController;
 use Illuminate\Support\Facades\Route;
  
 Route::apiResource('projects', ProjectController::class);
@@ -20,6 +21,11 @@ Route::get('/projects/{id}/work-types', [ProjectController::class, 'getProjectWo
 
 // Получить доступные категории затрат для проектов
 Route::get('/projects/available-cost-categories', [ProjectController::class, 'getAvailableCostCategories'])->name('projects.cost-categories');
+
+// Получить организации проекта
+Route::get('/projects/{id}/organizations', [ProjectOrganizationController::class, 'index'])->name('projects.organizations.index');
+Route::post('/projects/{projectId}/organizations/{organizationId}', [ProjectOrganizationController::class, 'attach'])->name('projects.organizations.attach');
+Route::delete('/projects/{projectId}/organizations/{organizationId}', [ProjectOrganizationController::class, 'detach'])->name('projects.organizations.detach');
 
 // Статистика (если понадобится)
 // Route::get('projects/{project}/statistics', [ProjectController::class, 'statistics'])->name('projects.statistics'); 
