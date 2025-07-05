@@ -91,7 +91,7 @@ class HoldingReportService
 
     /**
      * Получить движения денежных средств (BalanceTransaction) по нескольким организациям.
-     * Возвращает коллекцию для унификации с ресурсами.
+     * Возвращает коллекцию для унификации с ресурсами..
      */
     public function getMoneyMovements(array $organizationIds, array $filters = []): Collection
     {
