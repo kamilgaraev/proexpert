@@ -73,7 +73,9 @@ class HoldingReportService
     public function getConsolidatedActs(array $organizationIds, array $filters = []): Collection
     {
         $query = ContractPerformanceAct::query()
-            ->whereIn('organization_id', $organizationIds)
+            ->whereHas('contract', function($q) use ($organizationIds) {
+                $q->whereIn('organization_id', $organizationIds);
+            })
             ->with(['contract', 'organization']);
 
         if (isset($filters['date_from'])) {
