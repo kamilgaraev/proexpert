@@ -517,6 +517,10 @@ class ProjectService
             throw new BusinessLogicException('Проект не найден в вашей организации.', 404);
         }
 
+        if ($organizationId === $project->organization_id) {
+            throw new BusinessLogicException('Нельзя удалить головную организацию проекта.', 400);
+        }
+
         $project->organizations()->detach($organizationId);
     }
 
