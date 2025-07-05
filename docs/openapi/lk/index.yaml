@@ -1,0 +1,20 @@
+  /multi-organization/check-availability:
+    $ref: './paths/multi_organization.yaml#/multi-organization/check-availability'
+  /multi-organization/hierarchy:
+    $ref: './paths/multi_organization.yaml#/multi-organization/hierarchy'
+  /multi-organization/accessible:
+    $ref: './paths/multi_organization.yaml#/multi-organization/accessible'
+  /multi-organization/organization/{organizationId}:
+    $ref: './paths/multi_organization.yaml#/multi-organization/organization/{organizationId}'
+  /multi-organization/switch-context:
+    $ref: './paths/multi_organization.yaml#/multi-organization/switch-context'
+  /multi-organization/dashboard:
+    $ref: './paths/multi_organization.yaml#/multi-organization/dashboard'
+  /multi-organization/child-organizations:
+    $ref: './paths/multi_organization.yaml#/multi-organization/child-organizations'
+  /multi-organization/create-holding:
+    $ref: './paths/multi_organization.yaml#/multi-organization/create-holding'
+  /multi-organization/add-child:
+    $ref: './paths/multi_organization.yaml#/multi-organization/add-child'
+  /multi-organization/summary:
+    $ref: './paths/multi_organization.yaml#/multi-organization/summary' 
