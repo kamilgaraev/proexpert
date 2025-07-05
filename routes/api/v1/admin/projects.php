@@ -30,4 +30,6 @@ Route::delete('/projects/{projectId}/organizations/{organizationId}', [ProjectOr
 // Статистика (если понадобится)
 // Route::get('projects/{project}/statistics', [ProjectController::class, 'statistics'])->name('projects.statistics');
 
-Route::get('/projects/{id}/full', [ProjectController::class, 'fullDetails'])->name('projects.full-details'); 
+Route::get('/projects/{id}/full', [ProjectController::class, 'fullDetails'])->name('projects.full-details');
+
+Route::get('/projects/{id}/available-organizations', [ProjectOrganizationController::class, 'available'])->name('projects.organizations.available'); 

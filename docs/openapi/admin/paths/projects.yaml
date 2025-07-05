@@ -282,4 +282,29 @@
                         organizations_stats:
                           type: array
                           items:
-                            $ref: '../components/schemas/OrganizationInProject.yaml' 
+                            $ref: '../components/schemas/OrganizationInProject.yaml'
+
+/projects/{id}/available-organizations:
+  get:
+    tags: [Projects]
+    summary: Получить организации, доступные для добавления в проект
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Доступные организации
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/OrganizationSimple.yaml' 
