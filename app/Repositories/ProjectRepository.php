@@ -49,11 +49,16 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
      */
     public function getProjectsForOrganization(int $organizationId, int $perPage = 15): LengthAwarePaginator
     {
-        return $this->model->where('organization_id', $organizationId)
-            ->orderBy('is_archived')
-            ->orderBy('status', 'desc')
-            ->orderBy('name')
-            ->paginate($perPage);
+        return $this->model->where(function($q) use ($organizationId) {
+            $q->where('organization_id', $organizationId)
+              ->orWhereHas('organizations', function($sub) use ($organizationId) {
+                  $sub->where('organizations.id', $organizationId);
+              });
+        })
+        ->orderBy('is_archived')
+        ->orderBy('status', 'desc')
+        ->orderBy('name')
+        ->paginate($perPage);
     }
 
     /**
@@ -124,7 +129,12 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
         string $sortDirection = 'desc'
     ): LengthAwarePaginator
     {
-        $query = $this->model->where('organization_id', $organizationId);
+        $query = $this->model->where(function($q) use ($organizationId) {
+            $q->where('organization_id', $organizationId)
+              ->orWhereHas('organizations', function($sub) use ($organizationId) {
+                  $sub->where('organizations.id', $organizationId);
+              });
+        });
 
         // Применяем фильтры
         if (!empty($filters['name'])) {
