@@ -123,10 +123,15 @@ class ProjectService
         $organizationId = $this->getCurrentOrgId($request);
         $project = $this->projectRepository->find($id);
 
-        if (!$project || $project->organization_id !== $organizationId) {
+        if (!$project) {
             return null;
         }
-        return $project;
+
+        // Принадлежит ли текущей организации напрямую или через pivot
+        $belongsToOrg = $project->organization_id === $organizationId ||
+            $project->organizations()->where('organizations.id', $organizationId)->exists();
+
+        return $belongsToOrg ? $project : null;
     }
 
     /**
