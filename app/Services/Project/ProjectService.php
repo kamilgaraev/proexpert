@@ -273,24 +273,13 @@ class ProjectService
             // Статистика по материалам
             $materialStats = DB::table('material_usage_logs as mul')
                 ->where('mul.project_id', $id)
-                ->selectRaw('
-                    COUNT(DISTINCT mul.material_id) as unique_materials_count,
-                    SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END) as total_received,
-                    SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END) as total_used,
-                    SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.total_price ELSE 0 END) as total_received_value,
-                    SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.total_price ELSE 0 END) as total_used_value
-                ')
+                ->selectRaw("\n                    COUNT(DISTINCT mul.material_id) as unique_materials_count,\n                    SUM(CASE WHEN mul.operation_type = 'receipt' THEN mul.quantity ELSE 0 END) as total_received,\n                    SUM(CASE WHEN mul.operation_type = 'write_off' THEN mul.quantity ELSE 0 END) as total_used,\n                    SUM(CASE WHEN mul.operation_type = 'receipt' THEN mul.total_price ELSE 0 END) as total_received_value,\n                    SUM(CASE WHEN mul.operation_type = 'write_off' THEN mul.total_price ELSE 0 END) as total_used_value\n                ")
                 ->first();
 
             // Статистика по выполненным работам
             $workStats = DB::table('completed_works as cw')
                 ->where('cw.project_id', $id)
-                ->selectRaw('
-                    COUNT(*) as total_works_count,
-                    SUM(cw.quantity) as total_work_quantity,
-                    COUNT(DISTINCT cw.work_type_id) as unique_work_types_count,
-                    SUM(cw.total_cost) as total_work_cost
-                ')
+                ->selectRaw("\n                    COUNT(*) as total_works_count,\n                    SUM(cw.quantity) as total_work_quantity,\n                    COUNT(DISTINCT cw.work_type_id) as unique_work_types_count,\n                    SUM(cw.total_amount) as total_work_cost\n                ")
                 ->first();
 
             // Статистика по пользователям
@@ -369,9 +358,9 @@ class ProjectService
                     'm.code as material_code',
                     'mu.short_name as unit',
                     's.name as supplier_name',
-                    DB::raw('SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END) as total_received'),
-                    DB::raw('SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END) as total_used'),
-                    DB::raw('SUM(CASE WHEN mul.operation_type = "receipt" THEN mul.quantity ELSE 0 END) - SUM(CASE WHEN mul.operation_type = "write_off" THEN mul.quantity ELSE 0 END) as current_balance'),
+                    DB::raw("SUM(CASE WHEN mul.operation_type = 'receipt' THEN mul.quantity ELSE 0 END) as total_received"),
+                    DB::raw("SUM(CASE WHEN mul.operation_type = 'write_off' THEN mul.quantity ELSE 0 END) as total_used"),
+                    DB::raw("SUM(CASE WHEN mul.operation_type = 'receipt' THEN mul.quantity ELSE 0 END) - SUM(CASE WHEN mul.operation_type = 'write_off' THEN mul.quantity ELSE 0 END) as current_balance"),
                     DB::raw('AVG(mul.unit_price) as average_price'),
                     DB::raw('MAX(mul.usage_date) as last_operation_date')
                 ])
@@ -443,8 +432,8 @@ class ProjectService
                     'mu.short_name as unit',
                     DB::raw('COUNT(cw.id) as works_count'),
                     DB::raw('SUM(cw.quantity) as total_quantity'),
-                    DB::raw('SUM(cw.total_cost) as total_cost'),
-                    DB::raw('AVG(cw.unit_price) as average_unit_price'),
+                    DB::raw('SUM(cw.total_amount) as total_cost'),
+                    DB::raw('AVG(cw.price) as average_unit_price'),
                     DB::raw('MAX(cw.completion_date) as last_completion_date'),
                     DB::raw('COUNT(DISTINCT cw.user_id) as workers_count')
                 ])

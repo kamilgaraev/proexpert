@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use App\Models\WorkType;
 
 class Project extends Model
 {
@@ -174,5 +175,13 @@ class Project extends Model
     public function contracts(): HasMany
     {
         return $this->hasMany(Contract::class);
+    }
+
+    /**
+     * Получить используемые в проекте виды работ через CompletedWork.
+     */
+    public function workTypes()
+    {
+        return $this->belongsToMany(WorkType::class, 'completed_works', 'project_id', 'work_type_id')->distinct();
     }
 }
