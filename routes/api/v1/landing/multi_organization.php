@@ -92,4 +92,7 @@ Route::middleware(['auth:api_landing', 'auth.jwt', 'organization.context', 'modu
             Route::get('/movements', [MultiOrganizationController::class, 'getHoldingMovements'])
                 ->name('movements');
         });
+
+        Route::get('/summary', [App\Http\Controllers\Api\V1\Landing\HoldingSummaryController::class, 'summary'])
+            ->name('summary');
     }); 

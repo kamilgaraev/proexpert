@@ -5,6 +5,9 @@ namespace App\Services\Landing;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
 use App\Models\BalanceTransaction;
+use App\Models\Project;
+use App\Models\Organization;
+use App\Models\CompletedWork;
 use Illuminate\Support\Collection;
 
 /**
@@ -107,5 +110,92 @@ class HoldingReportService
         }
 
         return $query->latest()->get();
+    }
+
+    /**
+     * Получить список проектов по нескольким организациям.
+     */
+    public function getConsolidatedProjects(array $organizationIds, array $filters = []): Collection
+    {
+        $query = Project::query()
+            ->whereIn('organization_id', $organizationIds)
+            ->with(['organization']);
+
+        if (isset($filters['date_from'])) {
+            $query->whereDate('start_date', '>=', $filters['date_from']);
+        }
+        if (isset($filters['date_to'])) {
+            $query->whereDate('end_date', '<=', $filters['date_to']);
+        }
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        return $query->get();
+    }
+
+    /**
+     * Информация по организациям холдинга.
+     */
+    public function getOrganizationsInfo(array $organizationIds): Collection
+    {
+        return Organization::whereIn('id', $organizationIds)
+            ->withCount(['projects', 'contracts'])
+            ->get()
+            ->map(function (Organization $org) {
+                return [
+                    'id' => $org->id,
+                    'name' => $org->name,
+                    'is_active' => $org->is_active,
+                    'projects_count' => $org->projects_count,
+                    'contracts_count' => $org->contracts_count,
+                ];
+            });
+    }
+
+    /**
+     * Общая статистика по организациям.
+     */
+    public function getGlobalStats(array $organizationIds, array $filters = []): array
+    {
+        $contracts = $this->getContractsSummary($organizationIds, $filters);
+
+        $actsTotal = $this->getConsolidatedActs($organizationIds, $filters)->sum('amount');
+        $actsCount = $this->getConsolidatedActs($organizationIds, $filters)->count();
+
+        $projectsCount = Project::whereIn('organization_id', $organizationIds)->count();
+
+        return [
+            'contracts' => $contracts,
+            'acts' => [
+                'count' => $actsCount,
+                'total_amount' => (float) $actsTotal,
+            ],
+            'projects' => [
+                'count' => $projectsCount,
+            ],
+        ];
+    }
+
+    /**
+     * Получить выполненные работы по организациям.
+     */
+    public function getConsolidatedCompletedWorks(array $organizationIds, array $filters = []): Collection
+    {
+        $query = CompletedWork::query()
+            ->whereIn('organization_id', $organizationIds)
+            ->with(['organization', 'project', 'contract', 'workType']);
+
+        if (isset($filters['date_from'])) {
+            $query->whereDate('completion_date', '>=', $filters['date_from']);
+        }
+        if (isset($filters['date_to'])) {
+            $query->whereDate('completion_date', '<=', $filters['date_to']);
+        }
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        return $query->get();
     }
 } 
