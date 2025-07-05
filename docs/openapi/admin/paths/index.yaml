@@ -48,6 +48,8 @@
   $ref: './projects.yaml#/~1projects~1{id}~1work-types'
 /projects/{projectId}/foremen/{userId}:
   $ref: './projects.yaml#/~1projects~1{projectId}~1foremen~1{userId}'
+/projects/{id}/organizations:
+  $ref: './project_organizations.yaml#/~1projects~1{id}~1organizations'
 
 /completed-works:
   $ref: './completed_works.yaml#/~1completed-works'
@@ -247,4 +249,7 @@
   $ref: './performance_acts.yaml#/~1contracts~1{contract}~1performance-acts~1{performance_act}~1export~1excel'
 
 /payments/{payment}:
-  $ref: './payments.yaml#/~1payments~1{payment}' 
+  $ref: './payments.yaml#/~1payments~1{payment}'
+
+/projects/{projectId}/organizations/{organizationId}:
+  $ref: './project_organizations.yaml#/~1projects~1{projectId}~1organizations~1{organizationId}' 

@@ -1,0 +1,13 @@
+type: object
+required: [id, name, role]
+properties:
+  id:
+    type: integer
+    description: ID организации
+  name:
+    type: string
+    description: Название организации
+  role:
+    type: string
+    description: Роль организации в проекте
+    example: collaborator 

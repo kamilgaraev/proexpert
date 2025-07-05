@@ -1,0 +1,68 @@
+/projects/{id}/organizations:
+  get:
+    tags: [Projects]
+    summary: Получить организации проекта
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Список организаций
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/OrganizationInProject.yaml'
+
+/projects/{projectId}/organizations/{organizationId}:
+  post:
+    tags: [Projects]
+    summary: Добавить организацию к проекту
+    parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: integer
+      - in: path
+        name: organizationId
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Организация добавлена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+  delete:
+    tags: [Projects]
+    summary: Удалить организацию из проекта
+    parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: integer
+      - in: path
+        name: organizationId
+        required: true
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Организация удалена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 
