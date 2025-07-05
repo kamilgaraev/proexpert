@@ -76,7 +76,7 @@ class HoldingReportService
             ->whereHas('contract', function($q) use ($organizationIds) {
                 $q->whereIn('organization_id', $organizationIds);
             })
-            ->with(['contract', 'organization']);
+            ->with(['contract.organization']);
 
         if (isset($filters['date_from'])) {
             $query->whereDate('date', '>=', $filters['date_from']);

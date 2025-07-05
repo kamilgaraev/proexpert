@@ -12,8 +12,8 @@ class ConsolidatedActResource extends JsonResource
         return [
             'id' => $this->id,
             'organization' => [
-                'id' => $this->organization_id,
-                'name' => $this->organization->name ?? null,
+                'id' => $this->contract->organization_id ?? null,
+                'name' => $this->contract->organization->name ?? null,
             ],
             'contract_id' => $this->contract_id,
             'act_document_number' => $this->act_document_number,
