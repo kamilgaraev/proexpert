@@ -248,6 +248,37 @@
                           $ref: '../components/schemas/Project.yaml'
                         analytics:
                           type: object
+                          properties:
+                            financial:
+                              type: object
+                              properties:
+                                contracts_total_amount:
+                                  type: number
+                                  format: double
+                                performed_amount_by_acts:
+                                  type: number
+                                  format: double
+                                received_payments_amount:
+                                  type: number
+                                  format: double
+                                works_total_amount:
+                                  type: number
+                                  format: double
+                                materials_total_amount:
+                                  type: number
+                                  format: double
+                                overall_cost:
+                                  type: number
+                                  format: double
+                            counts:
+                              type: object
+                              properties:
+                                organizations:
+                                  type: integer
+                                contracts:
+                                  type: integer
+                                performance_acts:
+                                  type: integer
                         organizations_stats:
                           type: array
                           items:
