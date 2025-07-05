@@ -9,14 +9,18 @@ use App\Services\Billing\UserSubscriptionService;
 use App\Interfaces\Billing\SubscriptionLimitsServiceInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use App\Repositories\Landing\OrganizationSubscriptionRepository;
+use App\Models\OrganizationSubscription;
 
 class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
 {
     protected UserSubscriptionService $subscriptionService;
+    protected OrganizationSubscriptionRepository $organizationSubscriptionRepo;
 
-    public function __construct(UserSubscriptionService $subscriptionService)
+    public function __construct(UserSubscriptionService $subscriptionService, OrganizationSubscriptionRepository $organizationSubscriptionRepo)
     {
         $this->subscriptionService = $subscriptionService;
+        $this->organizationSubscriptionRepo = $organizationSubscriptionRepo;
     }
 
     public function getUserLimitsData(User $user): array
@@ -24,6 +28,15 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         $subscription = $this->subscriptionService->getUserCurrentValidSubscription($user);
 
         if (!$subscription) {
+            // Пробуем найти подписку организации (если пользователь работает в организации)
+            $organizationId = $user->current_organization_id;
+            if ($organizationId) {
+                $orgSubscription = $this->organizationSubscriptionRepo->getByOrganizationId($organizationId);
+                if ($orgSubscription && $orgSubscription->status === 'active') {
+                    return $this->getOrganizationLimitsData($user, $orgSubscription);
+                }
+            }
+
             return $this->getDefaultLimitsData($user);
         }
 
@@ -290,5 +303,37 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         $organizationId = $user->current_organization_id;
         $cacheKey = "user_usage_{$user->id}_{$organizationId}";
         Cache::forget($cacheKey);
+    }
+
+    /**
+     * Формируем данные лимитов на основе подписки организации
+     */
+    private function getOrganizationLimitsData(User $user, OrganizationSubscription $subscription): array
+    {
+        $plan = $subscription->plan;
+        $currentUsage = $this->getCurrentUsage($user);
+
+        return [
+            'has_subscription' => true,
+            'subscription' => [
+                'id' => $subscription->id,
+                'status' => $subscription->status,
+                'plan_name' => $plan->name,
+                'plan_description' => $plan->description,
+                'is_trial' => false,
+                'trial_ends_at' => $subscription->trial_ends_at?->format('Y-m-d H:i:s'),
+                'ends_at' => $subscription->ends_at?->format('Y-m-d H:i:s'),
+                'next_billing_at' => $subscription->next_billing_at?->format('Y-m-d H:i:s'),
+                'is_canceled' => $subscription->canceled_at !== null,
+            ],
+            'limits' => [
+                'foremen' => $this->formatLimitData($plan->max_foremen, $currentUsage['foremen']),
+                'projects' => $this->formatLimitData($plan->max_projects, $currentUsage['projects']),
+                'users' => $this->formatLimitData($plan->max_users, $currentUsage['users']),
+                'storage' => $this->formatStorageLimitData($plan->max_storage_gb, $currentUsage['storage_mb']),
+            ],
+            'features' => $plan->features ? (array) $plan->features : [],
+            'warnings' => $this->generateWarnings($plan, $currentUsage),
+        ];
     }
 } 
