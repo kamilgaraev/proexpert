@@ -182,6 +182,8 @@ class Project extends Model
      */
     public function workTypes()
     {
-        return $this->belongsToMany(WorkType::class, 'completed_works', 'project_id', 'work_type_id')->distinct();
+        return $this->belongsToMany(WorkType::class, 'completed_works', 'project_id', 'work_type_id')
+            ->select('work_types.id', 'work_types.name', 'work_types.code', 'work_types.measurement_unit_id')
+            ->distinct();
     }
 }
