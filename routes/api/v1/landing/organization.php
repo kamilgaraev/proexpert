@@ -26,7 +26,7 @@ Route::middleware(['auth:api_landing', 'organization.context'])
              ->name('landing.organization.verification.recommendations');
     });
 
-Route::middleware(['auth:api_landing'])
+Route::middleware(['throttle:60,1']) // Публичные подсказки Dadata, ограничиваем частоту
     ->prefix('dadata')
     ->group(function () {
         Route::post('/suggest/organizations', [OrganizationVerificationController::class, 'suggestOrganizations'])
