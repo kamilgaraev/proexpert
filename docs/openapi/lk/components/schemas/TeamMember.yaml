@@ -1,0 +1,18 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  email:
+    type: string
+    format: email
+  avatar_url:
+    type: string
+    format: uri
+    nullable: true
+  roles:
+    type: array
+    items:
+      type: string
+required: [id, name, email, roles] 

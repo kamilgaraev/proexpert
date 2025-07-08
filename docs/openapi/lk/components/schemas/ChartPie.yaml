@@ -1,0 +1,8 @@
+type: object
+additionalProperties:
+  type: integer
+  description: Количество элементов в данном статусе
+example:
+  draft: 3
+  active: 5
+  completed: 2 

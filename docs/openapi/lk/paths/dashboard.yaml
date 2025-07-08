@@ -1,0 +1,16 @@
+/dashboard:
+  get:
+    summary: Получить дашборд организации
+    tags: [Dashboard]
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/OrganizationDashboardExtended.yaml'
+            examples:
+              success:
+                $ref: '../components/examples/OrganizationDashboardExtended.yaml' 

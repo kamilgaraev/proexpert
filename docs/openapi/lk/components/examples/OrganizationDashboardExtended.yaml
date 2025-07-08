@@ -1,0 +1,66 @@
+summary: Пример расширенного дашборда
+value:
+  financial:
+    balance: 61200.0
+    credits_this_month: 15000.0
+    debits_this_month: 4800.0
+  projects:
+    total: 12
+    active: 6
+    completed: 4
+  contracts:
+    total: 18
+    active: 9
+    draft: 5
+    completed: 4
+    total_amount: 24500000.0
+  works_materials:
+    works:
+      total: 120
+      confirmed: 84
+      confirmed_amount: 7800000.0
+    materials:
+      total: 56
+  acts:
+    total: 14
+    approved: 9
+    total_amount: 5600000.0
+  team:
+    total: 7
+    by_roles:
+      organization_owner: 1
+      organization_admin: 2
+      foreman: 1
+      worker: 3
+  team_details:
+    - id: 1
+      name: "Иван Петров"
+      email: "ivan@example.com"
+      avatar_url: "https://cdn.prohelper.pro/avatars/1.png"
+      roles: [organization_owner]
+    - id: 2
+      name: "Анна Иванова"
+      email: "anna@example.com"
+      avatar_url: null
+      roles: [organization_admin]
+  charts:
+    projects_monthly:
+      labels: ["2025-02","2025-03","2025-04","2025-05","2025-06","2025-07"]
+      values: [2,3,4,5,4,6]
+    contracts_monthly:
+      labels: ["2025-02","2025-03","2025-04","2025-05","2025-06","2025-07"]
+      values: [1,2,3,2,3,4]
+    completed_works_monthly:
+      labels: ["2025-02","2025-03","2025-04","2025-05","2025-06","2025-07"]
+      values: [10,12,15,14,13,20]
+    balance_monthly:
+      labels: ["2025-02","2025-03","2025-04","2025-05","2025-06","2025-07"]
+      values: [50000.0,53000.0,56000.0,58000.0,62000.0,61200.0]
+    projects_status:
+      draft: 5
+      active: 6
+      completed: 4
+    contracts_status:
+      draft: 5
+      active: 9
+      completed: 4 

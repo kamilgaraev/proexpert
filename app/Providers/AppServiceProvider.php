@@ -38,6 +38,9 @@ class AppServiceProvider extends ServiceProvider
             return new ChildOrganizationUserService($app->make(OrganizationRoleService::class));
         });
         
+        // Репозиторий дашборда ЛК
+        $this->app->bind(\App\Repositories\Landing\OrganizationDashboardRepositoryInterface::class, \App\Repositories\Landing\EloquentOrganizationDashboardRepository::class);
+
         // Здесь могут быть другие связывания
     }
 

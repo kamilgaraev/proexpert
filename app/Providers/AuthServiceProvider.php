@@ -40,8 +40,10 @@ class AuthServiceProvider extends ServiceProvider
         // Настройка для безопасного режима входа в лендинг
         // ВАЖНО: УСТАНОВИТЕ ЭТОТ ПАРАМЕТР В .env для разблокировки доступа
         $landingSafetyMode = config('app.landing_safety_mode', true);
-        if ($landingSafetyMode) {
-            Log::warning('[AuthServiceProvider] Включен БЕЗОПАСНЫЙ РЕЖИМ доступа к лендингу!');
+        // Логируем включение безопасного режима только в debug-уровне и исключительно в локальной среде,
+        // чтобы не засорять production-логи.
+        if ($landingSafetyMode && app()->environment('local')) {
+            Log::debug('[AuthServiceProvider] Включен БЕЗОПАСНЫЙ РЕЖИМ доступа к лендингу (local env).');
         }
 
         /**

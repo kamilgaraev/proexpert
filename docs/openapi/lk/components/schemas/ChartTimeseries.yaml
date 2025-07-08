@@ -1,0 +1,13 @@
+type: object
+properties:
+  labels:
+    type: array
+    items:
+      type: string
+    description: Массив подпунктов оси X (формат YYYY-MM)
+  values:
+    type: array
+    items:
+      type: number
+    description: Значения метрики, соответствующие labels
+required: [labels, values] 

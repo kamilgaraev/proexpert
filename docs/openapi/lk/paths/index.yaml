@@ -126,5 +126,7 @@
   $ref: './billing.yaml#/~1billing~1org-one-time-purchases'
 /billing/org-dashboard:
   $ref: './billing.yaml#/~1billing~1org-dashboard'
+/dashboard:
+  $ref: './dashboard.yaml#/~1dashboard'
 /multi-organization/summary:
   $ref: './multi_organization.yaml#/~1multi-organization~1summary' 

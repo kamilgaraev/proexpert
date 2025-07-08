@@ -1,0 +1,66 @@
+type: object
+properties:
+  financial:
+    type: object
+    properties:
+      balance: { type: number }
+      credits_this_month: { type: number }
+      debits_this_month: { type: number }
+    required: [balance]
+  projects:
+    type: object
+    properties:
+      total: { type: integer }
+      active: { type: integer }
+      completed: { type: integer }
+    required: [total]
+  contracts:
+    type: object
+    properties:
+      total: { type: integer }
+      active: { type: integer }
+      draft:  { type: integer }
+      completed: { type: integer }
+      total_amount: { type: number }
+    required: [total]
+  works_materials:
+    type: object
+    properties:
+      works:
+        type: object
+        properties:
+          total: { type: integer }
+          confirmed: { type: integer }
+          confirmed_amount: { type: number }
+      materials:
+        type: object
+        properties:
+          total: { type: integer }
+  acts:
+    type: object
+    properties:
+      total: { type: integer }
+      approved: { type: integer }
+      total_amount: { type: number }
+  team:
+    type: object
+    properties:
+      total: { type: integer }
+      by_roles:
+        type: object
+        additionalProperties:
+          type: integer
+  team_details:
+    type: array
+    items:
+      $ref: './TeamMember.yaml'
+  charts:
+    type: object
+    properties:
+      projects_monthly: { $ref: './ChartTimeseries.yaml' }
+      contracts_monthly: { $ref: './ChartTimeseries.yaml' }
+      completed_works_monthly: { $ref: './ChartTimeseries.yaml' }
+      balance_monthly: { $ref: './ChartTimeseries.yaml' }
+      projects_status: { $ref: './ChartPie.yaml' }
+      contracts_status: { $ref: './ChartPie.yaml' }
+required: [financial, projects, contracts] 
