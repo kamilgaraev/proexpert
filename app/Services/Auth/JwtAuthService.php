@@ -565,14 +565,22 @@ class JwtAuthService
             // Фиксируем транзакцию
             DB::commit();
 
-            // Отправляем приветственное письмо (асинхронно, если очередь настроена)
+            // Отправляем приветственное письмо. Пытаемся через queue; если очередь недоступна — шлём синхронно.
             try {
                 Mail::to($user->email)->queue(new UserWelcomeMail($user));
             } catch (\Throwable $mailEx) {
-                Log::error('[JwtAuthService] Failed to send welcome email', [
+                Log::warning('[JwtAuthService] Queue welcome mail failed, fallback to sync send', [
                     'user_id' => $user->id,
                     'error' => $mailEx->getMessage(),
                 ]);
+                try {
+                    Mail::to($user->email)->send(new UserWelcomeMail($user));
+                } catch (\Throwable $mailSyncEx) {
+                    Log::error('[JwtAuthService] Failed to send welcome email synchronously', [
+                        'user_id' => $user->id,
+                        'error' => $mailSyncEx->getMessage(),
+                    ]);
+                }
             }
 
             // Верифицируем, что пользователь действительно сохранен
