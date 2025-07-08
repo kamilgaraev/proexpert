@@ -1,0 +1,9 @@
+type: object
+required: [id, name, role]
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  role:
+    type: string 

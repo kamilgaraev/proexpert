@@ -125,7 +125,31 @@
                 - type: object
                   properties:
                     data:
-                      $ref: '../components/schemas/ProjectStatistics.yaml'
+                      type: object
+                      properties:
+                        project_id:
+                          type: integer
+                        project_name:
+                          type: string
+                        materials:
+                          type: object
+                        works:
+                          type: object
+                        team:
+                          type: object
+                          properties:
+                            assigned_users_count:
+                              type: integer
+                            members:
+                              type: array
+                              items:
+                                $ref: '../components/schemas/ProjectTeamMember.yaml'
+                        performance_acts:
+                          type: array
+                          items:
+                            $ref: '../components/schemas/PerformanceAct.yaml'
+                        project_info:
+                          type: object
 
 /projects/{id}/materials:
   get:

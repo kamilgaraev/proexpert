@@ -287,11 +287,22 @@ class ProjectService
                 ->selectRaw("\n                    COUNT(*) as total_works_count,\n                    SUM(cw.quantity) as total_work_quantity,\n                    COUNT(DISTINCT cw.work_type_id) as unique_work_types_count,\n                    SUM(cw.total_amount) as total_work_cost\n                ")
                 ->first();
 
-            // Статистика по пользователям
-            $userStats = DB::table('project_user as pu')
+            // Команда проекта
+            $teamMembers = DB::table('project_user as pu')
+                ->join('users as u', 'u.id', '=', 'pu.user_id')
                 ->where('pu.project_id', $id)
-                ->selectRaw('COUNT(*) as assigned_users_count')
-                ->first();
+                ->select(['u.id', 'u.name', 'pu.role'])
+                ->get();
+
+            $userStats = (object) ['assigned_users_count' => $teamMembers->count()];
+
+            // Акты выполненных работ по проекту через контракты
+            $acts = DB::table('contract_performance_acts as a')
+                ->join('contracts as c', 'c.id', '=', 'a.contract_id')
+                ->where('c.project_id', $id)
+                ->select(['a.id', 'a.contract_id', 'a.act_document_number', 'a.act_date', 'a.amount', 'a.is_approved'])
+                ->orderBy('a.act_date', 'desc')
+                ->get();
 
             // Последние операции
             $lastMaterialOperation = DB::table('material_usage_logs')
@@ -325,8 +336,10 @@ class ProjectService
                     'last_completion_date' => $lastWorkCompletion->completion_date ?? null
                 ],
                 'team' => [
-                    'assigned_users_count' => $userStats->assigned_users_count ?? 0
+                    'assigned_users_count' => $userStats->assigned_users_count ?? 0,
+                    'members' => $teamMembers,
                 ],
+                'performance_acts' => $acts,
                 'project_info' => [
                     'start_date' => $project->start_date,
                     'end_date' => $project->end_date,
