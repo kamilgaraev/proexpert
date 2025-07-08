@@ -182,7 +182,8 @@ class ProjectService
         }
 
         try {
-            $project->users()->attach($userId);
+            // Добавляем роль foreman в pivot. Если запись уже есть — обновляем.
+            $project->users()->syncWithoutDetaching([$userId => ['role' => 'foreman']]);
             Log::info('Foreman assigned to project', ['project_id' => $projectId, 'user_id' => $userId, 'admin_id' => $request->user()->id]);
             return true;
         } catch (\Illuminate\Database\QueryException $e) {
