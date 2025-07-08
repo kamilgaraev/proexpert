@@ -539,8 +539,9 @@ class JwtAuthService
                     // Назначаем пользователю роль владельца организации (organization_owner)
                     $ownerRole = \App\Models\Role::where('slug', \App\Models\Role::ROLE_OWNER)->first();
                     if ($ownerRole) {
-                        $alreadyHas = $user->roles()->where('role_id', $ownerRole->id)
-                            ->where('organization_id', $organization->id)
+                        $alreadyHas = $user->roles()
+                            ->where('roles.id', $ownerRole->id)
+                            ->wherePivot('organization_id', $organization->id)
                             ->exists();
                         if (!$alreadyHas) {
                             $user->roles()->attach($ownerRole->id, ['organization_id' => $organization->id]);
