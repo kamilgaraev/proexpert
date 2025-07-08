@@ -533,8 +533,24 @@ class JwtAuthService
                     $user->save();
                     Log::info('[JwtAuthService] Set current organization for user', [
                         'user_id' => $user->id,
-                        'current_org_id' => $user->current_organization_id
+                        'current_org_id' => $organization->current_organization_id ?? $organization->id
                     ]);
+
+                    // Назначаем пользователю роль владельца организации (organization_owner)
+                    $ownerRole = \App\Models\Role::where('slug', \App\Models\Role::ROLE_OWNER)->first();
+                    if ($ownerRole) {
+                        $alreadyHas = $user->roles()->where('role_id', $ownerRole->id)
+                            ->where('organization_id', $organization->id)
+                            ->exists();
+                        if (!$alreadyHas) {
+                            $user->roles()->attach($ownerRole->id, ['organization_id' => $organization->id]);
+                            Log::info('[JwtAuthService] Owner role attached to user after registration.', [
+                                'user_id' => $user->id,
+                                'organization_id' => $organization->id,
+                                'role_id' => $ownerRole->id,
+                            ]);
+                        }
+                    }
                 } catch (\Exception $e) {
                     Log::error('[JwtAuthService] Failed to create organization', [
                         'error' => $e->getMessage(),
