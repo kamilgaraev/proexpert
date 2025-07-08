@@ -17,6 +17,8 @@ use Tymon\JWTAuth\Exceptions\JWTException;
 use Tymon\JWTAuth\Exceptions\TokenExpiredException;
 use Tymon\JWTAuth\Exceptions\TokenInvalidException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\UserWelcomeMail;
 
 class JwtAuthService
 {
@@ -562,7 +564,16 @@ class JwtAuthService
 
             // Фиксируем транзакцию
             DB::commit();
-            Log::info('[JwtAuthService] Transaction committed successfully');
+
+            // Отправляем приветственное письмо (асинхронно, если очередь настроена)
+            try {
+                Mail::to($user->email)->queue(new UserWelcomeMail($user));
+            } catch (\Throwable $mailEx) {
+                Log::error('[JwtAuthService] Failed to send welcome email', [
+                    'user_id' => $user->id,
+                    'error' => $mailEx->getMessage(),
+                ]);
+            }
 
             // Верифицируем, что пользователь действительно сохранен
             $checkUser = $this->userRepository->findByEmail($userData['email']);
