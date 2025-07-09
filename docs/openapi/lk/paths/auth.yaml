@@ -64,6 +64,9 @@
         multipart/form-data:
           schema:
             $ref: '../components/schemas/UpdateProfileRequest.yaml'
+          example:
+            name: "Антон Сидоров"
+            avatar: "(binary)"
         application/json:
           schema:
             $ref: '../components/schemas/UpdateProfileRequest.yaml'

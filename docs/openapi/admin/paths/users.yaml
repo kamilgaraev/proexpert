@@ -74,6 +74,14 @@
         multipart/form-data:
           schema:
             $ref: '../components/schemas/ForemanUpdateRequest.yaml'
+          example:
+            name: "Иван Иванов"
+            password: "Password123!"
+            password_confirmation: "Password123!"
+            phone: "+79998887766"
+            position: "Прораб"
+            avatar: "(binary)"
+            remove_avatar: false
         application/json:
           schema:
             $ref: '../components/schemas/ForemanUpdateRequest.yaml'
@@ -99,6 +107,10 @@
         multipart/form-data:
           schema:
             $ref: '../components/schemas/ForemanUpdateRequest.yaml'
+          example:
+            phone: "+79998887766"
+            position: "Старший прораб"
+            avatar: "(binary)"
         application/json:
           schema:
             $ref: '../components/schemas/ForemanUpdateRequest.yaml'

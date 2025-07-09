@@ -20,17 +20,6 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote')->hourly();
 
-// Ежедневная очистка "осиротевших" файлов (старше 72 часов)
-// Запускается на всех сконфигурированных дисках, кроме 'local' (как определено в команде)
-Schedule::command('files:cleanup --disk="all" --hours=72')
-    ->dailyAt('03:00')
-    ->withoutOverlapping(120) // Не запускать, если предыдущий экземпляр еще работает (макс 2 часа)
-    ->onFailure(function () {
-        // Можно добавить уведомление администратору
-        Log::channel('stderr')->error('Scheduled files:cleanup command failed.');
-    })
-    ->appendOutputTo(storage_path('logs/schedule-files-cleanup.log')); // Логировать вывод
-
 // Запланированная очистка "битых" аватаров (если файл отсутствует на диске)
 Schedule::command('avatars:cleanup')
     ->dailyAt('03:20')
