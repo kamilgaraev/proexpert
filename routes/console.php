@@ -29,5 +29,14 @@ Schedule::command('avatars:cleanup')
     })
     ->appendOutputTo(storage_path('logs/schedule-avatars-cleanup.log'));
 
+// Очистка старых файлов отчётов (старше 1 года)
+Schedule::command('reports:cleanup')
+    ->dailyAt('03:40')
+    ->withoutOverlapping(60)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled reports:cleanup command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-reports-cleanup.log'));
+
 // Если команда billing:process-renewals также должна быть здесь, ее можно добавить аналогично:
 // Schedule::command('billing:process-renewals')->dailyAt('02:00');
