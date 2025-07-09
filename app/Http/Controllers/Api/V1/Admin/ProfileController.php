@@ -58,13 +58,11 @@ class ProfileController extends Controller
                 $user->password = bcrypt($request->password);
             }
 
-            // Обработка аватара (если методы есть в модели)
-            if ($request->boolean('remove_avatar') && method_exists($user, 'deleteAvatar')) {
-                if ($user->avatar_url) {
-                    $user->deleteAvatar();
-                }
-            } elseif ($request->hasFile('avatar') && method_exists($user, 'uploadAvatar')) {
-                $user->uploadAvatar($request->file('avatar'));
+            // Обработка аватара
+            if ($request->boolean('remove_avatar')) {
+                $user->deleteImage('avatar_path');
+            } elseif ($request->hasFile('avatar')) {
+                $user->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'private');
             }
 
             $user->save();
