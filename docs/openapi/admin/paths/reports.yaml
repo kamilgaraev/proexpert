@@ -225,6 +225,13 @@
         schema:
           type: string
           enum: [json, xlsx, csv]
+        description: "Укажите xlsx, чтобы получить ссылку на скачивание Excel-файла."
+    x-codeSamples:
+      - lang: CURL
+        label: Excel download
+        source: |
+          curl -H "Authorization: Bearer <TOKEN>" \
+               "https://api.prohelper.pro/api/v1/admin/reports/official-material-usage?project_id=1&date_from=2024-01-01&date_to=2024-01-31&format=xlsx" | jq
     responses:
       "200":
         description: Данные отчета либо ссылка на файл
@@ -240,4 +247,22 @@
                       format: uri
                     expires_at:
                       type: string
-                      format: date-time 
+                      format: date-time
+            examples:
+              ExcelLink:
+                summary: Ссылка на скачивание Excel
+                value:
+                  download_url: "https://official-reports.website.regru.cloud/official-material-usage/2025/07/official_material_report_1_20250709.xlsx?X-Amz-Signature=abc123..."
+                  expires_at: "2025-07-09T14:42:00+03:00"
+              JsonData:
+                summary: Агрегированные данные (формат=json)
+                value:
+                  title: "Официальный отчет об использовании материалов"
+                  filters:
+                    project_id: 1
+                    date_from: "2024-01-01"
+                    date_to: "2024-01-31"
+                  data:
+                    materials_count: 12
+                    total_economy: -54.2
+                  generated_at: "2025-07-09T12:40:12+03:00" 
