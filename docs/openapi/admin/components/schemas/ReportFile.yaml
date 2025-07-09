@@ -1,0 +1,27 @@
+type: object
+properties:
+  id:
+    type: string
+    description: Base64-url ключ для операций удаления
+  path:
+    type: string
+    description: Полный путь/ключ объекта в S3
+  filename:
+    type: string
+  type:
+    type: string
+    description: Тип отчёта (первый сегмент пути)
+  size:
+    type: integer
+    description: Размер файла в байтах
+  created_at:
+    type: string
+    format: date-time
+  expires_at:
+    type: string
+    format: date-time
+    description: Дата автоматического удаления (+1 год)
+  download_url:
+    type: string
+    format: uri
+required: [id, filename, size, created_at, download_url] 

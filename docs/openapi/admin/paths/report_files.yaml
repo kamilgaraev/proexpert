@@ -1,0 +1,101 @@
+/report-files:
+  get:
+    tags: [ReportFiles]
+    summary: Получить список файлов отчётов
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: type
+        schema:
+          type: string
+        description: Тип отчёта (первый сегмент пути)
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: filename
+        schema:
+          type: string
+      - in: query
+        name: sort_by
+        schema:
+          type: string
+          enum: [created_at, size, filename]
+          default: created_at
+      - in: query
+        name: sort_dir
+        schema:
+          type: string
+          enum: [asc, desc]
+          default: desc
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+      - in: query
+        name: page
+        schema:
+          type: integer
+          default: 1
+    x-codeSamples:
+      - lang: CURL
+        label: Пример запроса
+        source: |
+          curl -H "Authorization: Bearer <TOKEN>" \
+               "https://api.prohelper.pro/api/v1/admin/report-files?type=official-material-usage&per_page=20"
+    responses:
+      "200":
+        description: Список файлов отчётов
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/ReportFile.yaml'
+
+/report-files/{key}:
+  delete:
+    tags: [ReportFiles]
+    summary: Удалить файл отчёта
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: key
+        required: true
+        schema:
+          type: string
+        description: Base64-url идентификатор файла (получается из списка)
+    x-codeSamples:
+      - lang: CURL
+        label: Пример удаления
+        source: |
+          curl -X DELETE -H "Authorization: Bearer <TOKEN>" \
+               "https://api.prohelper.pro/api/v1/admin/report-files/ZXhhbXBsZS1wYXRoL3RvLXJlcG9ydC54bHN4"
+    responses:
+      "200":
+        description: Файл удалён
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "404":
+        description: Файл не найден
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 

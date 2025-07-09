@@ -257,3 +257,8 @@
 
 /projects/{projectId}/organizations/{organizationId}:
   $ref: './project_organizations.yaml#/~1projects~1{projectId}~1organizations~1{organizationId}' 
+
+/report-files:
+  $ref: './report_files.yaml#/~1report-files'
+/report-files/{key}:
+  $ref: './report_files.yaml#/~1report-files~1{key}' 
