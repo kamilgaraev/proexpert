@@ -31,5 +31,14 @@ Schedule::command('files:cleanup --disk="all" --hours=72')
     })
     ->appendOutputTo(storage_path('logs/schedule-files-cleanup.log')); // Логировать вывод
 
+// Запланированная очистка "битых" аватаров (если файл отсутствует на диске)
+Schedule::command('avatars:cleanup')
+    ->dailyAt('03:20')
+    ->withoutOverlapping(60)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled avatars:cleanup command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-avatars-cleanup.log'));
+
 // Если команда billing:process-renewals также должна быть здесь, ее можно добавить аналогично:
 // Schedule::command('billing:process-renewals')->dailyAt('02:00');
