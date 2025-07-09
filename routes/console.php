@@ -38,5 +38,14 @@ Schedule::command('reports:cleanup')
     })
     ->appendOutputTo(storage_path('logs/schedule-reports-cleanup.log'));
 
+// ДОБАВЛЕНО: Синхронизация записей report_files с бакетом S3
+Schedule::command('reports:sync')
+    ->dailyAt('03:30')
+    ->withoutOverlapping(60)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled reports:sync command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-reports-sync.log'));
+
 // Если команда billing:process-renewals также должна быть здесь, ее можно добавить аналогично:
 // Schedule::command('billing:process-renewals')->dailyAt('02:00');
