@@ -45,7 +45,7 @@ class ProfileController extends Controller
                 }
             } elseif ($request->hasFile('avatar')) {
                 Log::info('[ProfileController] Attempting to upload new avatar.', ['user_id' => $user->id]);
-                if (!$user->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'public')) {
+                if (!$user->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'private')) {
                     Log::error('[ProfileController] Failed to upload avatar.', ['user_id' => $user->id]);
                     // Возвращаем ошибку, так как пользователь явно хотел загрузить аватар
                     return response()->json([

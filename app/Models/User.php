@@ -349,6 +349,7 @@ class User extends Authenticatable implements JWTSubject
         // Предполагаем, что дефолтный аватар находится в public/images/default-avatar.png
         // или вы настроите свой путь к дефолтному изображению.
         // Если аватары загружаются с видимостью 'public', то $temporary = false (по умолчанию)
-        return $this->getImageUrl('avatar_path', asset('images/default-avatar.png'));
+        // Для приватного бакета генерируем временную ссылку (60 минут)
+        return $this->getImageUrl('avatar_path', asset('images/default-avatar.png'), true, 60);
     }
 }

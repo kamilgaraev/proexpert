@@ -71,7 +71,7 @@ class UserManagementController extends Controller
                 // 'avatar_path' - имя атрибута в модели User для хранения пути к файлу
                 // 'avatars' - директория в S3 (или другом сконфигурированном диске)
                 // 'public' - видимость файла
-                if ($foreman->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'public')) {
+                if ($foreman->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'private')) {
                     $foreman->save(); // Сохраняем модель User с обновленным avatar_path
                 } else {
                     // Логируем ошибку, если загрузка не удалась, но не прерываем процесс,
@@ -158,7 +158,7 @@ class UserManagementController extends Controller
             // Загрузка нового аватара (только если не было запроса на удаление)
             // или если remove_avatar = false и пришел новый файл
             else if ($request->hasFile('avatar') && $request->file('avatar')->isValid()) {
-                if ($foreman->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'public')) {
+                if ($foreman->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'private')) {
                     $avatarChanged = true;
                 } else {
                     Log::error('[UserManagementController@update] Failed to upload new avatar for user.', ['user_id' => $foreman->id]);
