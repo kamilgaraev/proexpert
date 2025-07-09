@@ -472,10 +472,16 @@ class ReportService
             $filters
         );
 
-        // Если запрашивается Excel экспорт
+        // Если запрашивается Excel экспорт – генерируем файл в бакете reports и отдаём ссылку
         if ($format === 'xlsx') {
-            $filename = "official_material_report_{$projectId}_" . date('YmdHis') . '.xlsx';
-            return $this->excelExporter->generateOfficialMaterialReport($reportData, $filename);
+            $url = $this->excelExporter->uploadOfficialMaterialReport($reportData);
+            if (!$url) {
+                throw new BusinessLogicException('Не удалось сформировать файл отчёта.', 500);
+            }
+            return [
+                'download_url' => $url,
+                'expires_at' => now()->addHours(2),
+            ];
         }
 
         // JSON ответ

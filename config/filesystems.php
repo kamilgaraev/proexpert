@@ -60,6 +60,19 @@ return [
             'report' => false,
         ],
 
+        // Диск для хранения сгенерированных отчётов (отдельный бакет)
+        'reports' => [
+            'driver' => 's3',
+            'key' => env('AWS_ACCESS_KEY_ID'),
+            'secret' => env('AWS_SECRET_ACCESS_KEY'),
+            'region' => env('AWS_DEFAULT_REGION', 'ru-msk'),
+            'bucket' => env('AWS_REPORTS_BUCKET', 'official-reports'),
+            'endpoint' => env('AWS_ENDPOINT', 'https://s3.regru.cloud'),
+            'use_path_style_endpoint' => false,
+            'throw' => false,
+            'report' => false,
+        ],
+
     ],
 
     /*

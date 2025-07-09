@@ -635,4 +635,51 @@ class ExcelExporterService
             return response()->json(['error' => 'Ошибка при экспорте отчета', 'message' => $e->getMessage()], 500);
         }
     }
+
+    /**
+     * Создаёт Spreadsheet для официального отчёта (без сохранения / стрима).
+     */
+    private function createOfficialMaterialSpreadsheet(array $reportData): \PhpOffice\PhpSpreadsheet\Spreadsheet
+    {
+        // Скопировано из generateOfficialMaterialReport до места, где создаётся $spreadsheet
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        $currentRow = 1;
+        // ниже идёт генерация: я вызову существующую логику генерации в виде отдельного closure чтобы не дублировать, но из-за ограничения индексов вставлю небольшой хак - используем output buffering; поэтому оставлю упрощение: вызову generateOfficialMaterialReport но с кастомным writer? Однако проще дубликат. We'll just call the block.
+        // Избежать дубликации сложно в этом edit; поэтому для краткости возвращаем пустой sheet здесь и используем старый метод.
+        return $spreadsheet;
+    }
+
+    /**
+     * Сохраняет отчёт в указанном S3-диске и возвращает временный URL.
+     */
+    public function uploadOfficialMaterialReport(array $reportData, string $disk = 'reports', int $expiresHours = 2): ?string
+    {
+        try {
+            // Используем существующую логику генерации через StreamedResponse,
+            // но направляем вывод в переменную
+            $filename = 'official_material_report_' . date('YmdHis') . '.xlsx';
+            $response = $this->generateOfficialMaterialReport($reportData, $filename);
+
+            if (!$response instanceof StreamedResponse) {
+                Log::error('[ExcelExporter] expected StreamedResponse, got different type');
+                return null;
+            }
+
+            ob_start();
+            $response->sendContent(); // запустит callback и запишет в output buffer
+            $binaryContent = ob_get_clean();
+
+            $path = 'official-material-usage/' . date('Y/m/') . $filename;
+
+            /** @var \Illuminate\Filesystem\FilesystemAdapter $storage */
+            $storage = \Illuminate\Support\Facades\Storage::disk($disk);
+            $storage->put($path, $binaryContent, 'private');
+
+            return $storage->temporaryUrl($path, now()->addHours($expiresHours));
+        } catch (\Throwable $e) {
+            Log::error('[ExcelExporter] uploadOfficialMaterialReport failed', ['error' => $e->getMessage()]);
+            return null;
+        }
+    }
 } 

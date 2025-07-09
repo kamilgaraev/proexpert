@@ -125,6 +125,8 @@
   get:
     tags: [Reports]
     summary: Официальный отчет об использовании материалов, переданных Заказчиком
+    security:
+      - bearerAuth: []
     parameters:
       - in: query
         name: project_id
@@ -225,8 +227,17 @@
           enum: [json, xlsx, csv]
     responses:
       "200":
-        description: Данные отчета либо файл
+        description: Данные отчета либо ссылка на файл
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ReportResponse.yaml' 
+              oneOf:
+                - $ref: '../components/schemas/ReportResponse.yaml'
+                - type: object
+                  properties:
+                    download_url:
+                      type: string
+                      format: uri
+                    expires_at:
+                      type: string
+                      format: date-time 
