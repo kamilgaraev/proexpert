@@ -8,6 +8,9 @@ properties:
     description: Полный путь/ключ объекта в S3
   filename:
     type: string
+  name:
+    type: string
+    description: Читаемое название отчёта
   type:
     type: string
     description: Тип отчёта (первый сегмент пути)

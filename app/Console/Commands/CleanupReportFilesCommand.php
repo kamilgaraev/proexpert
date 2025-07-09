@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Carbon;
+use App\Models\ReportFile;
 
 class CleanupReportFilesCommand extends Command
 {
@@ -22,6 +23,16 @@ class CleanupReportFilesCommand extends Command
         /** @var \Illuminate\Filesystem\FilesystemAdapter|\Illuminate\Contracts\Filesystem\Cloud $storage */
         $storage = Storage::disk('reports');
         $files = $storage->allFiles();
+        // массив для быстрого поиска
+        $fileSet = array_flip($files);
+
+        // 1) Удаляем старые записи, если файла нет
+        $oldRecords = ReportFile::where('expires_at', '<', now())
+            ->orWhereNotIn('path', $files)
+            ->get();
+        foreach ($oldRecords as $rec) {
+            $rec->delete();
+        }
 
         $toDelete = [];
         foreach ($files as $path) {

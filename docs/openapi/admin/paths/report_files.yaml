@@ -98,4 +98,36 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml' 
+              $ref: '../components/schemas/ApiResponse.yaml'
+  patch:
+    tags: [ReportFiles]
+    summary: Изменить читаемое название отчёта
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: key
+        required: true
+        schema:
+          type: string
+        description: Base64-url ключ
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              name:
+                type: string
+                maxLength: 255
+            required: [name]
+    responses:
+      "200":
+        description: Название обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "404":
+        description: Не найдено 

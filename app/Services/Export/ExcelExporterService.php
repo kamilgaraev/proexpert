@@ -12,6 +12,7 @@ use Exception;
 use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use Illuminate\Support\Str;
 
 class ExcelExporterService
 {
@@ -675,6 +676,17 @@ class ExcelExporterService
             /** @var \Illuminate\Filesystem\FilesystemAdapter $storage */
             $storage = \Illuminate\Support\Facades\Storage::disk($disk);
             $storage->put($path, $binaryContent, 'private');
+
+            // Сохраняем запись в БД
+            $reportFile = \App\Models\ReportFile::create([
+                'path'       => $path,
+                'type'       => Str::before($path, '/'),
+                'filename'   => $filename,
+                'name'       => $filename, // по умолчанию
+                'size'       => strlen($binaryContent),
+                'expires_at' => now()->addYear(),
+                'user_id'    => auth()->id(),
+            ]);
 
             return $storage->temporaryUrl($path, now()->addHours($expiresHours));
         } catch (\Throwable $e) {

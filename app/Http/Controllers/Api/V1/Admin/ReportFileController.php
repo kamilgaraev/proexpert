@@ -10,6 +10,7 @@ use Illuminate\Support\Str;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Http\JsonResponse;
+use App\Models\ReportFile;
 
 class ReportFileController extends Controller
 {
@@ -42,53 +43,42 @@ class ReportFileController extends Controller
         $dateFrom  = isset($params['date_from']) ? Carbon::parse($params['date_from'])->startOfDay() : null;
         $dateTo    = isset($params['date_to']) ? Carbon::parse($params['date_to'])->endOfDay() : null;
 
+        // Формируем запрос к БД
+        $query = ReportFile::query();
+        if ($typeFilter) {
+            $query->where('type', $typeFilter);
+        }
+        if ($filenameFilter) {
+            $query->whereRaw('LOWER(filename) LIKE ?', ['%' . $filenameFilter . '%']);
+        }
+        if ($dateFrom) {
+            $query->whereDate('created_at', '>=', $dateFrom);
+        }
+        if ($dateTo) {
+            $query->whereDate('created_at', '<=', $dateTo);
+        }
+
+        $query->orderBy($sortBy, $sortDir);
+
+        /** @var \Illuminate\Pagination\LengthAwarePaginator $paginator */
+        $paginator = $query->paginate($perPage);
+
+        // Дополняем download_url для каждого элемента
         /** @var \Illuminate\Filesystem\FilesystemAdapter|\Illuminate\Contracts\Filesystem\Cloud $storage */
         $storage = Storage::disk('reports');
-        $allPaths = $storage->allFiles();
-
-        $items = collect($allPaths)->map(function (string $path) use ($storage) {
-            $lastModified = Carbon::createFromTimestamp($storage->lastModified($path));
+        $paginator->getCollection()->transform(function (ReportFile $file) use ($storage) {
             return [
-                'id'          => $this->encodeKey($path),
-                'path'        => $path,
-                'filename'    => basename($path),
-                'type'        => Str::before($path, '/'),
-                'size'        => $storage->size($path),
-                'created_at'  => $lastModified->toIso8601String(),
-                'expires_at'  => $lastModified->copy()->addYear()->toIso8601String(),
-                'download_url'=> $storage->temporaryUrl($path, now()->addMinutes(5)),
+                'id'          => $this->encodeKey($file->path),
+                'path'        => $file->path,
+                'filename'    => $file->filename,
+                'name'        => $file->name ?? $file->filename,
+                'type'        => $file->type,
+                'size'        => $file->size,
+                'created_at'  => $file->created_at?->toIso8601String(),
+                'expires_at'  => $file->expires_at?->toIso8601String(),
+                'download_url'=> $storage->temporaryUrl($file->path, now()->addMinutes(5)),
             ];
         });
-
-        // Применяем фильтры
-        $items = $items->filter(function (array $file) use ($typeFilter, $filenameFilter, $dateFrom, $dateTo) {
-            if ($typeFilter && $file['type'] !== $typeFilter) {
-                return false;
-            }
-            if ($filenameFilter && !Str::contains(Str::lower($file['filename']), $filenameFilter)) {
-                return false;
-            }
-            $created = Carbon::parse($file['created_at']);
-            if ($dateFrom && $created->lt($dateFrom)) {
-                return false;
-            }
-            if ($dateTo && $created->gt($dateTo)) {
-                return false;
-            }
-            return true;
-        });
-
-        // Сортировка
-        $items = $items->sortBy($sortBy, SORT_REGULAR, $sortDir === 'desc')->values();
-
-        // Пагинация вручную, т.к. элементы уже в коллекции
-        $page    = LengthAwarePaginator::resolveCurrentPage();
-        $total   = $items->count();
-        $results = $items->forPage($page, $perPage)->values();
-        $paginator = new LengthAwarePaginator($results, $total, $perPage, $page, [
-            'path' => $request->url(),
-            'query'=> $request->query(),
-        ]);
 
         return response()->json($paginator);
     }
@@ -103,12 +93,39 @@ class ReportFileController extends Controller
         $storage = Storage::disk('reports');
 
         if (!$storage->exists($path)) {
+            // всё равно пытаемся удалить запись из БД
+            ReportFile::where('path', $path)->delete();
             return response()->json(['message' => 'File not found.'], 404);
         }
 
         $storage->delete($path);
+        ReportFile::where('path', $path)->delete();
 
         return response()->json(['message' => 'File deleted.']);
+    }
+
+    /**
+     * Обновление читаемого названия файла.
+     */
+    public function update(Request $request, string $key): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'name' => ['required', 'string', 'max:255'],
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['errors' => $validator->errors()], 422);
+        }
+
+        $path = $this->decodeKey($key);
+        $file = ReportFile::where('path', $path)->first();
+        if (!$file) {
+            return response()->json(['message' => 'File not found.'], 404);
+        }
+
+        $file->name = $validator->validated()['name'];
+        $file->save();
+
+        return response()->json(['message' => 'Name updated.']);
     }
 
     // ---------------------------------------------------------------------
