@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Str;
 
 class ReportFile extends Model
 {
@@ -27,4 +28,15 @@ class ReportFile extends Model
     protected $casts = [
         'expires_at' => 'datetime',
     ];
+
+    protected static function booted()
+    {
+        parent::booted();
+
+        static::creating(function (self $model) {
+            if (empty($model->{$model->getKeyName()})) {
+                $model->{$model->getKeyName()} = (string) Str::ulid();
+            }
+        });
+    }
 } 
