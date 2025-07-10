@@ -1,0 +1,116 @@
+```yaml
+/personal-files:
+  get:
+    tags: [PersonalFiles]
+    summary: Список файлов и папок текущего пользователя
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: query
+        name: path
+        schema:
+          type: string
+        description: Префикс пути (папка). Пусто = корень.
+    responses:
+      "200":
+        description: Список файлов/папок
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '../components/schemas/PersonalFile.yaml'
+
+/personal-files/folder:
+  post:
+    tags: [PersonalFiles]
+    summary: Создать папку
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              name:
+                type: string
+              parent_path:
+                type: string
+                description: Префикс родительской папки
+            required: [name]
+    responses:
+      "200":
+        description: Папка создана
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "409":
+        description: Уже существует
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/personal-files/upload:
+  post:
+    tags: [PersonalFiles]
+    summary: Загрузить файл
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              file:
+                type: string
+                format: binary
+              parent_path:
+                type: string
+            required: [file]
+    responses:
+      "200":
+        description: Файл загружен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "409":
+        description: Уже существует
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/personal-files/{id}:
+  delete:
+    tags: [PersonalFiles]
+    summary: Удалить файл или папку (рекурсивно)
+    security:
+      - bearerAuth: []
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+        description: ULID файла/папки
+    responses:
+      "200":
+        description: Удалено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "404":
+        description: Не найдено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+``` 

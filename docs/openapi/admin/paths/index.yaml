@@ -262,3 +262,12 @@
   $ref: './report_files.yaml#/~1report-files'
 /report-files/{key}:
   $ref: './report_files.yaml#/~1report-files~1{key}' 
+
+/personal-files:
+  $ref: './personal_files.yaml#/~1personal-files'
+/personal-files/folder:
+  $ref: './personal_files.yaml#/~1personal-files~1folder'
+/personal-files/upload:
+  $ref: './personal_files.yaml#/~1personal-files~1upload'
+/personal-files/{id}:
+  $ref: './personal_files.yaml#/~1personal-files~1{id}' 

@@ -1,0 +1,19 @@
+type: object
+properties:
+  id:
+    type: string
+    description: ULID идентификатор
+  path:
+    type: string
+    description: Полный ключ объекта в S3
+  filename:
+    type: string
+  size:
+    type: integer
+    description: Размер файла (0 для папок)
+  is_folder:
+    type: boolean
+  download_url:
+    type: string
+    format: uri
+required: [id, filename, is_folder] 
