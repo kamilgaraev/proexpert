@@ -615,11 +615,10 @@ class ExcelExporterService
                         'exception' => $e->getMessage(),
                     ]);
                     
-                    // Создаем простой документ с ошибкой
+                    // Создаем простой документ с сообщением для пользователя
                     $errorSpreadsheet = new Spreadsheet();
                     $errorSheet = $errorSpreadsheet->getActiveSheet();
-                    $errorSheet->setCellValue('A1', 'Ошибка при создании отчета');
-                    $errorSheet->setCellValue('A2', $e->getMessage());
+                    $errorSheet->setCellValue('A1', 'Файл повреждён');
                     $errorWriter = new Xlsx($errorSpreadsheet);
                     $errorWriter->save('php://output');
                 }
@@ -633,7 +632,7 @@ class ExcelExporterService
             Log::error('[ExcelExporterService] Критическая ошибка при создании официального отчета:', [
                 'exception' => $e->getMessage(),
             ]);
-            return response()->json(['error' => 'Ошибка при экспорте отчета', 'message' => $e->getMessage()], 500);
+            return response()->json(['error' => 'Файл повреждён'], 500);
         }
     }
 
