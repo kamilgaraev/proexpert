@@ -26,8 +26,11 @@ class PersonalFileController extends Controller
             $prefix .= '/';
         }
 
+        $basePrefix = $user->id . '/';
+        $fullPrefix = $basePrefix . $prefix; // если $prefix пустой – получится "<uid>/"
+
         $query = PersonalFile::where('user_id', $user->id)
-            ->where('path', 'like', $prefix . '%');
+            ->where('path', 'like', $fullPrefix . '%');
 
         /** @var \Illuminate\Filesystem\FilesystemAdapter|\Illuminate\Contracts\Filesystem\Cloud $storage */
         $storage = Storage::disk(self::DISK);
