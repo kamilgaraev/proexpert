@@ -1,4 +1,3 @@
-```yaml
 /personal-files:
   get:
     tags: [PersonalFiles]
@@ -113,4 +112,3 @@
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
-``` 
