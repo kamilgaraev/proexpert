@@ -671,7 +671,8 @@ class ExcelExporterService
             $response->sendContent(); // запустит callback и запишет в output buffer
             $binaryContent = ob_get_clean();
 
-            $path = 'official-material-usage/' . date('Y/m/') . $filename;
+            // Путь теперь включает день для лучшей организаци ̃ии: YYYY/m/d/filename
+            $path = 'official-material-usage/' . date('Y/m/d/') . $filename;
 
             /** @var \Illuminate\Filesystem\FilesystemAdapter $storage */
             $storage = \Illuminate\Support\Facades\Storage::disk($disk);
