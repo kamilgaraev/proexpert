@@ -29,7 +29,7 @@ class ContractPaymentController extends Controller
     public function index(Request $request, int $contractId)
     {
         // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id', 1); // Временно
+        $organizationId = $request->user()?->current_organization_id;
 
         try {
             // Вместо int $contractId можно использовать Route Model Binding: Contract $contract
@@ -44,7 +44,7 @@ class ContractPaymentController extends Controller
     public function store(StoreContractPaymentRequest $request, int $contractId)
     {
         // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id_for_creation', 1); // Временно
+        $organizationId = $request->user()?->current_organization_id;
 
         try {
             // Contract $contract (Route Model Binding)
@@ -61,7 +61,7 @@ class ContractPaymentController extends Controller
     public function show(Request $request, int $contractId, int $paymentId)
     {
         // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id_for_show', 1); // Временно
+        $organizationId = $request->user()?->current_organization_id;
 
         try {
             // Contract $contract, ContractPayment $payment (Route Model Binding)
@@ -78,7 +78,7 @@ class ContractPaymentController extends Controller
     public function update(UpdateContractPaymentRequest $request, int $contractId, int $paymentId)
     {
         // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id_for_update', 1); // Временно
+        $organizationId = $request->user()?->current_organization_id;
         
         try {
             // Contract $contract, ContractPayment $payment (Route Model Binding)
@@ -103,7 +103,7 @@ class ContractPaymentController extends Controller
     public function destroy(Request $request, int $contractId, int $paymentId)
     {
         // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id_for_destroy', 1); // Временно
+        $organizationId = $request->user()?->current_organization_id;
 
         try {
             // Contract $contract, ContractPayment $payment (Route Model Binding)

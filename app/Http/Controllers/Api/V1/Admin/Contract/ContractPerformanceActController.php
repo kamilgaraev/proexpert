@@ -38,7 +38,7 @@ class ContractPerformanceActController extends Controller
     public function index(Request $request, int $contractId)
     {
         // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id', 1); // Временно
+        $organizationId = $request->user()?->current_organization_id;
 
         try {
             $acts = $this->actService->getAllActsForContract($contractId, $organizationId);
@@ -54,7 +54,7 @@ class ContractPerformanceActController extends Controller
     public function store(StoreContractPerformanceActRequest $request, int $contractId)
     {
         // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id_for_creation', 1); // Временно из StoreRequest или напрямую
+        $organizationId = $request->user()?->current_organization_id;
 
         try {
             $actDTO = $request->toDto();
@@ -73,7 +73,7 @@ class ContractPerformanceActController extends Controller
     public function show(Request $request, int $contractId, int $actId)
     {
         // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id_for_show', 1); // Временно
+        $organizationId = $request->user()?->current_organization_id;
 
         try {
             $act = $this->actService->getActById($actId, $contractId, $organizationId);
@@ -92,7 +92,7 @@ class ContractPerformanceActController extends Controller
     public function update(UpdateContractPerformanceActRequest $request, int $contractId, int $actId)
     {
         // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id_for_update', 1); // Временно
+        $organizationId = $request->user()?->current_organization_id;
         
         try {
             $actDTO = $request->toDto();
@@ -109,7 +109,7 @@ class ContractPerformanceActController extends Controller
     public function destroy(Request $request, int $contractId, int $actId)
     {
         // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id_for_destroy', 1); // Временно
+        $organizationId = $request->user()?->current_organization_id;
 
         try {
             $this->actService->deleteAct($actId, $contractId, $organizationId);
@@ -125,7 +125,7 @@ class ContractPerformanceActController extends Controller
     public function availableWorks(Request $request, int $contractId)
     {
         // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->input('organization_id', 1); // Временно
+        $organizationId = $request->user()?->current_organization_id;
 
         try {
             $works = $this->actService->getAvailableWorksForAct($contractId, $organizationId);
