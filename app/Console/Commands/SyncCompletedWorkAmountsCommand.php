@@ -41,6 +41,20 @@ class SyncCompletedWorkAmountsCommand extends Command
                         $work->total_amount = round($work->price * $work->quantity, 2);
                     }
 
+                    // Если по-прежнему нет total/price — считаем из материалов
+                    if (is_null($work->price) && is_null($work->total_amount)) {
+                        $materialsSum = 0;
+                        foreach ($work->materials as $mat) {
+                            $materialsSum += $mat->pivot->total_amount ?? ($mat->pivot->quantity * ($mat->pivot->unit_price ?? 0));
+                        }
+                        if ($materialsSum > 0) {
+                            $work->total_amount = round($materialsSum, 2);
+                            if ($work->quantity > 0) {
+                                $work->price = round($work->total_amount / $work->quantity, 2);
+                            }
+                        }
+                    }
+
                     if ($work->price !== $origPrice || $work->total_amount !== $origTotal) {
                         $work->save();
                         $updated++;
