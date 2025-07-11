@@ -677,6 +677,7 @@ class MultiOrganizationService
         return [
             'holding_info' => [
                 'name' => $organization->name,
+                'group_id' => $organization->organizationGroup?->id,
                 'group_name' => $organization->organizationGroup?->name,
                 'total_child_organizations' => $childOrgs->count(),
                 'max_child_organizations' => $organization->organizationGroup?->max_child_organizations ?? 10,
