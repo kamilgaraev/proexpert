@@ -67,6 +67,24 @@ class CompletedWorkService
                 $data['total_amount'] = round($data['price'] * $data['quantity'], 2);
             }
 
+            // Если всё ещё нет суммы, пытаемся рассчитать из материалов
+            if ($data['total_amount'] === null && !empty($dto->materials)) {
+                $materialsSum = 0;
+                foreach ($dto->materials as $m) {
+                    if ($m instanceof \App\DTOs\CompletedWork\CompletedWorkMaterialDTO) {
+                        $materialsSum += $m->total_amount ?? ($m->quantity * ($m->unit_price ?? 0));
+                    } elseif (is_array($m)) {
+                        $materialsSum += $m['total_amount'] ?? ($m['quantity'] * ($m['unit_price'] ?? 0));
+                    }
+                }
+                if ($materialsSum > 0) {
+                    $data['total_amount'] = round($materialsSum, 2);
+                    if ($data['price'] === null && $data['quantity'] > 0) {
+                        $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
+                    }
+                }
+            }
+
             $createdModel = $this->completedWorkRepository->create($data);
 
             if (!$createdModel) {
@@ -110,6 +128,23 @@ class CompletedWorkService
 
             if ($data['total_amount'] === null && $data['price'] !== null) {
                 $data['total_amount'] = round($data['price'] * $data['quantity'], 2);
+            }
+
+            if ($data['total_amount'] === null && !empty($dto->materials)) {
+                $materialsSum = 0;
+                foreach ($dto->materials as $m) {
+                    if ($m instanceof \App\DTOs\CompletedWork\CompletedWorkMaterialDTO) {
+                        $materialsSum += $m->total_amount ?? ($m->quantity * ($m->unit_price ?? 0));
+                    } elseif (is_array($m)) {
+                        $materialsSum += $m['total_amount'] ?? ($m['quantity'] * ($m['unit_price'] ?? 0));
+                    }
+                }
+                if ($materialsSum > 0) {
+                    $data['total_amount'] = round($materialsSum, 2);
+                    if ($data['price'] === null && $data['quantity'] > 0) {
+                        $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
+                    }
+                }
             }
 
             $success = $this->completedWorkRepository->update($id, $data);
