@@ -70,13 +70,24 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
      */
     public function getProjectsForUser(int $userId, ?int $organizationId = null)
     {
-        $query = $this->model->whereHas('users', function ($query) use ($userId) {
-            $query->where('user_id', $userId);
+        $query = $this->model->where(function($scope) use ($userId, $organizationId) {
+            // 1) Назначен пользователем
+            $scope->whereHas('users', function ($q) use ($userId) {
+                    $q->where('user_id', $userId);
+                })
+                // 2) Или принадлежит текущей организации напрямую
+                ->orWhere(function ($q) use ($organizationId) {
+                    if ($organizationId) {
+                        $q->where('organization_id', $organizationId);
+                    }
+                })
+                // 3) Или организация прикреплена как collaborator
+                ->orWhereHas('organizations', function ($q) use ($organizationId) {
+                    if ($organizationId) {
+                        $q->where('organizations.id', $organizationId);
+                    }
+                });
         });
-
-        if ($organizationId) {
-            $query->where('organization_id', $organizationId);
-        }
 
         return $query->orderBy('is_archived')
             ->orderBy('status', 'desc')
