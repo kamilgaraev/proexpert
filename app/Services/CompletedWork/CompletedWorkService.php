@@ -57,7 +57,16 @@ class CompletedWorkService
 
             $data = $dto->toArray();
             unset($data['materials']);
-            
+
+            // Автовычисление цены / суммы
+            if ($data['price'] === null && $data['total_amount'] !== null && $data['quantity'] > 0) {
+                $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
+            }
+
+            if ($data['total_amount'] === null && $data['price'] !== null) {
+                $data['total_amount'] = round($data['price'] * $data['quantity'], 2);
+            }
+
             $createdModel = $this->completedWorkRepository->create($data);
 
             if (!$createdModel) {
@@ -94,6 +103,14 @@ class CompletedWorkService
 
             $data = $dto->toArray();
             unset($data['materials']);
+
+            if ($data['price'] === null && $data['total_amount'] !== null && $data['quantity'] > 0) {
+                $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
+            }
+
+            if ($data['total_amount'] === null && $data['price'] !== null) {
+                $data['total_amount'] = round($data['price'] * $data['quantity'], 2);
+            }
 
             $success = $this->completedWorkRepository->update($id, $data);
             if (!$success) {
