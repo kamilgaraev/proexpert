@@ -1,0 +1,90 @@
+/projects/{id}/child-works:
+  get:
+    tags: [Projects]
+    summary: "Получить детализированные работы дочерних организаций проекта"
+    description: |
+      Возвращает постраничный список выполненных работ, принадлежащих дочерним организациям,
+      привязанным к проекту. Доступно только пользователям головной организации с разрешением
+      `projects.view_child_works`.
+    x-roles: [Owner, Admin, Accountant]
+    x-permissions: [projects.view_child_works]
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID проекта
+      - in: query
+        name: child_organization_id
+        schema:
+          oneOf:
+            - type: integer
+            - type: array
+              items:
+                type: integer
+        description: "Фильтр по дочерним организациям (один ID или несколько)"
+      - in: query
+        name: work_type_id
+        schema:
+          oneOf:
+            - type: integer
+            - type: array
+              items:
+                type: integer
+        description: "Фильтр по видам работ"
+      - in: query
+        name: status
+        schema:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        description: "Фильтр по статусу работы"
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+        description: "Дата начала (YYYY-MM-DD)"
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+        description: "Дата окончания (YYYY-MM-DD)"
+      - in: query
+        name: search
+        schema:
+          type: string
+        description: "Поиск по заметкам"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 50
+        description: "Размер страницы"
+    responses:
+      "200":
+        description: "Список детализированных работ"
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/CrossOrgCompletedWorkCollection.yaml'
+                    meta:
+                      type: object
+                      properties:
+                        current_page:
+                          type: integer
+                        last_page:
+                          type: integer
+                        per_page:
+                          type: integer
+                        total:
+                          type: integer 

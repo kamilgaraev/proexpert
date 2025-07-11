@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\V1\Admin\ProjectController;
 use App\Http\Controllers\Api\V1\Admin\ProjectOrganizationController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\Admin\ProjectChildWorksController;
  
 Route::apiResource('projects', ProjectController::class);
 
@@ -26,6 +27,9 @@ Route::get('/projects/available-cost-categories', [ProjectController::class, 'ge
 Route::get('/projects/{id}/organizations', [ProjectOrganizationController::class, 'index'])->name('projects.organizations.index');
 Route::post('/projects/{projectId}/organizations/{organizationId}', [ProjectOrganizationController::class, 'attach'])->name('projects.organizations.attach');
 Route::delete('/projects/{projectId}/organizations/{organizationId}', [ProjectOrganizationController::class, 'detach'])->name('projects.organizations.detach');
+
+// Получить детализированные работы дочерних организаций
+Route::get('/projects/{id}/child-works', [ProjectChildWorksController::class, 'index'])->name('projects.child-works.index');
 
 // Статистика (если понадобится)
 // Route::get('projects/{project}/statistics', [ProjectController::class, 'statistics'])->name('projects.statistics'); 

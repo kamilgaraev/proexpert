@@ -1,0 +1,47 @@
+type: object
+properties:
+  id:
+    type: integer
+  project_id:
+    type: integer
+  child_organization:
+    type: object
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+  parent_organization_id:
+    type: integer
+  work_type:
+    type: object
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+      measurement_unit:
+        type: string
+        nullable: true
+  quantity:
+    type: number
+    format: float
+  price:
+    type: number
+    format: float
+    nullable: true
+  total_amount:
+    type: number
+    format: float
+    nullable: true
+  completion_date:
+    type: string
+    format: date
+  status:
+    type: string
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time 
