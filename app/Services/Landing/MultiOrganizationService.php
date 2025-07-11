@@ -264,6 +264,7 @@ class MultiOrganizationService
         ];
 
         if ($organization->is_holding && $organization->organizationGroup) {
+            $data['group_id'] = $organization->organizationGroup->id;
             $data['slug'] = $organization->organizationGroup->slug;
         }
 
