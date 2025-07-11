@@ -70,3 +70,59 @@ const canViewChildWorks =
 ## 6. Дальнейшее расширение
 * Если появится мобильный клиент — ре-используем тот же эндпоинт, добавив JWT-scope `child_works:read`.
 * Для экрана аналитики можно запрашивать агрегаты через `/aggregate=true` (зарезервировано, пока не реализовано). 
+
+## Приложение A. OpenAPI-фрагмент
+Ниже ключевые строки из спецификации — можно не открывать `docs/openapi`.
+
+```yaml
+/projects/{id}/child-works:
+  get:
+    summary: "Получить детализированные работы дочерних организаций проекта"
+    x-roles: [Owner, Admin, Accountant]
+    x-permissions: [projects.view_child_works]
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: integer }
+      - in: query
+        name: child_organization_id
+        schema:
+          oneOf:
+            - type: integer
+            - type: array
+              items: { type: integer }
+      - in: query
+        name: work_type_id
+        schema:
+          oneOf:
+            - type: integer
+            - type: array
+              items: { type: integer }
+      - in: query
+        name: status
+        schema:
+          oneOf:
+            - type: string
+            - type: array
+              items: { type: string }
+      - in: query { name: date_from, schema: { type: string, format: date } }
+      - in: query { name: date_to,   schema: { type: string, format: date } }
+      - in: query { name: search,    schema: { type: string } }
+      - in: query { name: per_page,  schema: { type: integer, default: 50 } }
+    responses:
+      "200":
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/CrossOrgCompletedWorkCollection.yaml'
+                    meta:
+                      $ref: '../components/schemas/PaginationMeta.yaml'
+```
+
+> **Важно:** `x-roles` / `x-permissions` совпадают с проверкой в UI-коде из раздела 1. 
