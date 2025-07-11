@@ -22,7 +22,16 @@ class CrossOrgWorkReadService
     public function paginateByProject(int $projectId, array $filters = [], int $perPage = 50): LengthAwarePaginator
     {
         $query = DB::table('cross_org_completed_works as cow')
-            ->where('cow.project_id', $projectId);
+            ->join('organizations as org', 'org.id', '=', 'cow.child_organization_id')
+            ->join('work_types as wt', 'wt.id', '=', 'cow.work_type_id')
+            ->leftJoin('measurement_units as mu', 'mu.id', '=', 'wt.measurement_unit_id')
+            ->where('cow.project_id', $projectId)
+            ->select([
+                'cow.*',
+                'org.name as child_organization_name',
+                'wt.name as work_type_name',
+                'mu.short_name as measurement_unit'
+            ]);
 
         $this->applyFilters($query, $filters);
 

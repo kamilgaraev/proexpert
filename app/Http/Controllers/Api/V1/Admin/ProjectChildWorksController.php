@@ -59,9 +59,33 @@ class ProjectChildWorksController extends Controller
                 'current_page' => $worksPaginator->currentPage(),
             ]);
 
+            $items = collect($worksPaginator->items())->map(function ($row) {
+                return [
+                    'id' => $row->id,
+                    'project_id' => $row->project_id,
+                    'child_organization' => [
+                        'id' => $row->child_organization_id,
+                        'name' => $row->child_organization_name,
+                    ],
+                    'work_type' => [
+                        'id' => $row->work_type_id,
+                        'name' => $row->work_type_name,
+                        'measurement_unit' => $row->measurement_unit,
+                    ],
+                    'quantity' => $row->quantity,
+                    'price' => $row->price,
+                    'total_amount' => $row->total_amount,
+                    'completion_date' => $row->completion_date,
+                    'status' => $row->status,
+                    'notes' => $row->notes,
+                    'created_at' => $row->created_at,
+                    'updated_at' => $row->updated_at,
+                ];
+            });
+
             return response()->json([
                 'success' => true,
-                'data' => $worksPaginator->items(),
+                'data' => $items,
                 'meta' => [
                     'current_page' => $worksPaginator->currentPage(),
                     'last_page' => $worksPaginator->lastPage(),
