@@ -11,6 +11,7 @@ use App\Models\Project;
 use App\Models\Contract;
 use App\Models\Material;
 use Illuminate\Validation\Rule;
+use App\Rules\ProjectAccessibleRule;
 
 class StoreCompletedWorkRequest extends FormRequest
 {
@@ -24,7 +25,7 @@ class StoreCompletedWorkRequest extends FormRequest
         $organizationId = $this->route('organization')?->id ?? Auth::user()->current_organization_id;
 
         return [
-            'project_id' => ['required', 'integer', Rule::exists('projects', 'id')->where('organization_id', $organizationId)],
+            'project_id' => ['required', 'integer', new ProjectAccessibleRule()],
             'contract_id' => [
                 'nullable',
                 'integer',

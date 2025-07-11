@@ -15,6 +15,7 @@ use App\Enums\Contract\ContractStatusEnum;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Rules\ProjectAccessibleRule;
 
 class CompletedWorkService
 {
@@ -43,6 +44,12 @@ class CompletedWorkService
     public function create(CompletedWorkDTO $dto): CompletedWork
     {
         return DB::transaction(function () use ($dto) {
+            // Проверяем, доступен ли проект для текущей организации безопасности
+            $rule = new ProjectAccessibleRule();
+            if (!$rule->passes('project_id', $dto->project_id)) {
+                throw new BusinessLogicException('Проект недоступен для вашей организации.', 422);
+            }
+
             // Валидация контракта перед созданием работы
             if ($dto->contract_id) {
                 $this->validateContract($dto->contract_id, $dto->total_amount);

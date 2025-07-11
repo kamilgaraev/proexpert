@@ -10,6 +10,7 @@ use Carbon\Carbon;
 use App\Models\Contract;
 use App\Models\Material;
 use Illuminate\Validation\Rule;
+use App\Rules\ProjectAccessibleRule;
 
 class UpdateCompletedWorkRequest extends FormRequest
 {
@@ -24,7 +25,7 @@ class UpdateCompletedWorkRequest extends FormRequest
         $projectId = $this->input('project_id', $this->route('completed_work')->project_id);
 
         return [
-            'project_id' => ['sometimes', 'required', 'integer', Rule::exists('projects', 'id')->where('organization_id', $organizationId)],
+            'project_id' => ['sometimes', 'required', 'integer', new ProjectAccessibleRule()],
             'contract_id' => [
                 'sometimes',
                 'nullable',
