@@ -131,6 +131,25 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         return $query->paginate($perPage);
     }
 
+    public function findAccessible(int $contractId, int $organizationId): ?Contract
+    {
+        return $this->model
+            ->where('contracts.id', $contractId)
+            ->where(function($q) use ($organizationId) {
+                $q->where('contracts.organization_id', $organizationId)
+                  ->orWhereExists(function($sub) use ($organizationId) {
+                      $sub->select(DB::raw(1))
+                          ->from('projects as p')
+                          ->join('project_organization as po', function($join) use ($organizationId) {
+                              $join->on('po.project_id', '=', 'p.id')
+                                   ->where('po.organization_id', $organizationId);
+                          })
+                          ->whereColumn('p.id', 'contracts.project_id');
+                  });
+            })
+            ->first();
+    }
+
     /**
      * Получить статистику по выполненным работам контракта
      */

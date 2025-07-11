@@ -25,8 +25,8 @@ class ContractPerformanceActService
 
     protected function getContractOrFail(int $contractId, int $organizationId): Contract
     {
-        $contract = $this->contractRepository->find($contractId);
-        if (!$contract || $contract->organization_id !== $organizationId) {
+        $contract = $this->contractRepository->findAccessible($contractId, $organizationId);
+        if (!$contract) {
             throw new Exception('Contract not found or does not belong to the organization.');
         }
         return $contract;

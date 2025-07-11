@@ -31,6 +31,8 @@ interface ContractRepositoryInterface extends BaseRepositoryInterface
      */
     public function getAllCompletedWorks(int $contractId): Collection;
 
+    public function findAccessible(int $contractId, int $organizationId): ?\App\Models\Contract;
+
     // public function getSumOfActiveContracts(int $organizationId): float;
     // public function getOverdueContracts(int $organizationId): Collection;
 } 
