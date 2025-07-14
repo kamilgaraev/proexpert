@@ -24,4 +24,12 @@ class SpecificationRepository extends BaseRepository implements SpecificationRep
         $model = parent::create($data);
         return $model;
     }
+
+    public function find(int $id, array $columns = ['*'], array $relations = [], array $appends = []): ?Specification
+    {
+        /** @var Specification|null $model */
+        $model = Specification::with($relations)->find($id, $columns);
+        if ($model && $appends) $model->append($appends);
+        return $model;
+    }
 } 

@@ -31,4 +31,12 @@ class SupplementaryAgreementRepository extends BaseRepository implements Supplem
         $model = parent::create($data);
         return $model;
     }
+
+    public function find(int $id, array $columns = ['*'], array $relations = [], array $appends = []): ?SupplementaryAgreement
+    {
+        /** @var SupplementaryAgreement|null $model */
+        $model = SupplementaryAgreement::with($relations)->find($id, $columns);
+        if ($model && $appends) $model->append($appends);
+        return $model;
+    }
 } 
