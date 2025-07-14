@@ -3,7 +3,6 @@
 namespace App\DTOs\Contract;
 
 use App\Enums\Contract\ContractStatusEnum;
-use App\Enums\Contract\ContractTypeEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use Illuminate\Http\Request; // Для гидрации из Request, если нужно
 
@@ -15,7 +14,6 @@ class ContractDTO
         public readonly ?int $parent_contract_id,
         public readonly string $number,
         public readonly string $date, // Y-m-d format
-        public readonly ContractTypeEnum $type,
         public readonly ?string $subject,
         public readonly ?ContractWorkTypeCategoryEnum $work_type_category,
         public readonly ?string $payment_terms,
@@ -37,7 +35,6 @@ class ContractDTO
             'parent_contract_id' => $this->parent_contract_id,
             'number' => $this->number,
             'date' => $this->date,
-            'type' => $this->type->value,
             'subject' => $this->subject,
             'work_type_category' => $this->work_type_category?->value,
             'payment_terms' => $this->payment_terms,
@@ -62,7 +59,6 @@ class ContractDTO
             parent_contract_id: $request->input('parent_contract_id'),
             number: $request->input('number'),
             date: $request->input('date'),
-            type: ContractTypeEnum::from($request->input('type')),
             subject: $request->input('subject'),
             work_type_category: $request->input('work_type_category') ? ContractWorkTypeCategoryEnum::from($request->input('work_type_category')) : null,
             payment_terms: $request->input('payment_terms'),

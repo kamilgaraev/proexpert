@@ -273,3 +273,13 @@
   $ref: './personal_files.yaml#/~1personal-files~1upload'
 /personal-files/{id}:
   $ref: './personal_files.yaml#/~1personal-files~1{id}' 
+/agreements:
+  $ref: './agreements.yaml#/~1agreements'
+/agreements/{agreementId}:
+  $ref: './agreements.yaml#/~1agreements~1{agreementId}'
+/contracts/{contractId}/agreements:
+  $ref: './agreements.yaml#/~1contracts~1{contractId}~1agreements'
+/specifications:
+  $ref: './specifications.yaml#/~1specifications'
+/specifications/{specificationId}:
+  $ref: './specifications.yaml#/~1specifications~1{specificationId}' 

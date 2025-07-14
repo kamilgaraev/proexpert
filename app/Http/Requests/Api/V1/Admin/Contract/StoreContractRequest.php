@@ -5,7 +5,6 @@ namespace App\Http\Requests\Api\V1\Admin\Contract;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
 use App\Enums\Contract\ContractStatusEnum;
-use App\Enums\Contract\ContractTypeEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\DTOs\Contract\ContractDTO;
 use Illuminate\Validation\Rules\Enum;
@@ -35,7 +34,7 @@ class StoreContractRequest extends FormRequest
             'parent_contract_id' => ['nullable', 'integer', 'exists:contracts,id', 'different:id'], // TODO: 'exists:contracts,id,organization_id,'.$organizationId
             'number' => ['required', 'string', 'max:255'],
             'date' => ['required', 'date_format:Y-m-d'],
-            'type' => ['required', new Enum(ContractTypeEnum::class)],
+            // поле type больше не используется
             'subject' => ['nullable', 'string'],
             'work_type_category' => ['nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'payment_terms' => ['nullable', 'string'],
@@ -60,7 +59,7 @@ class StoreContractRequest extends FormRequest
             parent_contract_id: $this->validated('parent_contract_id'),
             number: $this->validated('number'),
             date: $this->validated('date'),
-            type: ContractTypeEnum::from($this->validated('type')),
+            // поле type больше не используется
             subject: $this->validated('subject'),
             work_type_category: $this->validated('work_type_category') ? ContractWorkTypeCategoryEnum::from($this->validated('work_type_category')) : null,
             payment_terms: $this->validated('payment_terms'),

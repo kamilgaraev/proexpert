@@ -1,0 +1,26 @@
+type: object
+required: [id, number, spec_date, total_amount, scope_items, status]
+properties:
+  id:
+    type: integer
+  number:
+    type: string
+  spec_date:
+    type: string
+    format: date
+  total_amount:
+    type: number
+    format: double
+  scope_items:
+    type: array
+    items:
+      type: string
+  status:
+    type: string
+    enum: [draft, approved, archived]
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time 

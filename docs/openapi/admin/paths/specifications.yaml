@@ -1,0 +1,58 @@
+/specifications:
+  get:
+    tags: [Specifications]
+    summary: Список спецификаций
+    responses:
+      '200': { description: OK }
+  post:
+    tags: [Specifications]
+    summary: Создать спецификацию
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/Specification.yaml'
+    responses:
+      '201': { description: Created }
+
+/specifications/{specificationId}:
+  get:
+    tags: [Specifications]
+    summary: Получить спецификацию
+    parameters:
+      - name: specificationId
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200': { description: OK }
+  put:
+    tags: [Specifications]
+    summary: Обновить спецификацию
+    parameters:
+      - name: specificationId
+        in: path
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/Specification.yaml'
+    responses:
+      '200': { description: Updated }
+  delete:
+    tags: [Specifications]
+    summary: Удалить спецификацию
+    parameters:
+      - name: specificationId
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '204': { description: Deleted } 

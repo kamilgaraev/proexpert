@@ -36,9 +36,6 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         if (!empty($filters['status'])) {
             $query->where('contracts.status', $filters['status']);
         }
-        if (!empty($filters['type'])) {
-            $query->where('contracts.type', $filters['type']);
-        }
         if (!empty($filters['number'])) {
             $query->where('contracts.number', 'ilike', '%' . $filters['number'] . '%');
         }

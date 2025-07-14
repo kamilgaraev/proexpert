@@ -209,10 +209,17 @@ Route::prefix('admin')->name('admin.')->group(function () {
         if (file_exists(__DIR__ . '/api/v1/admin/contracts.php')) {
             require __DIR__ . '/api/v1/admin/contracts.php';
         }
+        if (file_exists(__DIR__ . '/api/v1/admin/agreements.php')) {
+            require __DIR__ . '/api/v1/admin/agreements.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/admin/specifications.php')) {
+            require __DIR__ . '/api/v1/admin/specifications.php';
+        }
 
         if (file_exists(__DIR__ . '/api/v1/admin/filters.php')) {
             require __DIR__ . '/api/v1/admin/filters.php';
         }
+        // Маршруты для agreements и specifications вынесены в отдельные файлы
     });
 });
 

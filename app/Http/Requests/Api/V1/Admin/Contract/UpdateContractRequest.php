@@ -8,7 +8,6 @@ namespace App\Http\Requests\Api\V1\Admin\Contract;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
 use App\Enums\Contract\ContractStatusEnum;
-use App\Enums\Contract\ContractTypeEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\DTOs\Contract\ContractDTO;
 use Illuminate\Validation\Rules\Enum;
@@ -32,7 +31,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'parent_contract_id' => ['sometimes', 'nullable', 'integer', 'exists:contracts,id', 'different:id'], 
             'number' => ['sometimes', 'required', 'string', 'max:255'],
             'date' => ['sometimes', 'required', 'date_format:Y-m-d'],
-            'type' => ['sometimes', 'required', new Enum(ContractTypeEnum::class)],
+            // поле type больше не используется
             'subject' => ['sometimes', 'nullable', 'string'],
             'work_type_category' => ['sometimes', 'nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'payment_terms' => ['sometimes', 'nullable', 'string'],
@@ -75,7 +74,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             parent_contract_id: $validatedData['parent_contract_id'] ?? null,
             number: $validatedData['number'],
             date: $validatedData['date'],
-            type: ContractTypeEnum::from($validatedData['type']),
+            // поле type больше не используется
             subject: $validatedData['subject'] ?? null,
             work_type_category: isset($validatedData['work_type_category']) ? ContractWorkTypeCategoryEnum::from($validatedData['work_type_category']) : null,
             payment_terms: $validatedData['payment_terms'] ?? null,

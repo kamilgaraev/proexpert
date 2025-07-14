@@ -1,0 +1,25 @@
+type: object
+required: [id, contract_id, number, agreement_date, change_amount, subject_changes]
+properties:
+  id:
+    type: integer
+  contract_id:
+    type: integer
+  number:
+    type: string
+  agreement_date:
+    type: string
+    format: date
+  change_amount:
+    type: number
+    format: double
+  subject_changes:
+    type: array
+    items:
+      type: string
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time 

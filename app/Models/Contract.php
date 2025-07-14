@@ -8,8 +8,8 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use App\Enums\Contract\ContractStatusEnum;
-use App\Enums\Contract\ContractTypeEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 
 class Contract extends Model
@@ -23,7 +23,6 @@ class Contract extends Model
         'parent_contract_id',
         'number',
         'date',
-        'type',
         'subject',
         'work_type_category',
         'payment_terms',
@@ -46,7 +45,6 @@ class Contract extends Model
         'start_date' => 'date',
         'end_date' => 'date',
         'status' => ContractStatusEnum::class,
-        'type' => ContractTypeEnum::class,
         'work_type_category' => ContractWorkTypeCategoryEnum::class,
     ];
 
@@ -94,6 +92,18 @@ class Contract extends Model
     public function completedWorks(): HasMany
     {
         return $this->hasMany(CompletedWork::class);
+    }
+
+    public function agreements(): HasMany
+    {
+        return $this->hasMany(SupplementaryAgreement::class);
+    }
+
+    public function specifications(): BelongsToMany
+    {
+        return $this->belongsToMany(Specification::class, 'contract_specification')
+                    ->withPivot('attached_at')
+                    ->withTimestamps();
     }
 
     // Accessor for calculated GP Amount

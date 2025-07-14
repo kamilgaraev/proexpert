@@ -1,0 +1,92 @@
+/contracts/{contractId}/agreements:
+  get:
+    tags: [Agreements]
+    summary: Список доп. соглашений контракта
+    parameters:
+      - name: contractId
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/SupplementaryAgreement.yaml'
+
+/agreements:
+  post:
+    tags: [Agreements]
+    summary: Создать доп. соглашение
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/SupplementaryAgreement.yaml'
+    responses:
+      '201':
+        description: Created
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SupplementaryAgreement.yaml'
+  get:
+    tags: [Agreements]
+    summary: Пагинированный список доп. соглашений (фильтры через query)
+    responses:
+      '200':
+        description: OK
+
+/agreements/{agreementId}:
+  get:
+    tags: [Agreements]
+    summary: Получить соглашение
+    parameters:
+      - name: agreementId
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SupplementaryAgreement.yaml'
+  put:
+    tags: [Agreements]
+    summary: Обновить соглашение
+    parameters:
+      - name: agreementId
+        in: path
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/SupplementaryAgreement.yaml'
+    responses:
+      '200': { description: Updated }
+  delete:
+    tags: [Agreements]
+    summary: Удалить соглашение
+    parameters:
+      - name: agreementId
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '204': { description: Deleted } 
