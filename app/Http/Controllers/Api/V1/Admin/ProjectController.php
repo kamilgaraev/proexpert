@@ -115,7 +115,7 @@ class ProjectController extends Controller
     public function update(UpdateProjectRequest $request, string $id): ProjectResource | JsonResponse
     {
         try {
-            $project = $this->projectService->updateProject((int)$id, $request->validated(), $request);
+            $project = $this->projectService->updateProject((int)$id, $request->toDto(), $request);
             if (!$project) {
                 return response()->json([
                     'success' => false,
