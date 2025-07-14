@@ -48,6 +48,9 @@ class UpdateProjectRequest extends FormRequest
             'cost_category_id' => 'sometimes|nullable|exists:cost_categories,id',
             'accounting_data' => 'sometimes|nullable|array',
             'use_in_accounting_reports' => 'sometimes|nullable|boolean',
+            'budget_amount' => 'sometimes|nullable|numeric|min:0',
+            'site_area_m2' => 'sometimes|nullable|numeric|min:0',
+            'contract_number' => 'sometimes|nullable|string|max:100',
         ];
     }
 
@@ -104,7 +107,10 @@ class UpdateProjectRequest extends FormRequest
                                 ? (int)$validated['cost_category_id'] 
                                 : $currentProject->cost_category_id,
             accounting_data: $validated['accounting_data'] ?? $currentProject->accounting_data,
-            use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? $currentProject->use_in_accounting_reports
+            use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? $currentProject->use_in_accounting_reports,
+            budget_amount: $validated['budget_amount'] ?? $currentProject->budget_amount,
+            site_area_m2: $validated['site_area_m2'] ?? $currentProject->site_area_m2,
+            contract_number: $validated['contract_number'] ?? $currentProject->contract_number
         );
     }
 } 

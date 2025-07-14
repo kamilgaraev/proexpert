@@ -45,6 +45,18 @@ properties:
     nullable: true
   use_in_accounting_reports:
     type: boolean
+  budget_amount:
+    type: number
+    format: float
+    nullable: true
+  site_area_m2:
+    type: number
+    format: float
+    nullable: true
+  contract_number:
+    type: string
+    maxLength: 100
+    nullable: true
   created_at:
     type: string
     format: date-time

@@ -45,6 +45,9 @@ class StoreProjectRequest extends FormRequest
             'cost_category_id' => 'nullable|exists:cost_categories,id',
             'accounting_data' => 'nullable|array',
             'use_in_accounting_reports' => 'nullable|boolean',
+            'budget_amount' => 'nullable|numeric|min:0',
+            'site_area_m2' => 'nullable|numeric|min:0',
+            'contract_number' => 'nullable|string|max:100',
         ];
     }
 
@@ -92,7 +95,10 @@ class StoreProjectRequest extends FormRequest
             external_code: $validated['external_code'] ?? null,
             cost_category_id: isset($validated['cost_category_id']) ? (int)$validated['cost_category_id'] : null,
             accounting_data: $validated['accounting_data'] ?? null,
-            use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? false
+            use_in_accounting_reports: $validated['use_in_accounting_reports'] ?? false,
+            budget_amount: $validated['budget_amount'] ?? null,
+            site_area_m2: $validated['site_area_m2'] ?? null,
+            contract_number: $validated['contract_number'] ?? null
         );
     }
 } 

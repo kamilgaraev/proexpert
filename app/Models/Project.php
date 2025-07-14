@@ -21,6 +21,8 @@ class Project extends Model
         'description',
         'customer',
         'designer',
+        'budget_amount',
+        'site_area_m2',
         'start_date',
         'end_date',
         'status',
@@ -46,6 +48,8 @@ class Project extends Model
         'accounting_data' => 'array',
         'use_in_accounting_reports' => 'boolean',
         'contract_date' => 'date',
+        'budget_amount' => 'decimal:2',
+        'site_area_m2' => 'decimal:2',
     ];
 
     /**
