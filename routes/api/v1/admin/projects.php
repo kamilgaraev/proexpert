@@ -5,7 +5,7 @@ use App\Http\Controllers\Api\V1\Admin\ProjectOrganizationController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\ProjectChildWorksController;
  
-Route::apiResource('projects', ProjectController::class);
+Route::apiResource('projects', ProjectController::class)->where(['project' => '[0-9]+']);
 
 // Дополнительные маршруты для проекта
 Route::post('/projects/{projectId}/foremen/{userId}', [ProjectController::class, 'assignForeman'])->name('projects.foremen.assign');
