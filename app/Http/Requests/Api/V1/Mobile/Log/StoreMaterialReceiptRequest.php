@@ -8,21 +8,13 @@ use App\Models\Project;
 use App\Models\Material;
 use App\Models\Supplier;
 use Illuminate\Validation\Rule;
+use App\Rules\ProjectAccessibleRule;
 
 class StoreMaterialReceiptRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        $user = Auth::user();
-        $projectId = $this->input('project_id');
-        if (!$user || !$projectId) {
-            return false;
-        }
-        return Project::where('id', $projectId)
-                    ->whereHas('users', function ($query) use ($user) {
-                        $query->where('user_id', $user->id);
-                    })
-                    ->exists();
+        return Auth::check();
     }
 
     public function rules(): array
@@ -31,7 +23,7 @@ class StoreMaterialReceiptRequest extends FormRequest
         $organizationId = $project?->organization_id;
 
         return [
-            'project_id' => 'required|integer|exists:projects,id',
+            'project_id' => ['required','integer', new ProjectAccessibleRule()],
             'material_id' => [
                 'required',
                 'integer',

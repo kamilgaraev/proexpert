@@ -52,6 +52,18 @@ class MaterialReportService
         // Группируем по материалам и видам работ
         $materialGroups = $this->groupMaterialsByWork($materialLogs, $receipts, $periodFrom, $periodTo);
 
+        if (empty($materialGroups)) {
+            Log::warning('Official usage report: no material data', ['project_id' => $projectId]);
+            return [
+                'header' => [
+                    'report_date' => now()->format('d.m.Y'),
+                    'project_name' => $project->name,
+                ],
+                'message' => 'Нет данных за выбранный период',
+                'materials' => [],
+            ];
+        }
+
         return [
             'header' => [
                 'report_number' => $reportNumber ?? 1,
