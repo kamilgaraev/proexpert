@@ -37,8 +37,7 @@ class ContractResource extends JsonResource
             'parent_contract' => new ContractMiniResource($this->whenLoaded('parentContract')),
             'number' => $this->number,
             'date' => $this->date, // Предполагается, что в модели кастуется в нужный формат (Y-m-d)
-            'type' => $this->type->value, // Enum
-            'type_label' => $this->type->name, // Для отображения
+            // type удалён
             'subject' => $this->subject,
             'work_type_category' => $this->work_type_category?->value,
             'work_type_category_label' => $this->work_type_category?->name,

@@ -109,3 +109,111 @@
    * Привязка/отвязка спецификации отображается в таблице и графике
    * Пагинация реестров работает, фильтры применяются
 6. Обновить Wiki и onboarding-доки. 
+
+## 9. Примеры запросов и ответов
+
+### 9.1. Создание доп. соглашения
+
+**POST** `/api/v1/admin/agreements`
+
+```json
+{
+  "contract_id": 12,
+  "number": "СОГ-02",
+  "agreement_date": "2025-07-14",
+  "change_amount": 1500000,
+  "subject_changes": [
+    "Увеличение сроков выполнения",
+    "Корректировка сметы на материалы"
+  ]
+}
+```
+
+Ответ **201 Created**
+```json
+{
+  "id": 34,
+  "contract_id": 12,
+  "number": "СОГ-02",
+  "agreement_date": "2025-07-14",
+  "change_amount": 1500000,
+  "subject_changes": [
+    "Увеличение сроков выполнения",
+    "Корректировка сметы на материалы"
+  ],
+  "created_at": "2025-07-14T10:15:03+03:00",
+  "updated_at": "2025-07-14T10:15:03+03:00"
+}
+```
+
+### 9.2. Список соглашений контракта
+
+**GET** `/api/v1/admin/contracts/12/agreements`
+
+Ответ **200 OK**
+```json
+{
+  "data": [
+    {
+      "id": 34,
+      "number": "СОГ-02",
+      "agreement_date": "2025-07-14",
+      "change_amount": 1500000
+    },
+    {
+      "id": 29,
+      "number": "СОГ-01",
+      "agreement_date": "2025-06-01",
+      "change_amount": -500000
+    }
+  ],
+  "meta": {
+    "total": 2
+  }
+}
+```
+
+### 9.3. Создание спецификации
+
+**POST** `/api/v1/admin/specifications`
+```json
+{
+  "number": "СПЦ-2025-05",
+  "spec_date": "2025-07-10",
+  "total_amount": 7800000,
+  "scope_items": [
+    "Поставка кабеля 4×50 – 8 км",
+    "Монтаж опор — 15 шт."
+  ],
+  "status": "approved"
+}
+```
+Ответ **201 Created**
+```json
+{
+  "id": 57,
+  "number": "СПЦ-2025-05",
+  "spec_date": "2025-07-10",
+  "total_amount": 7800000,
+  "scope_items": [
+    "Поставка кабеля 4×50 – 8 км",
+    "Монтаж опор — 15 шт."
+  ],
+  "status": "approved",
+  "created_at": "2025-07-14T10:18:11+03:00",
+  "updated_at": "2025-07-14T10:18:11+03:00"
+}
+```
+
+### 9.4. Привязка спецификации к договору
+
+**POST** `/api/v1/admin/contracts/12/specifications/57`
+
+Ответ **200 OK**
+```json
+{
+  "message": "Specification attached"
+}
+```
+
+После привязки повторный вызов `GET /contracts/12` вернёт раздел `specifications` с новой записью. 
