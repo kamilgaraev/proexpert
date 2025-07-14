@@ -4,4 +4,5 @@ properties:
   addon_ids:
     type: array
     items: { type: integer }
+  is_auto_payment_enabled: { type: boolean, nullable: true }
 required: [plan_id] 

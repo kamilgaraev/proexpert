@@ -114,6 +114,7 @@ class UserSubscriptionService implements UserSubscriptionServiceInterface
                 'ends_at' => $status === UserSubscription::STATUS_ACTIVE ? $endsAt : null,
                 'next_billing_at' => $status === UserSubscription::STATUS_ACTIVE ? $endsAt : null,
                 'trial_ends_at' => $trialEndsAt,
+                'is_auto_payment_enabled' => $gatewayOptions['is_auto_payment_enabled'] ?? true,
             ]);
 
             if ($paymentMadeByBalance && $status === UserSubscription::STATUS_ACTIVE) {

@@ -35,6 +35,7 @@ class ProcessSubscriptionRenewals extends Command
         // Выбираем подписки, которые должны быть продлены
         // (next_billing_at наступил или немного в прошлом, и они активны и не отменены)
         $subscriptionsToRenew = UserSubscription::where('status', UserSubscription::STATUS_ACTIVE)
+            ->where('is_auto_payment_enabled', true)
             ->whereNotNull('next_billing_at')
             ->where('next_billing_at', '<= ', $now)
             ->whereNull('canceled_at') // Убедимся, что подписка не отменена к концу периода

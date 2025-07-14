@@ -29,6 +29,8 @@ Route::middleware(['auth:api_landing', 'role:organization_owner']) // Приме
         Route::post('subscribe', [UserSubscriptionController::class, 'subscribe'])->name('subscription.subscribe');
         // POST /api/v1/landing/billing/subscription/cancel
         Route::post('subscription/cancel', [UserSubscriptionController::class, 'cancel'])->name('subscription.cancel');
+        // PATCH /api/v1/landing/billing/subscription/auto-payment
+        Route::patch('subscription/auto-payment', [UserSubscriptionController::class, 'updateAutoPayment'])->name('subscription.auto_payment');
         // TODO: Route::post('subscription/switch', [UserSubscriptionController::class, 'switch'])->name('subscription.switch');
         // TODO: Route::post('subscription/resume', [UserSubscriptionController::class, 'resume'])->name('subscription.resume');
 
@@ -49,6 +51,8 @@ Route::middleware(['auth:api_landing', 'role:organization_owner']) // Приме
         Route::post('org-subscribe', [OrganizationSubscriptionController::class, 'subscribe'])->name('org_subscription.subscribe');
         // Изменить параметры подписки (например, апгрейд/даунгрейд)
         Route::patch('org-subscription', [OrganizationSubscriptionController::class, 'update'])->name('org_subscription.update');
+        // PATCH /api/v1/landing/billing/org-subscription/auto-payment
+        Route::patch('org-subscription/auto-payment', [OrganizationSubscriptionController::class, 'updateAutoPayment'])->name('org_subscription.auto_payment');
         // Подключить add-on
         Route::post('org-addon', [OrganizationSubscriptionAddonController::class, 'attach'])->name('org_addon.attach');
         // Отключить add-on

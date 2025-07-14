@@ -23,6 +23,7 @@ class OrganizationSubscription extends Model
         'payment_failure_notified_at',
         'payment_gateway_subscription_id',
         'payment_gateway_customer_id',
+        'is_auto_payment_enabled',
     ];
 
     protected $casts = [
@@ -32,6 +33,7 @@ class OrganizationSubscription extends Model
         'next_billing_at' => 'datetime',
         'canceled_at' => 'datetime',
         'payment_failure_notified_at' => 'datetime',
+        'is_auto_payment_enabled' => 'boolean',
     ];
 
     public function organization(): BelongsTo

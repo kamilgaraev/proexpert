@@ -23,6 +23,7 @@ class UserSubscription extends Model
         'payment_gateway_customer_id',
         'canceled_at',
         'payment_failure_notified_at',
+        'is_auto_payment_enabled',
     ];
 
     protected $casts = [
@@ -32,6 +33,7 @@ class UserSubscription extends Model
         'next_billing_at' => 'datetime',
         'canceled_at' => 'datetime',
         'payment_failure_notified_at' => 'datetime',
+        'is_auto_payment_enabled' => 'boolean',
     ];
 
     // Возможные статусы подписки

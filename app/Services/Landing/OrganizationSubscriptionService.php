@@ -27,7 +27,7 @@ class OrganizationSubscriptionService
         return $this->repo->getByOrganizationId($organizationId);
     }
 
-    public function subscribe($organizationId, $planSlug)
+    public function subscribe($organizationId, $planSlug, bool $isAutoPaymentEnabled = true)
     {
         $plan = SubscriptionPlan::where('slug', $planSlug)->where('is_active', true)->firstOrFail();
         $organization = Organization::findOrFail($organizationId);
@@ -36,6 +36,7 @@ class OrganizationSubscriptionService
             'status' => 'active',
             'starts_at' => $now,
             'ends_at' => $now->copy()->addDays($plan->duration_in_days),
+            'is_auto_payment_enabled' => $isAutoPaymentEnabled,
         ];
 
         // Списываем стоимость плана с баланса (в копейках/центах)
@@ -52,7 +53,7 @@ class OrganizationSubscriptionService
         return $this->repo->createOrUpdate($organizationId, $plan->id, $data);
     }
 
-    public function updateSubscription($organizationId, $planSlug)
+    public function updateSubscription($organizationId, $planSlug, bool $isAutoPaymentEnabled = true)
     {
         // Апгрейд/даунгрейд: смена тарифа, перерасчёт дат
         $plan = SubscriptionPlan::where('slug', $planSlug)->where('is_active', true)->firstOrFail();
@@ -63,6 +64,7 @@ class OrganizationSubscriptionService
             'status' => 'active',
             'starts_at' => $now,
             'ends_at' => $now->copy()->addDays($plan->duration_in_days),
+            'is_auto_payment_enabled' => $isAutoPaymentEnabled,
         ];
 
         if (((float) $plan->price) > 0) {

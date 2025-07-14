@@ -8,6 +8,7 @@ properties:
   ends_at: { type: string, format: date-time }
   next_billing_at: { type: string, format: date-time, nullable: true }
   canceled_at: { type: string, format: date-time, nullable: true }
+  is_auto_payment_enabled: { type: boolean, description: 'Включен ли автоплатеж' }
   addons:
     type: array
     items: { $ref: './OrganizationSubscriptionAddon.yaml' }

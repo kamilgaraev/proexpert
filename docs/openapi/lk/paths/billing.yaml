@@ -64,6 +64,29 @@
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
+/billing/subscription/auto-payment:
+  patch:
+    tags: [Billing]
+    summary: Включить/выключить автоплатеж для подписки
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/AutoPaymentToggleRequest.yaml'
+    responses:
+      "200":
+        description: Подписка обновлена
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/UserSubscription.yaml'
 /billing/balance:
   get:
     tags: [Billing]
@@ -187,6 +210,29 @@
     responses:
       "200":
         description: Подписка обновлена
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/OrganizationSubscription.yaml'
+/billing/org-subscription/auto-payment:
+  patch:
+    tags: [Billing]
+    summary: Включить/выключить автоплатеж для подписки организации
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/AutoPaymentToggleRequest.yaml'
+    responses:
+      "200":
+        description: Подписка организации обновлена
         content:
           application/json:
             schema:

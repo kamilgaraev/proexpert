@@ -2,4 +2,5 @@ type: object
 properties:
   plan_slug: { type: string }
   payment_method_token: { type: string, nullable: true }
+  is_auto_payment_enabled: { type: boolean, nullable: true }
 required: [plan_slug] 

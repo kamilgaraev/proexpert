@@ -60,6 +60,8 @@
   $ref: './billing.yaml#/~1billing~1subscribe'
 /billing/subscription/cancel:
   $ref: './billing.yaml#/~1billing~1subscription~1cancel'
+/billing/subscription/auto-payment:
+  $ref: './billing.yaml#/~1billing~1subscription~1auto-payment'
 /billing/balance:
   $ref: './billing.yaml#/~1billing~1balance'
 /billing/balance/transactions:
@@ -114,6 +116,8 @@
   $ref: './billing.yaml#/~1billing~1addons'
 /billing/org-subscription:
   $ref: './billing.yaml#/~1billing~1org-subscription'
+/billing/org-subscription/auto-payment:
+  $ref: './billing.yaml#/~1billing~1org-subscription~1auto-payment'
 /billing/org-subscribe:
   $ref: './billing.yaml#/~1billing~1org-subscribe'
 /billing/org-addon:

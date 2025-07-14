@@ -5,4 +5,5 @@ properties:
   started_at: { type: string, format: date-time, nullable: true }
   ends_at: { type: string, format: date-time, nullable: true }
   cancel_at: { type: string, format: date-time, nullable: true }
+  is_auto_payment_enabled: { type: boolean, description: 'Включен ли автоплатеж' }
 required: [plan, status] 

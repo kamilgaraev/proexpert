@@ -91,6 +91,7 @@ class UserSubscriptionController extends Controller
             $request->validate([
                 'plan_slug' => 'required|string|exists:subscription_plans,slug',
                 'payment_method_token' => 'nullable|string',
+                'is_auto_payment_enabled' => 'sometimes|boolean',
             ]);
             Log::info('[UserSubscriptionController::subscribe] Validation passed.');
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -149,7 +150,10 @@ class UserSubscriptionController extends Controller
             $subscription = $this->subscriptionService->subscribeUserToPlan(
                 $user,
                 $plan,
-                $request->input('payment_method_token')
+                $request->input('payment_method_token'),
+                [
+                    'is_auto_payment_enabled' => $request->boolean('is_auto_payment_enabled', true)
+                ]
             );
             Log::info('[UserSubscriptionController::subscribe] Subscription successful.', ['subscription_id' => $subscription->id]);
             
@@ -214,6 +218,25 @@ class UserSubscriptionController extends Controller
         }
     }
     
+    public function updateAutoPayment(Request $request)
+    {
+        $request->validate([
+            'is_auto_payment_enabled' => 'required|boolean',
+        ]);
+
+        $user = Auth::user();
+        $subscription = $this->subscriptionService->getUserCurrentValidSubscription($user);
+        if (!$subscription) {
+            return response()->json(['message' => 'No active subscription found.'], 404);
+        }
+
+        $subscription->update([
+            'is_auto_payment_enabled' => $request->boolean('is_auto_payment_enabled')
+        ]);
+
+        return new UserSubscriptionResource($subscription);
+    }
+
     // TODO: Добавить метод для смены плана (switchPlan)
     // TODO: Добавить метод для возобновления подписки (resumeSubscription), если это необходимо
 } 

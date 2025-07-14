@@ -1,0 +1,4 @@
+type: object
+properties:
+  is_auto_payment_enabled: { type: boolean }
+required: [is_auto_payment_enabled] 
