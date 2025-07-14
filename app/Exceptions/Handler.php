@@ -63,7 +63,7 @@ class Handler extends ExceptionHandler
                 
                 if ($e instanceof ValidationException) {
                     return response()->json([
-                        'message' => $e->getMessage(),
+                        'message' => $e->getMessage() ?: 'Данные не прошли валидацию.',
                         'errors' => $e->errors(),
                     ], $e->status);
                 }
@@ -76,19 +76,19 @@ class Handler extends ExceptionHandler
 
                 if ($e instanceof AuthenticationException) {
                     return response()->json([
-                        'message' => $e->getMessage() ?: 'Unauthenticated.',
+                        'message' => $e->getMessage() ?: 'Не аутентифицировано.',
                     ], 401);
                 }
 
                 if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
                     return response()->json([
-                        'message' => 'Resource not found.'
+                        'message' => 'Ресурс не найден.'
                     ], 404);
                 }
 
                 if ($e instanceof RouteNotFoundException) {
                     return response()->json([
-                        'message' => 'Route not found or not authorized.'
+                        'message' => 'Маршрут не найден или доступ запрещён.'
                     ], 401);
                 }
 
@@ -96,7 +96,7 @@ class Handler extends ExceptionHandler
                 $message = $e->getMessage();
 
                 if ($statusCode === 500 && !config('app.debug')) {
-                    $message = 'Server Error';
+                    $message = 'Внутренняя ошибка сервера';
                 }
                 
                 $response = ['message' => $message];

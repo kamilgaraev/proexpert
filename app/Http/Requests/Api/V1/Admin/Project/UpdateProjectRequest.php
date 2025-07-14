@@ -82,7 +82,11 @@ class UpdateProjectRequest extends FormRequest
     {
         $validated = $this->validated();
         // Текущий проект для получения старых значений, если они не переданы
-        $currentProject = $this->route('project'); 
+        $projectId = $this->route('project');
+        $currentProject = $projectId instanceof \App\Models\Project ? $projectId : Project::find($projectId);
+        if (!$currentProject) {
+            throw new \RuntimeException('Project not found for DTO conversion.');
+        }
 
         return new ProjectDTO(
             name: $validated['name'] ?? $currentProject->name,
