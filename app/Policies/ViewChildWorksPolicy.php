@@ -15,14 +15,20 @@ class ViewChildWorksPolicy
      */
     public function view(User $user, Project $project): bool
     {
-        // У пользователя должно быть право projects.view_child_works в контексте головной организации проекта
         $hasPermission = method_exists($user, 'hasPermission')
             ? $user->hasPermission('projects.view_child_works')
             : false;
 
-        // Пользователь принадлежит головной организации проекта?
-        $belongsToOrg = $user->organizations()->where('organizations.id', $project->organization_id)->exists();
+        $currentOrgId = $user->current_organization_id;
 
-        return $hasPermission && $belongsToOrg;
+        // 1) Пользователь из головной организации с разрешением
+        if ($hasPermission && $user->organizations()->where('organizations.id', $project->organization_id)->exists()) {
+            return true;
+        }
+
+        // 2) Пользователь из дочерней организации, которая прикреплена к проекту
+        $attached = $project->organizations()->where('organizations.id', $currentOrgId)->exists();
+
+        return $attached;
     }
 } 
