@@ -17,4 +17,11 @@ class SpecificationRepository extends BaseRepository implements SpecificationRep
     {
         return Specification::orderBy('spec_date', 'desc')->paginate($perPage);
     }
+
+    public function create(array $data): Specification
+    {
+        /** @var Specification $model */
+        $model = parent::create($data);
+        return $model;
+    }
 } 

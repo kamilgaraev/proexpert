@@ -13,10 +13,13 @@ class AgreementController extends Controller
 {
     public function __construct(private SupplementaryAgreementService $service) {}
 
-    public function index(Request $request, int $contractId)
+    public function index(Request $request, int $contractId = null)
     {
         $perPage = $request->query('per_page', 15);
-        return $this->service->paginateByContract($contractId, $perPage);
+        if ($contractId) {
+            return $this->service->paginateByContract($contractId, $perPage);
+        }
+        return $this->service->paginate($perPage);
     }
 
     public function store(StoreSupplementaryAgreementRequest $request)

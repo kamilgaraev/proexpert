@@ -36,4 +36,9 @@ class SupplementaryAgreementService
     {
         return $this->repository->paginateByContract($contractId, $perPage);
     }
+
+    public function paginate(int $perPage = 15)
+    {
+        return $this->repository->paginate($perPage);
+    }
 } 

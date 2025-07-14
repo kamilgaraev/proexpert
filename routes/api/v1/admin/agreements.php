@@ -12,5 +12,4 @@ Route::group(['prefix' => 'contracts/{contract}'], function () {
 
 // CRUD по соглашениям (без индекса)
 Route::apiResource('agreements', AgreementController::class)
-    ->except(['index'])
     ->parameters(['agreements' => 'agreement']); 

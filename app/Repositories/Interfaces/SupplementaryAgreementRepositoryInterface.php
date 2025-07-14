@@ -12,4 +12,5 @@ interface SupplementaryAgreementRepositoryInterface
     public function update(int $id, array $data): bool;
     public function delete(int $id): bool;
     public function paginateByContract(int $contractId, int $perPage = 15): LengthAwarePaginator;
+    public function paginate(int $perPage = 15): LengthAwarePaginator;
 } 

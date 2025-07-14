@@ -19,4 +19,16 @@ class SupplementaryAgreementRepository extends BaseRepository implements Supplem
             ->orderBy('agreement_date', 'desc')
             ->paginate($perPage);
     }
+
+    public function paginate(int $perPage = 15): LengthAwarePaginator
+    {
+        return SupplementaryAgreement::orderBy('agreement_date', 'desc')->paginate($perPage);
+    }
+
+    public function create(array $data): SupplementaryAgreement
+    {
+        /** @var SupplementaryAgreement $model */
+        $model = parent::create($data);
+        return $model;
+    }
 } 
