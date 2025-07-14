@@ -25,22 +25,23 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
 
     public function getUserLimitsData(User $user): array
     {
-        $subscription = $this->subscriptionService->getUserCurrentValidSubscription($user);
-
-        if (!$subscription) {
-            // Пробуем найти подписку организации (если пользователь работает в организации)
-            $organizationId = $user->current_organization_id;
-            if ($organizationId) {
-                $orgSubscription = $this->organizationSubscriptionRepo->getByOrganizationId($organizationId);
-                if ($orgSubscription && $orgSubscription->status === 'active') {
-                    return $this->getOrganizationLimitsData($user, $orgSubscription);
-                }
+        // 1) Сначала смотрим подписку организации, так как она общая для всех пользователей.
+        $organizationId = $user->current_organization_id;
+        if ($organizationId) {
+            $orgSubscription = $this->organizationSubscriptionRepo->getByOrganizationId($organizationId);
+            if ($orgSubscription && $orgSubscription->status === 'active') {
+                return $this->getOrganizationLimitsData($user, $orgSubscription);
             }
-
-            return $this->getDefaultLimitsData($user);
         }
 
-        return $this->getSubscriptionLimitsData($user, $subscription);
+        // 2) Если активной организации-подписки нет, используем персональную
+        $userSubscription = $this->subscriptionService->getUserCurrentValidSubscription($user);
+        if ($userSubscription) {
+            return $this->getSubscriptionLimitsData($user, $userSubscription);
+        }
+
+        // 3) Ни того, ни другого — отдаём базовые лимиты
+        return $this->getDefaultLimitsData($user);
     }
 
     private function getSubscriptionLimitsData(User $user, UserSubscription $subscription): array
