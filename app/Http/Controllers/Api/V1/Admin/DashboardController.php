@@ -29,7 +29,16 @@ class DashboardController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $summary = $this->dashboardService->getSummary($request);
+        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization context is required.'
+            ], 400);
+        }
+
+        $summary = $this->dashboardService->getSummary($organizationId);
         return response()->json(['success' => true, 'data' => $summary]);
     }
 
@@ -40,7 +49,8 @@ class DashboardController extends Controller
     {
         $metric = $request->input('metric', 'users');
         $period = $request->input('period', 'month');
-        $organizationId = $request->input('organization_id');
+        // Если ID организации не передан явно, используем организацию текущего пользователя
+        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
         $data = $this->dashboardService->getTimeseries($metric, $period, $organizationId);
         return response()->json(['success' => true, 'data' => $data]);
     }
@@ -52,7 +62,7 @@ class DashboardController extends Controller
     {
         $entity = $request->input('entity', 'projects');
         $period = $request->input('period', 'month');
-        $organizationId = $request->input('organization_id');
+        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
         $data = $this->dashboardService->getTopEntities($entity, $period, $organizationId);
         return response()->json(['success' => true, 'data' => $data]);
     }
@@ -64,7 +74,7 @@ class DashboardController extends Controller
     {
         $type = $request->input('type', 'materials');
         $limit = (int)$request->input('limit', 10);
-        $organizationId = $request->input('organization_id');
+        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
         $data = $this->dashboardService->getHistory($type, $limit, $organizationId);
         return response()->json(['success' => true, 'data' => $data]);
     }
@@ -74,7 +84,7 @@ class DashboardController extends Controller
      */
     public function limits(Request $request): JsonResponse
     {
-        $organizationId = $request->input('organization_id');
+        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
         $data = $this->dashboardService->getLimits($organizationId);
         return response()->json(['success' => true, 'data' => $data]);
     }

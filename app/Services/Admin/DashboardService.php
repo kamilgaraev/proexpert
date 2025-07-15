@@ -44,16 +44,18 @@ class DashboardService
     /**
      * Получить сводную информацию по всей системе
      */
-    public function getSummary(Request $request): array
+    public function getSummary(int $organizationId): array
     {
+        // Пользователей определяем по текущей организации пользователя (current_organization_id)
+        $usersCount = User::where('current_organization_id', $organizationId)->count();
+
         return [
-            'users_count' => User::count(),
-            'projects_count' => Project::count(),
-            'materials_count' => Material::count(),
-            'suppliers_count' => Supplier::count(),
-            'contracts_count' => Contract::count(),
-            'completed_works_count' => CompletedWork::count(),
-            // Можно добавить другие метрики по необходимости
+            'users_count' => $usersCount,
+            'projects_count' => Project::where('organization_id', $organizationId)->count(),
+            'materials_count' => Material::where('organization_id', $organizationId)->count(),
+            'suppliers_count' => Supplier::where('organization_id', $organizationId)->count(),
+            'contracts_count' => Contract::where('organization_id', $organizationId)->count(),
+            'completed_works_count' => CompletedWork::where('organization_id', $organizationId)->count(),
         ];
     }
 
