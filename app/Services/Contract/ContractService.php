@@ -208,6 +208,10 @@ class ContractService
         return [
             'financial' => [
                 'total_amount' => $aggregatedContractAmount,
+                'base_contract_amount' => (float) $contract->total_amount,
+                'agreements_delta' => (float) $agreementsDelta,
+                'child_contracts_amount' => (float) $childContractsTotal,
+                'specifications_amount' => (float) $specificationsTotal,
                 'gp_percentage' => $gpPercentage,
                 'gp_amount' => $gpAmountAgg,
                 'total_amount_with_gp' => $totalWithGpAgg,
@@ -238,6 +242,8 @@ class ContractService
                 'approved_acts' => $approvedActs->count(),
                 'payments_count' => $contract->payments->count(),
                 'child_contracts' => $contract->childContracts->count(),
+                'agreements_count' => $contract->agreements->count(),
+                'specifications_count' => $contract->specifications->count(),
             ]
         ];
     }
