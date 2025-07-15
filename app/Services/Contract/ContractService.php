@@ -125,7 +125,9 @@ class ContractService
             'completedWorks:id,contract_id,work_type_id,user_id,quantity,total_amount,status,completion_date',
             'completedWorks.workType:id,name',
             'completedWorks.user:id,name',
-            'completedWorks.materials'
+            'completedWorks.materials',
+            'agreements:id,contract_id,number,agreement_date,change_amount,subject_changes,created_at,updated_at',
+            'specifications:id,number,spec_date,total_amount,status,scope_items'
         ]);
 
         // Принудительно загружаем дочерние контракты отдельно

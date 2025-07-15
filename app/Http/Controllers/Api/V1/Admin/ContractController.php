@@ -11,6 +11,8 @@ use App\Http\Resources\Api\V1\Admin\Contract\ContractCollection; // Создад
 use App\Http\Resources\Api\V1\Admin\Contract\ContractMiniResource;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Payment\ContractPaymentResource;
+use App\Http\Resources\Api\V1\Admin\Contract\Agreement\SupplementaryAgreementResource;
+use App\Http\Resources\Api\V1\Admin\Contract\Specification\SpecificationResource;
 use App\Models\Organization; // Для получения ID организации, например, из аутентифицированного пользователя
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -245,6 +247,10 @@ class ContractController extends Controller
                         ContractPaymentResource::collection($contract->payments) : [],
                     'child_contracts' => $contract->relationLoaded('childContracts') ? 
                         ContractMiniResource::collection($contract->childContracts) : [],
+                    'agreements' => $contract->relationLoaded('agreements') ?
+                        SupplementaryAgreementResource::collection($contract->agreements) : [],
+                    'specifications' => $contract->relationLoaded('specifications') ?
+                        SpecificationResource::collection($contract->specifications) : [],
                 ]
             ]);
         } catch (Exception $e) {
