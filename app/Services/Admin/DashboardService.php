@@ -8,7 +8,8 @@ use App\Repositories\MaterialRepository;
 use App\Repositories\SupplierRepository;
 use App\Repositories\ContractRepository;
 use App\Repositories\CompletedWork\CompletedWorkRepository;
-use Illuminate\Http\Request;
+use App\Services\Billing\SubscriptionLimitsService;
+use Illuminate\Support\Facades\Auth;
 use App\Models\User;
 use App\Models\Project;
 use App\Models\Material;
@@ -24,6 +25,7 @@ class DashboardService
     protected SupplierRepository $supplierRepository;
     protected ContractRepository $contractRepository;
     protected CompletedWorkRepository $completedWorkRepository;
+    protected SubscriptionLimitsService $subscriptionLimitsService;
 
     public function __construct(
         UserRepository $userRepository,
@@ -31,7 +33,8 @@ class DashboardService
         MaterialRepository $materialRepository,
         SupplierRepository $supplierRepository,
         ContractRepository $contractRepository,
-        CompletedWorkRepository $completedWorkRepository
+        CompletedWorkRepository $completedWorkRepository,
+        SubscriptionLimitsService $subscriptionLimitsService
     ) {
         $this->userRepository = $userRepository;
         $this->projectRepository = $projectRepository;
@@ -39,6 +42,7 @@ class DashboardService
         $this->supplierRepository = $supplierRepository;
         $this->contractRepository = $contractRepository;
         $this->completedWorkRepository = $completedWorkRepository;
+        $this->subscriptionLimitsService = $subscriptionLimitsService;
     }
 
     /**
@@ -152,12 +156,11 @@ class DashboardService
      */
     public function getLimits(?int $organizationId = null): array
     {
-        // Пример: лимиты по материалам (заглушка)
-        return [
-            'monthly_limit' => 50000,
-            'monthly_used' => 45790,
-            'yearly_limit' => 100000,
-            'yearly_used' => 52780,
-        ];
+        $user = Auth::user();
+        if (!$user) {
+            return [];
+        }
+
+        return $this->subscriptionLimitsService->getUserLimitsData($user);
     }
 } 
