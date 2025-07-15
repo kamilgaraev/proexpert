@@ -11,6 +11,7 @@ use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\DTOs\Contract\ContractDTO;
 use Illuminate\Validation\Rules\Enum;
+use App\Rules\ParentContractValid;
 
 class UpdateContractRequest extends FormRequest // Был StoreContractRequest
 {
@@ -28,7 +29,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
         return [
             'project_id' => ['sometimes', 'nullable', 'integer', 'exists:projects,id'],
             'contractor_id' => ['sometimes', 'required', 'integer', 'exists:contractors,id'],
-            'parent_contract_id' => ['sometimes', 'nullable', 'integer', 'exists:contracts,id', 'different:id'], 
+            'parent_contract_id' => ['nullable', 'integer', new ParentContractValid], 
             'number' => ['sometimes', 'required', 'string', 'max:255'],
             'date' => ['sometimes', 'required', 'date_format:Y-m-d'],
             // поле type больше не используется
