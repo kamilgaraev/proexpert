@@ -69,6 +69,11 @@ class FileService
 
         try {
             $disk->putFileAs($directory, $file, $filename, $visibility);
+            Log::info('[FileService] upload(): file uploaded', [
+                'path' => $fullPath,
+                'org_id' => $organization?->id,
+                'visibility' => $visibility,
+            ]);
             return $fullPath;
         } catch (\Throwable $e) {
             // можно логировать здесь, но оставляем на вызывающую сторону
