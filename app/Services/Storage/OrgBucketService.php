@@ -159,14 +159,17 @@ class OrgBucketService
 
         // Для корректного TLS у Regru wildcard сертификат выписан на *.s3.regru.cloud.
         // Поэтому оставляем endpoint без региона, а регион используем только для подписи.
+        $signRegion = $region;
         if (str_ends_with($config['endpoint'] ?? '', '.regru.cloud')) {
             $config['endpoint'] = "https://s3.regru.cloud";
+            // Глобальный endpoint требует подпись как us-east-1, иначе Regru отвечает 404
+            $signRegion = 'us-east-1';
         }
 
         $diskConfig = array_merge($config, [
             'bucket' => $bucket,
             'use_path_style_endpoint' => false,
-            'region' => $region,
+            'region' => $signRegion,
         ]);
         Log::debug('[OrgBucketService] Building disk', [
             'config' => $diskConfig,
