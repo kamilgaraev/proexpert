@@ -151,9 +151,15 @@ class OrgBucketService
         }
         
         $config = Config::get('filesystems.disks.s3');
+
+        // Regru корректно обслуживает только virtual-hosted стиль для недавно созданных бакетов.
+        // Дополнительно убираем параметр «url», чтобы Laravel не подставлял устаревший path-style адрес
+        // (например, https://s3.regru.cloud/images-pro), иначе метод url() вернёт ссылку, которая 404.
+        unset($config['url']);
+
         $diskConfig = array_merge($config, [
             'bucket' => $bucket,
-            'use_path_style_endpoint' => true,
+            'use_path_style_endpoint' => false,
             'region' => $region,
         ]);
         Log::debug('[OrgBucketService] Building disk', [
