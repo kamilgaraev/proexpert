@@ -97,10 +97,12 @@ class FileService
     {
         if (!$path) return null;
         $disk = $this->disk($organization);
-        $url = $disk->url($path);
+        $exists = $disk->exists($path);
+        $url = $exists ? $disk->url($path) : null;
         Log::debug('[FileService] url(): generated', [
             'path' => $path,
             'url' => $url,
+            'exists' => $exists,
         ]);
         return $url;
     }
@@ -109,11 +111,13 @@ class FileService
     {
         if (!$path) return null;
         $disk = $this->disk($organization);
-        $url = $disk->temporaryUrl($path, now()->addMinutes($minutes));
+        $exists = $disk->exists($path);
+        $url = $exists ? $disk->temporaryUrl($path, now()->addMinutes($minutes)) : null;
         Log::debug('[FileService] temporaryUrl(): generated', [
             'path' => $path,
             'url' => $url,
             'expires_in_minutes' => $minutes,
+            'exists' => $exists,
         ]);
         return $url;
     }
