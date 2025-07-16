@@ -123,8 +123,10 @@ class OrgBucketService
                     : ($loc->get('LocationConstraint') ?? '');
 
                 $region = trim(strip_tags((string) $regionRaw));
-                if ($region === '' || strtolower($region) === 'default') {
-                    $region = 'us-east-1';
+                // Regru-S3: пустое значение и «default» трактуются как special-region "default"
+                // Также us-east-1 считается синонимом и даёт 403 при подписи, поэтому приводим к "default".
+                if ($region === '' || strtolower($region) === 'us-east-1' || strtolower($region) === 'default') {
+                    $region = 'default';
                 }
                 Log::debug('[OrgBucketService] getBucketLocation() result', [ 'raw' => $regionRaw, 'clean' => $region ]);
             } catch (\Throwable $e) {
@@ -136,8 +138,8 @@ class OrgBucketService
         }
 
         // fallback, если после всех манипуляций регион всё ещё пуст
-        if ($region === '' || strtolower($region) === 'default') {
-            $region = 'us-east-1';
+        if ($region === '') {
+            $region = 'default';
         }
         
         // Если регион обновился после санитации или получения из S3 — сохраняем изменение, обрезая до 120 символов
