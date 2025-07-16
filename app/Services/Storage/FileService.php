@@ -64,8 +64,8 @@ class FileService
         } else {
             $bucketInDisk = $disk->getConfig()['bucket'] ?? null;
             if ($bucketInDisk && str_starts_with($bucketInDisk, 'org-')) {
-                // Внутренний орг-бакет: пишем приватно
-                $visibility = 'private';
+                // Внутренний орг-бакет: Regru отказывается от любых ACL, оставляем по умолчанию
+                $visibility = null;
             }
         }
 
