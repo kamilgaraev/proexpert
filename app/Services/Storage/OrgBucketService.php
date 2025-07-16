@@ -97,7 +97,10 @@ class OrgBucketService
     {
         $bucket = $organization->s3_bucket;
         $config = Config::get('filesystems.disks.s3');
-        $diskConfig = array_merge($config, ['bucket' => $bucket]);
+        $diskConfig = array_merge($config, [
+            'bucket' => $bucket,
+            'use_path_style_endpoint' => true,
+        ]);
         return Storage::build($diskConfig);
     }
 
