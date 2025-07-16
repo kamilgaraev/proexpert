@@ -2,7 +2,7 @@
 
 namespace App\Traits;
 
-use App\Services\ImageUploadService;
+use App\Services\Storage\FileService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\App;
 
@@ -25,14 +25,14 @@ trait HasImages
             return $defaultUrl;
         }
 
-        /** @var ImageUploadService $service */
-        $service = App::make(ImageUploadService::class);
+        /** @var FileService $service */
+        $service = App::make(FileService::class);
 
         if ($temporary) {
-            return $service->getTemporaryUrl($imagePath, $temporaryUrlMinutes);
+            return $service->temporaryUrl($imagePath, $temporaryUrlMinutes);
         }
 
-        return $service->getUrl($imagePath);
+        return $service->url($imagePath);
     }
 
     /**
@@ -46,8 +46,8 @@ trait HasImages
      */
     public function uploadImage(UploadedFile $file, string $attributeName, string $directory, string $visibility = 'public'): bool
     {
-        /** @var ImageUploadService $service */
-        $service = App::make(ImageUploadService::class);
+        /** @var FileService $service */
+        $service = App::make(FileService::class);
 
         $existingPath = $this->{$attributeName};
         $newPath = $service->upload($file, $directory, $existingPath, $visibility);
@@ -68,8 +68,8 @@ trait HasImages
      */
     public function deleteImage(string $attributeName): bool
     {
-        /** @var ImageUploadService $service */
-        $service = App::make(ImageUploadService::class);
+        /** @var FileService $service */
+        $service = App::make(FileService::class);
 
         $pathToDelete = $this->{$attributeName};
         

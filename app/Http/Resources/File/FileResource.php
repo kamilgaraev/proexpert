@@ -3,6 +3,8 @@
 namespace App\Http\Resources\File;
 
 use Illuminate\Http\Resources\Json\JsonResource;
+use App\Services\Storage\FileService;
+use Illuminate\Support\Facades\App as AppFacade;
 // Storage не используется напрямую, если модель сама генерирует URL
 
 class FileResource extends JsonResource
@@ -55,7 +57,9 @@ class FileResource extends JsonResource
     protected function getFileUrl()
     {
         if ($this->storage_disk === 's3') {
-            return Storage::disk('s3')->url($this->filepath);
+            /** @var FileService $fs */
+            $fs = AppFacade::make(FileService::class);
+            return $fs->url($this->filepath ?? $this->path, $this->organization ?? null);
         }
 
         return asset('storage/' . $this->filepath);

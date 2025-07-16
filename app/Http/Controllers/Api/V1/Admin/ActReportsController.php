@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\DB;
 use Exception;
 use Illuminate\Support\Facades\Storage;
 use App\Models\File;
+use App\Services\Storage\FileService;
+use App\Models\Organization;
 
 class ActReportsController extends Controller
 {
@@ -367,7 +369,9 @@ class ActReportsController extends Controller
             
             // Сохраняем в S3 (в фоне)
             try {
-                Storage::disk('s3')->put($path, $pdfContent, 'public');
+                $org = Organization::find($organizationId);
+                $disk = app(FileService::class)->disk($org);
+                $disk->put($path, $pdfContent, 'public');
 
                 // Создаем запись в БД только если файла еще нет
                 $existingFile = File::where('fileable_type', ContractPerformanceAct::class)
@@ -575,7 +579,9 @@ class ActReportsController extends Controller
                 $excelContent = file_get_contents($tempFile);
                 unlink($tempFile);
 
-                Storage::disk('s3')->put($path, $excelContent, 'public');
+                $org = Organization::find($organizationId);
+                $disk = app(FileService::class)->disk($org);
+                $disk->put($path, $excelContent, 'public');
 
                 // Создаем запись в БД только если файла еще нет
                 $existingFile = File::where('fileable_type', ContractPerformanceAct::class)
