@@ -113,8 +113,8 @@ class OrgBucketService
         Log::debug('[OrgBucketService] Region after sanitize', [
             'region' => $region,
         ]);
-        // Если регион не указан или указан как «default», пытаемся получить реальный регион с S3
-        if ($region === '' || strtolower($region) === 'default' || str_contains($region, '<')) {
+        // Если регион не указан, содержит XML/«default» ИЛИ равен us-east-1 (заглушка), пробуем получить реальный регион
+        if ($region === '' || strtolower($region) === 'default' || str_contains($region, '<') || strtolower($region) === 'us-east-1') {
             try {
                 Log::debug('[OrgBucketService] Fetching bucket location from S3');
                 $loc = $this->client->getBucketLocation(['Bucket' => $bucket]);
@@ -123,6 +123,7 @@ class OrgBucketService
                     : ($loc->get('LocationConstraint') ?? '');
 
                 $region = trim(strip_tags((string) $regionRaw));
+                Log::debug('[OrgBucketService] getBucketLocation() result', [ 'raw' => $regionRaw, 'clean' => $region ]);
             } catch (\Throwable $e) {
                 Log::warning('[OrgBucketService] Failed to getBucketLocation()', [
                     'error' => $e->getMessage(),
