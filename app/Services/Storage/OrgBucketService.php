@@ -104,7 +104,12 @@ class OrgBucketService
         if (!$region) {
             try {
                 $loc = $this->client->getBucketLocation(['Bucket' => $bucket]);
-                $region = $loc['LocationConstraint'] ?? 'us-east-1';
+                $regionRaw = is_array($loc) ? ($loc['LocationConstraint'] ?? '') : ($loc->get('LocationConstraint') ?? '');
+                // remove xml tags if any
+                $region = trim(strip_tags((string) $regionRaw));
+                if ($region === '' || strtolower($region) === 'default') {
+                    $region = 'us-east-1';
+                }
             } catch (\Throwable $e) {
                 $region = 'us-east-1';
             }
