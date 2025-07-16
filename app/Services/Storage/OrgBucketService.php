@@ -99,24 +99,34 @@ class OrgBucketService
     public function getDisk(Organization $organization)
     {
         $bucket = $organization->s3_bucket;
-        $region = $organization->bucket_region;
+        $regionOriginal = $organization->bucket_region;
+        // Sanitize (удаляем возможные XML-теги и пробелы)
+        $region = trim(strip_tags((string) $regionOriginal));
 
-        if (!$region) {
+        // Если регион не указан или указан как «default», пытаемся получить реальный регион с S3
+        if ($region === '' || strtolower($region) === 'default' || str_contains($region, '<')) {
             try {
                 $loc = $this->client->getBucketLocation(['Bucket' => $bucket]);
-                $regionRaw = is_array($loc) ? ($loc['LocationConstraint'] ?? '') : ($loc->get('LocationConstraint') ?? '');
-                // remove xml tags if any
+                $regionRaw = is_array($loc)
+                    ? ($loc['LocationConstraint'] ?? '')
+                    : ($loc->get('LocationConstraint') ?? '');
+
                 $region = trim(strip_tags((string) $regionRaw));
-                if ($region === '' || strtolower($region) === 'default') {
-                    $region = 'us-east-1';
-                }
             } catch (\Throwable $e) {
                 $region = 'us-east-1';
             }
-            // persist
-            $organization->forceFill(['bucket_region' => substr($region,0,120)])->save();
         }
 
+        // fallback, если после всех манипуляций регион всё ещё пуст
+        if ($region === '') {
+            $region = 'us-east-1';
+        }
+
+        // Если регион обновился после санитации или получения из S3 — сохраняем изменение, обрезая до 120 символов
+        if ($region !== $regionOriginal) {
+            $organization->forceFill(['bucket_region' => substr($region, 0, 120)])->save();
+        }
+        
         $config = Config::get('filesystems.disks.s3');
         $diskConfig = array_merge($config, [
             'bucket' => $bucket,
