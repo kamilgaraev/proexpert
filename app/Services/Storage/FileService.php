@@ -26,6 +26,10 @@ class FileService
         if (!$org) {
             $org = Auth::user()?->currentOrganization;
         }
+        // Фолбек на статический контекст, который уже выставлен middleware
+        if (!$org) {
+            $org = \App\Services\Organization\OrganizationContext::getOrganization();
+        }
 
         if ($org && $org->s3_bucket) {
             $disk = $this->bucketService->getDisk($org);
