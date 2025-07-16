@@ -117,8 +117,8 @@ class OrgBucketService
             }
         }
 
-        // fallback, если после всех манипуляций регион пустой или «default»
-        if ($region === '' || strtolower($region) === 'default') {
+        // fallback, если после всех манипуляций регион всё ещё пуст
+        if ($region === '') {
             $region = 'us-east-1';
         }
         
