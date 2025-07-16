@@ -122,20 +122,22 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
             return [
                 'limit_gb' => null,
                 'used_gb' => round($usedMb / 1024, 2),
+                'used_mb' => round($usedMb, 2),
                 'remaining_gb' => null,
                 'percentage_used' => 0,
                 'is_unlimited' => true,
             ];
         }
 
-        $usedGb = round($usedMb / 1024, 2);
+        $usedGb = round($usedMb / 1024, 4);
         $remainingGb = max(0, round($limitGb - $usedGb, 2));
 
         return [
             'limit_gb' => $limitGb,
             'used_gb' => $usedGb,
+            'used_mb' => round($usedMb, 2),
             'remaining_gb' => $remainingGb,
-            'percentage_used' => $limitGb > 0 ? round(($usedGb / $limitGb) * 100, 1) : 0,
+            'percentage_used' => $limitGb > 0 ? round(($usedGb / $limitGb) * 100, 2) : 0,
             'is_unlimited' => false,
         ];
     }
