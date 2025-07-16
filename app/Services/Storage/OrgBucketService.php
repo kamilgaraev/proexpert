@@ -90,26 +90,8 @@ class OrgBucketService
     {
         $bucket = $organization->s3_bucket;
 
-        // Проверяем, существует ли бакет; если нет — создаём.
-        try {
-            $this->client->headBucket(['Bucket' => $bucket]);
-        } catch (\Aws\S3\Exception\S3Exception $e) {
-            if ($e->getAwsErrorCode() === 'NoSuchBucket') {
-                try {
-                    // YC: регион ru-central1 по умолчанию; можно создать без конфигурации.
-                    $this->client->createBucket(['Bucket' => $bucket]);
-                    $this->client->waitUntil('BucketExists', ['Bucket' => $bucket]);
-                } catch (\Throwable $e2) {
-                    Log::error('[OrgBucketService] Failed to auto-create bucket', [
-                        'bucket' => $bucket,
-                        'err' => $e2->getMessage(),
-                    ]);
-                    throw $e2;
-                }
-            } else {
-                throw $e;
-            }
-        }
+        // Гарантируем существование бакета
+        $this->ensureBucketExists($bucket);
 
         Log::debug('[OrgBucketService] getDisk(): start', [
             'org_id' => $organization->id,
@@ -180,25 +162,8 @@ class OrgBucketService
      */
     public function calculateBucketSizeMb(string $bucket): int
     {
-        // Проверяем наличие бакета, создаём при отсутствии
-        try {
-            $this->client->headBucket(['Bucket' => $bucket]);
-        } catch (\Aws\S3\Exception\S3Exception $e) {
-            if ($e->getAwsErrorCode() === 'NoSuchBucket') {
-                try {
-                    $this->client->createBucket(['Bucket' => $bucket]);
-                    $this->client->waitUntil('BucketExists', ['Bucket' => $bucket]);
-                    return 0; // только создали — размер 0
-                } catch (\Throwable $e2) {
-                    Log::error('[OrgBucketService] Auto-create bucket during size calc failed', [
-                        'bucket' => $bucket,
-                        'err' => $e2->getMessage(),
-                    ]);
-                    throw $e2;
-                }
-            }
-            throw $e;
-        }
+        // Гарантируем существование бакета
+        $this->ensureBucketExists($bucket);
         $bytes = 0;
         $token = null;
         do {
@@ -214,5 +179,28 @@ class OrgBucketService
         } while ($token);
 
         return (int) round($bytes / 1_048_576); // в МБ
+    }
+
+    /**
+     * Гарантирует наличие бакета: пытается создать, а если уже существует – игнорирует ошибку.
+     */
+    private function ensureBucketExists(string $bucket): void
+    {
+        try {
+            $this->client->createBucket(['Bucket' => $bucket]);
+            $this->client->waitUntil('BucketExists', ['Bucket' => $bucket]);
+        } catch (\Aws\S3\Exception\S3Exception $e) {
+            $code = $e->getAwsErrorCode();
+            if (in_array($code, ['BucketAlreadyOwnedByYou', 'BucketAlreadyExists'])) {
+                return; // бакет уже есть – это нормально
+            }
+            if (in_array($code, ['NotFound', 'NoSuchBucket'])) {
+                // Параллельный запрос мог удалить бакет – повторяем один раз
+                $this->client->createBucket(['Bucket' => $bucket]);
+                $this->client->waitUntil('BucketExists', ['Bucket' => $bucket]);
+                return;
+            }
+            throw $e;
+        }
     }
 } 
