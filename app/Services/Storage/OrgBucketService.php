@@ -40,10 +40,30 @@ class OrgBucketService
 
         $bucket = 'org-' . $organization->id . '-' . Str::lower(Str::random(6));
 
-        // Создание бакета
-        $this->client->createBucket(['Bucket' => $bucket]);
-        // Ждём, пока бакет появится
-        $this->client->waitUntil('BucketExists', ['Bucket' => $bucket]);
+        try {
+            // Создание бакета
+            $this->client->createBucket(['Bucket' => $bucket]);
+            // Ждём, пока бакет появится
+            $this->client->waitUntil('BucketExists', ['Bucket' => $bucket]);
+        } catch (\Aws\S3\Exception\S3Exception $e) {
+            if ($e->getAwsErrorCode() === 'InvalidLocationConstraint') {
+                // Повторяем с region = us-east-1 (для провайдеров, которым не нравится другое значение)
+                $fallbackClient = new S3Client([
+                    'region' => 'us-east-1',
+                    'version' => 'latest',
+                    'credentials' => $this->client->getCredentials()->wait(),
+                    'endpoint' => $this->client->getEndpoint(),
+                    'use_path_style_endpoint' => true,
+                ]);
+
+                $fallbackClient->createBucket(['Bucket' => $bucket]);
+                $fallbackClient->waitUntil('BucketExists', ['Bucket' => $bucket]);
+                // Заменяем клиента, чтобы последующие вызовы шли с новым конфигом
+                $this->client = $fallbackClient;
+            } else {
+                throw $e;
+            }
+        }
 
         // Включаем versioning
         $this->client->putBucketVersioning([
