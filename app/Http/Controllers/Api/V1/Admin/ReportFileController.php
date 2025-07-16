@@ -11,6 +11,9 @@ use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
 use Illuminate\Http\JsonResponse;
 use App\Models\ReportFile;
+use Illuminate\Support\Facades\Auth;
+use App\Services\Storage\FileService;
+use App\Services\Organization\OrganizationContext;
 
 class ReportFileController extends Controller
 {
@@ -64,8 +67,10 @@ class ReportFileController extends Controller
         $paginator = $query->paginate($perPage);
 
         // Дополняем download_url для каждого элемента
-        /** @var \Illuminate\Filesystem\FilesystemAdapter|\Illuminate\Contracts\Filesystem\Cloud $storage */
-        $storage = Storage::disk('reports');
+        /** @var FileService $fs */
+        $fs = app(FileService::class);
+        $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
+        $storage = $fs->disk($org);
         $paginator->getCollection()->transform(function (ReportFile $file) use ($storage) {
             return [
                 'id'          => $this->encodeKey($file->path),
@@ -89,8 +94,10 @@ class ReportFileController extends Controller
     public function destroy(string $key): JsonResponse
     {
         $path = $this->decodeKey($key);
-        /** @var \Illuminate\Filesystem\FilesystemAdapter|\Illuminate\Contracts\Filesystem\Cloud $storage */
-        $storage = Storage::disk('reports');
+        /** @var FileService $fs */
+        $fs = app(FileService::class);
+        $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
+        $storage = $fs->disk($org);
 
         if (!$storage->exists($path)) {
             // всё равно пытаемся удалить запись из БД

@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Carbon;
 use App\Models\ReportFile;
+use App\Models\Organization;
+use App\Services\Storage\OrgBucketService;
 
 class CleanupReportFilesCommand extends Command
 {
@@ -14,61 +16,53 @@ class CleanupReportFilesCommand extends Command
 
     protected $description = 'Удаляет из S3-диска reports файлы отчётов, которым более указанного количества дней (по умолчанию – 1 год).';
 
-    public function handle(): int
+    public function handle(OrgBucketService $bucketService): int
     {
         $dryRun = (bool) $this->option('dry-run');
         $days   = (int) $this->option('days');
         $cutoff = Carbon::now()->subDays($days);
 
-        /** @var \Illuminate\Filesystem\FilesystemAdapter|\Illuminate\Contracts\Filesystem\Cloud $storage */
-        $storage = Storage::disk('reports');
-        $files = $storage->allFiles();
-        // массив для быстрого поиска
-        $fileSet = array_flip($files);
+        $totalDeleted = 0;
 
-        // 1) Удаляем старые записи, если файла нет
-        $oldRecords = ReportFile::where('expires_at', '<', now())
-            ->orWhereNotIn('path', $files)
-            ->get();
-        foreach ($oldRecords as $rec) {
-            $rec->delete();
-        }
+        Organization::query()->whereNotNull('s3_bucket')->chunkById(50, function ($orgs) use ($bucketService, $cutoff, $dryRun, &$totalDeleted) {
+            foreach ($orgs as $org) {
+                $disk = $bucketService->getDisk($org);
+                $files = $disk->allFiles('reports');
 
-        $toDelete = [];
-        foreach ($files as $path) {
-            $lastModified = Carbon::createFromTimestamp($storage->lastModified($path));
-            if ($lastModified->lessThan($cutoff)) {
-                $toDelete[] = $path;
+                // 1) удаляем записи БД, если файла нет или просрочен expires_at
+                ReportFile::where('organization_id', $org->id)
+                    ->where(function($q) use ($files) { $q->whereNotIn('path', $files)->orWhere('expires_at','<', now()); })
+                    ->delete();
+
+                $toDelete = [];
+                foreach ($files as $path) {
+                    $lastModified = Carbon::createFromTimestamp($disk->lastModified($path));
+                    if ($lastModified->lessThan($cutoff)) {
+                        $toDelete[] = $path;
+                    }
+                }
+
+                if ($dryRun) {
+                    foreach ($toDelete as $p) {
+                        $this->line("[DRY] {$org->id}: {$p}");
+                    }
+                    continue;
+                }
+
+                foreach ($toDelete as $p) {
+                    $disk->delete($p);
+                    ReportFile::where('organization_id', $org->id)->where('path', $p)->delete();
+                    $totalDeleted++;
+                }
             }
-        }
-
-        $count = count($toDelete);
-        if ($count === 0) {
-            $this->info('Нет файлов для удаления.');
-            return Command::SUCCESS;
-        }
-
-        $this->info("Файлов для удаления: {$count}");
+        });
 
         if ($dryRun) {
-            foreach ($toDelete as $path) {
-                $this->line($path);
-            }
-            $this->info('DRY RUN – файлы не удалены.');
+            $this->info('DRY RUN завершён.');
             return Command::SUCCESS;
         }
 
-        foreach ($toDelete as $path) {
-            try {
-                $storage->delete($path);
-                Log::info("[reports:cleanup] Deleted {$path}");
-            } catch (\Exception $e) {
-                $this->error("Ошибка удаления {$path}: " . $e->getMessage());
-                Log::error("[reports:cleanup] Error deleting {$path}: " . $e->getMessage());
-            }
-        }
-
-        $this->info("Удалено {$count} файлов.");
+        $this->info("Удалено {$totalDeleted} файлов.");
         return Command::SUCCESS;
     }
 } 

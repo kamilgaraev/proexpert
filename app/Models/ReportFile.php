@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Support\Str;
+use App\Models\Organization;
 
 class ReportFile extends Model
 {
@@ -23,6 +24,7 @@ class ReportFile extends Model
         'size',
         'expires_at',
         'user_id',
+        'organization_id',
     ];
 
     protected $casts = [
@@ -38,5 +40,10 @@ class ReportFile extends Model
                 $model->{$model->getKeyName()} = (string) Str::ulid();
             }
         });
+    }
+
+    public function organization()
+    {
+        return $this->belongsTo(Organization::class);
     }
 } 
