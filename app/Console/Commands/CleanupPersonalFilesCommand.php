@@ -32,7 +32,10 @@ class CleanupPersonalFilesCommand extends Command
                 $objectSet = array_flip($objects);
 
                 // 1) Удаляем записи, для которых файла нет
-                $lostRecords = PersonalFile::where('user_id', $org->users()->pluck('users.id')) // may produce subquery but fine
+                $userIds = $org->users()->pluck('users.id')->all();
+                if (!$userIds) { continue; }
+
+                $lostRecords = PersonalFile::whereIn('user_id', $userIds)
                     ->whereNotIn('path', $objects)
                     ->get();
                 foreach ($lostRecords as $rec) {
@@ -45,7 +48,10 @@ class CleanupPersonalFilesCommand extends Command
                 }
 
                 // 2) Удаляем физические объекты без записи в БД (старше cutoff)
-                $knownPaths = PersonalFile::pluck('path', 'path')->all();
+                $userIds = $org->users()->pluck('users.id')->all();
+                if (!$userIds) { continue; }
+
+                $knownPaths = PersonalFile::whereIn('user_id', $userIds)->pluck('path', 'path')->all();
                 foreach ($objects as $obj) {
                     if (!isset($knownPaths[$obj])) {
                         $lastMod = Carbon::createFromTimestamp($disk->lastModified($obj));
