@@ -9,11 +9,12 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Http\JsonResponse;
 use App\Models\PersonalFile;
+use App\Services\Storage\FileService;
+use App\Services\Organization\OrganizationContext;
+use Illuminate\Support\Facades\Auth;
 
 class PersonalFileController extends Controller
 {
-    private const DISK = 'personals';
-
     /**
      * Список файлов и папок пользователя (по префиксу path, по умолчанию корень).
      */
@@ -32,8 +33,10 @@ class PersonalFileController extends Controller
         $query = PersonalFile::where('user_id', $user->id)
             ->where('path', 'like', $fullPrefix . '%');
 
-        /** @var \Illuminate\Filesystem\FilesystemAdapter|\Illuminate\Contracts\Filesystem\Cloud $storage */
-        $storage = Storage::disk(self::DISK);
+        /** @var FileService $fs */
+        $fs = app(FileService::class);
+        $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
+        $storage = $fs->disk($org);
         $items = $query->orderBy('is_folder', 'desc')->orderBy('filename')->get()->map(function (PersonalFile $file) use ($storage) {
             return [
                 'id'       => $file->id,
@@ -71,7 +74,9 @@ class PersonalFileController extends Controller
         }
 
         // Создаём zero-byte объект для папки (S3 не хранит папки реально)
-        Storage::disk(self::DISK)->put($path, '');
+        $fs = app(FileService::class);
+        $storage = $fs->disk(OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization);
+        $storage->put($path, '');
 
         PersonalFile::create([
             'user_id'  => $user->id,
@@ -103,12 +108,15 @@ class PersonalFileController extends Controller
         $filename = $uploaded->getClientOriginalName();
         $path = $user->id . '/' . $parent . $filename;
 
-        $storage = Storage::disk(self::DISK);
+        $fs = app(FileService::class);
+        $storage = $fs->disk(OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization);
         if ($storage->exists($path)) {
             return response()->json(['message' => 'File already exists.'], 409);
         }
 
-        $storage->put($path, file_get_contents($uploaded->getRealPath()), 'private');
+        $fs = app(FileService::class);
+        $storage = $fs->disk(OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization);
+        $storage->put($path, file_get_contents($uploaded->getRealPath()));
 
         PersonalFile::create([
             'user_id'  => $user->id,
@@ -132,7 +140,8 @@ class PersonalFileController extends Controller
             return response()->json(['message' => 'Not found.'], 404);
         }
 
-        $storage = Storage::disk(self::DISK);
+        $fs = app(FileService::class);
+        $storage = $fs->disk(OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization);
 
         if ($file->is_folder) {
             // удаляем все объекты с этим префиксом
