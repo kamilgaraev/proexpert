@@ -56,6 +56,12 @@ class FileService
     ): string|false {
         $disk = $this->disk($organization);
 
+        // Regru-S3 отклоняет ACL public-read, если бакет закрыт («Доступ по ключам»).
+        // Для орг-бакетов всегда пишем без ACL (по умолчанию private) и используем presigned URL.
+        if ($organization) {
+            $visibility = null;
+        }
+
         // Пытаемся удалить старый файл без предварительной проверки наличия
         if ($existingPath) {
             try {
@@ -72,7 +78,11 @@ class FileService
         $fullPath = $directory . '/' . $filename;
 
         try {
-            $disk->putFileAs($directory, $file, $filename, $visibility);
+            if ($visibility) {
+                $disk->putFileAs($directory, $file, $filename, $visibility);
+            } else {
+                $disk->putFileAs($directory, $file, $filename);
+            }
             Log::info('[FileService] upload(): file uploaded', [
                 'path' => $fullPath,
                 'org_id' => $organization?->id,
