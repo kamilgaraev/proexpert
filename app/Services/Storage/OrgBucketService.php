@@ -162,8 +162,8 @@ class OrgBucketService
         $signRegion = $region;
         if (str_ends_with($config['endpoint'] ?? '', '.regru.cloud')) {
             $config['endpoint'] = "https://s3.regru.cloud";
-            // Глобальный endpoint требует подпись как us-east-1, иначе Regru отвечает 404
-            $signRegion = 'us-east-1';
+            // Для Regru глобальный endpoint принимает подпись в том же регионе, где создан бакет
+            // (ru-msk и т.п.). Оставляем $signRegion без изменений.
         }
 
         $diskConfig = array_merge($config, [
