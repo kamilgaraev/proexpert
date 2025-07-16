@@ -45,9 +45,16 @@ class FileService
     ): string|false {
         $disk = $this->disk($organization);
 
-        // удаляем существующий
-        if ($existingPath && $disk->exists($existingPath)) {
-            $disk->delete($existingPath);
+        // Пытаемся удалить старый файл без предварительной проверки наличия
+        if ($existingPath) {
+            try {
+                $disk->delete($existingPath);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Failed to delete previous file', [
+                    'path' => $existingPath,
+                    'err'  => $e->getMessage(),
+                ]);
+            }
         }
 
         $filename = Str::uuid()->toString() . '.' . $file->getClientOriginalExtension();
@@ -67,8 +74,16 @@ class FileService
         if (!$path) {
             return true;
         }
-        $disk = $this->disk($organization);
-        return $disk->exists($path) ? $disk->delete($path) : true;
+        try {
+            $disk = $this->disk($organization);
+            return $disk->delete($path);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Delete file failed', [
+                'path' => $path,
+                'err'  => $e->getMessage(),
+            ]);
+            return false;
+        }
     }
 
     public function url(?string $path, ?Organization $organization = null): ?string
