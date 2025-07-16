@@ -22,8 +22,8 @@ class UserManagementController extends Controller
         $this->userService = $userService;
         // Применяем middleware для проверки доступа к админ-панели ко всем методам контроллера
         $this->middleware('can:access-admin-panel');
+        $this->middleware('subscription.limit:max_users')->only('store');
         // Убираем middleware для проверки прав на управление прорабами отсюда
-        // $this->middleware('can:manage-foremen');
     }
 
     // Получить список прорабов

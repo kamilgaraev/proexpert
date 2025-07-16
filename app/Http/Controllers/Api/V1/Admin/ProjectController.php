@@ -26,6 +26,7 @@ class ProjectController extends Controller
     {
         $this->projectService = $projectService;
         $this->middleware('can:access-admin-panel');
+        $this->middleware('subscription.limit:max_projects')->only('store');
     }
 
     /**
