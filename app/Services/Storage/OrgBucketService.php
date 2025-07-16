@@ -85,7 +85,10 @@ class OrgBucketService
             ],
         ]);
 
-        $organization->forceFill(['s3_bucket' => $bucket])->save();
+        $organization->forceFill([
+            's3_bucket' => $bucket,
+            'bucket_region' => 'us-east-1',
+        ])->save();
 
         return $bucket;
     }
@@ -96,10 +99,24 @@ class OrgBucketService
     public function getDisk(Organization $organization)
     {
         $bucket = $organization->s3_bucket;
+        $region = $organization->bucket_region;
+
+        if (!$region) {
+            try {
+                $loc = $this->client->getBucketLocation(['Bucket' => $bucket]);
+                $region = $loc['LocationConstraint'] ?? 'us-east-1';
+            } catch (\Throwable $e) {
+                $region = 'us-east-1';
+            }
+            // persist
+            $organization->forceFill(['bucket_region' => $region])->save();
+        }
+
         $config = Config::get('filesystems.disks.s3');
         $diskConfig = array_merge($config, [
             'bucket' => $bucket,
             'use_path_style_endpoint' => true,
+            'region' => $region,
         ]);
         return Storage::build($diskConfig);
     }

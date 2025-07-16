@@ -49,6 +49,7 @@ class Organization extends Model
         's3_bucket',
         'storage_used_mb',
         'storage_usage_synced_at',
+        'bucket_region',
     ];
 
     /**
