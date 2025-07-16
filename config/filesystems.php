@@ -69,7 +69,7 @@ return [
             'region' => env('AWS_DEFAULT_REGION', 'ru-msk'),
             'bucket' => env('AWS_REPORTS_BUCKET', 'official-reports'),
             'endpoint' => env('AWS_ENDPOINT', 'https://s3.regru.cloud'),
-            'use_path_style_endpoint' => false,
+            'use_path_style_endpoint' => true, // Regru: path-style надёжнее, иначе возможны 404
             'throw' => false,
             'report' => false,
         ],
@@ -84,7 +84,7 @@ return [
             // Хост бакета поддерживает virtual-hosted стиль (https://personals.website.regru.cloud)
             // оставляем стандартный endpoint для API-вызовов
             'endpoint' => env('AWS_ENDPOINT', 'https://s3.regru.cloud'),
-            'use_path_style_endpoint' => false,
+            'use_path_style_endpoint' => true, // единообразно с другими Regru-дисками
             'throw' => false,
             'report' => false,
         ],
