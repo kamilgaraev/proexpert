@@ -58,8 +58,15 @@ class FileService
 
         // Regru-S3 отклоняет ACL public-read, если бакет закрыт («Доступ по ключам»).
         // Для орг-бакетов всегда пишем без ACL (по умолчанию private) и используем presigned URL.
+        // Если метод вызван без указания $organization, определяем бакет по конфигу диска.
         if ($organization) {
             $visibility = null;
+        } else {
+            $bucketInDisk = $disk->getConfig()['bucket'] ?? null;
+            $sharedBucket  = \Illuminate\Support\Facades\Config::get('filesystems.disks.s3.bucket');
+            if ($bucketInDisk && $sharedBucket && $bucketInDisk !== $sharedBucket) {
+                $visibility = null; // это не общий открытый бакет → убираем ACL
+            }
         }
 
         // Пытаемся удалить старый файл без предварительной проверки наличия
