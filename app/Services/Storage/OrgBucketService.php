@@ -100,7 +100,6 @@ class OrgBucketService
         $diskConfig = array_merge($config, [
             'bucket' => $bucket,
             'use_path_style_endpoint' => true,
-            'region' => 'us-east-1',
         ]);
         return Storage::build($diskConfig);
     }
