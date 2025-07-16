@@ -52,7 +52,7 @@ class OrgBucketService
                     'region' => 'us-east-1',
                     'version' => 'latest',
                     'credentials' => $this->client->getCredentials()->wait(),
-                    'endpoint' => $this->client->getEndpoint(),
+                    'endpoint' => (string) $this->client->getEndpoint(),
                     'use_path_style_endpoint' => true,
                 ]);
 
