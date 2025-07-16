@@ -117,11 +117,11 @@ class OrgBucketService
             }
         }
 
-        // fallback, если после всех манипуляций регион всё ещё пуст
-        if ($region === '') {
+        // fallback, если после всех манипуляций регион пустой или «default»
+        if ($region === '' || strtolower($region) === 'default') {
             $region = 'us-east-1';
         }
-
+        
         // Если регион обновился после санитации или получения из S3 — сохраняем изменение, обрезая до 120 символов
         if ($region !== $regionOriginal) {
             $organization->forceFill(['bucket_region' => substr($region, 0, 120)])->save();
