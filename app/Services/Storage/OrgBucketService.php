@@ -123,6 +123,9 @@ class OrgBucketService
                     : ($loc->get('LocationConstraint') ?? '');
 
                 $region = trim(strip_tags((string) $regionRaw));
+                if ($region === '' || strtolower($region) === 'default') {
+                    $region = 'us-east-1';
+                }
                 Log::debug('[OrgBucketService] getBucketLocation() result', [ 'raw' => $regionRaw, 'clean' => $region ]);
             } catch (\Throwable $e) {
                 Log::warning('[OrgBucketService] Failed to getBucketLocation()', [
@@ -133,7 +136,7 @@ class OrgBucketService
         }
 
         // fallback, если после всех манипуляций регион всё ещё пуст
-        if ($region === '') {
+        if ($region === '' || strtolower($region) === 'default') {
             $region = 'us-east-1';
         }
         
