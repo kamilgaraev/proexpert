@@ -62,7 +62,7 @@ class ProfileController extends Controller
             if ($request->boolean('remove_avatar')) {
                 $user->deleteImage('avatar_path');
             } elseif ($request->hasFile('avatar')) {
-                $user->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'private');
+                $user->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'public');
             }
 
             $user->save();

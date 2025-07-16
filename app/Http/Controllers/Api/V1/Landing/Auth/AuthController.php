@@ -72,7 +72,7 @@ class AuthController extends Controller
             // Обработка загрузки аватара
             if ($request->hasFile('avatar')) {
                 // Вызываем метод из трейта HasImages
-                if ($user->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'private')) {
+                if ($user->uploadImage($request->file('avatar'), 'avatar_path', 'avatars', 'public')) {
                     // Если uploadImage успешен (путь установлен), сохраняем пользователя
                     // Предполагаем, что authService->register мог не сохранить User или что повторное сохранение безопасно
                     $user->save(); 
