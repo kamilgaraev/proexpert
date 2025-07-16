@@ -166,9 +166,11 @@ class OrgBucketService
             // (ru-msk и т.п.). Оставляем $signRegion без изменений.
         }
 
+        // Приватные бакеты Regru (режим «Доступ по ключам») доступны только через path-style.
+        // Поэтому для орг-бакетов явно включаем use_path_style_endpoint.
         $diskConfig = array_merge($config, [
             'bucket' => $bucket,
-            'use_path_style_endpoint' => false,
+            'use_path_style_endpoint' => true,
             'region' => $signRegion,
         ]);
         Log::debug('[OrgBucketService] Building disk', [
