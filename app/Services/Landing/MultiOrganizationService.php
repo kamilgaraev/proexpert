@@ -89,6 +89,9 @@ class MultiOrganizationService
                 'email' => $organizationData['email'] ?? null,
             ]);
 
+            // Создаём S3-бакет для дочерней организации
+            app(\App\Services\Storage\OrgBucketService::class)->createBucket($childOrg);
+
             $this->createDefaultAccessPermissions($parentOrg, $childOrg, $creator);
 
             // Привязываем владельца

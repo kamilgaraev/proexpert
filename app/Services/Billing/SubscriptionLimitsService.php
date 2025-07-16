@@ -179,6 +179,12 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
 
     private function getStorageUsage(int $organizationId): float
     {
+        $org = \App\Models\Organization::find($organizationId);
+        if ($org && !is_null($org->storage_used_mb)) {
+            return (float) $org->storage_used_mb;
+        }
+
+        // Fallback на старую эвристику, если счётчик ещё не посчитан
         $completedWorksCount = \App\Models\CompletedWork::whereHas('contract', function($query) use ($organizationId) {
             $query->where('organization_id', $organizationId);
         })->count();

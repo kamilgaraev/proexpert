@@ -46,6 +46,9 @@ class Organization extends Model
         'multi_org_settings',
         'hierarchy_level',
         'hierarchy_path',
+        's3_bucket',
+        'storage_used_mb',
+        'storage_usage_synced_at',
     ];
 
     /**
@@ -62,6 +65,8 @@ class Organization extends Model
         'multi_org_settings' => 'array',
         'is_holding' => 'boolean',
         'hierarchy_level' => 'integer',
+        'storage_used_mb' => 'integer',
+        'storage_usage_synced_at' => 'datetime',
     ];
 
     /**

@@ -65,6 +65,9 @@ class OrganizationController extends Controller
             'owner_id' => $user->id,
         ]);
 
+        // Создаём S3-бакет для организации
+        app(\App\Services\Storage\OrgBucketService::class)->createBucket($organization);
+
         // Привязываем пользователя к созданной организации (если не сделано через observer/event)
         if (!$user->organizations()->where('organization_id', $organization->id)->exists()) {
             $user->organizations()->attach($organization->id, [
