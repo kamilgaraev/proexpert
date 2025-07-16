@@ -109,7 +109,7 @@ class OrgBucketService
                 $region = 'us-east-1';
             }
             // persist
-            $organization->forceFill(['bucket_region' => $region])->save();
+            $organization->forceFill(['bucket_region' => substr($region,0,120)])->save();
         }
 
         $config = Config::get('filesystems.disks.s3');
