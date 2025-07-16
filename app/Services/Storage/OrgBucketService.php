@@ -157,9 +157,10 @@ class OrgBucketService
         // (например, https://s3.regru.cloud/images-pro), иначе метод url() вернёт ссылку, которая 404.
         unset($config['url']);
 
-        // Для Regru важно, чтобы endpoint содержал регион (bucket.s3.<region>.regru.cloud)
+        // Для корректного TLS у Regru wildcard сертификат выписан на *.s3.regru.cloud.
+        // Поэтому оставляем endpoint без региона, а регион используем только для подписи.
         if (str_ends_with($config['endpoint'] ?? '', '.regru.cloud')) {
-            $config['endpoint'] = "https://s3.{$region}.regru.cloud";
+            $config['endpoint'] = "https://s3.regru.cloud";
         }
 
         $diskConfig = array_merge($config, [
