@@ -13,6 +13,7 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Auth;
 
 class ExcelExporterService
 {
@@ -671,11 +672,13 @@ class ExcelExporterService
             $binaryContent = ob_get_clean();
 
             // Путь теперь включает день для лучшей организаци ̃ии: YYYY/m/d/filename
-            $path = 'official-material-usage/' . date('Y/m/d/') . $filename;
+            $path = 'reports/official-material-usage/' . date('Y/m/d/') . $filename;
 
-            /** @var \Illuminate\Filesystem\FilesystemAdapter $storage */
-            $storage = \Illuminate\Support\Facades\Storage::disk($disk);
-            $storage->put($path, $binaryContent, 'private');
+            /** @var \App\Services\Storage\FileService $fs */
+            $fs = app(\App\Services\Storage\FileService::class);
+            $org = \App\Services\Organization\OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
+            $storage = $fs->disk($org);
+            $storage->put($path, $binaryContent);
 
             // Сохраняем запись в БД
             $reportFile = \App\Models\ReportFile::create([
@@ -685,7 +688,7 @@ class ExcelExporterService
                 'name'       => $filename, // по умолчанию
                 'size'       => strlen($binaryContent),
                 'expires_at' => now()->addYear(),
-                'user_id'    => auth()->id(),
+                'user_id'    => Auth::id(),
             ]);
 
             return $storage->temporaryUrl($path, now()->addHours($expiresHours));
