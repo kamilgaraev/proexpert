@@ -46,24 +46,13 @@ class OrgBucketService
             $this->client->createBucket(['Bucket' => $bucket]);
             // Ждём, пока бакет появится
             $this->client->waitUntil('BucketExists', ['Bucket' => $bucket]);
-        } catch (\Aws\S3\Exception\S3Exception $e) {
-            if ($e->getAwsErrorCode() === 'InvalidLocationConstraint') {
-                // Повторяем с region = us-east-1 (для провайдеров, которым не нравится другое значение)
-                $fallbackClient = new S3Client([
-                    'region' => 'us-east-1',
-                    'version' => 'latest',
-                    'credentials' => $this->client->getCredentials()->wait(),
-                    'endpoint' => (string) $this->client->getEndpoint(),
-                    'use_path_style_endpoint' => true,
-                ]);
-
-                $fallbackClient->createBucket(['Bucket' => $bucket]);
-                $fallbackClient->waitUntil('BucketExists', ['Bucket' => $bucket]);
-                // Заменяем клиента, чтобы последующие вызовы шли с новым конфигом
-                $this->client = $fallbackClient;
-            } else {
-                throw $e;
-            }
+        } catch (\Throwable $e) {
+            // Логируем и пробрасываем — для Yandex OS повторов не делаем
+            Log::error('[OrgBucketService] createBucket failed', [
+                'bucket' => $bucket,
+                'err' => $e->getMessage(),
+            ]);
+            throw $e;
         }
 
         // Включаем versioning
@@ -100,6 +89,27 @@ class OrgBucketService
     public function getDisk(Organization $organization)
     {
         $bucket = $organization->s3_bucket;
+
+        // Проверяем, существует ли бакет; если нет — создаём.
+        try {
+            $this->client->headBucket(['Bucket' => $bucket]);
+        } catch (\Aws\S3\Exception\S3Exception $e) {
+            if ($e->getAwsErrorCode() === 'NoSuchBucket') {
+                try {
+                    // YC: регион ru-central1 по умолчанию; можно создать без конфигурации.
+                    $this->client->createBucket(['Bucket' => $bucket]);
+                    $this->client->waitUntil('BucketExists', ['Bucket' => $bucket]);
+                } catch (\Throwable $e2) {
+                    Log::error('[OrgBucketService] Failed to auto-create bucket', [
+                        'bucket' => $bucket,
+                        'err' => $e2->getMessage(),
+                    ]);
+                    throw $e2;
+                }
+            } else {
+                throw $e;
+            }
+        }
 
         Log::debug('[OrgBucketService] getDisk(): start', [
             'org_id' => $organization->id,
