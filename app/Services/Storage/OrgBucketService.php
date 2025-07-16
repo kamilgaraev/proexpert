@@ -152,26 +152,12 @@ class OrgBucketService
         
         $config = Config::get('filesystems.disks.s3');
 
-        // Regru корректно обслуживает только virtual-hosted стиль для недавно созданных бакетов.
-        // Дополнительно убираем параметр «url», чтобы Laravel не подставлял устаревший path-style адрес
-        // (например, https://s3.regru.cloud/images-pro), иначе метод url() вернёт ссылку, которая 404.
-        unset($config['url']);
-
-        // Для корректного TLS у Regru wildcard сертификат выписан на *.s3.regru.cloud.
-        // Поэтому оставляем endpoint без региона, а регион используем только для подписи.
-        $signRegion = $region;
-        if (str_ends_with($config['endpoint'] ?? '', '.regru.cloud')) {
-            $config['endpoint'] = "https://s3.regru.cloud";
-            // Для Regru глобальный endpoint принимает подпись в том же регионе, где создан бакет
-            // (ru-msk и т.п.). Оставляем $signRegion без изменений.
-        }
-
-        // Приватные бакеты Regru (режим «Доступ по ключам») доступны только через path-style.
-        // Поэтому для орг-бакетов явно включаем use_path_style_endpoint.
+        // Yandex Object Storage: стандартный virtual-host стиль, path-style не нужен.
+        // Убираем кастомные твики для Regru, оставляем базовый конфиг.
         $diskConfig = array_merge($config, [
             'bucket' => $bucket,
-            'use_path_style_endpoint' => true,
-            'region' => $signRegion,
+            'use_path_style_endpoint' => false,
+            'region' => $region ?: ($config['region'] ?? 'ru-central1'),
         ]);
         Log::debug('[OrgBucketService] Building disk', [
             'config' => $diskConfig,
