@@ -97,12 +97,18 @@ class FileService
     {
         if (!$path) return null;
         $disk = $this->disk($organization);
-        $exists = $disk->exists($path);
-        $url = $exists ? $disk->url($path) : null;
+        try {
+            $url = $disk->url($path);
+        } catch (\Throwable $e) {
+            Log::warning('[FileService] url() failed', [
+                'path' => $path,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
         Log::debug('[FileService] url(): generated', [
             'path' => $path,
             'url' => $url,
-            'exists' => $exists,
         ]);
         return $url;
     }
@@ -111,13 +117,19 @@ class FileService
     {
         if (!$path) return null;
         $disk = $this->disk($organization);
-        $exists = $disk->exists($path);
-        $url = $exists ? $disk->temporaryUrl($path, now()->addMinutes($minutes)) : null;
+        try {
+            $url = $disk->temporaryUrl($path, now()->addMinutes($minutes));
+        } catch (\Throwable $e) {
+            Log::warning('[FileService] temporaryUrl() failed', [
+                'path' => $path,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
         Log::debug('[FileService] temporaryUrl(): generated', [
             'path' => $path,
             'url' => $url,
             'expires_in_minutes' => $minutes,
-            'exists' => $exists,
         ]);
         return $url;
     }
