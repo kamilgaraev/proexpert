@@ -66,7 +66,7 @@ class Organization extends Model
         'multi_org_settings' => 'array',
         'is_holding' => 'boolean',
         'hierarchy_level' => 'integer',
-        'storage_used_mb' => 'integer',
+        'storage_used_mb' => 'decimal:2',
         'storage_usage_synced_at' => 'datetime',
     ];
 

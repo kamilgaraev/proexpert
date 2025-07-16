@@ -160,7 +160,7 @@ class OrgBucketService
     /**
      * Подсчитывает размер бакета в мегабайтах.
      */
-    public function calculateBucketSizeMb(string $bucket): int
+    public function calculateBucketSizeMb(string $bucket): float
     {
         // Гарантируем существование бакета
         $this->ensureBucketExists($bucket);
@@ -178,7 +178,7 @@ class OrgBucketService
             $token = $resp['NextContinuationToken'] ?? null;
         } while ($token);
 
-        return (int) round($bytes / 1_048_576); // в МБ
+        return round($bytes / 1_048_576, 2); // в МБ
     }
 
     /**
