@@ -63,9 +63,9 @@ class FileService
             $visibility = null;
         } else {
             $bucketInDisk = $disk->getConfig()['bucket'] ?? null;
-            $sharedBucket  = \Illuminate\Support\Facades\Config::get('filesystems.disks.s3.bucket');
-            if ($bucketInDisk && $sharedBucket && $bucketInDisk !== $sharedBucket) {
-                $visibility = null; // это не общий открытый бакет → убираем ACL
+            if ($bucketInDisk && str_starts_with($bucketInDisk, 'org-')) {
+                // Внутренний орг-бакет: пишем приватно
+                $visibility = 'private';
             }
         }
 
