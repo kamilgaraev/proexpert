@@ -9,6 +9,7 @@ use Illuminate\Contracts\Filesystem\Filesystem;
 use Illuminate\Filesystem\FilesystemAdapter;
 use App\Models\Organization;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class FileService
 {
@@ -27,9 +28,15 @@ class FileService
         }
 
         if ($org && $org->s3_bucket) {
-            return $this->bucketService->getDisk($org);
+            $disk = $this->bucketService->getDisk($org);
+            Log::debug('[FileService] disk(): org-specific disk resolved', [
+                'org_id' => $org->id,
+                'bucket' => $org->s3_bucket,
+            ]);
+            return $disk;
         }
 
+        Log::debug('[FileService] disk(): fallback to shared disk s3');
         return Storage::disk('s3'); // fallback на общий бакет
     }
 
@@ -89,12 +96,25 @@ class FileService
     public function url(?string $path, ?Organization $organization = null): ?string
     {
         if (!$path) return null;
-        return $this->disk($organization)->url($path);
+        $disk = $this->disk($organization);
+        $url = $disk->url($path);
+        Log::debug('[FileService] url(): generated', [
+            'path' => $path,
+            'url' => $url,
+        ]);
+        return $url;
     }
 
     public function temporaryUrl(?string $path, int $minutes = 5, ?Organization $organization = null): ?string
     {
         if (!$path) return null;
-        return $this->disk($organization)->temporaryUrl($path, now()->addMinutes($minutes));
+        $disk = $this->disk($organization);
+        $url = $disk->temporaryUrl($path, now()->addMinutes($minutes));
+        Log::debug('[FileService] temporaryUrl(): generated', [
+            'path' => $path,
+            'url' => $url,
+            'expires_in_minutes' => $minutes,
+        ]);
+        return $url;
     }
 } 

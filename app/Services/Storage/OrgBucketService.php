@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Models\Organization;
+use Illuminate\Support\Facades\Log;
 
 class OrgBucketService
 {
@@ -99,13 +100,23 @@ class OrgBucketService
     public function getDisk(Organization $organization)
     {
         $bucket = $organization->s3_bucket;
+
+        Log::debug('[OrgBucketService] getDisk(): start', [
+            'org_id' => $organization->id,
+            'bucket' => $bucket,
+            'bucket_region_original' => $organization->bucket_region,
+        ]);
         $regionOriginal = $organization->bucket_region;
         // Sanitize (удаляем возможные XML-теги и пробелы)
         $region = trim(strip_tags((string) $regionOriginal));
 
+        Log::debug('[OrgBucketService] Region after sanitize', [
+            'region' => $region,
+        ]);
         // Если регион не указан или указан как «default», пытаемся получить реальный регион с S3
         if ($region === '' || strtolower($region) === 'default' || str_contains($region, '<')) {
             try {
+                Log::debug('[OrgBucketService] Fetching bucket location from S3');
                 $loc = $this->client->getBucketLocation(['Bucket' => $bucket]);
                 $regionRaw = is_array($loc)
                     ? ($loc['LocationConstraint'] ?? '')
@@ -113,6 +124,9 @@ class OrgBucketService
 
                 $region = trim(strip_tags((string) $regionRaw));
             } catch (\Throwable $e) {
+                Log::warning('[OrgBucketService] Failed to getBucketLocation()', [
+                    'error' => $e->getMessage(),
+                ]);
                 $region = 'us-east-1';
             }
         }
@@ -124,6 +138,10 @@ class OrgBucketService
         
         // Если регион обновился после санитации или получения из S3 — сохраняем изменение, обрезая до 120 символов
         if ($region !== $regionOriginal) {
+            Log::debug('[OrgBucketService] Persisting updated bucket_region', [
+                'old' => $regionOriginal,
+                'new' => $region,
+            ]);
             $organization->forceFill(['bucket_region' => substr($region, 0, 120)])->save();
         }
         
@@ -132,6 +150,9 @@ class OrgBucketService
             'bucket' => $bucket,
             'use_path_style_endpoint' => true,
             'region' => $region,
+        ]);
+        Log::debug('[OrgBucketService] Building disk', [
+            'config' => $diskConfig,
         ]);
         return Storage::build($diskConfig);
     }
