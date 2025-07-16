@@ -180,6 +180,25 @@ class OrgBucketService
      */
     public function calculateBucketSizeMb(string $bucket): int
     {
+        // Проверяем наличие бакета, создаём при отсутствии
+        try {
+            $this->client->headBucket(['Bucket' => $bucket]);
+        } catch (\Aws\S3\Exception\S3Exception $e) {
+            if ($e->getAwsErrorCode() === 'NoSuchBucket') {
+                try {
+                    $this->client->createBucket(['Bucket' => $bucket]);
+                    $this->client->waitUntil('BucketExists', ['Bucket' => $bucket]);
+                    return 0; // только создали — размер 0
+                } catch (\Throwable $e2) {
+                    Log::error('[OrgBucketService] Auto-create bucket during size calc failed', [
+                        'bucket' => $bucket,
+                        'err' => $e2->getMessage(),
+                    ]);
+                    throw $e2;
+                }
+            }
+            throw $e;
+        }
         $bytes = 0;
         $token = null;
         do {
