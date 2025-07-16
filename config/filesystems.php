@@ -65,7 +65,8 @@ return [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),
             'secret' => env('AWS_SECRET_ACCESS_KEY'),
-            'region' => env('AWS_DEFAULT_REGION', 'ru-msk'),
+            // Regru-S3 использует фиктивный регион «default». Оставляем значение из .env, но по умолчанию ставим default.
+            'region' => env('AWS_DEFAULT_REGION', 'default'),
             'bucket' => env('AWS_REPORTS_BUCKET', 'official-reports'),
             'endpoint' => env('AWS_ENDPOINT', 'https://s3.regru.cloud'),
             'use_path_style_endpoint' => false,
@@ -78,7 +79,7 @@ return [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),
             'secret' => env('AWS_SECRET_ACCESS_KEY'),
-            'region' => env('AWS_DEFAULT_REGION', 'ru-msk'),
+            'region' => env('AWS_DEFAULT_REGION', 'default'),
             'bucket' => env('AWS_PERSONALS_BUCKET', 'personals'),
             // Хост бакета поддерживает virtual-hosted стиль (https://personals.website.regru.cloud)
             // оставляем стандартный endpoint для API-вызовов
