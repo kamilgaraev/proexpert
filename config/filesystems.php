@@ -53,6 +53,7 @@ return [
             'key'    => env('AWS_ACCESS_KEY_ID'),
             'secret' => env('AWS_SECRET_ACCESS_KEY'),
             'region' => env('AWS_DEFAULT_REGION', 'ru-central1'),
+            'bucket' => env('AWS_DUMMY_BUCKET', 'unused'), // фиктивный бакет, переопределяется динамически
             // bucket устанавливается динамически в OrgBucketService
             'endpoint' => env('AWS_ENDPOINT', 'https://storage.yandexcloud.net'),
             'use_path_style_endpoint' => false, // virtual-hosted стиль
