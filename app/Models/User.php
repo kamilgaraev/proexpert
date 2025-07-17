@@ -257,9 +257,14 @@ class User extends Authenticatable implements JWTSubject
      */
     public function isSystemAdmin(): bool
     {
-        // TODO: Проверить, нужно ли сверяться с таблицей ролей или достаточно user_type
-        // Пока оставляем user_type для системного админа
-        return $this->user_type === 'system_admin';
+        // Считаем системным админом, если user_type = system_admin
+        // или назначена системная роль super_admin (slug)
+        if ($this->user_type === 'system_admin') {
+            return true;
+        }
+
+        // Проверяем наличие роли super_admin без привязки к организации
+        return $this->roles()->where('slug', Role::ROLE_SUPER_ADMIN)->exists();
     }
 
     /**
