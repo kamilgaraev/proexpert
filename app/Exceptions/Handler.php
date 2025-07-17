@@ -96,7 +96,8 @@ class Handler extends ExceptionHandler
                 $message = $e->getMessage();
 
                 if ($statusCode === 500 && !config('app.debug')) {
-                    $message = 'Внутренняя ошибка сервера';
+                    $message = 'Произошла внутренняя ошибка сервера. Мы уже работаем над её исправлением. ' .
+                               'Если проблема повторяется, пожалуйста, свяжитесь с нашей службой поддержки.';
                 }
                 
                 $response = ['message' => $message];
