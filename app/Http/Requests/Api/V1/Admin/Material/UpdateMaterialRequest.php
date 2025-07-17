@@ -22,9 +22,15 @@ class UpdateMaterialRequest extends FormRequest
 
     public function rules(): array
     {
-        $organizationId = $this->attributes->get('organization_id');
-        /** @var Material|null $material */
-        $material = $this->route('material'); // Получаем модель из маршрута
+        $organizationId = $this->attributes->get('organization_id') ?? Auth::user()->current_organization_id;
+
+        /** @var Material|string|null $material */
+        $material = $this->route('material'); // Может быть моделью или ID
+
+        if ($material && !($material instanceof Material)) {
+            $material = Material::find($material);
+        }
+
         $materialId = $material?->id; // ID текущего материала
 
         return [
