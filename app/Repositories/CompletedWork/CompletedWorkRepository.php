@@ -103,9 +103,7 @@ class CompletedWorkRepository extends BaseRepository implements CompletedWorkRep
 
                 // Фильтр по подрядчику (через контракт)
                 case 'contractor_id':
-                    $query->whereHas('contract', function ($contractQuery) use ($value) {
-                        $contractQuery->where('contractor_id', $value);
-                    });
+                    $query->where('contractor_id', $value);
                     break;
                 
                 default:

@@ -60,7 +60,7 @@ class CompletedWorkController extends Controller
             $perPage, 
             $sortBy, 
             $sortDirection, 
-            ['project', 'contract.contractor', 'workType', 'user', 'materials.measurementUnit']
+            ['project', 'contract.contractor', 'workType', 'user', 'contractor', 'materials.measurementUnit']
         );
         
         return new CompletedWorkCollection($completedWorks);
@@ -75,7 +75,7 @@ class CompletedWorkController extends Controller
                 [
                     'success' => true, 
                     'message' => 'Запись о выполненной работе успешно создана.',
-                    'data' => new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'materials.measurementUnit']))
+                    'data' => new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit']))
                 ],
                 Response::HTTP_CREATED
             );
@@ -90,7 +90,7 @@ class CompletedWorkController extends Controller
         if ($completedWork->organization_id !== Auth::user()->current_organization_id) {
             abort(404, 'Запись о выполненной работе не найдена.');
         }
-        return new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'materials.measurementUnit', 'files']));
+        return new CompletedWorkResource($completedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit', 'files']));
     }
 
     public function update(UpdateCompletedWorkRequest $request, CompletedWork $completedWork): JsonResponse
@@ -107,7 +107,7 @@ class CompletedWorkController extends Controller
                 [
                     'success' => true, 
                     'message' => 'Запись о выполненной работе успешно обновлена.',
-                    'data' => new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user', 'materials.measurementUnit']))
+                    'data' => new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit']))
                 ]
             );
         } catch (BusinessLogicException $e) {
@@ -146,7 +146,7 @@ class CompletedWorkController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Материалы выполненной работы успешно синхронизированы.',
-                'data' => new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user', 'materials.measurementUnit']))
+                'data' => new CompletedWorkResource($updatedWork->load(['project', 'contract', 'workType', 'user', 'contractor', 'materials.measurementUnit']))
             ]);
         } catch (BusinessLogicException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: Response::HTTP_BAD_REQUEST);

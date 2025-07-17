@@ -40,6 +40,11 @@ class StoreCompletedWorkRequest extends FormRequest
                     }
                 },
             ],
+            'contractor_id' => [
+                'nullable',
+                'integer',
+                Rule::exists('contractors', 'id')->where('organization_id', $organizationId)
+            ],
             'work_type_id' => ['required', 'integer', Rule::exists('work_types', 'id')->where('organization_id', $organizationId)],
             'user_id' => ['required', 'integer', Rule::exists('users', 'id')], // Можно добавить проверку на принадлежность юзера организации
             'quantity' => 'required|numeric|min:0.001',
@@ -79,6 +84,7 @@ class StoreCompletedWorkRequest extends FormRequest
             organization_id: $this->route('organization')?->id ?? Auth::user()->current_organization_id,
             project_id: $validatedData['project_id'],
             contract_id: $validatedData['contract_id'] ?? null,
+            contractor_id: $validatedData['contractor_id'] ?? null,
             work_type_id: $validatedData['work_type_id'],
             user_id: $validatedData['user_id'],
             quantity: (float)$validatedData['quantity'],

@@ -19,6 +19,8 @@ class CompletedWorkResource extends JsonResource
             'contract' => new ContractMiniResource($this->whenLoaded('contract')),
             'work_type' => new WorkTypeResource($this->whenLoaded('workType')),
             'user' => new UserResource($this->whenLoaded('user')),
+            'contractor' => new \App\Http\Resources\Api\V1\Admin\Contractor\ContractorMiniResource($this->whenLoaded('contractor')),
+            'contractor_id' => $this->contractor_id,
             'quantity' => (float)$this->quantity,
             'price' => isset($this->price) ? (float)$this->price : null,
             'total_amount' => isset($this->total_amount) ? (float)$this->total_amount : null,

@@ -42,6 +42,12 @@ class UpdateCompletedWorkRequest extends FormRequest
             ],
             'work_type_id' => ['sometimes', 'required', 'integer', Rule::exists('work_types', 'id')->where('organization_id', $organizationId)],
             'user_id' => ['sometimes', 'required', 'integer', Rule::exists('users', 'id')],
+            'contractor_id' => [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('contractors', 'id')->where('organization_id', $organizationId)
+            ],
             'quantity' => 'sometimes|required|numeric|min:0.001',
             'price' => 'sometimes|nullable|numeric|min:0',
             'total_amount' => 'sometimes|nullable|numeric|min:0',
@@ -82,6 +88,7 @@ class UpdateCompletedWorkRequest extends FormRequest
             organization_id: $completedWork->organization_id,
             project_id: $validatedData['project_id'] ?? $completedWork->project_id,
             contract_id: array_key_exists('contract_id', $validatedData) ? ($validatedData['contract_id'] ?? null) : $completedWork->contract_id,
+            contractor_id: array_key_exists('contractor_id', $validatedData) ? ($validatedData['contractor_id'] ?? null) : $completedWork->contractor_id,
             work_type_id: $validatedData['work_type_id'] ?? $completedWork->work_type_id,
             user_id: $validatedData['user_id'] ?? $completedWork->user_id,
             quantity: isset($validatedData['quantity']) ? (float)$validatedData['quantity'] : (float)$completedWork->quantity,

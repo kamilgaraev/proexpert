@@ -17,6 +17,7 @@ class CompletedWork extends Model
         'contract_id',
         'work_type_id',
         'user_id',
+        'contractor_id',
         'quantity',
         'price',
         'total_amount',
@@ -64,6 +65,24 @@ class CompletedWork extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Получить подрядчика, выполнившего работу.
+     */
+    public function contractor(): BelongsTo
+    {
+        return $this->belongsTo(Contractor::class);
+    }
+
+    /**
+     * Алиас для исполнителя (пользователь-прораб).
+     * Некоторые контроллеры обращаются к relation "executor".
+     */
+    public function executor(): BelongsTo
+    {
+        // Используем ту же связь, что и user()
+        return $this->belongsTo(User::class, 'user_id');
     }
 
     /**
