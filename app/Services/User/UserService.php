@@ -77,9 +77,12 @@ class UserService
 
         // Проверяем, является ли пользователь системным админом, админом организации ИЛИ веб-админом
         // Роль веб-админа (Role::ROLE_WEB_ADMIN) теперь также дает доступ
-        if (!($user->isSystemAdmin() || 
-              $user->isOrganizationAdmin($organizationId) || 
-              $user->hasRole(Role::ROLE_WEB_ADMIN, $organizationId))) {
+        if (!(
+              $user->isSystemAdmin() ||
+              $user->isOrganizationAdmin($organizationId) ||
+              $user->isOwnerOfOrganization($organizationId) ||
+              $user->hasRole(Role::ROLE_WEB_ADMIN, $organizationId)
+            )) {
             throw new BusinessLogicException('Действие доступно только администратору организации или веб-администратору.', 403);
         }
     }
