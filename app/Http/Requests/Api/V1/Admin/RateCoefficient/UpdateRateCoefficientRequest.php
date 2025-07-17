@@ -55,8 +55,13 @@ class UpdateRateCoefficientRequest extends FormRequest
     public function toDto(): RateCoefficientDTO
     {
         $validated = $this->validated();
-        /** @var RateCoefficient $currentCoefficient */
-        $currentCoefficient = $this->route('rate_coefficient'); // rate_coefficient - имя параметра из роута
+        // route parameter может быть либо моделью (если используется implicit binding), либо ID (string/int).
+        $routeParam = $this->route('rate_coefficient');
+        if ($routeParam instanceof RateCoefficient) {
+            $currentCoefficient = $routeParam;
+        } else {
+            $currentCoefficient = RateCoefficient::findOrFail((int)$routeParam);
+        }
 
         return new RateCoefficientDTO(
             name: $validated['name'] ?? $currentCoefficient->name,
