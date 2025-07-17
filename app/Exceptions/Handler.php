@@ -122,4 +122,24 @@ class Handler extends ExceptionHandler
 
         parent::report($exception);
     }
+
+    public function render($request, Throwable $e)
+    {
+        // Для JSON/API отвечает register()->renderable выше
+        $response = parent::render($request, $e);
+
+        // Если не API/JSON запрос и в проде (debug=false) — подменяем тело для 5xx ошибок
+        if (!config('app.debug') && !$request->expectsJson() && !$request->is('api/*')) {
+            $status = $response->getStatusCode();
+            if ($status >= 500) {
+                return response(
+                    'Произошла внутренняя ошибка сервера. Мы уже работаем над её исправлением. ' .
+                    'Если проблема повторяется, пожалуйста, свяжитесь с нашей службой поддержки.',
+                    $status,
+                    ['Content-Type' => 'text/plain; charset=utf-8']
+                );
+            }
+        }
+        return $response;
+    }
 } 
