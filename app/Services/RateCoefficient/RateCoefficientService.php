@@ -158,19 +158,33 @@ class RateCoefficientService
         );
     }
     
-    // TODO: Возможно, добавить метод для расчета итогового значения с учетом всех применимых коэффициентов
-    // public function calculateAdjustedValue(float $originalValue, string $appliesTo, array $context, Request $request): float
-    // {
-    //     $coefficients = $this->getApplicableCoefficients($request, $appliesTo, null, $context);
-    //     $adjustedValue = $originalValue;
-    // 
-    //     foreach ($coefficients as $coeff) {
-    //         if ($coeff->type === RateCoefficientTypeEnum::PERCENTAGE) {
-    //             $adjustedValue *= (1 + ($coeff->value / 100)); // Предполагая, что value для процентов хранится как 15 для 15%
-    //         } elseif ($coeff->type === RateCoefficientTypeEnum::FIXED_ADDITION) {
-    //             $adjustedValue += $coeff->value;
-    //         }
-    //     }
-    //     return round($adjustedValue, 2); // Округляем до 2 знаков
-    // }
+    public function calculateAdjustedValue(
+        int $organizationId,
+        float $originalValue,
+        string $appliesTo, // RateCoefficientAppliesToEnum value
+        ?string $scope = null, // RateCoefficientScopeEnum value
+        array $contextualIds = [],
+        ?string $date = null
+    ): float
+    {
+        $coefficients = $this->coefficientRepository->findApplicableCoefficients(
+            $organizationId,
+            $appliesTo,
+            $scope,
+            $contextualIds,
+            $date
+        );
+
+        $adjusted = $originalValue;
+
+        foreach ($coefficients as $coeff) {
+            if ($coeff->type === \App\Enums\RateCoefficient\RateCoefficientTypeEnum::PERCENTAGE) {
+                $adjusted *= (1 + ($coeff->value / 100));
+            } elseif ($coeff->type === \App\Enums\RateCoefficient\RateCoefficientTypeEnum::FIXED_ADDITION) {
+                $adjusted += $coeff->value;
+            }
+        }
+
+        return round($adjusted, 4);
+    }
 } 

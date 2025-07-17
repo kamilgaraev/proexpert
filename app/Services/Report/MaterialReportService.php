@@ -9,9 +9,18 @@ use App\Models\MaterialReceipt;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
+use App\Services\RateCoefficient\RateCoefficientService;
+use App\Enums\RateCoefficient\RateCoefficientAppliesToEnum;
 
 class MaterialReportService
 {
+    private RateCoefficientService $rateCoefficientService;
+
+    public function __construct(RateCoefficientService $rateCoefficientService)
+    {
+        $this->rateCoefficientService = $rateCoefficientService;
+    }
+
     /**
      * Генерирует данные для официального отчета об использовании материалов.
      */
@@ -50,7 +59,7 @@ class MaterialReportService
         $receipts = $receiptsQuery->get();
 
         // Группируем по материалам и видам работ
-        $materialGroups = $this->groupMaterialsByWork($materialLogs, $receipts, $periodFrom, $periodTo);
+        $materialGroups = $this->groupMaterialsByWork($materialLogs, $receipts, $periodFrom, $periodTo, $project->organization_id, $projectId);
 
         if (empty($materialGroups)) {
             Log::warning('Official usage report: no material data', ['project_id' => $projectId]);
@@ -94,7 +103,9 @@ class MaterialReportService
         Collection $materialLogs,
         Collection $receipts,
         Carbon $periodFrom,
-        Carbon $periodTo
+        Carbon $periodTo,
+        int $organizationId,
+        int $projectId
     ): array {
         $grouped = [];
         
@@ -121,6 +132,16 @@ class MaterialReportService
                 
                 $usedQuantity = $logs->where('operation_type', 'write_off')->sum('quantity');
                 $normQuantity = $logs->sum('production_norm_quantity') ?: $usedQuantity;
+
+                // Корректируем норму с учётом коэффициентов организации
+                $normQuantity = $this->rateCoefficientService->calculateAdjustedValue(
+                    $organizationId,
+                    $normQuantity,
+                    RateCoefficientAppliesToEnum::MATERIAL_NORMS->value,
+                    null,
+                    ['project_id' => $projectId, 'material_id' => $materialId]
+                );
+                
                 $previousBalance = $logs->first()->previous_month_balance ?? 0;
                 $currentBalance = $receivedQuantity + $previousBalance - $usedQuantity;
                 

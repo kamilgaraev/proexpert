@@ -2,6 +2,7 @@
 
 namespace App\Repositories\RateCoefficient;
 
+use App\Enums\RateCoefficient\RateCoefficientScopeEnum;
 use App\Models\RateCoefficient;
 use App\Repositories\BaseRepository;
 use App\Repositories\Interfaces\RateCoefficientRepositoryInterface;
@@ -75,18 +76,24 @@ class RateCoefficientRepository extends BaseRepository implements RateCoefficien
         if ($scope) {
             $query->where('scope', $scope);
         }
-        
-        // TODO: Добавить более сложную логику фильтрации по `conditions` и `contextualIds`
-        // Например, если scope = 'project', то искать в `conditions` -> `project_ids` совпадение с $contextualIds['project_id']
-        // На данный момент это базовая реализация, которую можно будет расширить.
-        // Пример для project_id, если он хранится в json `conditions`->`project_ids` (как массив)
-        // if (isset($contextualIds['project_id'])) {
-        //     $query->where(function(Builder $q) use ($contextualIds) {
-        //         $q->whereJsonContains('conditions->project_ids', $contextualIds['project_id'])
-        //           ->orWhereNull('conditions->project_ids'); // Либо если project_ids не задан (глобальнее в рамках scope)
-        //     });
-        // }
 
+        // Дополнительная фильтрация по контекстным идентификаторам
+        if (isset($contextualIds['project_id'])) {
+            $projectId = $contextualIds['project_id'];
+            $query->where(function (Builder $q) use ($projectId) {
+                $q->whereJsonContains('conditions->project_ids', $projectId)
+                  ->orWhereNull('conditions->project_ids');
+            });
+        }
+
+        if (isset($contextualIds['material_id'])) {
+            $materialId = $contextualIds['material_id'];
+            $query->where(function (Builder $q) use ($materialId) {
+                $q->whereJsonContains('conditions->material_ids', $materialId)
+                  ->orWhereNull('conditions->material_ids');
+            });
+        }
+        
         // TODO: Добавить сортировку по приоритету, если будет такое поле, или по специфичности scope
 
         return $query->get();
