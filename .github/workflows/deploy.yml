@@ -38,7 +38,11 @@ jobs:
             cd /var/www/prohelper && \
             git pull origin main && \
             composer install --no-interaction --prefer-dist --optimize-autoloader && \
+            # Ensure RoadRunner binary is up-to-date
+            vendor/bin/rr get-binary --location=/usr/local/bin/rr && \
             php artisan migrate --force && \
             php artisan route:cache && \
             php artisan config:cache && \
-            php artisan view:cache" 
+            php artisan view:cache && \
+            # Graceful reload of Octane (RoadRunner) service
+            sudo systemctl reload prohelper-octane" 
