@@ -70,6 +70,9 @@ class UserService
         /** @var User $user */
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id');
+        if (!$organizationId && $user) {
+            $organizationId = $user->current_organization_id; // Фолбэк, если атрибут не установлен middleware
+        }
 
         if (!$user || !$organizationId) { // Базовые проверки
             throw new BusinessLogicException('Действие доступно только авторизованному пользователю в контексте организации.', 403);
