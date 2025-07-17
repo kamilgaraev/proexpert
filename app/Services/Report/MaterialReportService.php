@@ -133,14 +133,16 @@ class MaterialReportService
                 $usedQuantity = $logs->where('operation_type', 'write_off')->sum('quantity');
                 $normQuantity = $logs->sum('production_norm_quantity') ?: $usedQuantity;
 
-                // Корректируем норму с учётом коэффициентов организации
-                $normQuantity = $this->rateCoefficientService->calculateAdjustedValue(
+                // Корректируем норму с учётом коэффициентов организации и получаем детали расчёта
+                $coeffResult = $this->rateCoefficientService->calculateAdjustedValueDetailed(
                     $organizationId,
                     $normQuantity,
                     RateCoefficientAppliesToEnum::MATERIAL_NORMS->value,
                     null,
                     ['project_id' => $projectId, 'material_id' => $materialId]
                 );
+
+                $normQuantity = $coeffResult['final'];
                 
                 $previousBalance = $logs->first()->previous_month_balance ?? 0;
                 $currentBalance = $receivedQuantity + $previousBalance - $usedQuantity;
@@ -163,6 +165,7 @@ class MaterialReportService
                     ],
                     'economy_overrun' => $economyOverrun,
                     'economy_percentage' => $normQuantity > 0 ? ($economyOverrun / $normQuantity) * 100 : 0,
+                    'coefficients_applied' => $coeffResult['applications'],
                 ];
             }
         }

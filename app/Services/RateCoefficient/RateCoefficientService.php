@@ -12,6 +12,7 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use App\Models\User; // Для getCurrentOrgId
 use Illuminate\Support\Facades\Log; // Для getCurrentOrgId
+use App\Enums\RateCoefficient\RateCoefficientTypeEnum;
 
 class RateCoefficientService
 {
@@ -167,6 +168,28 @@ class RateCoefficientService
         ?string $date = null
     ): float
     {
+        return $this->calculateAdjustedValueDetailed(
+            $organizationId,
+            $originalValue,
+            $appliesTo,
+            $scope,
+            $contextualIds,
+            $date
+        )['final'];
+    }
+
+    /**
+     * Рассчитывает скорректированное значение и возвращает детальную информацию
+     * о каждом применённом коэффициенте.
+     */
+    public function calculateAdjustedValueDetailed(
+        int $organizationId,
+        float $originalValue,
+        string $appliesTo, // RateCoefficientAppliesToEnum value
+        ?string $scope = null, // RateCoefficientScopeEnum value
+        array $contextualIds = [],
+        ?string $date = null
+    ): array {
         $coefficients = $this->coefficientRepository->findApplicableCoefficients(
             $organizationId,
             $appliesTo,
@@ -176,15 +199,31 @@ class RateCoefficientService
         );
 
         $adjusted = $originalValue;
+        $applications = [];
 
         foreach ($coefficients as $coeff) {
-            if ($coeff->type === \App\Enums\RateCoefficient\RateCoefficientTypeEnum::PERCENTAGE) {
+            $before = $adjusted;
+
+            if ($coeff->type === RateCoefficientTypeEnum::PERCENTAGE) {
                 $adjusted *= (1 + ($coeff->value / 100));
-            } elseif ($coeff->type === \App\Enums\RateCoefficient\RateCoefficientTypeEnum::FIXED_ADDITION) {
+            } elseif ($coeff->type === RateCoefficientTypeEnum::FIXED_ADDITION) {
                 $adjusted += $coeff->value;
             }
+
+            $applications[] = [
+                'id' => $coeff->id,
+                'name' => $coeff->name,
+                'type' => $coeff->type->value,
+                'value' => $coeff->value,
+                'before' => round($before, 4),
+                'after' => round($adjusted, 4),
+            ];
         }
 
-        return round($adjusted, 4);
+        return [
+            'original' => round($originalValue, 4),
+            'final' => round($adjusted, 4),
+            'applications' => $applications,
+        ];
     }
 } 

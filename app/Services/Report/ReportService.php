@@ -21,6 +21,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 use App\Services\Report\ReportTemplateService;
 use App\Models\ReportTemplate;
 use App\Services\Report\MaterialReportService;
+use App\Services\RateCoefficient\RateCoefficientService;
+use App\Enums\RateCoefficient\RateCoefficientAppliesToEnum;
 
 class ReportService
 {
@@ -32,6 +34,7 @@ class ReportService
     protected ExcelExporterService $excelExporter;
     protected ReportTemplateService $reportTemplateService;
     protected MaterialReportService $materialReportService;
+    protected RateCoefficientService $rateCoefficientService;
 
     public function __construct(
         MaterialUsageLogRepositoryInterface $materialLogRepo,
@@ -41,7 +44,8 @@ class ReportService
         CsvExporterService $csvExporter,
         ExcelExporterService $excelExporter,
         ReportTemplateService $reportTemplateService,
-        MaterialReportService $materialReportService
+        MaterialReportService $materialReportService,
+        RateCoefficientService $rateCoefficientService
     ) {
         $this->materialLogRepo = $materialLogRepo;
         $this->workLogRepo = $workLogRepo;
@@ -51,6 +55,7 @@ class ReportService
         $this->excelExporter = $excelExporter;
         $this->reportTemplateService = $reportTemplateService;
         $this->materialReportService = $materialReportService;
+        $this->rateCoefficientService = $rateCoefficientService;
     }
 
     /**
@@ -277,7 +282,21 @@ class ReportService
             $request->query('sort_by', 'completion_date'),
             $request->query('sort_direction', 'desc')
         );
-        $logEntries = collect($allLogsPaginator->items());
+        $logEntries = collect($allLogsPaginator->items())->map(function ($entry) use ($organizationId) {
+            // Добавляем коэффициенты стоимости работ
+            if (isset($entry->total_price)) {
+                $coeff = $this->rateCoefficientService->calculateAdjustedValueDetailed(
+                    $organizationId,
+                    (float)$entry->total_price,
+                    RateCoefficientAppliesToEnum::WORK_COSTS->value,
+                    null,
+                    ['project_id' => $entry->project_id, 'work_type_id' => $entry->work_type_id]
+                );
+                $entry->total_price_adjusted = $coeff['final'];
+                $entry->coefficients_applied = $coeff['applications'];
+            }
+            return $entry;
+        });
 
         if ($request->query('format') === 'csv') {
             $reportTemplate = $this->reportTemplateService->getTemplateForReport('work_completion', $request, $templateId);

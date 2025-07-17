@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\RateCoefficientController;
 
 Route::apiResource('rate-coefficients', RateCoefficientController::class);
+Route::post('rate-coefficients/apply', [\App\Http\Controllers\Api\V1\Admin\RateCoefficientApplyController::class, 'apply']);
 
 // Сюда можно будет добавить специфичные роуты для коэффициентов, если понадобятся
 // например, для массового обновления или получения списка для конкретного контекста

@@ -16,14 +16,20 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Rules\ProjectAccessibleRule;
+use App\Services\RateCoefficient\RateCoefficientService;
+use App\Enums\RateCoefficient\RateCoefficientAppliesToEnum;
 
 class CompletedWorkService
 {
     protected CompletedWorkRepositoryInterface $completedWorkRepository;
+    protected RateCoefficientService $rateCoefficientService;
 
-    public function __construct(CompletedWorkRepositoryInterface $completedWorkRepository)
-    {
+    public function __construct(
+        CompletedWorkRepositoryInterface $completedWorkRepository,
+        RateCoefficientService $rateCoefficientService
+    ) {
         $this->completedWorkRepository = $completedWorkRepository;
+        $this->rateCoefficientService = $rateCoefficientService;
     }
 
     public function getAll(array $filters = [], int $perPage = 15, string $sortBy = 'completion_date', string $sortDirection = 'desc', array $relations = []): LengthAwarePaginator
@@ -82,6 +88,21 @@ class CompletedWorkService
                     if ($data['price'] === null && $data['quantity'] > 0) {
                         $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
                     }
+                }
+            }
+
+            // Применяем коэффициенты к стоимости работ, если рассчитана сумма
+            if (isset($data['total_amount'])) {
+                $coeff = $this->rateCoefficientService->calculateAdjustedValueDetailed(
+                    $dto->organization_id,
+                    $data['total_amount'],
+                    RateCoefficientAppliesToEnum::WORK_COSTS->value,
+                    null,
+                    ['project_id' => $dto->project_id, 'work_type_id' => $dto->work_type_id]
+                );
+                $data['total_amount'] = $coeff['final'];
+                if ($data['quantity'] > 0) {
+                    $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
                 }
             }
 
@@ -144,6 +165,21 @@ class CompletedWorkService
                     if ($data['price'] === null && $data['quantity'] > 0) {
                         $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
                     }
+                }
+            }
+
+            // Применяем коэффициенты к стоимости работ
+            if (isset($data['total_amount'])) {
+                $coeff = $this->rateCoefficientService->calculateAdjustedValueDetailed(
+                    $dto->organization_id,
+                    $data['total_amount'],
+                    RateCoefficientAppliesToEnum::WORK_COSTS->value,
+                    null,
+                    ['project_id' => $dto->project_id, 'work_type_id' => $dto->work_type_id]
+                );
+                $data['total_amount'] = $coeff['final'];
+                if ($data['quantity'] > 0) {
+                    $data['price'] = round($data['total_amount'] / $data['quantity'], 2);
                 }
             }
 
