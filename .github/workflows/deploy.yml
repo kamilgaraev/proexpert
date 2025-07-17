@@ -44,5 +44,5 @@ jobs:
             php artisan route:cache && \
             php artisan config:cache && \
             php artisan view:cache && \
-            # Graceful reload of Octane (RoadRunner) service
-            sudo systemctl reload prohelper-octane" 
+            # Restart Octane (RoadRunner) service
+            sudo systemctl restart prohelper-octane" 
