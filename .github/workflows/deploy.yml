@@ -38,8 +38,8 @@ jobs:
             cd /var/www/prohelper && \
             git pull origin main && \
             composer install --no-interaction --prefer-dist --optimize-autoloader && \
-            # Ensure RoadRunner binary is up-to-date
-            vendor/bin/rr get-binary --location=/usr/local/bin && \
+            # Download RR binary only if not present to avoid interactive prompt
+            if [ ! -f /usr/local/bin/rr ]; then vendor/bin/rr get-binary --location=/usr/local/bin --no-config --stability=stable; fi && \
             php artisan migrate --force && \
             php artisan route:cache && \
             php artisan config:cache && \
