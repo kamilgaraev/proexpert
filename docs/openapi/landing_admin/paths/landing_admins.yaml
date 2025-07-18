@@ -12,7 +12,7 @@
             schema:
               type: array
               items:
-                $ref: '#/components/schemas/LandingAdmin'
+                $ref: '../openapi.yaml#/components/schemas/LandingAdmin'
   post:
     tags: [LandingAdmins]
     summary: "Create landing admin"
@@ -23,14 +23,14 @@
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/LandingAdminCreateRequest'
+            $ref: '../openapi.yaml#/components/schemas/LandingAdminCreateRequest'
     responses:
       '201':
         description: "Created"
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LandingAdmin'
+              $ref: '../openapi.yaml#/components/schemas/LandingAdmin'
 
 /landing-admins/{id}:
   parameters:
@@ -50,7 +50,7 @@
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LandingAdmin'
+              $ref: '../openapi.yaml#/components/schemas/LandingAdmin'
   put:
     tags: [LandingAdmins]
     summary: "Update landing admin"
@@ -61,14 +61,14 @@
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/LandingAdminUpdateRequest'
+            $ref: '../openapi.yaml#/components/schemas/LandingAdminUpdateRequest'
     responses:
       '200':
         description: "Updated"
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LandingAdmin'
+              $ref: '../openapi.yaml#/components/schemas/LandingAdmin'
   delete:
     tags: [LandingAdmins]
     summary: "Delete landing admin"
