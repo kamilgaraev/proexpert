@@ -1,0 +1,4 @@
+/landing-admins:
+  $ref: './landing_admins.yaml#/~1landing-admins'
+/landing-admins/{id}:
+  $ref: './landing_admins.yaml#/~1landing-admins~1{id}' 

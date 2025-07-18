@@ -1,0 +1,61 @@
+/landing-admins:
+  get:
+    tags: [LandingAdmins]
+    summary: "List landing admins"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Successful response"
+  post:
+    tags: [LandingAdmins]
+    summary: "Create landing admin"
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '201':
+        description: "Created"
+
+/landing-admins/{id}:
+  parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+  get:
+    tags: [LandingAdmins]
+    summary: "Get landing admin"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Successful response"
+  put:
+    tags: [LandingAdmins]
+    summary: "Update landing admin"
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+    responses:
+      '200':
+        description: "Updated"
+  delete:
+    tags: [LandingAdmins]
+    summary: "Delete landing admin"
+    security:
+      - bearerAuth: []
+    responses:
+      '204':
+        description: "Deleted" 

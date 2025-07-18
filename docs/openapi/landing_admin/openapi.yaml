@@ -1,0 +1,19 @@
+openapi: 3.1.0
+info:
+  title: "ProHelper Landing Admin API"
+  description: |
+    Спецификация API админ-панели (Landing Admin). Добавляйте пути через `$ref` в папку `paths/`.
+  version: "1.0.0"
+servers:
+  - url: "/api/v1/landing"
+    description: "Production server"
+  - url: "http://localhost:8000/api/v1/landing"
+    description: "Local development"
+paths:
+  $ref: './paths/index.yaml'
+components:
+  securitySchemes:
+    $ref: './components/securitySchemes.yaml'
+  schemas: {}
+  responses: {}
+  parameters: {} 

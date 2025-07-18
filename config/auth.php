@@ -55,6 +55,11 @@ return [
             'driver' => 'jwt',
             'provider' => 'users',
         ],
+
+        'api_landing_admin' => [
+            'driver' => 'jwt',
+            'provider' => 'landing_admins',
+        ],
     ],
 
     /*
@@ -84,6 +89,11 @@ return [
         //     'driver' => 'database',
         //     'table' => 'users',
         // ],
+
+        'landing_admins' => [
+            'driver' => 'eloquent',
+            'model' => App\Models\LandingAdmin::class,
+        ],
     ],
 
     /*
