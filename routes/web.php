@@ -22,7 +22,7 @@ Route::get('/login', function () {
 Route::get('/metrics', [App\Http\Controllers\MetricsController::class, 'metrics']);
 
 Route::get('/docs/{type?}', function (string $type = 'lk') {
-    $allowed = ['lk', 'admin', 'mobile'];
+    $allowed = ['lk', 'admin', 'mobile', 'landing_admin'];
     $type = in_array($type, $allowed) ? $type : 'lk';
     $path = public_path("docs/{$type}_api.html");
     if (!file_exists($path)) {
