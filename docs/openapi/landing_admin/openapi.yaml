@@ -14,6 +14,12 @@ paths:
 components:
   securitySchemes:
     $ref: './components/securitySchemes.yaml'
-  schemas: {}
+  schemas:
+    LandingAdmin:
+      $ref: './components/schemas/LandingAdmin.yaml'
+    LandingAdminCreateRequest:
+      $ref: './components/schemas/LandingAdminCreateRequest.yaml'
+    LandingAdminUpdateRequest:
+      $ref: './components/schemas/LandingAdminUpdateRequest.yaml'
   responses: {}
   parameters: {} 

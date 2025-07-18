@@ -22,6 +22,7 @@ class LandingAdmin extends Authenticatable implements JWTSubject
         'name',
         'email',
         'password',
+        'role',
     ];
 
     /**
@@ -40,6 +41,7 @@ class LandingAdmin extends Authenticatable implements JWTSubject
     protected $casts = [
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
+        'is_super' => 'boolean',
     ];
 
     // --- JWT implementation ----

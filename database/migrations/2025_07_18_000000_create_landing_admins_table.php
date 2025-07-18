@@ -17,6 +17,9 @@ return new class extends Migration
             $table->string('email')->unique();
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
+            $table->string('role')->default('admin');
+            // Отметка супер-администратора (первый/главный)
+            $table->boolean('is_super')->default(false);
             $table->rememberToken();
             $table->timestamps();
             

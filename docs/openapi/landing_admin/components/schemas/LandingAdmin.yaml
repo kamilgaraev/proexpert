@@ -1,0 +1,21 @@
+type: object
+properties:
+  id:
+    type: integer
+  name:
+    type: string
+  email:
+    type: string
+    format: email
+  role:
+    type: string
+    description: "Роль администратора (admin, super_admin, ... )"
+  is_super:
+    type: boolean
+  created_at:
+    type: string
+    format: date-time
+  updated_at:
+    type: string
+    format: date-time
+required: [id, name, email, role, is_super, created_at, updated_at] 

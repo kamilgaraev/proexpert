@@ -28,9 +28,13 @@ class LandingAdminController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'email', 'max:255', 'unique:landing_admins,email'],
             'password' => ['required', 'string', 'min:8'],
+            'role' => ['sometimes', 'string', 'max:50'],
         ]);
 
         $data['password'] = Hash::make($data['password']);
+        if (!isset($data['role'])) {
+            $data['role'] = 'admin';
+        }
 
         $admin = LandingAdmin::create($data);
         return response()->json($admin, 201);
@@ -53,10 +57,14 @@ class LandingAdminController extends Controller
             'name' => ['sometimes', 'string', 'max:255'],
             'email' => ['sometimes', 'string', 'email', 'max:255', Rule::unique('landing_admins')->ignore($landingAdmin->id)],
             'password' => ['sometimes', 'string', 'min:8'],
+            'role' => ['sometimes', 'string', 'max:50'],
         ]);
 
         if (isset($data['password'])) {
             $data['password'] = Hash::make($data['password']);
+        }
+        if (!isset($data['role'])) {
+            $data['role'] = 'admin';
         }
 
         $landingAdmin->update($data);
