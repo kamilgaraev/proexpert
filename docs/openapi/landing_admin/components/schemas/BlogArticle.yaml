@@ -1,0 +1,158 @@
+type: object
+properties:
+  id:
+    type: integer
+    example: 1
+  title:
+    type: string
+    example: "Как создать SEO-оптимизированный блог"
+  slug:
+    type: string
+    example: "kak-sozdat-seo-optimizirovannyj-blog"
+  excerpt:
+    type: string
+    nullable: true
+    example: "Краткое описание статьи для превью"
+  content:
+    type: string
+    example: "<p>Полное содержимое статьи в HTML формате</p>"
+  featured_image:
+    type: string
+    nullable: true
+    example: "/storage/blog/images/article-1.jpg"
+  gallery_images:
+    type: array
+    nullable: true
+    items:
+      type: string
+    example: ["/storage/blog/images/gallery-1.jpg", "/storage/blog/images/gallery-2.jpg"]
+  
+  # SEO fields
+  meta_title:
+    type: string
+    nullable: true
+    example: "Как создать SEO-оптимизированный блог | ProHelper"
+  meta_description:
+    type: string
+    nullable: true
+    example: "Подробное руководство по созданию блога с учетом SEO требований. Пошаговая инструкция для начинающих."
+  meta_keywords:
+    type: array
+    nullable: true
+    items:
+      type: string
+    example: ["seo", "блог", "оптимизация", "контент-маркетинг"]
+  og_title:
+    type: string
+    nullable: true
+    example: "Как создать SEO-оптимизированный блог"
+  og_description:
+    type: string
+    nullable: true
+    example: "Узнайте, как создать блог, который будет привлекать трафик из поисковых систем"
+  og_image:
+    type: string
+    nullable: true
+    example: "/storage/blog/images/og-article-1.jpg"
+  structured_data:
+    type: object
+    nullable: true
+    example:
+      "@context": "https://schema.org"
+      "@type": "BlogPosting"
+      "headline": "Как создать SEO-оптимизированный блог"
+  
+  # Status and dates
+  status:
+    type: string
+    enum: [draft, published, scheduled, archived]
+    example: "published"
+  published_at:
+    type: string
+    format: date-time
+    nullable: true
+    example: "2025-01-19T15:30:00.000000Z"
+  scheduled_at:
+    type: string
+    format: date-time
+    nullable: true
+    example: "2025-01-20T10:00:00.000000Z"
+  
+  # Counters
+  views_count:
+    type: integer
+    example: 1250
+  likes_count:
+    type: integer
+    example: 45
+  comments_count:
+    type: integer
+    example: 12
+  reading_time:
+    type: integer
+    nullable: true
+    example: 5
+  estimated_reading_time:
+    type: integer
+    example: 5
+  
+  # Flags
+  is_featured:
+    type: boolean
+    example: true
+  allow_comments:
+    type: boolean
+    example: true
+  is_published_in_rss:
+    type: boolean
+    example: true
+  noindex:
+    type: boolean
+    example: false
+  sort_order:
+    type: integer
+    example: 0
+  
+  # Computed fields
+  url:
+    type: string
+    example: "/blog/kak-sozdat-seo-optimizirovannyj-blog"
+  is_published:
+    type: boolean
+    example: true
+  readable_published_at:
+    type: string
+    example: "19.01.2025 15:30"
+  
+  # Relations
+  category:
+    $ref: './BlogCategory.yaml'
+  author:
+    type: object
+    properties:
+      id:
+        type: integer
+        example: 1
+      name:
+        type: string
+        example: "Иван Петров"
+      email:
+        type: string
+        example: "ivan@example.com"
+  tags:
+    type: array
+    items:
+      $ref: './BlogTag.yaml'
+  comments:
+    type: array
+    items:
+      $ref: './BlogComment.yaml'
+  
+  created_at:
+    type: string
+    format: date-time
+    example: "2025-01-19T12:00:00.000000Z"
+  updated_at:
+    type: string
+    format: date-time
+    example: "2025-01-19T15:30:00.000000Z" 

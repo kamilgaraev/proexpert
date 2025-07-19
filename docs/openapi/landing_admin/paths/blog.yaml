@@ -1,0 +1,707 @@
+# Dashboard endpoints
+/blog/dashboard/overview:
+  get:
+    tags: [Blog Dashboard]
+    summary: "Обзор блога"
+    description: "Возвращает общую статистику блога: количество статей, комментариев, популярные статьи"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Успешный ответ"
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/BlogDashboard'
+
+/blog/dashboard/analytics:
+  get:
+    tags: [Blog Dashboard]
+    summary: "Аналитика блога"
+    description: "Детальная аналитика с графиками и статистикой за период"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: period
+        in: query
+        schema:
+          type: string
+          enum: [week, month, quarter, year]
+          default: month
+      - name: start_date
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: end_date
+        in: query
+        schema:
+          type: string
+          format: date
+    responses:
+      '200':
+        description: "Аналитические данные"
+        content:
+          application/json:
+            schema:
+              $ref: '../openapi.yaml#/components/schemas/BlogAnalytics'
+
+/blog/dashboard/quick-stats:
+  get:
+    tags: [Blog Dashboard]
+    summary: "Быстрая статистика"
+    description: "Сравнение показателей сегодня/вчера, этот/прошлый месяц"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Быстрая статистика"
+
+# Articles endpoints
+/blog/articles:
+  get:
+    tags: [Blog Articles]
+    summary: "Список статей"
+    description: "Получение списка статей с фильтрацией и поиском"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum: [draft, published, scheduled, archived]
+      - name: category_id
+        in: query
+        schema:
+          type: integer
+      - name: author_id
+        in: query
+        schema:
+          type: integer
+      - name: search
+        in: query
+        schema:
+          type: string
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          default: 15
+    responses:
+      '200':
+        description: "Список статей"
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../openapi.yaml#/components/schemas/BlogArticle'
+                meta:
+                  type: object
+                links:
+                  type: object
+  
+  post:
+    tags: [Blog Articles]
+    summary: "Создание статьи"
+    description: "Создание новой статьи блога"
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/BlogArticleCreateRequest'
+    responses:
+      '201':
+        description: "Статья создана"
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                message:
+                  type: string
+                data:
+                  $ref: '../openapi.yaml#/components/schemas/BlogArticle'
+
+/blog/articles/{id}:
+  get:
+    tags: [Blog Articles]
+    summary: "Получение статьи"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200':
+        description: "Данные статьи"
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                data:
+                  $ref: '../openapi.yaml#/components/schemas/BlogArticle'
+  
+  put:
+    tags: [Blog Articles]
+    summary: "Обновление статьи"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/BlogArticleUpdateRequest'
+    responses:
+      '200':
+        description: "Статья обновлена"
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                message:
+                  type: string
+                data:
+                  $ref: '../openapi.yaml#/components/schemas/BlogArticle'
+  
+  delete:
+    tags: [Blog Articles]
+    summary: "Удаление статьи"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200':
+        description: "Статья удалена"
+
+/blog/articles/{id}/publish:
+  post:
+    tags: [Blog Articles]
+    summary: "Публикация статьи"
+    description: "Немедленная публикация статьи или в указанное время"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              publish_at:
+                type: string
+                format: date-time
+                description: "Время публикации (опционально)"
+    responses:
+      '200':
+        description: "Статья опубликована"
+
+/blog/articles/{id}/schedule:
+  post:
+    tags: [Blog Articles]
+    summary: "Планирование статьи"
+    description: "Запланировать публикацию статьи на определенное время"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [scheduled_at]
+            properties:
+              scheduled_at:
+                type: string
+                format: date-time
+    responses:
+      '200':
+        description: "Статья запланирована"
+
+/blog/articles/{id}/archive:
+  post:
+    tags: [Blog Articles]
+    summary: "Архивирование статьи"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200':
+        description: "Статья архивирована"
+
+/blog/articles/{id}/duplicate:
+  post:
+    tags: [Blog Articles]
+    summary: "Дублирование статьи"
+    description: "Создает копию статьи в статусе черновика"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200':
+        description: "Статья дублирована"
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                message:
+                  type: string
+                data:
+                  $ref: '../openapi.yaml#/components/schemas/BlogArticle'
+
+/blog/articles/{id}/seo-data:
+  get:
+    tags: [Blog Articles]
+    summary: "Генерация SEO данных"
+    description: "Автоматическая генерация SEO данных для статьи"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200':
+        description: "SEO данные сгенерированы"
+
+/blog/articles-scheduled:
+  get:
+    tags: [Blog Articles]
+    summary: "Запланированные статьи"
+    description: "Список статей, запланированных к публикации"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Список запланированных статей"
+
+/blog/articles-drafts:
+  get:
+    tags: [Blog Articles]
+    summary: "Черновики автора"
+    description: "Черновики текущего автора"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Список черновиков"
+
+# Categories endpoints
+/blog/categories:
+  get:
+    tags: [Blog Categories]
+    summary: "Список категорий"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Список категорий"
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                data:
+                  type: array
+                  items:
+                    $ref: '../openapi.yaml#/components/schemas/BlogCategory'
+  
+  post:
+    tags: [Blog Categories]
+    summary: "Создание категории"
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/BlogCategoryRequest'
+    responses:
+      '201':
+        description: "Категория создана"
+
+/blog/categories/{id}:
+  get:
+    tags: [Blog Categories]
+    summary: "Получение категории"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200':
+        description: "Данные категории"
+  
+  put:
+    tags: [Blog Categories]
+    summary: "Обновление категории"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/BlogCategoryRequest'
+    responses:
+      '200':
+        description: "Категория обновлена"
+  
+  delete:
+    tags: [Blog Categories]
+    summary: "Удаление категории"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200':
+        description: "Категория удалена"
+
+/blog/categories/reorder:
+  post:
+    tags: [Blog Categories]
+    summary: "Изменение порядка категорий"
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [category_ids]
+            properties:
+              category_ids:
+                type: array
+                items:
+                  type: integer
+    responses:
+      '200':
+        description: "Порядок изменен"
+
+# Comments endpoints
+/blog/comments:
+  get:
+    tags: [Blog Comments]
+    summary: "Список комментариев"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum: [pending, approved, rejected, spam]
+      - name: article_id
+        in: query
+        schema:
+          type: integer
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          default: 20
+    responses:
+      '200':
+        description: "Список комментариев"
+
+/blog/comments/{id}:
+  get:
+    tags: [Blog Comments]
+    summary: "Получение комментария"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200':
+        description: "Данные комментария"
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                data:
+                  $ref: '../openapi.yaml#/components/schemas/BlogComment'
+  
+  delete:
+    tags: [Blog Comments]
+    summary: "Удаление комментария"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    responses:
+      '200':
+        description: "Комментарий удален"
+
+/blog/comments/{id}/status:
+  put:
+    tags: [Blog Comments]
+    summary: "Изменение статуса комментария"
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/BlogCommentStatusRequest'
+    responses:
+      '200':
+        description: "Статус изменен"
+
+/blog/comments/bulk-status:
+  post:
+    tags: [Blog Comments]
+    summary: "Массовое изменение статуса"
+    description: "Изменение статуса нескольких комментариев одновременно"
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [status, comment_ids]
+            properties:
+              status:
+                type: string
+                enum: [approved, rejected, spam]
+              comment_ids:
+                type: array
+                items:
+                  type: integer
+    responses:
+      '200':
+        description: "Статусы изменены"
+
+/blog/comments-pending:
+  get:
+    tags: [Blog Comments]
+    summary: "Ожидающие комментарии"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Список ожидающих модерации комментариев"
+
+/blog/comments-recent:
+  get:
+    tags: [Blog Comments]
+    summary: "Последние комментарии"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Список последних комментариев"
+
+/blog/comments/stats:
+  get:
+    tags: [Blog Comments]
+    summary: "Статистика комментариев"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Статистика по статусам комментариев"
+
+# SEO endpoints
+/blog/seo/settings:
+  get:
+    tags: [Blog SEO]
+    summary: "Получение SEO настроек"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "SEO настройки"
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                data:
+                  $ref: '../openapi.yaml#/components/schemas/BlogSeoSettings'
+  
+  put:
+    tags: [Blog SEO]
+    summary: "Обновление SEO настроек"
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../openapi.yaml#/components/schemas/BlogSeoSettings'
+    responses:
+      '200':
+        description: "Настройки обновлены"
+
+/blog/seo/sitemap:
+  get:
+    tags: [Blog SEO]
+    summary: "Генерация sitemap.xml"
+    description: "Генерирует XML sitemap для поисковых систем"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "XML sitemap"
+        content:
+          application/xml:
+            schema:
+              type: string
+
+/blog/seo/rss:
+  get:
+    tags: [Blog SEO]
+    summary: "Генерация RSS-ленты"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "RSS feed"
+        content:
+          application/rss+xml:
+            schema:
+              type: string
+
+/blog/seo/robots:
+  get:
+    tags: [Blog SEO]
+    summary: "Генерация robots.txt"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "robots.txt content"
+        content:
+          text/plain:
+            schema:
+              type: string
+
+/blog/seo/preview/sitemap:
+  get:
+    tags: [Blog SEO]
+    summary: "Предпросмотр sitemap"
+    description: "Предпросмотр XML sitemap в JSON формате"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Предпросмотр sitemap"
+
+/blog/seo/preview/rss:
+  get:
+    tags: [Blog SEO]
+    summary: "Предпросмотр RSS"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Предпросмотр RSS"
+
+/blog/seo/preview/robots:
+  get:
+    tags: [Blog SEO]
+    summary: "Предпросмотр robots.txt"
+    security:
+      - bearerAuth: []
+    responses:
+      '200':
+        description: "Предпросмотр robots.txt" 

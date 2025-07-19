@@ -1,0 +1,161 @@
+type: object
+properties:
+  articles:
+    type: object
+    properties:
+      total:
+        type: integer
+        example: 45
+        description: "Общее количество статей"
+      published:
+        type: integer
+        example: 32
+        description: "Количество опубликованных статей"
+      drafts:
+        type: integer
+        example: 8
+        description: "Количество черновиков"
+      scheduled:
+        type: integer
+        example: 5
+        description: "Количество запланированных статей"
+  
+  categories:
+    type: object
+    properties:
+      total:
+        type: integer
+        example: 6
+        description: "Общее количество категорий"
+      active:
+        type: integer
+        example: 5
+        description: "Количество активных категорий"
+  
+  tags:
+    type: object
+    properties:
+      total:
+        type: integer
+        example: 24
+        description: "Общее количество тегов"
+      active:
+        type: integer
+        example: 20
+        description: "Количество активных тегов"
+  
+  comments:
+    type: object
+    properties:
+      total:
+        type: integer
+        example: 156
+        description: "Общее количество комментариев"
+      pending:
+        type: integer
+        example: 12
+        description: "Комментарии ожидающие модерации"
+      approved:
+        type: integer
+        example: 130
+        description: "Одобренные комментарии"
+      rejected:
+        type: integer
+        example: 8
+        description: "Отклоненные комментарии"
+      spam:
+        type: integer
+        example: 6
+        description: "Спам комментарии"
+  
+  popular_articles:
+    type: array
+    description: "Популярные статьи"
+    items:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: "Как создать SEO-оптимизированный блог"
+        views_count:
+          type: integer
+          example: 1250
+        likes_count:
+          type: integer
+          example: 45
+        comments_count:
+          type: integer
+          example: 12
+        category:
+          type: object
+          properties:
+            id:
+              type: integer
+              example: 1
+            name:
+              type: string
+              example: "SEO и Маркетинг"
+  
+  recent_articles:
+    type: array
+    description: "Последние статьи"
+    items:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 5
+        title:
+          type: string
+          example: "Новые тренды в веб-разработке 2025"
+        status:
+          type: string
+          example: "published"
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-01-19T15:30:00.000000Z"
+        author:
+          type: object
+          properties:
+            id:
+              type: integer
+              example: 1
+            name:
+              type: string
+              example: "Иван Петров"
+  
+  recent_comments:
+    type: array
+    description: "Последние комментарии"
+    items:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 25
+        author_name:
+          type: string
+          example: "Мария Иванова"
+        content:
+          type: string
+          example: "Отличная статья, спасибо за информацию!"
+        status:
+          type: string
+          example: "pending"
+        created_at:
+          type: string
+          format: date-time
+          example: "2025-01-19T16:15:00.000000Z"
+        article:
+          type: object
+          properties:
+            id:
+              type: integer
+              example: 3
+            title:
+              type: string
+              example: "Основы контент-маркетинга" 

@@ -1,0 +1,135 @@
+type: object
+properties:
+  title:
+    type: string
+    maxLength: 255
+    example: "Как создать SEO-оптимизированный блог (обновлено)"
+    description: "Заголовок статьи"
+  slug:
+    type: string
+    maxLength: 255
+    nullable: true
+    example: "kak-sozdat-seo-optimizirovannyj-blog"
+    description: "URL slug"
+  category_id:
+    type: integer
+    example: 2
+    description: "ID категории блога"
+  excerpt:
+    type: string
+    maxLength: 500
+    nullable: true
+    example: "Обновленное краткое описание статьи"
+    description: "Краткое описание статьи"
+  content:
+    type: string
+    example: "<p>Обновленное содержимое статьи в HTML формате</p>"
+    description: "Содержимое статьи в HTML"
+  featured_image:
+    type: string
+    nullable: true
+    example: "/storage/blog/images/article-1-updated.jpg"
+    description: "URL главного изображения"
+  gallery_images:
+    type: array
+    nullable: true
+    items:
+      type: string
+    example: ["/storage/blog/images/gallery-1.jpg"]
+    description: "Массив URL изображений галереи"
+  
+  # SEO fields
+  meta_title:
+    type: string
+    maxLength: 60
+    nullable: true
+    example: "Как создать SEO-оптимизированный блог | ProHelper"
+    description: "Meta title для SEO (до 60 символов)"
+  meta_description:
+    type: string
+    maxLength: 160
+    nullable: true
+    example: "Обновленное руководство по созданию блога."
+    description: "Meta description для SEO (до 160 символов)"
+  meta_keywords:
+    type: array
+    nullable: true
+    items:
+      type: string
+      maxLength: 50
+    example: ["seo", "блог", "контент"]
+    description: "Ключевые слова для SEO"
+  og_title:
+    type: string
+    maxLength: 60
+    nullable: true
+    example: "Как создать SEO-оптимизированный блог"
+    description: "Open Graph title"
+  og_description:
+    type: string
+    maxLength: 200
+    nullable: true
+    example: "Обновленное описание для социальных сетей"
+    description: "Open Graph description"
+  og_image:
+    type: string
+    nullable: true
+    example: "/storage/blog/images/og-article-1.jpg"
+    description: "Open Graph изображение"
+  
+  # Status and scheduling
+  status:
+    type: string
+    enum: [draft, published, scheduled, archived]
+    example: "published"
+    description: "Статус статьи"
+  published_at:
+    type: string
+    format: date-time
+    nullable: true
+    example: "2025-01-19T15:30:00.000000Z"
+    description: "Дата публикации"
+  scheduled_at:
+    type: string
+    format: date-time
+    nullable: true
+    example: "2025-01-20T10:00:00.000000Z"
+    description: "Дата запланированной публикации"
+  
+  # Settings
+  is_featured:
+    type: boolean
+    nullable: true
+    example: true
+    description: "Рекомендуемая статья"
+  allow_comments:
+    type: boolean
+    nullable: true
+    example: true
+    description: "Разрешить комментарии"
+  is_published_in_rss:
+    type: boolean
+    nullable: true
+    example: true
+    description: "Включить в RSS-ленту"
+  noindex:
+    type: boolean
+    nullable: true
+    example: false
+    description: "Запретить индексацию поисковыми системами"
+  sort_order:
+    type: integer
+    nullable: true
+    minimum: 0
+    example: 5
+    description: "Порядок сортировки"
+  
+  # Tags
+  tags:
+    type: array
+    nullable: true
+    items:
+      type: string
+      maxLength: 50
+    example: ["seo", "блог", "контент-маркетинг"]
+    description: "Массив названий тегов (существующие или новые)" 

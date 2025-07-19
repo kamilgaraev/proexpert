@@ -1,0 +1,15 @@
+type: object
+required:
+  - status
+properties:
+  status:
+    type: string
+    enum: [pending, approved, rejected, spam]
+    example: "approved"
+    description: "Новый статус комментария"
+  comment_ids:
+    type: array
+    items:
+      type: integer
+    example: [1, 2, 3]
+    description: "Массив ID комментариев (для массовых операций)" 

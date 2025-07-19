@@ -1,0 +1,34 @@
+type: object
+properties:
+  id:
+    type: integer
+    example: 1
+  name:
+    type: string
+    example: "SEO"
+  slug:
+    type: string
+    example: "seo"
+  description:
+    type: string
+    nullable: true
+    example: "Поисковая оптимизация"
+  color:
+    type: string
+    example: "#6c757d"
+    description: "Цвет тега в формате HEX"
+  usage_count:
+    type: integer
+    example: 25
+    description: "Количество использований тега"
+  is_active:
+    type: boolean
+    example: true
+  created_at:
+    type: string
+    format: date-time
+    example: "2025-01-15T10:00:00.000000Z"
+  updated_at:
+    type: string
+    format: date-time
+    example: "2025-01-19T14:30:00.000000Z" 

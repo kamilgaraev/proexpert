@@ -9,4 +9,68 @@
 /landing-admins:
   $ref: './landing_admins.yaml#/~1landing-admins'
 /landing-admins/{id}:
-  $ref: './landing_admins.yaml#/~1landing-admins~1{id}' 
+  $ref: './landing_admins.yaml#/~1landing-admins~1{id}'
+
+# Blog paths
+/blog/dashboard/overview:
+  $ref: './blog.yaml#/~1blog~1dashboard~1overview'
+/blog/dashboard/analytics:
+  $ref: './blog.yaml#/~1blog~1dashboard~1analytics'
+/blog/dashboard/quick-stats:
+  $ref: './blog.yaml#/~1blog~1dashboard~1quick-stats'
+
+/blog/articles:
+  $ref: './blog.yaml#/~1blog~1articles'
+/blog/articles/{id}:
+  $ref: './blog.yaml#/~1blog~1articles~1{id}'
+/blog/articles/{id}/publish:
+  $ref: './blog.yaml#/~1blog~1articles~1{id}~1publish'
+/blog/articles/{id}/schedule:
+  $ref: './blog.yaml#/~1blog~1articles~1{id}~1schedule'
+/blog/articles/{id}/archive:
+  $ref: './blog.yaml#/~1blog~1articles~1{id}~1archive'
+/blog/articles/{id}/duplicate:
+  $ref: './blog.yaml#/~1blog~1articles~1{id}~1duplicate'
+/blog/articles/{id}/seo-data:
+  $ref: './blog.yaml#/~1blog~1articles~1{id}~1seo-data'
+/blog/articles-scheduled:
+  $ref: './blog.yaml#/~1blog~1articles-scheduled'
+/blog/articles-drafts:
+  $ref: './blog.yaml#/~1blog~1articles-drafts'
+
+/blog/categories:
+  $ref: './blog.yaml#/~1blog~1categories'
+/blog/categories/{id}:
+  $ref: './blog.yaml#/~1blog~1categories~1{id}'
+/blog/categories/reorder:
+  $ref: './blog.yaml#/~1blog~1categories~1reorder'
+
+/blog/comments:
+  $ref: './blog.yaml#/~1blog~1comments'
+/blog/comments/{id}:
+  $ref: './blog.yaml#/~1blog~1comments~1{id}'
+/blog/comments/{id}/status:
+  $ref: './blog.yaml#/~1blog~1comments~1{id}~1status'
+/blog/comments/bulk-status:
+  $ref: './blog.yaml#/~1blog~1comments~1bulk-status'
+/blog/comments-pending:
+  $ref: './blog.yaml#/~1blog~1comments-pending'
+/blog/comments-recent:
+  $ref: './blog.yaml#/~1blog~1comments-recent'
+/blog/comments/stats:
+  $ref: './blog.yaml#/~1blog~1comments~1stats'
+
+/blog/seo/settings:
+  $ref: './blog.yaml#/~1blog~1seo~1settings'
+/blog/seo/sitemap:
+  $ref: './blog.yaml#/~1blog~1seo~1sitemap'
+/blog/seo/rss:
+  $ref: './blog.yaml#/~1blog~1seo~1rss'
+/blog/seo/robots:
+  $ref: './blog.yaml#/~1blog~1seo~1robots'
+/blog/seo/preview/sitemap:
+  $ref: './blog.yaml#/~1blog~1seo~1preview~1sitemap'
+/blog/seo/preview/rss:
+  $ref: './blog.yaml#/~1blog~1seo~1preview~1rss'
+/blog/seo/preview/robots:
+  $ref: './blog.yaml#/~1blog~1seo~1preview~1robots' 

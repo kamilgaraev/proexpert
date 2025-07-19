@@ -1,0 +1,95 @@
+type: object
+properties:
+  id:
+    type: integer
+    example: 1
+  site_name:
+    type: string
+    example: "ProHelper Blog"
+    description: "Название сайта"
+  site_description:
+    type: string
+    nullable: true
+    example: "Блог о технологиях и бизнесе"
+    description: "Описание сайта"
+  site_keywords:
+    type: array
+    nullable: true
+    items:
+      type: string
+    example: ["технологии", "бизнес", "seo"]
+    description: "Ключевые слова сайта"
+  default_og_image:
+    type: string
+    nullable: true
+    example: "/storage/blog/default-og.jpg"
+    description: "Изображение по умолчанию для Open Graph"
+  auto_generate_meta_description:
+    type: boolean
+    example: true
+    description: "Автоматически генерировать meta description"
+  meta_description_length:
+    type: integer
+    example: 160
+    description: "Максимальная длина meta description"
+  enable_breadcrumbs:
+    type: boolean
+    example: true
+    description: "Включить хлебные крошки"
+  enable_structured_data:
+    type: boolean
+    example: true
+    description: "Включить структурированные данные"
+  enable_sitemap:
+    type: boolean
+    example: true
+    description: "Включить генерацию sitemap"
+  enable_rss:
+    type: boolean
+    example: true
+    description: "Включить RSS-ленту"
+  robots_txt:
+    type: string
+    nullable: true
+    example: |
+      User-agent: *
+      Allow: /
+      Disallow: /admin/
+      Sitemap: https://example.com/blog/sitemap.xml
+    description: "Содержимое robots.txt"
+  social_media_links:
+    type: object
+    nullable: true
+    example:
+      facebook: "https://facebook.com/prohelper"
+      twitter: "https://twitter.com/prohelper"
+      linkedin: "https://linkedin.com/company/prohelper"
+    description: "Ссылки на социальные сети"
+  google_analytics_id:
+    type: string
+    nullable: true
+    example: "GA-XXXXXXXX-X"
+    description: "Google Analytics ID"
+  yandex_metrica_id:
+    type: string
+    nullable: true
+    example: "12345678"
+    description: "Yandex Metrica ID"
+  google_search_console_verification:
+    type: string
+    nullable: true
+    example: "verification_code_here"
+    description: "Код верификации Google Search Console"
+  yandex_webmaster_verification:
+    type: string
+    nullable: true
+    example: "verification_code_here"
+    description: "Код верификации Yandex Webmaster"
+  created_at:
+    type: string
+    format: date-time
+    example: "2025-01-15T10:00:00.000000Z"
+  updated_at:
+    type: string
+    format: date-time
+    example: "2025-01-19T14:30:00.000000Z" 

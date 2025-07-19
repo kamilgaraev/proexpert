@@ -1,0 +1,53 @@
+type: object
+properties:
+  id:
+    type: integer
+    example: 1
+  name:
+    type: string
+    example: "SEO и Маркетинг"
+  slug:
+    type: string
+    example: "seo-i-marketing"
+  description:
+    type: string
+    nullable: true
+    example: "Статьи о поисковой оптимизации и маркетинге"
+  meta_title:
+    type: string
+    nullable: true
+    example: "SEO и Маркетинг | ProHelper Blog"
+  meta_description:
+    type: string
+    nullable: true
+    example: "Советы по SEO-оптимизации и маркетинговые стратегии для бизнеса"
+  color:
+    type: string
+    example: "#007bff"
+    description: "Цвет категории в формате HEX"
+  image:
+    type: string
+    nullable: true
+    example: "/storage/blog/categories/seo-marketing.jpg"
+  sort_order:
+    type: integer
+    example: 0
+  is_active:
+    type: boolean
+    example: true
+  articles_count:
+    type: integer
+    example: 15
+    description: "Общее количество статей в категории"
+  published_articles_count:
+    type: integer
+    example: 12
+    description: "Количество опубликованных статей"
+  created_at:
+    type: string
+    format: date-time
+    example: "2025-01-15T10:00:00.000000Z"
+  updated_at:
+    type: string
+    format: date-time
+    example: "2025-01-19T14:30:00.000000Z" 

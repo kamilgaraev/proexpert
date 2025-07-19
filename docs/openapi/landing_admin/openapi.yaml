@@ -25,5 +25,30 @@ components:
       $ref: './components/schemas/LoginRequest.yaml'
     TokenResponse:
       $ref: './components/schemas/TokenResponse.yaml'
+    
+    # Blog Schemas
+    BlogArticle:
+      $ref: './components/schemas/BlogArticle.yaml'
+    BlogArticleCreateRequest:
+      $ref: './components/schemas/BlogArticleCreateRequest.yaml'
+    BlogArticleUpdateRequest:
+      $ref: './components/schemas/BlogArticleUpdateRequest.yaml'
+    BlogCategory:
+      $ref: './components/schemas/BlogCategory.yaml'
+    BlogCategoryRequest:
+      $ref: './components/schemas/BlogCategoryRequest.yaml'
+    BlogComment:
+      $ref: './components/schemas/BlogComment.yaml'
+    BlogCommentStatusRequest:
+      $ref: './components/schemas/BlogCommentStatusRequest.yaml'
+    BlogTag:
+      $ref: './components/schemas/BlogTag.yaml'
+    BlogSeoSettings:
+      $ref: './components/schemas/BlogSeoSettings.yaml'
+    BlogDashboard:
+      $ref: './components/schemas/BlogDashboard.yaml'
+    BlogAnalytics:
+      $ref: './components/schemas/BlogAnalytics.yaml'
+    
   responses: {}
   parameters: {} 

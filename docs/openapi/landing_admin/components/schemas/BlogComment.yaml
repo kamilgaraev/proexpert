@@ -1,0 +1,108 @@
+type: object
+properties:
+  id:
+    type: integer
+    example: 1
+  article_id:
+    type: integer
+    example: 5
+  parent_id:
+    type: integer
+    nullable: true
+    example: null
+    description: "ID родительского комментария (для ответов)"
+  author_name:
+    type: string
+    example: "Иван Петров"
+  author_email:
+    type: string
+    example: "ivan@example.com"
+  author_website:
+    type: string
+    nullable: true
+    example: "https://example.com"
+  content:
+    type: string
+    example: "Отличная статья! Много полезной информации."
+  status:
+    type: string
+    enum: [pending, approved, rejected, spam]
+    example: "approved"
+  approved_at:
+    type: string
+    format: date-time
+    nullable: true
+    example: "2025-01-19T16:00:00.000000Z"
+  likes_count:
+    type: integer
+    example: 3
+  is_approved:
+    type: boolean
+    example: true
+  is_root:
+    type: boolean
+    example: true
+    description: "Является ли комментарий корневым (не ответом)"
+  
+  # Relations
+  article:
+    type: object
+    nullable: true
+    properties:
+      id:
+        type: integer
+        example: 5
+      title:
+        type: string
+        example: "Как создать SEO-оптимизированный блог"
+      slug:
+        type: string
+        example: "kak-sozdat-seo-optimizirovannyj-blog"
+  
+  parent:
+    type: object
+    nullable: true
+    description: "Родительский комментарий (если это ответ)"
+    properties:
+      id:
+        type: integer
+      author_name:
+        type: string
+      content:
+        type: string
+  
+  replies:
+    type: array
+    description: "Ответы на комментарий"
+    items:
+      type: object
+      properties:
+        id:
+          type: integer
+        author_name:
+          type: string
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+  
+  approved_by:
+    type: object
+    nullable: true
+    properties:
+      id:
+        type: integer
+        example: 1
+      name:
+        type: string
+        example: "Администратор"
+  
+  created_at:
+    type: string
+    format: date-time
+    example: "2025-01-19T15:45:00.000000Z"
+  updated_at:
+    type: string
+    format: date-time
+    example: "2025-01-19T16:00:00.000000Z" 

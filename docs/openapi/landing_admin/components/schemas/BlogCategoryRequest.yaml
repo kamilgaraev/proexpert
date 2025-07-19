@@ -1,0 +1,55 @@
+type: object
+required:
+  - name
+properties:
+  name:
+    type: string
+    maxLength: 255
+    example: "SEO и Маркетинг"
+    description: "Название категории"
+  slug:
+    type: string
+    maxLength: 255
+    nullable: true
+    example: "seo-i-marketing"
+    description: "URL slug (будет сгенерирован автоматически, если не указан)"
+  description:
+    type: string
+    maxLength: 1000
+    nullable: true
+    example: "Статьи о поисковой оптимизации и маркетинге"
+    description: "Описание категории"
+  meta_title:
+    type: string
+    maxLength: 60
+    nullable: true
+    example: "SEO и Маркетинг | ProHelper Blog"
+    description: "Meta title для SEO"
+  meta_description:
+    type: string
+    maxLength: 160
+    nullable: true
+    example: "Советы по SEO-оптимизации и маркетинговые стратегии для бизнеса"
+    description: "Meta description для SEO"
+  color:
+    type: string
+    pattern: '^#[0-9a-fA-F]{6}$'
+    nullable: true
+    example: "#007bff"
+    description: "Цвет категории в формате #RRGGBB"
+  image:
+    type: string
+    nullable: true
+    example: "/storage/blog/categories/seo-marketing.jpg"
+    description: "URL изображения категории"
+  sort_order:
+    type: integer
+    minimum: 0
+    nullable: true
+    example: 0
+    description: "Порядок сортировки"
+  is_active:
+    type: boolean
+    nullable: true
+    example: true
+    description: "Активность категории" 

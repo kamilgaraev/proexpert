@@ -1,0 +1,132 @@
+type: object
+properties:
+  articles_by_date:
+    type: array
+    description: "Статистика создания статей по дням"
+    items:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2025-01-19"
+        count:
+          type: integer
+          example: 3
+  
+  comments_by_date:
+    type: array
+    description: "Статистика комментариев по дням"
+    items:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2025-01-19"
+        count:
+          type: integer
+          example: 15
+  
+  views_by_date:
+    type: array
+    description: "Статистика просмотров по дням"
+    items:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+          example: "2025-01-19"
+        total_views:
+          type: integer
+          example: 2450
+  
+  categories_stats:
+    type: array
+    description: "Статистика по категориям"
+    items:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "SEO и Маркетинг"
+        published_articles_count:
+          type: integer
+          example: 12
+  
+  tags_stats:
+    type: array
+    description: "Статистика по тегам"
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+          example: "SEO"
+        usage_count:
+          type: integer
+          example: 25
+  
+  authors_stats:
+    type: array
+    description: "Статистика по авторам"
+    items:
+      type: object
+      properties:
+        author_id:
+          type: integer
+          example: 1
+        author:
+          type: object
+          properties:
+            id:
+              type: integer
+              example: 1
+            name:
+              type: string
+              example: "Иван Петров"
+        articles_count:
+          type: integer
+          example: 15
+        total_views:
+          type: integer
+          example: 12500
+        total_likes:
+          type: integer
+          example: 340
+  
+  top_articles:
+    type: array
+    description: "Топ статей за период"
+    items:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        title:
+          type: string
+          example: "Как создать SEO-оптимизированный блог"
+        views_count:
+          type: integer
+          example: 1250
+        likes_count:
+          type: integer
+          example: 45
+        comments_count:
+          type: integer
+          example: 12
+        category:
+          type: string
+          example: "SEO и Маркетинг"
+        author:
+          type: string
+          example: "Иван Петров"
+        published_at:
+          type: string
+          format: date-time
+          example: "2025-01-15T10:00:00.000000Z" 
