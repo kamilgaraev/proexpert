@@ -1,3 +1,11 @@
+/landingAdminAuth/login:
+  $ref: './auth.yaml#/~1landingAdminAuth~1login'
+/landingAdminAuth/me:
+  $ref: './auth.yaml#/~1landingAdminAuth~1me'
+/landingAdminAuth/refresh:
+  $ref: './auth.yaml#/~1landingAdminAuth~1refresh'
+/landingAdminAuth/logout:
+  $ref: './auth.yaml#/~1landingAdminAuth~1logout'
 /landing-admins:
   $ref: './landing_admins.yaml#/~1landing-admins'
 /landing-admins/{id}:

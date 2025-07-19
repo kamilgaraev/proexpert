@@ -154,6 +154,9 @@ Route::prefix('landing')->name('landing.')->group(function () {
             // Подключение маршрутов Landing Admins
             require __DIR__ . '/api/v1/landing/landing_admins.php';
 
+            // Роуты авторизации Landing Admins
+            require __DIR__ . '/api/v1/landing/landing_admin_auth.php';
+
             // Дашборд личного кабинета
             require __DIR__ . '/api/v1/landing/dashboard.php';
             

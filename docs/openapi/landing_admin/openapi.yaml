@@ -21,5 +21,9 @@ components:
       $ref: './components/schemas/LandingAdminCreateRequest.yaml'
     LandingAdminUpdateRequest:
       $ref: './components/schemas/LandingAdminUpdateRequest.yaml'
+    LoginRequest:
+      $ref: './components/schemas/LoginRequest.yaml'
+    TokenResponse:
+      $ref: './components/schemas/TokenResponse.yaml'
   responses: {}
   parameters: {} 
