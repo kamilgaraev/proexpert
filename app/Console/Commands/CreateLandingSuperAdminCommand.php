@@ -36,6 +36,12 @@ class CreateLandingSuperAdminCommand extends Command
         $admin->is_super = true;
         $admin->save();
 
+        // attach role relation if super_admin role exists
+        $roleModel = \App\Models\Role::where('slug', 'super_admin')->first();
+        if ($roleModel) {
+            $admin->roles()->attach($roleModel->id);
+        }
+
         $this->info("Super admin created with ID {$admin->id}");
         return Command::SUCCESS;
     }

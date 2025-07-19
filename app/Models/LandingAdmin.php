@@ -54,4 +54,9 @@ class LandingAdmin extends Authenticatable implements JWTSubject
     {
         return [];
     }
+
+    public function roles(): \Illuminate\Database\Eloquent\Relations\BelongsToMany
+    {
+        return $this->belongsToMany(Role::class, 'landing_admin_role');
+    }
 } 
