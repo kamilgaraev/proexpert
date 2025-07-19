@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Landing\Auth;
 
 use App\Http\Controllers\Controller;
-use App\Services\Auth\JwtAuthService;
+use App\Services\Auth\LandingAdminAuthService;
 use App\DTOs\Auth\LoginDTO;
 use App\Http\Requests\Api\V1\Landing\Auth\LoginRequest;
 use Illuminate\Support\Facades\Log;
@@ -11,10 +11,10 @@ use Illuminate\Http\Request;
 
 class LandingAdminAuthController extends Controller
 {
-    protected JwtAuthService $authService;
+    protected LandingAdminAuthService $authService;
     protected string $guard = 'api_landing_admin';
 
-    public function __construct(JwtAuthService $authService)
+    public function __construct(LandingAdminAuthService $authService)
     {
         $this->authService = $authService;
     }
@@ -25,7 +25,7 @@ class LandingAdminAuthController extends Controller
     public function login(LoginRequest $request)
     {
         $loginDTO = LoginDTO::fromRequest($request->only('email', 'password'));
-        $result = $this->authService->authenticate($loginDTO, $this->guard);
+        $result = $this->authService->authenticate($loginDTO);
         if ($result['success']) {
             return response()->json([
                 'token' => $result['token'],
@@ -40,7 +40,7 @@ class LandingAdminAuthController extends Controller
      */
     public function me(Request $request)
     {
-        $result = $this->authService->me($this->guard);
+        $result = $this->authService->me();
         if ($result['success']) {
             return response()->json($result['user']);
         }
@@ -52,7 +52,7 @@ class LandingAdminAuthController extends Controller
      */
     public function refresh()
     {
-        $result = $this->authService->refresh($this->guard);
+        $result = $this->authService->refresh();
         if ($result['success']) {
             return response()->json(['token' => $result['token']]);
         }
@@ -64,7 +64,7 @@ class LandingAdminAuthController extends Controller
      */
     public function logout()
     {
-        $this->authService->logout($this->guard);
+        $this->authService->logout();
         return response()->json(['message' => 'Logged out']);
     }
 } 
