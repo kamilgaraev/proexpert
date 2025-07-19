@@ -7,7 +7,7 @@ use App\Http\Controllers\Api\V1\Landing\Blog\BlogCommentController;
 use App\Http\Controllers\Api\V1\Landing\Blog\BlogSeoController;
 use App\Http\Controllers\Api\V1\Landing\Blog\BlogDashboardController;
 
-Route::prefix('blog')->middleware(['auth:api_landing_admin'])->group(function () {
+Route::prefix('blog')->middleware(['auth:api_landing_admin', 'auth.jwt:api_landing_admin'])->group(function () {
     
     // Дашборд блога
     Route::get('dashboard/overview', [BlogDashboardController::class, 'overview']);
@@ -29,7 +29,7 @@ Route::prefix('blog')->middleware(['auth:api_landing_admin'])->group(function ()
     Route::post('categories/reorder', [BlogCategoryController::class, 'reorder']);
 
     // Комментарии
-    Route::apiResource('comments', BlogCommentController::class)->except(['store', 'update']);
+    Route::apiResource('comments', BlogCommentController::class)->only(['index', 'show', 'destroy']);
     Route::put('comments/{comment}/status', [BlogCommentController::class, 'updateStatus']);
     Route::post('comments/bulk-status', [BlogCommentController::class, 'bulkUpdateStatus']);
     Route::get('comments-pending', [BlogCommentController::class, 'getPending']);
@@ -40,9 +40,10 @@ Route::prefix('blog')->middleware(['auth:api_landing_admin'])->group(function ()
     Route::get('seo/settings', [BlogSeoController::class, 'getSettings']);
     Route::put('seo/settings', [BlogSeoController::class, 'updateSettings']);
     Route::get('seo/sitemap', [BlogSeoController::class, 'generateSitemap']);
-    Route::get('seo/rss', [BlogSeoController::class, 'generateRssFeed']);
-    Route::get('seo/robots', [BlogSeoController::class, 'generateRobotsTxt']);
+    Route::get('seo/rss', [BlogSeoController::class, 'generateRss']);
+    Route::get('seo/robots', [BlogSeoController::class, 'generateRobots']);
     Route::get('seo/preview/sitemap', [BlogSeoController::class, 'previewSitemap']);
-    Route::get('seo/preview/rss', [BlogSeoController::class, 'previewRssFeed']);
-    Route::get('seo/preview/robots', [BlogSeoController::class, 'previewRobotsTxt']);
+    Route::get('seo/preview/rss', [BlogSeoController::class, 'previewRss']);
+    Route::get('seo/preview/robots', [BlogSeoController::class, 'previewRobots']);
+    
 }); 
