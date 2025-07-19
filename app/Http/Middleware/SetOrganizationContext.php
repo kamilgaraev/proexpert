@@ -10,6 +10,7 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
 use App\Models\Organization;
 use App\Models\User;
+use App\Models\LandingAdmin;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\App;
 use App\Services\Organization\OrganizationContext;
@@ -23,7 +24,6 @@ class SetOrganizationContext
      */
     public function handle(Request $request, Closure $next): Response
     {
-        /** @var User|null $user */
         $user = Auth::user();
 
         if (!$user) {
@@ -31,6 +31,14 @@ class SetOrganizationContext
             return $next($request);
         }
 
+        // Если пользователь - LandingAdmin, то ему не нужен контекст организации
+        if ($user instanceof LandingAdmin) {
+            Log::debug('[SetOrganizationContext] LandingAdmin detected, skipping organization context.');
+            return $next($request);
+        }
+
+        // Приводим к типу User для дальнейшей работы
+        /** @var User $user */
         $organization = null;
         $organizationId = null;
         $logContext = ['user_id' => $user->id];
@@ -59,43 +67,38 @@ class SetOrganizationContext
                     $organizationId = $firstOrg->id;
                     $logContext['found_by'] = 'fallback_first';
                 } else {
-                    $logContext['found_by'] = 'none';
-                    $logContext['user_has_no_organizations'] = true;
+                    $logContext['no_organizations'] = true;
                 }
             }
 
         } catch (JWTException $e) {
-             report($e);
-             $logContext['jwt_exception'] = $e->getMessage();
+            Log::debug('[SetOrganizationContext] JWT parsing failed: ' . $e->getMessage());
+            $firstOrg = $user->organizations()->first();
+            if ($firstOrg) {
+                $organization = $firstOrg;
+                $organizationId = $firstOrg->id;
+                $logContext['found_by'] = 'fallback_no_token';
+            }
+        } catch (\Throwable $e) {
+            Log::error('[SetOrganizationContext] Unexpected error: ' . $e->getMessage(), [
+                'user_id' => $user->id,
+                'trace' => $e->getTraceAsString()
+            ]);
         }
 
-        $logContext['final_org_id'] = $organizationId;
         if ($organization) {
-            // Устанавливаем атрибуты запроса
-            $request->attributes->set('current_organization', $organization);
+            $user->current_organization_id = $organizationId;
             $request->attributes->set('current_organization_id', $organizationId);
-            $logContext['attribute_set'] = true;
-             
-            // Обновляем контекст организации через статические методы
-            try {
-                // Используем статические методы класса
-                OrganizationContext::setOrganizationId($organizationId);
-                OrganizationContext::setOrganization($organization);
-                
-                Log::debug('[SetOrganizationContext] Context updated via static methods.', [
-                    'org_id' => $organizationId
-                ]);
-            } catch (\Throwable $e) {
-                Log::error('[SetOrganizationContext] Failed to update context.', [
-                    'error' => $e->getMessage(), 
-                    'trace' => $e->getTraceAsString()
-                ]);
-            }
+            $request->attributes->set('current_organization', $organization);
+
+            App::instance(OrganizationContext::class, new OrganizationContext($organization));
+
+            $logContext['final_org_id'] = $organizationId;
         } else {
-            $logContext['attribute_set'] = false;
+            $logContext['final_org_id'] = null;
         }
-        
-        Log::debug('[SetOrganizationContext] Context determination result.', $logContext);
+
+        Log::debug('[SetOrganizationContext] Context set', $logContext);
 
         return $next($request);
     }
