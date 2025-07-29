@@ -331,4 +331,48 @@ class ProjectScheduleController extends Controller
             'data' => ProjectScheduleResource::collection($recent)
         ]);
     }
+
+    /**
+     * Получить задачи расписания
+     */
+    public function tasks(int $id, Request $request): JsonResponse
+    {
+        $schedule = $this->scheduleRepository->findForOrganization(
+            $id,
+            $this->getOrganizationId($request)
+        );
+
+        if (!$schedule) {
+            return response()->json(['message' => 'График не найден'], 404);
+        }
+
+        $tasks = $schedule->tasks()->with(['assignedUser', 'workType'])->get();
+
+        return response()->json([
+            'data' => $tasks
+        ]);
+    }
+
+    /**
+     * Получить зависимости расписания
+     */
+    public function dependencies(int $id, Request $request): JsonResponse
+    {
+        $schedule = $this->scheduleRepository->findForOrganization(
+            $id,
+            $this->getOrganizationId($request)
+        );
+
+        if (!$schedule) {
+            return response()->json(['message' => 'График не найден'], 404);
+        }
+
+        $dependencies = $schedule->dependencies()
+            ->with(['predecessorTask', 'successorTask'])
+            ->get();
+
+        return response()->json([
+            'data' => $dependencies
+        ]);
+    }
 } 

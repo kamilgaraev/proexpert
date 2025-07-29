@@ -28,6 +28,12 @@ Route::prefix('schedules')->group(function () {
             ->name('schedules.save-baseline');
         Route::delete('baseline', [ProjectScheduleController::class, 'clearBaseline'])
             ->name('schedules.clear-baseline');
+            
+        // Задачи и зависимости
+        Route::get('tasks', [ProjectScheduleController::class, 'tasks'])
+            ->name('schedules.tasks');
+        Route::get('dependencies', [ProjectScheduleController::class, 'dependencies'])
+            ->name('schedules.dependencies');
     });
     
     // Дополнительные эндпоинты
