@@ -12,6 +12,7 @@ use App\Services\Export\ExcelExporterService;
 use App\Services\Report\MaterialReportService;
 use App\Services\Landing\ChildOrganizationUserService;
 use App\Services\OrganizationRoleService;
+use App\Services\RateCoefficient\RateCoefficientService;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -31,7 +32,7 @@ class AppServiceProvider extends ServiceProvider
         
         // Регистрируем MaterialReportService как singleton
         $this->app->singleton(MaterialReportService::class, function ($app) {
-            return new MaterialReportService();
+            return new MaterialReportService($app->make(RateCoefficientService::class));
         });
 
         $this->app->singleton(ChildOrganizationUserService::class, function ($app) {
