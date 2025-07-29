@@ -25,41 +25,11 @@ class RouteServiceProvider extends ServiceProvider
     {
         $this->configureRateLimiting();
         
-        // Route Model Binding для актов - проверка принадлежности организации будет в контроллере
         Route::bind('act', function ($value) {
             return \App\Models\ContractPerformanceAct::findOrFail($value);
         });
 
         $this->routes(function () {
-            // Admin Auth Routes (loaded separately, login accessible without auth middleware)
-            Route::middleware('api') // Базовый middleware для API
-                ->prefix('api/v1/admin')
-                ->as('api.v1.admin.') // Можно использовать то же имя группы для удобства
-                ->group(base_path('routes/api/v1/admin/auth.php'));
-
-            // Other Admin API Routes (protected by auth and access gates)
-            Route::middleware(['api'])
-                ->prefix('api/v1/admin')
-                ->as('api.v1.admin.')
-                ->group(function () {
-                    // Дополнительные middleware применяем в цепочке отдельно
-                    Route::middleware(['auth:api_admin', 'organization.context', 'can:access-admin-panel'])
-                        ->group(function() {
-                            // Подключаем остальные файлы админки
-                            require base_path('routes/api/v1/admin/users.php');
-                            require base_path('routes/api/v1/admin/projects.php');
-                            require base_path('routes/api/v1/admin/catalogs.php');
-                            require base_path('routes/api/v1/admin/reports.php');
-                            require base_path('routes/api/v1/admin/report_files.php');
-                            require base_path('routes/api/v1/admin/personal_files.php');
-                            require base_path('routes/api/v1/admin/act_reports.php');
-                            require base_path('routes/api/v1/admin/logs.php');
-                            require base_path('routes/api/v1/admin/advance_settings.php');
-                            require base_path('routes/api/v1/schedule.php');
-                            // TODO: Добавить файл для логов аудита, когда он будет
-                        });
-                });
-
             // Mobile API Routes
             Route::middleware('api')
                 ->prefix('api/v1/mobile')
@@ -81,7 +51,6 @@ class RouteServiceProvider extends ServiceProvider
                      require base_path('routes/api/v1/landing/landing_admin_auth.php');
                      require base_path('routes/api/v1/landing/landing_admins.php');
                      require base_path('routes/api/v1/landing_admin_blog.php');
-                     // Добавить другие файлы лендинга...
                  });
 
             // Web Routes

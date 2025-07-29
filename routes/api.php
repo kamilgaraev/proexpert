@@ -45,24 +45,6 @@ use App\Http\Controllers\Api\V1\HoldingApiController;
             });
         });
 
-        // --- Admin Panel API ---
-        Route::prefix('admin')->name('admin.')->group(function () {
-            // Публичные маршруты Admin Panel (Auth)
-            require __DIR__ . '/api/v1/admin/auth.php';
-
-            // Защищенные маршруты Admin Panel (требуют токен admin + контекст организации)
-            // Middleware 'jwt.auth' и 'organization.context' + Gate 'access-admin-panel'
-            Route::middleware(['auth:api_admin', 'jwt.auth', 'organization.context', 'can:access-admin-panel'])->group(function() {
-                require __DIR__ . '/api/v1/admin/projects.php';
-                require __DIR__ . '/api/v1/admin/catalogs.php'; // Новый общий путь
-                require __DIR__ . '/api/v1/admin/users.php'; // Управление прорабами
-                require __DIR__ . '/api/v1/admin/logs.php'; // Добавляем подключение логов
-                require __DIR__ . '/api/v1/admin/reports.php'; // Добавляем подключение отчетов
-                require __DIR__ . '/api/v1/admin/dashboard.php'; // Дашборд админки
-                // Добавить другие защищенные маршруты админки
-            });
-        });
-
         // --- Mobile App API ---
         Route::prefix('mobile')->name('mobile.')->group(function () {
             // Публичные маршруты Mobile App (Auth)
@@ -225,7 +207,24 @@ Route::prefix('admin')->name('admin.')->group(function () {
         if (file_exists(__DIR__ . '/api/v1/admin/filters.php')) {
             require __DIR__ . '/api/v1/admin/filters.php';
         }
-        // Маршруты для agreements и specifications вынесены в отдельные файлы
+        if (file_exists(__DIR__ . '/api/v1/admin/personal_files.php')) {
+            require __DIR__ . '/api/v1/admin/personal_files.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/admin/report_files.php')) {
+            require __DIR__ . '/api/v1/admin/report_files.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/admin/act_reports.php')) {
+            require __DIR__ . '/api/v1/admin/act_reports.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/admin/advance_settings.php')) {
+            require __DIR__ . '/api/v1/admin/advance_settings.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/admin/work_type_materials.php')) {
+            require __DIR__ . '/api/v1/admin/work_type_materials.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/admin/contractors.php')) {
+            require __DIR__ . '/api/v1/admin/contractors.php';
+        }
     });
 });
 
