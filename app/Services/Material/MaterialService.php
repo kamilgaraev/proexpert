@@ -13,6 +13,7 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
 use App\Http\Resources\Api\V1\Admin\MeasurementUnitResource;
 use App\Models\Material;
+use App\Models\MaterialBalance;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use Illuminate\Support\Facades\DB;
@@ -170,45 +171,22 @@ class MaterialService
      */
     public function getMaterialBalancesForProject(int $organizationId, int $projectId): \Illuminate\Support\Collection
     {
-        // Получаем все логи прихода и расхода для данного проекта
-        // Предполагаем, что в MaterialUsageLogRepository есть метод для получения всех логов по фильтрам
-        // или мы используем getPaginatedLogs с очень большим perPage, что не идеально, но для начала.
-        // Идеально: $allLogs = $this->materialUsageLogRepository->getAllLogsForProject($projectId, $organizationId);
-        
-        // Временное решение: используем пагинатор с большим числом записей
-        // ВАЖНО: это неэффективно для большого количества логов. Нужен специальный метод в репозитории.
-        $logsPaginator = $this->materialUsageLogRepository->getPaginatedLogs(
-            $organizationId, 
-            100000, // Очень большое число для получения всех записей
-            ['project_id' => $projectId],
-            'usage_date', 
-            'asc'
-        );
-        $allLogs = collect($logsPaginator->items());
+        // Используем MaterialBalance для быстрого получения остатков
+        // Это гораздо быстрее чем пересчет из логов каждый раз
+        $balances = MaterialBalance::where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->with(['material.measurementUnit'])
+            ->get();
 
-        $balances = [];
-
-        foreach ($allLogs as $log) {
-            if (!isset($balances[$log->material_id])) {
-                $balances[$log->material_id] = [
-                    'material_id' => $log->material_id,
-                    'material_name' => $log->material?->name, // Предполагается, что связь material загружена или доступна
-                    'measurement_unit_id' => $log->material?->measurementUnit?->id,
-                    'measurement_unit_symbol' => $log->material?->measurementUnit?->short_name,
-                    'current_balance' => 0,
-                ];
-            }
-
-            if ($log->operation_type === 'receipt') {
-                $balances[$log->material_id]['current_balance'] += $log->quantity;
-            } elseif ($log->operation_type === 'write_off') {
-                $balances[$log->material_id]['current_balance'] -= $log->quantity;
-            }
-        }
-
-        // Оставляем только материалы с положительным балансом или все, в зависимости от требований
-        // return collect(array_values($balances))->filter(fn($item) => $item['current_balance'] > 0);
-        return collect(array_values($balances));
+        return $balances->map(function ($balance) {
+            return [
+                'material_id' => $balance->material_id,
+                'material_name' => $balance->material?->name,
+                'measurement_unit_id' => $balance->material?->measurementUnit?->id,
+                'measurement_unit_symbol' => $balance->material?->measurementUnit?->short_name,
+                'current_balance' => (float) $balance->available_quantity,
+            ];
+        });
     }
 
     public function getMaterialBalancesByMaterial(int $materialId, int $perPage = 15, ?int $projectId = null, string $sortBy = 'created_at', string $sortDirection = 'desc'): array

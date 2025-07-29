@@ -13,6 +13,12 @@ use App\Services\Report\MaterialReportService;
 use App\Services\Landing\ChildOrganizationUserService;
 use App\Services\OrganizationRoleService;
 use App\Services\RateCoefficient\RateCoefficientService;
+use App\Models\Models\Log\MaterialUsageLog;
+use App\Models\CompletedWork;
+use App\Models\MaterialReceipt;
+use App\Observers\MaterialUsageLogObserver;
+use App\Observers\CompletedWorkObserver;
+use App\Observers\MaterialReceiptObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -68,5 +74,9 @@ class AppServiceProvider extends ServiceProvider
             $router->prependMiddlewareToGroup("api", CorsMiddleware::class);
         }
         
+        // Регистрируем observers для автоматической синхронизации данных
+        MaterialUsageLog::observe(MaterialUsageLogObserver::class);
+        CompletedWork::observe(CompletedWorkObserver::class);
+        MaterialReceipt::observe(MaterialReceiptObserver::class);
     }
 } 
