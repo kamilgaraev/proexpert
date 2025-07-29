@@ -20,6 +20,21 @@ class ProjectScheduleController extends Controller
     ) {}
 
     /**
+     * Получить ID организации из запроса
+     */
+    private function getOrganizationId(Request $request): int
+    {
+        $user = $request->user();
+        $organizationId = $user->current_organization_id ?? $user->organization_id;
+        
+        if (!$organizationId) {
+            abort(400, 'Не определена организация пользователя');
+        }
+        
+        return (int) $organizationId;
+    }
+
+    /**
      * Получить список графиков для организации с фильтрацией и пагинацией
      */
     public function index(Request $request): JsonResponse
@@ -48,7 +63,7 @@ class ProjectScheduleController extends Controller
     public function store(CreateProjectScheduleRequest $request): JsonResponse
     {
         $data = $request->validated();
-        $data['organization_id'] = $request->user()->organization_id;
+        $data['organization_id'] = $this->getOrganizationId($request);
         $data['created_by_user_id'] = $request->user()->id;
 
         // Устанавливаем значения по умолчанию
@@ -255,7 +270,7 @@ class ProjectScheduleController extends Controller
                     'name' => $request->name,
                     'planned_start_date' => $request->planned_start_date,
                     'planned_end_date' => $request->planned_end_date,
-                    'organization_id' => $request->user()->organization_id,
+                    'organization_id' => $request->user()->current_organization_id ?? $request->user()->organization_id,
                     'created_by_user_id' => $request->user()->id,
                 ]
             );
