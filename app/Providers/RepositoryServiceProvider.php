@@ -41,6 +41,8 @@ use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
 use App\Repositories\CompletedWork\CompletedWorkRepository;
 use App\Repositories\Interfaces\SiteRequestRepositoryInterface;
 use App\Repositories\SiteRequest\SiteRequestRepository;
+use App\Repositories\Interfaces\ProjectScheduleRepositoryInterface;
+use App\Repositories\Schedule\ProjectScheduleRepository;
 
 class RepositoryServiceProvider extends ServiceProvider
 {
@@ -78,6 +80,9 @@ class RepositoryServiceProvider extends ServiceProvider
         
         // Привязка для заявок с объекта
         $this->app->bind(SiteRequestRepositoryInterface::class, SiteRequestRepository::class);
+        
+        // Привязка для графиков проектов
+        $this->app->bind(ProjectScheduleRepositoryInterface::class, ProjectScheduleRepository::class);
         
         // Добавить другие репозитории по мере необходимости
     }
