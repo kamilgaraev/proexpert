@@ -13,9 +13,9 @@ use Carbon\Carbon;
 
 class ProjectScheduleRepository extends BaseRepository implements ProjectScheduleRepositoryInterface
 {
-    public function __construct(ProjectSchedule $model)
+    public function __construct()
     {
-        parent::__construct($model);
+        parent::__construct(ProjectSchedule::class);
     }
 
     public function getPaginatedForOrganization(

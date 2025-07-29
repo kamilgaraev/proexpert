@@ -100,36 +100,39 @@ class DashboardController extends Controller
             ->with(['project:id,name', 'contractor:id,name'])
             ->leftJoin(DB::raw('(SELECT contract_id, COALESCE(SUM(total_amount), 0) as completed_amount 
                                FROM completed_works 
-                               WHERE status = "confirmed" 
+                               WHERE status = \'confirmed\' 
                                GROUP BY contract_id) as cw'), 'contracts.id', '=', 'cw.contract_id')
             ->select('contracts.*', DB::raw('COALESCE(cw.completed_amount, 0) as completed_amount'))
-            ->selectRaw('CASE 
+            ->addSelect(DB::raw('CASE 
                 WHEN contracts.total_amount > 0 
                 THEN ROUND((COALESCE(cw.completed_amount, 0) / contracts.total_amount) * 100, 2)
                 ELSE 0 
-                END as completion_percentage')
+                END as completion_percentage'))
             ->where(function($query) {
                 $query->whereRaw('(CASE 
                     WHEN contracts.total_amount > 0 
                     THEN ROUND((COALESCE(cw.completed_amount, 0) / contracts.total_amount) * 100, 2)
                     ELSE 0 
                     END) >= 90')
-                ->orWhereRaw('(CASE 
+                ->orWhere(function($subQuery) {
+                    $subQuery->where('end_date', '<', now())
+                             ->where('status', ContractStatusEnum::ACTIVE->value);
+                });
+            })
+            ->orderByDesc(DB::raw('CASE 
+                WHEN (CASE 
                     WHEN contracts.total_amount > 0 
                     THEN ROUND((COALESCE(cw.completed_amount, 0) / contracts.total_amount) * 100, 2)
                     ELSE 0 
-                    END) >= 100')
-                ->orWhere(function($subQuery) {
-                    $subQuery->where('end_date', '<', now())
-                             ->where('status', ContractStatusEnum::ACTIVE);
-                });
-            })
-            ->orderByRaw('CASE 
-                WHEN completion_percentage >= 100 THEN 3
-                WHEN end_date < NOW() AND status = "active" THEN 2  
-                WHEN completion_percentage >= 90 THEN 1
+                    END) >= 100 THEN 3
+                WHEN end_date < CURRENT_TIMESTAMP AND status = \'' . ContractStatusEnum::ACTIVE->value . '\' THEN 2  
+                WHEN (CASE 
+                    WHEN contracts.total_amount > 0 
+                    THEN ROUND((COALESCE(cw.completed_amount, 0) / contracts.total_amount) * 100, 2)
+                    ELSE 0 
+                    END) >= 90 THEN 1
                 ELSE 0 
-                END DESC')
+                END'))
             ->limit(50)
             ->get()
             ->map(function ($contract) {
