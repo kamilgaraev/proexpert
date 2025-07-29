@@ -171,22 +171,57 @@ class MaterialService
      */
     public function getMaterialBalancesForProject(int $organizationId, int $projectId): \Illuminate\Support\Collection
     {
-        // Используем MaterialBalance для быстрого получения остатков
-        // Это гораздо быстрее чем пересчет из логов каждый раз
+        // Сначала пытаемся получить из MaterialBalance (быстро)
         $balances = MaterialBalance::where('organization_id', $organizationId)
             ->where('project_id', $projectId)
             ->with(['material.measurementUnit'])
             ->get();
 
-        return $balances->map(function ($balance) {
-            return [
-                'material_id' => $balance->material_id,
-                'material_name' => $balance->material?->name,
-                'measurement_unit_id' => $balance->material?->measurementUnit?->id,
-                'measurement_unit_symbol' => $balance->material?->measurementUnit?->short_name,
-                'current_balance' => (float) $balance->available_quantity,
-            ];
-        });
+        // Если есть записи в MaterialBalance, используем их
+        if ($balances->isNotEmpty()) {
+            return $balances->map(function ($balance) {
+                return [
+                    'material_id' => $balance->material_id,
+                    'material_name' => $balance->material?->name,
+                    'measurement_unit_id' => $balance->material?->measurementUnit?->id,
+                    'measurement_unit_symbol' => $balance->material?->measurementUnit?->short_name,
+                    'current_balance' => (float) $balance->available_quantity,
+                ];
+            });
+        }
+
+        // Fallback: если MaterialBalance пустая, пересчитываем из логов (медленнее)
+        // Это нужно для старых данных до внедрения observers
+        $logsPaginator = $this->materialUsageLogRepository->getPaginatedLogs(
+            $organizationId, 
+            100000, 
+            ['project_id' => $projectId],
+            'usage_date', 
+            'asc'
+        );
+        $allLogs = collect($logsPaginator->items());
+
+        $calculatedBalances = [];
+
+        foreach ($allLogs as $log) {
+            if (!isset($calculatedBalances[$log->material_id])) {
+                $calculatedBalances[$log->material_id] = [
+                    'material_id' => $log->material_id,
+                    'material_name' => $log->material?->name,
+                    'measurement_unit_id' => $log->material?->measurementUnit?->id,
+                    'measurement_unit_symbol' => $log->material?->measurementUnit?->short_name,
+                    'current_balance' => 0,
+                ];
+            }
+
+            if ($log->operation_type === 'receipt') {
+                $calculatedBalances[$log->material_id]['current_balance'] += $log->quantity;
+            } elseif ($log->operation_type === 'write_off') {
+                $calculatedBalances[$log->material_id]['current_balance'] -= $log->quantity;
+            }
+        }
+
+        return collect(array_values($calculatedBalances));
     }
 
     public function getMaterialBalancesByMaterial(int $materialId, int $perPage = 15, ?int $projectId = null, string $sortBy = 'created_at', string $sortDirection = 'desc'): array
