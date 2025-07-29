@@ -39,7 +39,7 @@ class ProjectScheduleController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $this->getOrganizationId($request);
         $perPage = min($request->get('per_page', 15), 100);
         
         $filters = $request->only([
@@ -86,28 +86,26 @@ class ProjectScheduleController extends Controller
     {
         $schedule = $this->scheduleRepository->findForOrganization(
             $id,
-            $request->user()->organization_id
+            $this->getOrganizationId($request)
         );
 
         if (!$schedule) {
             return response()->json(['message' => 'График не найден'], 404);
         }
 
-        $schedule->load(['project', 'createdBy', 'baselineSavedBy', 'tasks.assignedUser', 'dependencies', 'resources']);
-
         return response()->json([
-            'data' => new ProjectScheduleResource($schedule)
+            'data' => new ProjectScheduleResource($schedule->load(['project', 'createdBy', 'tasks', 'dependencies', 'resources']))
         ]);
     }
 
     /**
-     * Обновить График проекта
+     * Обновить график проекта
      */
-    public function update(UpdateProjectScheduleRequest $request, int $id): JsonResponse
+    public function update(int $id, UpdateProjectScheduleRequest $request): JsonResponse
     {
         $schedule = $this->scheduleRepository->findForOrganization(
             $id,
-            $request->user()->organization_id
+            $this->getOrganizationId($request)
         );
 
         if (!$schedule) {
@@ -116,10 +114,11 @@ class ProjectScheduleController extends Controller
 
         $data = $request->validated();
         
-        // Если изменились даты - сбрасываем расчет критического пути
-        if (isset($data['planned_start_date']) || isset($data['planned_end_date'])) {
-            $data['critical_path_calculated'] = false;
-            $data['critical_path_updated_at'] = null;
+        // Не позволяем изменять organization_id и created_by_user_id через update
+        unset($data['organization_id'], $data['created_by_user_id']);
+        
+        if (isset($data['is_template']) && $data['is_template']) {
+            unset($data['project_id']); // Шаблоны не привязаны к проектам
         }
 
         $schedule = $this->scheduleRepository->update($schedule->id, $data);
@@ -137,18 +136,11 @@ class ProjectScheduleController extends Controller
     {
         $schedule = $this->scheduleRepository->findForOrganization(
             $id,
-            $request->user()->organization_id
+            $this->getOrganizationId($request)
         );
 
         if (!$schedule) {
             return response()->json(['message' => 'График не найден'], 404);
-        }
-
-        // Проверяем, можно ли удалить график
-        if ($schedule->status === 'active' && $schedule->overall_progress_percent > 0) {
-            return response()->json([
-                'message' => 'Нельзя удалить активный график с выполненными задачами'
-            ], 422);
         }
 
         $this->scheduleRepository->delete($schedule->id);
@@ -163,30 +155,31 @@ class ProjectScheduleController extends Controller
     {
         $schedule = $this->scheduleRepository->findForOrganization(
             $id,
-            $request->user()->organization_id
+            $this->getOrganizationId($request)
         );
 
         if (!$schedule) {
             return response()->json(['message' => 'График не найден'], 404);
         }
 
-        if ($schedule->status !== 'active') {
-            return response()->json([
-                'message' => 'Критический путь можно рассчитать только для активного графика'
-            ], 422);
-        }
-
         try {
-            $result = $this->criticalPathService->calculateCriticalPath($schedule);
+            $criticalPath = $this->criticalPathService->calculate($schedule);
+            
+            // Обновляем флаг что критический путь рассчитан
+            $this->scheduleRepository->update($schedule->id, [
+                'critical_path_calculated' => true
+            ]);
 
             return response()->json([
                 'message' => 'Критический путь рассчитан',
-                'data' => $result
+                'data' => [
+                    'critical_path' => $criticalPath,
+                    'total_duration' => count($criticalPath),
+                ]
             ]);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Ошибка при расчете критического пути',
-                'error' => $e->getMessage()
+                'message' => 'Ошибка при расчете критического пути: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -198,29 +191,24 @@ class ProjectScheduleController extends Controller
     {
         $schedule = $this->scheduleRepository->findForOrganization(
             $id,
-            $request->user()->organization_id
+            $this->getOrganizationId($request)
         );
 
         if (!$schedule) {
             return response()->json(['message' => 'График не найден'], 404);
         }
 
-        if ($schedule->status !== 'active') {
+        try {
+            $this->scheduleRepository->saveBaseline($schedule);
+
             return response()->json([
-                'message' => 'Базовый план можно сохранить только для активного графика'
-            ], 422);
+                'message' => 'Базовый план сохранен'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Ошибка при сохранении базового плана: ' . $e->getMessage()
+            ], 500);
         }
-
-        $success = $this->scheduleRepository->saveBaseline($id, $request->user()->id);
-
-        if (!$success) {
-            return response()->json(['message' => 'Не удалось сохранить базовый план'], 500);
-        }
-
-        return response()->json([
-            'message' => 'Базовый план сохранен',
-            'data' => new ProjectScheduleResource($schedule->fresh(['project', 'createdBy', 'baselineSavedBy']))
-        ]);
     }
 
     /**
@@ -230,22 +218,37 @@ class ProjectScheduleController extends Controller
     {
         $schedule = $this->scheduleRepository->findForOrganization(
             $id,
-            $request->user()->organization_id
+            $this->getOrganizationId($request)
         );
 
         if (!$schedule) {
             return response()->json(['message' => 'График не найден'], 404);
         }
 
-        $success = $this->scheduleRepository->clearBaseline($id);
+        try {
+            $this->scheduleRepository->clearBaseline($schedule);
 
-        if (!$success) {
-            return response()->json(['message' => 'Не удалось очистить базовый план'], 500);
+            return response()->json([
+                'message' => 'Базовый план очищен'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Ошибка при очистке базового плана: ' . $e->getMessage()
+            ], 500);
         }
+    }
+
+    /**
+     * Получить шаблоны графиков
+     */
+    public function templates(Request $request): JsonResponse
+    {
+        $templates = $this->scheduleRepository->getTemplatesForOrganization(
+            $this->getOrganizationId($request)
+        );
 
         return response()->json([
-            'message' => 'Базовый план очищен',
-            'data' => new ProjectScheduleResource($schedule->fresh(['project', 'createdBy']))
+            'data' => ProjectScheduleResource::collection($templates)
         ]);
     }
 
@@ -263,6 +266,8 @@ class ProjectScheduleController extends Controller
         ]);
 
         try {
+            $validatedData = $request->validated();
+
             $schedule = $this->scheduleRepository->createFromTemplate(
                 $request->template_id,
                 $request->project_id,
@@ -270,7 +275,7 @@ class ProjectScheduleController extends Controller
                     'name' => $request->name,
                     'planned_start_date' => $request->planned_start_date,
                     'planned_end_date' => $request->planned_end_date,
-                    'organization_id' => $request->user()->current_organization_id ?? $request->user()->organization_id,
+                    'organization_id' => $this->getOrganizationId($request),
                     'created_by_user_id' => $request->user()->id,
                 ]
             );
@@ -281,66 +286,49 @@ class ProjectScheduleController extends Controller
             ], 201);
         } catch (\Exception $e) {
             return response()->json([
-                'message' => 'Ошибка при создании графика из шаблона',
-                'error' => $e->getMessage()
+                'message' => 'Ошибка при создании графика из шаблона: ' . $e->getMessage()
             ], 500);
         }
     }
 
     /**
-     * Получить шаблоны графиков
-     */
-    public function templates(Request $request): JsonResponse
-    {
-        $templates = $this->scheduleRepository->getTemplatesForOrganization(
-            $request->user()->organization_id
-        );
-
-        return response()->json([
-            'data' => ProjectScheduleResource::collection($templates)
-        ]);
-    }
-
-    /**
-     * Получить статистику по графикам организации
+     * Получить статистику по графикам
      */
     public function statistics(Request $request): JsonResponse
     {
-        $stats = $this->scheduleRepository->getOrganizationStats(
-            $request->user()->organization_id
+        $stats = $this->scheduleRepository->getStatisticsForOrganization(
+            $this->getOrganizationId($request)
         );
 
         return response()->json(['data' => $stats]);
     }
 
     /**
-     * Получить графики с просроченными задачами
+     * Получить просроченные графики
      */
     public function overdue(Request $request): JsonResponse
     {
-        $schedules = $this->scheduleRepository->getWithOverdueTasks(
-            $request->user()->organization_id
+        $overdue = $this->scheduleRepository->getOverdueForOrganization(
+            $this->getOrganizationId($request)
         );
 
         return response()->json([
-            'data' => ProjectScheduleResource::collection($schedules)
+            'data' => ProjectScheduleResource::collection($overdue)
         ]);
     }
 
     /**
-     * Получить недавно обновленные графики
+     * Получить недавние графики
      */
     public function recent(Request $request): JsonResponse
     {
-        $limit = min($request->get('limit', 10), 50);
-        
-        $schedules = $this->scheduleRepository->getRecentlyUpdated(
-            $request->user()->organization_id,
-            $limit
+        $recent = $this->scheduleRepository->getRecentForOrganization(
+            $this->getOrganizationId($request),
+            $request->get('limit', 10)
         );
 
         return response()->json([
-            'data' => ProjectScheduleResource::collection($schedules)
+            'data' => ProjectScheduleResource::collection($recent)
         ]);
     }
 } 
