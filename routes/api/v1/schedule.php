@@ -4,7 +4,7 @@ use App\Http\Controllers\Api\V1\Schedule\ProjectScheduleController;
 use Illuminate\Support\Facades\Route;
 
 // Маршруты для системы графика работ (Gantt Chart)
-Route::middleware(['auth:api'])->prefix('schedules')->group(function () {
+Route::prefix('schedules')->group(function () {
     
     // Основные CRUD операции для графиков проектов
     Route::apiResource('/', ProjectScheduleController::class)->parameters([

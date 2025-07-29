@@ -98,33 +98,63 @@ class DashboardController extends Controller
         
         $contracts = Contract::where('organization_id', $organizationId)
             ->with(['project:id,name', 'contractor:id,name'])
-            ->get()
-            ->filter(function ($contract) {
-                return $contract->isNearingLimit() || 
-                       $contract->completion_percentage >= 100 ||
-                       ($contract->end_date && $contract->end_date->isPast() && $contract->status === ContractStatusEnum::ACTIVE);
+            ->leftJoin(DB::raw('(SELECT contract_id, COALESCE(SUM(total_amount), 0) as completed_amount 
+                               FROM completed_works 
+                               WHERE status = "confirmed" 
+                               GROUP BY contract_id) as cw'), 'contracts.id', '=', 'cw.contract_id')
+            ->select('contracts.*', DB::raw('COALESCE(cw.completed_amount, 0) as completed_amount'))
+            ->selectRaw('CASE 
+                WHEN contracts.total_amount > 0 
+                THEN ROUND((COALESCE(cw.completed_amount, 0) / contracts.total_amount) * 100, 2)
+                ELSE 0 
+                END as completion_percentage')
+            ->where(function($query) {
+                $query->whereRaw('(CASE 
+                    WHEN contracts.total_amount > 0 
+                    THEN ROUND((COALESCE(cw.completed_amount, 0) / contracts.total_amount) * 100, 2)
+                    ELSE 0 
+                    END) >= 90')
+                ->orWhereRaw('(CASE 
+                    WHEN contracts.total_amount > 0 
+                    THEN ROUND((COALESCE(cw.completed_amount, 0) / contracts.total_amount) * 100, 2)
+                    ELSE 0 
+                    END) >= 100')
+                ->orWhere(function($subQuery) {
+                    $subQuery->where('end_date', '<', now())
+                             ->where('status', ContractStatusEnum::ACTIVE);
+                });
             })
+            ->orderByRaw('CASE 
+                WHEN completion_percentage >= 100 THEN 3
+                WHEN end_date < NOW() AND status = "active" THEN 2  
+                WHEN completion_percentage >= 90 THEN 1
+                ELSE 0 
+                END DESC')
+            ->limit(50)
+            ->get()
             ->map(function ($contract) {
+                $completionPercentage = (float) $contract->completion_percentage;
+                $completedAmount = (float) $contract->completed_amount;
+                $totalAmount = (float) $contract->total_amount;
+                
                 return [
                     'id' => $contract->id,
                     'number' => $contract->number,
                     'project_name' => $contract->project?->name,
                     'contractor_name' => $contract->contractor?->name,
-                    'total_amount' => (float) $contract->total_amount,
-                    'completed_works_amount' => $contract->completed_works_amount,
-                    'completion_percentage' => $contract->completion_percentage,
-                    'remaining_amount' => $contract->remaining_amount,
+                    'total_amount' => $totalAmount,
+                    'completed_works_amount' => $completedAmount,
+                    'completion_percentage' => $completionPercentage,
+                    'remaining_amount' => max(0, $totalAmount - $completedAmount),
                     'status' => $contract->status->value,
                     'end_date' => $contract->end_date?->format('Y-m-d'),
-                    'is_nearing_limit' => $contract->isNearingLimit(),
+                    'is_nearing_limit' => $completionPercentage >= 90.0,
                     'is_overdue' => $contract->end_date && $contract->end_date->isPast(),
-                    'is_completed' => $contract->completion_percentage >= 100,
-                    'attention_reason' => $this->getAttentionReason($contract),
-                    'priority' => $this->getContractPriority($contract),
+                    'is_completed' => $completionPercentage >= 100,
+                    'attention_reason' => $this->getAttentionReason($contract, $completionPercentage),
+                    'priority' => $this->getContractPriority($contract, $completionPercentage),
                 ];
-            })
-            ->sortByDesc('priority')
-            ->values();
+            });
 
         return response()->json([
             'success' => true,
@@ -268,15 +298,15 @@ class DashboardController extends Controller
     /**
      * Определить причину требования внимания к контракту
      */
-    private function getAttentionReason(Contract $contract): array
+    private function getAttentionReason(Contract $contract, float $completionPercentage): array
     {
         $reasons = [];
 
-        if ($contract->isNearingLimit()) {
-            $reasons[] = "Приближение к лимиту ({$contract->completion_percentage}%)";
+        if ($completionPercentage >= 90.0) {
+            $reasons[] = "Приближение к лимиту ({$completionPercentage}%)";
         }
 
-        if ($contract->completion_percentage >= 100) {
+        if ($completionPercentage >= 100) {
             $reasons[] = "Работы выполнены на 100%";
         }
 
@@ -290,7 +320,7 @@ class DashboardController extends Controller
     /**
      * Определить приоритет контракта для сортировки
      */
-    private function getContractPriority(Contract $contract): int
+    private function getContractPriority(Contract $contract, float $completionPercentage): int
     {
         $priority = 0;
 
@@ -300,17 +330,17 @@ class DashboardController extends Controller
         }
 
         // 100% выполнение - высокий приоритет  
-        if ($contract->completion_percentage >= 100) {
+        if ($completionPercentage >= 100) {
             $priority += 50;
         }
 
         // Приближение к лимиту - средний приоритет
-        if ($contract->isNearingLimit()) {
+        if ($completionPercentage >= 90.0) {
             $priority += 25;
         }
 
         // Добавляем процент выполнения для точной сортировки
-        $priority += $contract->completion_percentage;
+        $priority += $completionPercentage;
 
         return $priority;
     }
