@@ -56,5 +56,14 @@ Schedule::command('org:sync-bucket-usage')
     })
     ->appendOutputTo(storage_path('logs/schedule-org-bucket-usage.log'));
 
+// Синхронизация данных подрядчиков, приглашённых как организации
+Schedule::command('contractors:sync-invited')
+    ->hourly()
+    ->withoutOverlapping(60)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled contractors:sync-invited command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-contractors-sync-invited.log'));
+
 // Если команда billing:process-renewals также должна быть здесь, ее можно добавить аналогично:
 // Schedule::command('billing:process-renewals')->dailyAt('02:00');
