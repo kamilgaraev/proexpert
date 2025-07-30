@@ -142,7 +142,7 @@ class OrganizationDiscoveryService
         $query = Organization::query()
             ->select([
                 'organizations.*',
-                DB::raw('(SELECT COUNT(*) FROM contractor_invitations ci WHERE ci.invited_organization_id = organizations.id AND ci.status = "accepted") as contractor_connections_count')
+                DB::raw("(SELECT COUNT(*) FROM contractor_invitations ci WHERE ci.invited_organization_id = organizations.id AND ci.status = 'accepted') as contractor_connections_count")
             ])
             ->where('id', '!=', $excludeOrganizationId)
             ->where('is_active', true);
