@@ -13,6 +13,7 @@ use App\Http\Resources\Api\V1\Schedule\ProjectScheduleResource;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleCollection;
 use App\Models\ScheduleTask;
 use App\Models\TaskDependency;
+use App\Enums\Schedule\PriorityEnum;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 

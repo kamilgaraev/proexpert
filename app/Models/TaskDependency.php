@@ -38,6 +38,7 @@ class TaskDependency extends Model
         'is_active' => 'boolean',
         'dependency_type' => DependencyTypeEnum::class,
         'advanced_settings' => 'array',
+        'priority' => 'integer',
     ];
 
     // === RELATIONSHIPS ===

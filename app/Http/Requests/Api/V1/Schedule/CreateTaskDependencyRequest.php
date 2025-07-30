@@ -4,6 +4,7 @@ namespace App\Http\Requests\Api\V1\Schedule;
 
 use Illuminate\Foundation\Http\FormRequest;
 use App\Enums\Schedule\DependencyTypeEnum;
+use App\Enums\Schedule\PriorityEnum;
 use Illuminate\Validation\Rule;
 
 class CreateTaskDependencyRequest extends FormRequest
@@ -33,7 +34,7 @@ class CreateTaskDependencyRequest extends FormRequest
             'lag_type' => 'nullable|string|max:20',
             'description' => 'nullable|string|max:1000',
             'is_hard_constraint' => 'nullable|boolean',
-            'priority' => 'nullable|string|in:low,normal,high,critical',
+            'priority' => 'nullable',
             'constraint_reason' => 'nullable|string|max:500',
             'advanced_settings' => 'nullable|array',
             'advanced_settings.*' => 'string|max:255',
@@ -54,7 +55,7 @@ class CreateTaskDependencyRequest extends FormRequest
             'lag_hours.max' => 'Задержка не может быть больше 999 часов',
             'description.max' => 'Описание не должно превышать 1000 символов',
             'constraint_reason.max' => 'Причина ограничения не должна превышать 500 символов',
-            'priority.in' => 'Приоритет должен быть: low, normal, high или critical',
+
         ];
     }
 
@@ -112,7 +113,7 @@ class CreateTaskDependencyRequest extends FormRequest
             'lag_hours' => $this->lag_hours ?? 0.0,
             'lag_type' => $this->lag_type ?? 'working_days',
             'is_hard_constraint' => $this->is_hard_constraint ?? false,
-            'priority' => $this->priority ?? 'normal',
+            'priority' => is_numeric($this->priority) ? (int) $this->priority : \App\Enums\Schedule\PriorityEnum::from($this->priority ?? 'normal')->weight(),
         ]);
     }
 }
