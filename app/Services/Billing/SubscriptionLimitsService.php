@@ -67,6 +67,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
                 'projects' => $this->formatLimitData($plan->max_projects, $currentUsage['projects']),
                 'users' => $this->formatLimitData($plan->max_users, $currentUsage['users']),
                 'storage' => $this->formatStorageLimitData($plan->max_storage_gb, $currentUsage['storage_mb']),
+                'contractor_invitations' => $this->formatLimitData($plan->max_contractor_invitations ?? null, $currentUsage['contractor_invitations']),
             ],
             'features' => $plan->features ? (array) $plan->features : [],
             'warnings' => $this->generateWarnings($plan, $currentUsage),
@@ -154,6 +155,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
                 'projects' => $this->getProjectsCount($organizationId),
                 'users' => $this->getUsersCount($organizationId),
                 'storage_mb' => $this->getStorageUsage($organizationId),
+                'contractor_invitations' => $this->getContractorInvitationsUsage($organizationId),
             ];
         });
     }
@@ -317,6 +319,47 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
     /**
      * Формируем данные лимитов на основе подписки организации
      */
+    public function canCreateContractorInvitation(User $user): bool
+    {
+        $limitsData = $this->getUserLimitsData($user);
+        
+        if (!$limitsData['has_subscription']) {
+            $defaultLimits = config('billing.default_limits');
+            $currentUsage = $this->getCurrentUsage($user);
+            return $currentUsage['contractor_invitations'] < ($defaultLimits['max_contractor_invitations'] ?? 5);
+        }
+        
+        $invitationLimit = $limitsData['limits']['contractor_invitations'];
+        return $invitationLimit['is_unlimited'] || $invitationLimit['used'] < $invitationLimit['limit'];
+    }
+
+    public function getContractorInvitationsUsage(int $organizationId): int
+    {
+        return DB::table('contractor_invitations')
+            ->where('organization_id', $organizationId)
+            ->whereIn('status', ['pending', 'accepted'])
+            ->where('created_at', '>=', now()->subMonth())
+            ->count();
+    }
+
+    public function getRemainingContractorInvitations(User $user): int
+    {
+        $limitsData = $this->getUserLimitsData($user);
+        
+        if (!$limitsData['has_subscription']) {
+            $defaultLimits = config('billing.default_limits');
+            $currentUsage = $this->getCurrentUsage($user);
+            return max(0, ($defaultLimits['max_contractor_invitations'] ?? 5) - $currentUsage['contractor_invitations']);
+        }
+        
+        $invitationLimit = $limitsData['limits']['contractor_invitations'];
+        if ($invitationLimit['is_unlimited']) {
+            return 999999;
+        }
+        
+        return max(0, $invitationLimit['limit'] - $invitationLimit['used']);
+    }
+
     private function getOrganizationLimitsData(User $user, OrganizationSubscription $subscription): array
     {
         $plan = $subscription->plan;
@@ -340,6 +383,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
                 'projects' => $this->formatLimitData($plan->max_projects, $currentUsage['projects']),
                 'users' => $this->formatLimitData($plan->max_users, $currentUsage['users']),
                 'storage' => $this->formatStorageLimitData($plan->max_storage_gb, $currentUsage['storage_mb']),
+                'contractor_invitations' => $this->formatLimitData($plan->max_contractor_invitations ?? null, $currentUsage['contractor_invitations']),
             ],
             'features' => $plan->features ? (array) $plan->features : [],
             'warnings' => $this->generateWarnings($plan, $currentUsage),

@@ -16,5 +16,6 @@ return [
         'max_foremen' => 1,
         'max_projects' => 1,
         'max_storage_mb' => 100,
+        'max_contractor_invitations' => 5,
     ],
 ];

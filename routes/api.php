@@ -144,6 +144,14 @@ Route::prefix('landing')->name('landing.')->group(function () {
             
             // Подключение маршрутов мультиорганизации для лендинга/ЛК
             require __DIR__ . '/api/v1/landing/multi_organization.php';
+            
+            // Подключение маршрутов приглашений подрядчиков для лендинга/ЛК
+            Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
+                ->group(function () {
+                    if (file_exists(__DIR__ . '/api/v1/landing/contractor_invitations.php')) {
+                        require __DIR__ . '/api/v1/landing/contractor_invitations.php';
+                    }
+                });
 });
 
 // --- Admin Panel API ---
@@ -224,6 +232,9 @@ Route::prefix('admin')->name('admin.')->group(function () {
         }
         if (file_exists(__DIR__ . '/api/v1/admin/contractors.php')) {
             require __DIR__ . '/api/v1/admin/contractors.php';
+        }
+        if (file_exists(__DIR__ . '/api/v1/admin/contractor_invitations.php')) {
+            require __DIR__ . '/api/v1/admin/contractor_invitations.php';
         }
         if (file_exists(__DIR__ . '/api/v1/schedule.php')) {
             require __DIR__ . '/api/v1/schedule.php';
