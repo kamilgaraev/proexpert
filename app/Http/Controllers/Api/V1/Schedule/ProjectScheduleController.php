@@ -7,8 +7,10 @@ use App\Repositories\Interfaces\ProjectScheduleRepositoryInterface;
 use App\Services\Schedule\CriticalPathService;
 use App\Http\Requests\Api\V1\Schedule\CreateProjectScheduleRequest;
 use App\Http\Requests\Api\V1\Schedule\UpdateProjectScheduleRequest;
+use App\Http\Requests\Api\V1\Schedule\CreateScheduleTaskRequest;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleResource;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleCollection;
+use App\Models\ScheduleTask;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -121,7 +123,8 @@ class ProjectScheduleController extends Controller
             unset($data['project_id']); // Шаблоны не привязаны к проектам
         }
 
-        $schedule = $this->scheduleRepository->update($schedule->id, $data);
+        $this->scheduleRepository->update($schedule->id, $data);
+        $schedule = $this->scheduleRepository->findForOrganization($schedule->id, $this->getOrganizationId($request));
 
         return response()->json([
             'message' => 'График проекта обновлен',
@@ -163,19 +166,17 @@ class ProjectScheduleController extends Controller
         }
 
         try {
-            $criticalPath = $this->criticalPathService->calculate($schedule);
+            $criticalPath = $this->criticalPathService->calculateCriticalPath($schedule);
             
             // Обновляем флаг что критический путь рассчитан
             $this->scheduleRepository->update($schedule->id, [
-                'critical_path_calculated' => true
+                'critical_path_calculated' => true,
+                'critical_path_duration_days' => $criticalPath['duration']
             ]);
 
             return response()->json([
                 'message' => 'Критический путь рассчитан',
-                'data' => [
-                    'critical_path' => $criticalPath,
-                    'total_duration' => count($criticalPath),
-                ]
+                'data' => $criticalPath
             ]);
         } catch (\Exception $e) {
             return response()->json([
@@ -199,7 +200,7 @@ class ProjectScheduleController extends Controller
         }
 
         try {
-            $this->scheduleRepository->saveBaseline($schedule);
+            $this->scheduleRepository->saveBaseline($schedule->id, $request->user()->id);
 
             return response()->json([
                 'message' => 'Базовый план сохранен'
@@ -226,7 +227,7 @@ class ProjectScheduleController extends Controller
         }
 
         try {
-            $this->scheduleRepository->clearBaseline($schedule);
+            $this->scheduleRepository->clearBaseline($schedule->id);
 
             return response()->json([
                 'message' => 'Базовый план очищен'
@@ -296,7 +297,7 @@ class ProjectScheduleController extends Controller
      */
     public function statistics(Request $request): JsonResponse
     {
-        $stats = $this->scheduleRepository->getStatisticsForOrganization(
+        $stats = $this->scheduleRepository->getOrganizationStats(
             $this->getOrganizationId($request)
         );
 
@@ -308,7 +309,7 @@ class ProjectScheduleController extends Controller
      */
     public function overdue(Request $request): JsonResponse
     {
-        $overdue = $this->scheduleRepository->getOverdueForOrganization(
+        $overdue = $this->scheduleRepository->getWithOverdueTasks(
             $this->getOrganizationId($request)
         );
 
@@ -322,7 +323,7 @@ class ProjectScheduleController extends Controller
      */
     public function recent(Request $request): JsonResponse
     {
-        $recent = $this->scheduleRepository->getRecentForOrganization(
+        $recent = $this->scheduleRepository->getRecentlyUpdated(
             $this->getOrganizationId($request),
             $request->get('limit', 10)
         );
@@ -374,5 +375,41 @@ class ProjectScheduleController extends Controller
         return response()->json([
             'data' => $dependencies
         ]);
+    }
+
+    /**
+     * Создать новую задачу в расписании
+     */
+    public function storeTask(int $id, CreateScheduleTaskRequest $request): JsonResponse
+    {
+        $schedule = $this->scheduleRepository->findForOrganization(
+            $id,
+            $this->getOrganizationId($request)
+        );
+
+        if (!$schedule) {
+            return response()->json(['message' => 'График не найден'], 404);
+        }
+
+        $data = $request->validated();
+        $data['schedule_id'] = $schedule->id;
+        $data['organization_id'] = $this->getOrganizationId($request);
+        $data['created_by_user_id'] = $request->user()->id;
+
+        try {
+            $task = ScheduleTask::create($data);
+            
+            // Загружаем связанные данные для ответа
+            $task->load(['assignedUser', 'workType', 'parentTask']);
+
+            return response()->json([
+                'message' => 'Задача успешно создана',
+                'data' => $task
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Ошибка при создании задачи: ' . $e->getMessage()
+            ], 500);
+        }
     }
 } 

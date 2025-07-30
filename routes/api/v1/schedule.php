@@ -32,6 +32,8 @@ Route::prefix('schedules')->group(function () {
         // Задачи и зависимости
         Route::get('tasks', [ProjectScheduleController::class, 'tasks'])
             ->name('schedules.tasks');
+        Route::post('tasks', [ProjectScheduleController::class, 'storeTask'])
+            ->name('schedules.tasks.store');
         Route::get('dependencies', [ProjectScheduleController::class, 'dependencies'])
             ->name('schedules.dependencies');
     });
