@@ -301,6 +301,17 @@ class User extends Authenticatable implements JWTSubject
     }
 
     /**
+     * Проверяет, принадлежит ли пользователь указанной организации (активное членство)
+     */
+    public function belongsToOrganization(int $organizationId): bool
+    {
+        return $this->organizations()
+            ->where('organization_user.organization_id', $organizationId)
+            ->where('organization_user.is_active', true)
+            ->exists();
+    }
+
+    /**
      * Получить проекты, на которые назначен пользователь.
      */
     public function assignedProjects(): BelongsToMany
