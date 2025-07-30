@@ -148,12 +148,18 @@ class OrganizationDiscoveryService
             ->where('is_active', true);
 
         if (!empty($filters['search'])) {
-            $searchTerm = $filters['search'];
+            $searchTerm = mb_strtolower($filters['search']);
+            $query->addSelect([
+                DB::raw("GREATEST(similarity(lower(name), ?), similarity(lower(legal_name), ?)) as relevance_score")
+            ])->setBindings([$searchTerm, $searchTerm], 'select');
+
             $query->where(function($q) use ($searchTerm) {
-                $q->where('name', 'LIKE', "%{$searchTerm}%")
-                  ->orWhere('legal_name', 'LIKE', "%{$searchTerm}%")
-                  ->orWhere('description', 'LIKE', "%{$searchTerm}%")
-                  ->orWhere('city', 'LIKE', "%{$searchTerm}%");
+                $q->whereRaw('similarity(lower(name), ?) > 0.25', [$searchTerm])
+                  ->orWhereRaw('similarity(lower(legal_name), ?) > 0.25', [$searchTerm])
+                  ->orWhere('name', 'ILIKE', "%{$searchTerm}%")
+                  ->orWhere('legal_name', 'ILIKE', "%{$searchTerm}%")
+                  ->orWhere('description', 'ILIKE', "%{$searchTerm}%")
+                  ->orWhere('city', 'ILIKE', "%{$searchTerm}%");
             });
         }
 
