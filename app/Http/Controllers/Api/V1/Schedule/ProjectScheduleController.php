@@ -8,9 +8,11 @@ use App\Services\Schedule\CriticalPathService;
 use App\Http\Requests\Api\V1\Schedule\CreateProjectScheduleRequest;
 use App\Http\Requests\Api\V1\Schedule\UpdateProjectScheduleRequest;
 use App\Http\Requests\Api\V1\Schedule\CreateScheduleTaskRequest;
+use App\Http\Requests\Api\V1\Schedule\CreateTaskDependencyRequest;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleResource;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleCollection;
 use App\Models\ScheduleTask;
+use App\Models\TaskDependency;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -84,10 +86,10 @@ class ProjectScheduleController extends Controller
     /**
      * Получить детальную информацию о графике
      */
-    public function show(int $id, Request $request): JsonResponse
+    public function show(string $id, Request $request): JsonResponse
     {
         $schedule = $this->scheduleRepository->findForOrganization(
-            $id,
+            (int) $id,
             $this->getOrganizationId($request)
         );
 
@@ -103,10 +105,10 @@ class ProjectScheduleController extends Controller
     /**
      * Обновить график проекта
      */
-    public function update(int $id, UpdateProjectScheduleRequest $request): JsonResponse
+    public function update(string $id, UpdateProjectScheduleRequest $request): JsonResponse
     {
         $schedule = $this->scheduleRepository->findForOrganization(
-            $id,
+            (int) $id,
             $this->getOrganizationId($request)
         );
 
@@ -135,10 +137,10 @@ class ProjectScheduleController extends Controller
     /**
      * Удалить график проекта
      */
-    public function destroy(int $id, Request $request): JsonResponse
+    public function destroy(string $id, Request $request): JsonResponse
     {
         $schedule = $this->scheduleRepository->findForOrganization(
-            $id,
+            (int) $id,
             $this->getOrganizationId($request)
         );
 
@@ -154,10 +156,10 @@ class ProjectScheduleController extends Controller
     /**
      * Рассчитать критический путь для графика
      */
-    public function calculateCriticalPath(int $id, Request $request): JsonResponse
+    public function calculateCriticalPath(string $id, Request $request): JsonResponse
     {
         $schedule = $this->scheduleRepository->findForOrganization(
-            $id,
+            (int) $id,
             $this->getOrganizationId($request)
         );
 
@@ -188,10 +190,10 @@ class ProjectScheduleController extends Controller
     /**
      * Сохранить базовый план графика
      */
-    public function saveBaseline(int $id, Request $request): JsonResponse
+    public function saveBaseline(string $id, Request $request): JsonResponse
     {
         $schedule = $this->scheduleRepository->findForOrganization(
-            $id,
+            (int) $id,
             $this->getOrganizationId($request)
         );
 
@@ -215,10 +217,10 @@ class ProjectScheduleController extends Controller
     /**
      * Очистить базовый план графика
      */
-    public function clearBaseline(int $id, Request $request): JsonResponse
+    public function clearBaseline(string $id, Request $request): JsonResponse
     {
         $schedule = $this->scheduleRepository->findForOrganization(
-            $id,
+            (int) $id,
             $this->getOrganizationId($request)
         );
 
@@ -334,12 +336,32 @@ class ProjectScheduleController extends Controller
     }
 
     /**
+     * Получить все графики с конфликтами ресурсов
+     */
+    public function allResourceConflicts(Request $request): JsonResponse
+    {
+        $conflictedSchedules = $this->scheduleRepository->getWithResourceConflicts(
+            $this->getOrganizationId($request)
+        );
+
+        return response()->json([
+            'data' => ProjectScheduleResource::collection($conflictedSchedules),
+            'meta' => [
+                'total_schedules_with_conflicts' => $conflictedSchedules->count(),
+                'message' => $conflictedSchedules->isEmpty() 
+                    ? 'Конфликтов ресурсов не обнаружено' 
+                    : 'Найдены графики с конфликтами ресурсов'
+            ]
+        ]);
+    }
+
+    /**
      * Получить задачи расписания
      */
-    public function tasks(int $id, Request $request): JsonResponse
+    public function tasks(string $id, Request $request): JsonResponse
     {
         $schedule = $this->scheduleRepository->findForOrganization(
-            $id,
+            (int) $id,
             $this->getOrganizationId($request)
         );
 
@@ -357,10 +379,10 @@ class ProjectScheduleController extends Controller
     /**
      * Получить зависимости расписания
      */
-    public function dependencies(int $id, Request $request): JsonResponse
+    public function dependencies(string $id, Request $request): JsonResponse
     {
         $schedule = $this->scheduleRepository->findForOrganization(
-            $id,
+            (int) $id,
             $this->getOrganizationId($request)
         );
 
@@ -378,12 +400,146 @@ class ProjectScheduleController extends Controller
     }
 
     /**
-     * Создать новую задачу в расписании
+     * Создать новую зависимость между задачами
      */
-    public function storeTask(int $id, CreateScheduleTaskRequest $request): JsonResponse
+    public function storeDependency(string $id, CreateTaskDependencyRequest $request): JsonResponse
     {
         $schedule = $this->scheduleRepository->findForOrganization(
-            $id,
+            (int) $id,
+            $this->getOrganizationId($request)
+        );
+
+        if (!$schedule) {
+            return response()->json(['message' => 'График не найден'], 404);
+        }
+
+        $data = $request->validated();
+        $data['schedule_id'] = $schedule->id;
+        $data['organization_id'] = $this->getOrganizationId($request);
+        $data['created_by_user_id'] = $request->user()->id;
+        
+        // Устанавливаем значения по умолчанию
+        $data['is_active'] = true;
+        $data['validation_status'] = 'valid';
+
+        try {
+            $dependency = TaskDependency::create($data);
+            
+            // Загружаем связанные данные для ответа
+            $dependency->load(['predecessorTask', 'successorTask', 'createdBy']);
+
+            return response()->json([
+                'message' => 'Зависимость между задачами успешно создана',
+                'data' => [
+                    'id' => $dependency->id,
+                    'dependency_type' => $dependency->dependency_type->value,
+                    'dependency_type_label' => $dependency->dependency_type->label(),
+                    'lag_days' => $dependency->lag_days,
+                    'lag_hours' => $dependency->lag_hours,
+                    'lag_type' => $dependency->lag_type,
+                    'description' => $dependency->description,
+                    'is_hard_constraint' => $dependency->is_hard_constraint,
+                    'priority' => $dependency->priority,
+                    'is_active' => $dependency->is_active,
+                    'validation_status' => $dependency->validation_status,
+                    'created_at' => $dependency->created_at,
+                    'predecessor_task' => [
+                        'id' => $dependency->predecessorTask->id,
+                        'name' => $dependency->predecessorTask->name,
+                        'planned_start_date' => $dependency->predecessorTask->planned_start_date,
+                        'planned_end_date' => $dependency->predecessorTask->planned_end_date,
+                    ],
+                    'successor_task' => [
+                        'id' => $dependency->successorTask->id,
+                        'name' => $dependency->successorTask->name,
+                        'planned_start_date' => $dependency->successorTask->planned_start_date,
+                        'planned_end_date' => $dependency->successorTask->planned_end_date,
+                    ],
+                    'created_by' => [
+                        'id' => $dependency->createdBy->id,
+                        'name' => $dependency->createdBy->name,
+                        'email' => $dependency->createdBy->email,
+                    ]
+                ]
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Ошибка при создании зависимости: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить конфликты ресурсов в расписании
+     */
+    public function resourceConflicts(string $id, Request $request): JsonResponse
+    {
+        $schedule = $this->scheduleRepository->findForOrganization(
+            (int) $id,
+            $this->getOrganizationId($request)
+        );
+
+        if (!$schedule) {
+            return response()->json(['message' => 'График не найден'], 404);
+        }
+
+        try {
+            // Получаем конфликты ресурсов для данного графика
+            $conflicts = $this->scheduleRepository->getWithResourceConflicts(
+                $this->getOrganizationId($request)
+            )->where('id', $schedule->id);
+
+            // Если нет конфликтов для этого графика
+            if ($conflicts->isEmpty()) {
+                return response()->json([
+                    'data' => [],
+                    'meta' => [
+                        'conflicts_count' => 0,
+                        'has_conflicts' => false,
+                        'message' => 'Конфликтов ресурсов не обнаружено'
+                    ]
+                ]);
+            }
+
+            // Загружаем детальную информацию о конфликтах
+            $schedule->load([
+                'tasks' => function ($query) {
+                    $query->whereHas('resources', function ($q) {
+                        $q->where('is_overallocated', true);
+                    })->with(['resources', 'assignedUser']);
+                },
+                'resources' => function ($query) {
+                    $query->where('is_overallocated', true);
+                }
+            ]);
+
+            return response()->json([
+                'data' => [
+                    'schedule_id' => $schedule->id,
+                    'schedule_name' => $schedule->name,
+                    'conflicted_tasks' => $schedule->tasks,
+                    'conflicted_resources' => $schedule->resources,
+                ],
+                'meta' => [
+                    'conflicts_count' => $schedule->tasks->count() + $schedule->resources->count(),
+                    'has_conflicts' => true,
+                    'message' => 'Обнаружены конфликты ресурсов'
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Ошибка при получении конфликтов ресурсов: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Создать новую задачу в расписании
+     */
+    public function storeTask(string $id, CreateScheduleTaskRequest $request): JsonResponse
+    {
+        $schedule = $this->scheduleRepository->findForOrganization(
+            (int) $id,
             $this->getOrganizationId($request)
         );
 

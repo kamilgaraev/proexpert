@@ -64,11 +64,11 @@ enum TaskStatusEnum: string
 
     public static function activeStatuses(): array
     {
-        return [self::NOT_STARTED, self::IN_PROGRESS, self::WAITING, self::ON_HOLD];
+        return [self::NOT_STARTED->value, self::IN_PROGRESS->value, self::WAITING->value, self::ON_HOLD->value];
     }
 
     public static function workingStatuses(): array
     {
-        return [self::IN_PROGRESS, self::WAITING];
+        return [self::IN_PROGRESS->value, self::WAITING->value];
     }
 } 

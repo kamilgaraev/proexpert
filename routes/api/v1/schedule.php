@@ -36,6 +36,10 @@ Route::prefix('schedules')->group(function () {
             ->name('schedules.tasks.store');
         Route::get('dependencies', [ProjectScheduleController::class, 'dependencies'])
             ->name('schedules.dependencies');
+        Route::post('dependencies', [ProjectScheduleController::class, 'storeDependency'])
+            ->name('schedules.dependencies.store');
+        Route::get('resource-conflicts', [ProjectScheduleController::class, 'resourceConflicts'])
+            ->name('schedules.resource-conflicts');
     });
     
     // Дополнительные эндпоинты
@@ -49,4 +53,6 @@ Route::prefix('schedules')->group(function () {
         ->name('schedules.overdue');
     Route::get('recent', [ProjectScheduleController::class, 'recent'])
         ->name('schedules.recent');
+    Route::get('resource-conflicts', [ProjectScheduleController::class, 'allResourceConflicts'])
+        ->name('schedules.all-resource-conflicts');
 }); 

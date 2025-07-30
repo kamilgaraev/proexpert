@@ -379,7 +379,7 @@ class ScheduleTask extends Model
     {
         return $query->where('planned_end_date', '<', now())
                     ->where('progress_percent', '<', 100)
-                    ->whereNotIn('status', [TaskStatusEnum::COMPLETED, TaskStatusEnum::CANCELLED]);
+                    ->whereNotIn('status', [TaskStatusEnum::COMPLETED->value, TaskStatusEnum::CANCELLED->value]);
     }
 
     public function scopeByType($query, TaskTypeEnum $type)

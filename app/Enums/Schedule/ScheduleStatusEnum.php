@@ -49,11 +49,11 @@ enum ScheduleStatusEnum: string
 
     public static function activeStatuses(): array
     {
-        return [self::DRAFT, self::ACTIVE, self::PAUSED];
+        return [self::DRAFT->value, self::ACTIVE->value, self::PAUSED->value];
     }
 
     public static function finalStatuses(): array
     {
-        return [self::COMPLETED, self::CANCELLED];
+        return [self::COMPLETED->value, self::CANCELLED->value];
     }
 } 
