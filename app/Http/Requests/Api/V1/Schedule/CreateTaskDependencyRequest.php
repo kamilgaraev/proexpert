@@ -67,12 +67,26 @@ class CreateTaskDependencyRequest extends FormRequest
             $predecessorTask = \App\Models\ScheduleTask::find($this->predecessor_task_id);
             $successorTask = \App\Models\ScheduleTask::find($this->successor_task_id);
             
+            // Добавляем детальную отладочную информацию
             if ($predecessorTask && $predecessorTask->schedule_id !== $scheduleId) {
-                $validator->errors()->add('predecessor_task_id', 'Предшествующая задача не принадлежит данному расписанию');
+                $validator->errors()->add('predecessor_task_id', 
+                    "Предшествующая задача (ID: {$predecessorTask->id}) принадлежит расписанию {$predecessorTask->schedule_id}, но ожидается {$scheduleId}"
+                );
             }
             
             if ($successorTask && $successorTask->schedule_id !== $scheduleId) {
-                $validator->errors()->add('successor_task_id', 'Последующая задача не принадлежит данному расписанию');
+                $validator->errors()->add('successor_task_id', 
+                    "Последующая задача (ID: {$successorTask->id}) принадлежит расписанию {$successorTask->schedule_id}, но ожидается {$scheduleId}"
+                );
+            }
+            
+            // Проверяем что задачи найдены
+            if (!$predecessorTask) {
+                $validator->errors()->add('predecessor_task_id', 'Предшествующая задача не найдена в базе данных');
+            }
+            
+            if (!$successorTask) {
+                $validator->errors()->add('successor_task_id', 'Последующая задача не найдена в базе данных');
             }
             
             // Проверяем на циклические зависимости
