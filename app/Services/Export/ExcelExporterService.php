@@ -131,10 +131,14 @@ class ExcelExporterService
                         'first_row' => is_iterable($data) ? (is_array($data) ? ($data[0] ?? null) : (method_exists($data, 'first') ? $data->first() : null)) : null,
                         'data_count' => is_countable($data) ? count($data) : null,
                     ]);
-                    echo json_encode([
-                        'error' => 'Ошибка при экспорте в Excel',
-                        'message' => $e->getMessage(),
-                    ]);
+                    // Не выводим JSON в поток, так как это портит Excel файл
+                    // Вместо этого создаем пустой Excel файл с сообщением об ошибке
+                    $errorSpreadsheet = new Spreadsheet();
+                    $errorSheet = $errorSpreadsheet->getActiveSheet();
+                    $errorSheet->setCellValue('A1', 'Ошибка при генерации отчета');
+                    $errorSheet->setCellValue('A2', $e->getMessage());
+                    $errorWriter = new Xlsx($errorSpreadsheet);
+                    $errorWriter->save('php://output');
                 }
             });
 
@@ -153,6 +157,65 @@ class ExcelExporterService
                 'error' => 'Ошибка при экспорте в Excel',
                 'message' => $e->getMessage(),
             ], 500);
+        }
+    }
+
+    /**
+     * Сохраняет Excel файл на диск.
+     *
+     * @param array|\Illuminate\Support\Collection $data Массив данных
+     * @param array $headers Массив заголовков колонок
+     * @param string $filePath Путь к файлу для сохранения
+     * @return void
+     */
+    public function saveToFile($data, array $headers, string $filePath): void
+    {
+        try {
+            Log::info('[ExcelExporterService] Сохранение Excel файла на диск', [
+                'file_path' => $filePath,
+                'headers_count' => count($headers),
+                'data_count' => is_countable($data) ? count($data) : null,
+            ]);
+
+            $spreadsheet = new Spreadsheet();
+            $sheet = $spreadsheet->getActiveSheet();
+
+            // Записываем заголовки
+            $colIndex = 0;
+            foreach ($headers as $header) {
+                $cell = chr(65 + $colIndex) . '1';
+                $sheet->setCellValue($cell, $header);
+                $colIndex++;
+            }
+
+            // Записываем данные
+            $rowIndex = 2;
+            $preparedData = $this->prepareDataForExport($data, []);
+            foreach ($preparedData['data'] as $rowArray) {
+                $colIndex = 0;
+                foreach ($rowArray as $value) {
+                    $cell = chr(65 + $colIndex) . $rowIndex;
+                    $sheet->setCellValue($cell, $value);
+                    $colIndex++;
+                }
+                $rowIndex++;
+            }
+
+            // Сохраняем файл
+            $writer = new Xlsx($spreadsheet);
+            $writer->save($filePath);
+
+            Log::info('[ExcelExporterService] Excel файл успешно сохранен', [
+                'file_path' => $filePath,
+                'rows_count' => $rowIndex - 2,
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('[ExcelExporterService] Ошибка при сохранении Excel файла', [
+                'file_path' => $filePath,
+                'exception' => $e,
+            ]);
+            throw $e;
         }
     }
 
@@ -697,4 +760,4 @@ class ExcelExporterService
             return null;
         }
     }
-} 
+}

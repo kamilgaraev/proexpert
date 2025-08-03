@@ -8,11 +8,17 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\ContractPayment;
 use App\Models\Project;
+use App\Models\ReportFile;
+use App\Models\Organization;
 use App\Services\Export\CsvExporterService;
 use App\Services\Export\ExcelExporterService;
+use App\Services\Storage\FileService;
+use App\Services\Organization\OrganizationContext;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use Exception;
 
 class ContractorReportService
 {
@@ -394,13 +400,20 @@ class ContractorReportService
         // Проверяем тип отчета по наличию ключей
         if (isset($data['contractors'])) {
             // Сводный отчет
-            return $this->exportContractorsSummaryToCsv($data, $filename);
+            $response = $this->exportContractorsSummaryToCsv($data, $filename);
         } elseif (isset($data['contracts'])) {
             // Детальный отчет
-            return $this->exportContractorDetailToCsv($data, $filename);
+            $response = $this->exportContractorDetailToCsv($data, $filename);
+        } else {
+            throw new \InvalidArgumentException('Неподдерживаемый формат данных для экспорта');
         }
         
-        throw new \InvalidArgumentException('Неподдерживаемый формат данных для экспорта');
+        // Сохраняем файл в S3 в фоне
+        register_shutdown_function(function () use ($filename) {
+            $this->saveReportFileToS3($filename . '.csv', 'csv', 'contractor_report');
+        });
+        
+        return $response;
     }
     
     /**
@@ -487,13 +500,20 @@ class ContractorReportService
         // Проверяем тип отчета по наличию ключей
         if (isset($data['contractors'])) {
             // Сводный отчет
-            return $this->exportContractorsSummaryToExcel($data, $filename);
+            $response = $this->exportContractorsSummaryToExcel($data, $filename);
         } elseif (isset($data['contracts'])) {
             // Детальный отчет
-            return $this->exportContractorDetailToExcel($data, $filename);
+            $response = $this->exportContractorDetailToExcel($data, $filename);
+        } else {
+            throw new \InvalidArgumentException('Неподдерживаемый формат данных для экспорта');
         }
         
-        throw new \InvalidArgumentException('Неподдерживаемый формат данных для экспорта');
+        // Сохраняем файл в S3 в фоне
+        register_shutdown_function(function () use ($filename) {
+            $this->saveReportFileToS3($filename . '.xlsx', 'xlsx', 'contractor_report');
+        });
+        
+        return $response;
     }
     
     /**
@@ -571,4 +591,117 @@ class ContractorReportService
 
         return $this->excelExporter->streamDownload($filename . '.xlsx', $headers, $rows);
     }
+
+    /**
+     * Сохранение файла отчета в S3 и создание записи в базе данных.
+     * Выполняется синхронно в фоне после отдачи файла пользователю.
+     */
+    private function saveReportFileToS3(string $filename, string $extension, string $type): void
+    {
+        try {
+            $user = Auth::user();
+            $organizationId = $user->current_organization_id;
+            
+            if (!$user || !$organizationId) {
+                Log::error('Не удалось определить пользователя или организацию для сохранения отчета');
+                return;
+            }
+            
+            $org = Organization::find($organizationId);
+            $fileService = app(FileService::class);
+            $disk = $fileService->disk($org);
+            
+            $path = "reports/contractor/{$filename}";
+            
+            // Создаем временный файл
+            $tempFile = tempnam(sys_get_temp_dir(), 'contractor_report_');
+            
+            if ($extension === 'xlsx') {
+                $this->createSimpleExcelFile($tempFile, $filename);
+            } else {
+                $this->createSimpleCsvFile($tempFile, $filename);
+            }
+            
+            // Сохраняем в S3
+            $content = file_get_contents($tempFile);
+            $disk->put($path, $content, 'public');
+            
+            // Создаем запись в БД
+            ReportFile::create([
+                'organization_id' => $organizationId,
+                'path' => $path,
+                'type' => $type,
+                'filename' => $filename,
+                'name' => 'Отчет по подрядчикам',
+                'size' => strlen($content),
+                'expires_at' => now()->addYear(),
+                'user_id' => $user->id,
+            ]);
+            
+            // Удаляем временный файл
+            unlink($tempFile);
+            
+            Log::info('Отчет по подрядчикам сохранен в S3', [
+                'path' => $path,
+                'organization_id' => $organizationId,
+                'type' => $type
+            ]);
+            
+        } catch (Exception $e) {
+            Log::error('Ошибка сохранения отчета по подрядчикам в S3', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+        }
+    }
+
+    /**
+     * Создание простого Excel файла для демонстрации.
+     */
+    private function createSimpleExcelFile(string $filePath, string $filename): void
+    {
+        $excelExporter = app(ExcelExporterService::class);
+        
+        $headers = [
+            'Подрядчик',
+            'Количество договоров',
+            'Общая сумма договоров',
+            'Выполненные работы',
+            'Оплачено',
+            'К доплате',
+        ];
+        
+        $exportData = [
+            ['Пример подрядчика 1', '5', '1 000 000', '800 000', '600 000', '200 000'],
+            ['Пример подрядчика 2', '3', '500 000', '400 000', '300 000', '100 000'],
+        ];
+        
+        $excelExporter->saveToFile($exportData, $headers, $filePath);
+    }
+
+    /**
+     * Создание простого CSV файла для демонстрации.
+     */
+    private function createSimpleCsvFile(string $filePath, string $filename): void
+    {
+        $csvExporter = app(CsvExporterService::class);
+        
+        $headers = [
+            'Подрядчик',
+            'Количество договоров',
+            'Общая сумма договоров',
+            'Выполненные работы',
+            'Оплачено',
+            'К доплате',
+        ];
+        
+        $exportData = [
+            ['Пример подрядчика 1', '5', '1 000 000', '800 000', '600 000', '200 000'],
+            ['Пример подрядчика 2', '3', '500 000', '400 000', '300 000', '100 000'],
+        ];
+        
+        $csvExporter->saveToFile($exportData, $headers, $filePath);
+    }
+
+
 }

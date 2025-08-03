@@ -126,4 +126,53 @@ class CsvExporterService
             'data' => $exportData
         ];
     }
-} 
+
+    /**
+     * Сохраняет CSV файл на диск.
+     *
+     * @param array|\Illuminate\Support\Collection $data Массив данных
+     * @param array $headers Массив заголовков колонок
+     * @param string $filePath Путь к файлу для сохранения
+     * @param string $delimiter Разделитель полей
+     * @param bool $applyBom Добавлять ли UTF-8 BOM
+     * @return void
+     */
+    public function saveToFile($data, array $headers, string $filePath, string $delimiter = ';', bool $applyBom = true): void
+    {
+        try {
+            Log::info('[CsvExporterService] Сохранение CSV файла на диск', [
+                'file_path' => $filePath,
+                'headers_count' => count($headers),
+                'data_count' => is_countable($data) ? count($data) : null,
+            ]);
+
+            $handle = fopen($filePath, 'w');
+
+            if ($applyBom) {
+                fwrite($handle, "\xEF\xBB\xBF"); // UTF-8 BOM
+            }
+
+            // Записываем заголовки
+            fputcsv($handle, $headers, $delimiter);
+
+            // Записываем данные
+            foreach ($data as $rowArray) {
+                fputcsv($handle, $rowArray, $delimiter);
+            }
+
+            fclose($handle);
+
+            Log::info('[CsvExporterService] CSV файл успешно сохранен', [
+                'file_path' => $filePath,
+                'rows_count' => count($data),
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('[CsvExporterService] Ошибка при сохранении CSV файла', [
+                'file_path' => $filePath,
+                'exception' => $e,
+            ]);
+            throw $e;
+        }
+    }
+}
