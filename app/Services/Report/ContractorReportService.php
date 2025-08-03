@@ -423,7 +423,7 @@ class ContractorReportService
             ];
         }
 
-        return $this->csvExporter->export($headers, $rows, $filename);
+        return $this->csvExporter->streamDownload($filename . '.csv', $headers, $rows);
     }
 
     /**
@@ -464,6 +464,6 @@ class ContractorReportService
             ];
         }
 
-        return $this->excelExporter->export($headers, $rows, $filename);
+        return $this->excelExporter->streamDownload($filename . '.xlsx', $headers, $rows);
     }
 }
