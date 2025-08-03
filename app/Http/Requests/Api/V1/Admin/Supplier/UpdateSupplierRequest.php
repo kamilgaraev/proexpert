@@ -14,8 +14,17 @@ class UpdateSupplierRequest extends FormRequest
         /** @var Supplier|null $supplier */
         $supplier = $this->route('supplier');
         
+        if (!$supplier || !($supplier instanceof \App\Models\Supplier)) {
+            return false;
+        }
+        
+        $organizationId = $this->get('current_organization_id');
+        if (!$organizationId) {
+            return false;
+        }
+        
         // Проверяем права и принадлежность
-        return $supplier && Gate::allows('manage-catalogs') && $supplier->organization_id === (int)$this->get('current_organization_id');
+        return Gate::allows('manage-catalogs') && $supplier->organization_id === (int)$organizationId;
     }
 
     public function rules(): array
