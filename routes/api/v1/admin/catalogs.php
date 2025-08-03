@@ -56,7 +56,11 @@ Route::apiResource('contracts', ContractController::class);
 Route::get('/measurement-units/material-units', [MeasurementUnitController::class, 'getMaterialUnits'])->name('measurement-units.material-units');
 Route::apiResource('measurement-units', MeasurementUnitController::class);
 
-// Группа для видов работ и связанных с ними материалов
+// Маршруты для категорий затрат
+Route::post('/cost-categories/import', [CostCategoryController::class, 'import'])->name('cost-categories.import');
+Route::apiResource('cost-categories', CostCategoryController::class);
+
+// Группа для видов работ и связанных с ними материалов (в конце, чтобы не перехватывать основные роуты)
 Route::apiresource('work-types', WorkTypeController::class)->except([]); // Оставляем все стандартные CRUD для WorkType
 Route::prefix('work-types/{work_type}')->name('work-types.')->group(function () {
     // Подключаем маршруты для управления материалами, привязанными к виду работ
@@ -64,7 +68,3 @@ Route::prefix('work-types/{work_type}')->name('work-types.')->group(function () 
         require __DIR__ . '/work_type_materials.php';
     }
 });
-
-// Маршруты для категорий затрат
-Route::post('/cost-categories/import', [CostCategoryController::class, 'import'])->name('cost-categories.import');
-Route::apiResource('cost-categories', CostCategoryController::class); 

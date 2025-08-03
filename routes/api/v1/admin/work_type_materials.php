@@ -7,21 +7,21 @@ use App\Http\Controllers\Api\V1\Admin\WorkTypeMaterialController;
 // Префикс /work-types/{work_type} будет добавлен при подключении этого файла
 
 Route::get('/materials', [WorkTypeMaterialController::class, 'indexForWorkType'])
-    ->name('materials.index');
+    ->name('work-type-materials.index');
 
 Route::post('/materials', [WorkTypeMaterialController::class, 'storeOrUpdateForWorkType'])
-    ->name('materials.storeOrUpdate');
+    ->name('work-type-materials.storeOrUpdate');
 
 Route::delete('/materials/{material}', [WorkTypeMaterialController::class, 'destroyForWorkType'])
-    ->name('materials.destroy');
+    ->name('work-type-materials.destroy');
 
 // Роут для получения предложенных материалов
 Route::get('/suggest-materials', [WorkTypeMaterialController::class, 'getSuggestedMaterialsForWorkType'])
-   ->name('materials.suggest'); 
+   ->name('work-type-materials.suggest'); 
 
 // Роут для получения предложенных материалов (не CRUD, а вспомогательный)
 // Route::get('/suggested-materials', [WorkTypeMaterialController::class, 'getSuggestedMaterialsForWorkType'])
 //    ->name('materials.suggested'); 
 // Этот роут лучше вынести отдельно или сделать GET-запросом к основному ресурсу WorkTypes 
 // с параметром action=suggest-materials, если контроллер будет расширен.
-// Пока что метод getSuggestedMaterials есть в сервисе и может быть вызван другими частями приложения. 
+// Пока что метод getSuggestedMaterials есть в сервисе и может быть вызван другими частями приложения.

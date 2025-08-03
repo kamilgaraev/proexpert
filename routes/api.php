@@ -227,9 +227,7 @@ Route::prefix('admin')->name('admin.')->group(function () {
         if (file_exists(__DIR__ . '/api/v1/admin/advance_settings.php')) {
             require __DIR__ . '/api/v1/admin/advance_settings.php';
         }
-        if (file_exists(__DIR__ . '/api/v1/admin/work_type_materials.php')) {
-            require __DIR__ . '/api/v1/admin/work_type_materials.php';
-        }
+
         if (file_exists(__DIR__ . '/api/v1/admin/contractors.php')) {
             require __DIR__ . '/api/v1/admin/contractors.php';
         }
