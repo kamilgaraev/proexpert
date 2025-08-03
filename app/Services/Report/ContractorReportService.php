@@ -139,7 +139,7 @@ class ContractorReportService
             return $this->exportToCsv($result, 'contractor_summary_report');
         }
 
-        if ($exportFormat === 'excel') {
+        if ($exportFormat === 'excel' || $exportFormat === 'xlsx') {
             return $this->exportToExcel($result, 'contractor_summary_report');
         }
 
@@ -221,7 +221,7 @@ class ContractorReportService
             return $this->exportToCsv($result, 'contractor_detail_report');
         }
 
-        if ($exportFormat === 'excel') {
+        if ($exportFormat === 'excel' || $exportFormat === 'xlsx') {
             return $this->exportToExcel($result, 'contractor_detail_report');
         }
 

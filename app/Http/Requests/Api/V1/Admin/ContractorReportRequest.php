@@ -33,7 +33,7 @@ class ContractorReportRequest extends FormRequest
             'include_payments' => ['nullable', 'boolean'],
             'include_materials' => ['nullable', 'boolean'],
             'group_by' => ['nullable', 'string', Rule::in(['contractor', 'contract', 'work_type'])],
-            'export_format' => ['nullable', 'string', Rule::in(['json', 'csv', 'excel'])],
+            'export_format' => ['nullable', 'string', Rule::in(['json', 'csv', 'excel', 'xlsx'])],
             'sort_by' => ['nullable', 'string', Rule::in(['contractor_name', 'total_amount', 'completed_amount', 'payment_amount'])],
             'sort_direction' => ['nullable', 'string', Rule::in(['asc', 'desc'])],
         ];
