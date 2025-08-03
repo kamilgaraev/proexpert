@@ -21,7 +21,7 @@ class StoreMaterialRequest extends FormRequest
 
     public function rules(): array
     {
-        $organizationId = $this->attributes->get('organization_id');
+        $organizationId = $this->get('current_organization_id');
 
         return [
             'name' => [
@@ -93,4 +93,4 @@ class StoreMaterialRequest extends FormRequest
             ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
         );
     }
-} 
+}

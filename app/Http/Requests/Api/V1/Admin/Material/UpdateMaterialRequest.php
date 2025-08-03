@@ -22,7 +22,7 @@ class UpdateMaterialRequest extends FormRequest
 
     public function rules(): array
     {
-        $organizationId = $this->attributes->get('organization_id') ?? Auth::user()->current_organization_id;
+        $organizationId = $this->get('current_organization_id');
 
         /** @var Material|string|null $material */
         $material = $this->route('material'); // Может быть моделью или ID
@@ -107,4 +107,4 @@ class UpdateMaterialRequest extends FormRequest
             ], JsonResponse::HTTP_UNPROCESSABLE_ENTITY)
         );
     }
-} 
+}

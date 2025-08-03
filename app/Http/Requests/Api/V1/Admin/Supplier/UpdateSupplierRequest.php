@@ -15,7 +15,7 @@ class UpdateSupplierRequest extends FormRequest
         $supplier = $this->route('supplier');
         
         // Проверяем права и принадлежность
-        return $supplier && Gate::allows('manage-catalogs') && $supplier->organization_id === (int)$this->attributes->get('organization_id');
+        return $supplier && Gate::allows('manage-catalogs') && $supplier->organization_id === (int)$this->get('current_organization_id');
     }
 
     public function rules(): array
@@ -23,7 +23,7 @@ class UpdateSupplierRequest extends FormRequest
         /** @var Supplier|null $supplier */
         $supplier = $this->route('supplier');
         $supplierId = $supplier?->id;
-        $organizationId = $this->attributes->get('organization_id');
+        $organizationId = $this->get('current_organization_id');
         
         if (!$organizationId || !$supplierId) {
             return [];
@@ -49,4 +49,4 @@ class UpdateSupplierRequest extends FormRequest
             'is_active' => 'sometimes|boolean',
         ];
     }
-} 
+}
