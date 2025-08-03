@@ -231,7 +231,7 @@ class ContractService
                 'current_status' => $contract->status->value,
                 'is_nearing_limit' => $totalPerformedAmount >= ($aggregatedContractAmount * 0.9),
                 'can_add_work' => !in_array($contract->status->value, ['completed', 'terminated']),
-                'is_overdue' => $contract->end_date && $contract->end_date->isPast(),
+                'is_overdue' => $contract->is_overdue,
                 'days_until_deadline' => $contract->end_date ? now()->diffInDays($contract->end_date, false) : null,
             ],
             'counts' => [
@@ -319,4 +319,4 @@ class ContractService
     }
 
 
-} 
+}

@@ -152,7 +152,7 @@ class DashboardController extends Controller
                     'status' => $contract->status->value,
                     'end_date' => $contract->end_date?->format('Y-m-d'),
                     'is_nearing_limit' => $completionPercentage >= 90.0,
-                    'is_overdue' => $contract->end_date && $contract->end_date->isPast(),
+                    'is_overdue' => $contract->is_overdue,
                     'is_completed' => $completionPercentage >= 100,
                     'attention_reason' => $this->getAttentionReason($contract, $completionPercentage),
                     'priority' => $this->getContractPriority($contract, $completionPercentage),
@@ -347,4 +347,4 @@ class DashboardController extends Controller
 
         return $priority;
     }
-} 
+}

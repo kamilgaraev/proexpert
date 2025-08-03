@@ -223,6 +223,14 @@ class Contract extends Model
     }
 
     /**
+     * Проверить, просрочен ли контракт
+     */
+    public function getIsOverdueAttribute(): bool
+    {
+        return $this->end_date && $this->end_date->isPast() && $this->status === ContractStatusEnum::ACTIVE;
+    }
+
+    /**
      * Получить сумму всех платежей по контракту
      */
     public function getTotalPaidAmountAttribute(): float
@@ -265,4 +273,4 @@ class Contract extends Model
 
         return false;
     }
-} 
+}
