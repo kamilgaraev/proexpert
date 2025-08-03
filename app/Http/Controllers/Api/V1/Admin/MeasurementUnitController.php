@@ -24,6 +24,23 @@ class MeasurementUnitController extends Controller
     }
 
     /**
+     * Получить ID организации из запроса
+     */
+    private function getOrganizationId(Request $request): ?int
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        if (!$organizationId) {
+            $user = $request->user();
+            if ($user && $user->current_organization_id) {
+                $organizationId = $user->current_organization_id;
+            }
+        }
+        
+        return $organizationId ? (int) $organizationId : null;
+    }
+
+    /**
      * @OA\Get(
      *     path="/api/v1/admin/measurement-units",
      *     summary="Список всех единиц измерения для организации",
