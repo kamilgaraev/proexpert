@@ -53,6 +53,25 @@ class RouteServiceProvider extends ServiceProvider
                      require base_path('routes/api/v1/landing_admin_blog.php');
                  });
 
+            // Admin API Routes
+            Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.context'])
+                ->prefix('api/v1/admin')
+                ->as('api.v1.admin.')
+                ->group(function() {
+                    if (file_exists(base_path('routes/api/v1/admin/catalogs.php'))) {
+                        require base_path('routes/api/v1/admin/catalogs.php');
+                    }
+                    if (file_exists(base_path('routes/api/v1/admin/projects.php'))) {
+                        require base_path('routes/api/v1/admin/projects.php');
+                    }
+                    if (file_exists(base_path('routes/api/v1/admin/users.php'))) {
+                        require base_path('routes/api/v1/admin/users.php');
+                    }
+                    if (file_exists(base_path('routes/api/v1/admin/reports.php'))) {
+                        require base_path('routes/api/v1/admin/reports.php');
+                    }
+                });
+
             // Web Routes
             Route::middleware('web')
                 ->group(base_path('routes/web.php'));
@@ -77,4 +96,4 @@ class RouteServiceProvider extends ServiceProvider
         });
         */
     }
-} 
+}

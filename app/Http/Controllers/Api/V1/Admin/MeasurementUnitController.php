@@ -10,7 +10,6 @@ use App\Http\Resources\Api\V1\Admin\MeasurementUnitResource; // Уже суще�
 use App\Http\Resources\Api\V1\Admin\MeasurementUnitCollection; // Создадим
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use App\Services\Organization\OrganizationContext; // Добавлено
 use Exception;
 
 class MeasurementUnitController extends Controller
@@ -39,7 +38,7 @@ class MeasurementUnitController extends Controller
      */
     public function index(Request $request)
     {
-        $organizationId = OrganizationContext::getOrganizationId();
+        $organizationId = $this->getOrganizationId($request);
         if (!$organizationId) {
             return response()->json(['message' => 'Organization ID not found in context.'], Response::HTTP_BAD_REQUEST);
         }
@@ -66,7 +65,7 @@ class MeasurementUnitController extends Controller
      */
     public function store(StoreMeasurementUnitRequest $request)
     {
-        $organizationId = OrganizationContext::getOrganizationId();
+        $organizationId = $this->getOrganizationId($request);
         if (!$organizationId) {
             return response()->json(['message' => 'Organization ID not found in context.'], Response::HTTP_BAD_REQUEST);
         }
@@ -94,9 +93,9 @@ class MeasurementUnitController extends Controller
      *     @OA\Response(response=401, description="Не авторизован")
      * )
      */
-    public function show(int $id)
+    public function show(int $id, Request $request)
     {
-        $organizationId = OrganizationContext::getOrganizationId();
+        $organizationId = $this->getOrganizationId($request);
         if (!$organizationId) {
             return response()->json(['message' => 'Organization ID not found in context.'], Response::HTTP_BAD_REQUEST);
         }
@@ -125,7 +124,7 @@ class MeasurementUnitController extends Controller
      */
     public function update(UpdateMeasurementUnitRequest $request, int $id)
     {
-        $organizationId = OrganizationContext::getOrganizationId();
+        $organizationId = $this->getOrganizationId($request);
         if (!$organizationId) {
             return response()->json(['message' => 'Organization ID not found in context.'], Response::HTTP_BAD_REQUEST);
         }
@@ -155,9 +154,9 @@ class MeasurementUnitController extends Controller
      *     @OA\Response(response=401, description="Не авторизован")
      * )
      */
-    public function destroy(int $id)
+    public function destroy(int $id, Request $request)
     {
-        $organizationId = OrganizationContext::getOrganizationId();
+        $organizationId = $this->getOrganizationId($request);
         if (!$organizationId) {
             return response()->json(['message' => 'Organization ID not found in context.'], Response::HTTP_BAD_REQUEST);
         }
@@ -186,7 +185,7 @@ class MeasurementUnitController extends Controller
      */
     public function getMaterialUnits(Request $request)
     {
-        $organizationId = OrganizationContext::getOrganizationId();
+        $organizationId = $this->getOrganizationId($request);
         if (!$organizationId) {
             return response()->json(['message' => 'Organization ID not found in context.'], Response::HTTP_BAD_REQUEST);
         }
@@ -194,4 +193,4 @@ class MeasurementUnitController extends Controller
         $units = $this->measurementUnitService->getMaterialMeasurementUnits($organizationId);
         return MeasurementUnitResource::collection($units);
     }
-} 
+}

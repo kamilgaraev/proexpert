@@ -17,6 +17,17 @@ class OrganizationContext
     private static $organization = null;
     
     /**
+     * Конструктор для установки контекста при создании instance
+     */
+    public function __construct($organization = null)
+    {
+        if ($organization) {
+            self::setOrganization($organization);
+            self::setOrganizationId($organization->id);
+        }
+    }
+    
+    /**
      * Установить ID организации
      */
     public static function setOrganizationId(?int $id): void 
@@ -61,4 +72,4 @@ class OrganizationContext
         self::$organization = null;
         Log::debug("[OrganizationContext] Контекст очищен");
     }
-} 
+}
