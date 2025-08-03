@@ -391,6 +391,23 @@ class ContractorReportService
      */
     private function exportToCsv(array $data, string $filename): StreamedResponse
     {
+        // Проверяем тип отчета по наличию ключей
+        if (isset($data['contractors'])) {
+            // Сводный отчет
+            return $this->exportContractorsSummaryToCsv($data, $filename);
+        } elseif (isset($data['contracts'])) {
+            // Детальный отчет
+            return $this->exportContractorDetailToCsv($data, $filename);
+        }
+        
+        throw new \InvalidArgumentException('Неподдерживаемый формат данных для экспорта');
+    }
+    
+    /**
+     * Экспорт сводного отчета в CSV.
+     */
+    private function exportContractorsSummaryToCsv(array $data, string $filename): StreamedResponse
+    {
         $headers = [
             'Подрядчик',
             'Контактное лицо',
@@ -426,11 +443,63 @@ class ContractorReportService
 
         return $this->csvExporter->streamDownload($filename . '.csv', $headers, $rows);
     }
+    
+    /**
+     * Экспорт детального отчета в CSV.
+     */
+    private function exportContractorDetailToCsv(array $data, string $filename): StreamedResponse
+    {
+        $headers = [
+            'Номер контракта',
+            'Дата контракта',
+            'Статус',
+            'Сумма контракта',
+            'Выполнено работ',
+            'Оплачено',
+            'Остаток к доплате',
+            'Процент выполнения',
+            'Процент оплаты',
+        ];
+
+        $rows = [];
+        foreach ($data['contracts'] as $contract) {
+            $rows[] = [
+                $contract['contract_number'],
+                $contract['contract_date'],
+                $contract['status'],
+                $contract['total_amount'],
+                $contract['completed_amount'],
+                $contract['payment_amount'],
+                $contract['remaining_amount'],
+                $contract['completion_percentage'].'%',
+                $contract['payment_percentage'].'%',
+            ];
+        }
+
+        return $this->csvExporter->streamDownload($filename . '.csv', $headers, $rows);
+    }
 
     /**
      * Экспорт в Excel.
      */
     private function exportToExcel(array $data, string $filename): StreamedResponse
+    {
+        // Проверяем тип отчета по наличию ключей
+        if (isset($data['contractors'])) {
+            // Сводный отчет
+            return $this->exportContractorsSummaryToExcel($data, $filename);
+        } elseif (isset($data['contracts'])) {
+            // Детальный отчет
+            return $this->exportContractorDetailToExcel($data, $filename);
+        }
+        
+        throw new \InvalidArgumentException('Неподдерживаемый формат данных для экспорта');
+    }
+    
+    /**
+     * Экспорт сводного отчета в Excel.
+     */
+    private function exportContractorsSummaryToExcel(array $data, string $filename): StreamedResponse
     {
         $headers = [
             'Подрядчик',
@@ -462,6 +531,41 @@ class ContractorReportService
                 $contractor['remaining_amount'],
                 $contractor['completion_percentage'],
                 $contractor['payment_percentage'],
+            ];
+        }
+
+        return $this->excelExporter->streamDownload($filename . '.xlsx', $headers, $rows);
+    }
+    
+    /**
+     * Экспорт детального отчета в Excel.
+     */
+    private function exportContractorDetailToExcel(array $data, string $filename): StreamedResponse
+    {
+        $headers = [
+            'Номер контракта',
+            'Дата контракта',
+            'Статус',
+            'Сумма контракта',
+            'Выполнено работ',
+            'Оплачено',
+            'Остаток к доплате',
+            'Процент выполнения',
+            'Процент оплаты',
+        ];
+
+        $rows = [];
+        foreach ($data['contracts'] as $contract) {
+            $rows[] = [
+                $contract['contract_number'],
+                $contract['contract_date'],
+                $contract['status'],
+                $contract['total_amount'],
+                $contract['completed_amount'],
+                $contract['payment_amount'],
+                $contract['remaining_amount'],
+                $contract['completion_percentage'],
+                $contract['payment_percentage'],
             ];
         }
 
