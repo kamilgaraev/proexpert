@@ -260,9 +260,10 @@ class ContractorReportService
 
         // Получаем выполненные работы
         if ($includeCompletedWorks) {
-            $completedWorksQuery = CompletedWork::where('contractor_id', $contractor->id)
-                ->where('project_id', $projectId)
-                ->where('organization_id', $organizationId);
+            // Получаем ID контрактов подрядчика для правильного расчета выполненных работ
+            $contractIds = $contracts->pluck('id');
+            
+            $completedWorksQuery = CompletedWork::whereIn('contract_id', $contractIds);
 
             if ($dateFrom) {
                 $completedWorksQuery->where('completion_date', '>=', Carbon::parse($dateFrom));
