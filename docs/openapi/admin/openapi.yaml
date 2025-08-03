@@ -26,7 +26,11 @@ components:
       $ref: './components/schemas/LoginResponse.yaml'
     UserSimple:
       $ref: './components/schemas/UserSimple.yaml'
+    ContractorSummaryReport:
+      $ref: './components/schemas/ContractorSummaryReport.yaml'
+    ContractorDetailReport:
+      $ref: './components/schemas/ContractorDetailReport.yaml'
   parameters: {}
   responses:
     UnauthorizedError:
-      $ref: './components/responses/UnauthorizedError.yaml' 
+      $ref: './components/responses/UnauthorizedError.yaml'

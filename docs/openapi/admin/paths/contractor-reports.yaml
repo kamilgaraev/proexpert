@@ -1,0 +1,185 @@
+# Отчеты по подрядчикам
+
+/api/v1/admin/reports/contractor-summary:
+  get:
+    tags:
+      - Reports
+    summary: Сводный отчет по подрядчикам проекта
+    description: Получить сводный отчет по всем подрядчикам для выбранного проекта с итоговыми суммами контрактов, выполненных работ и платежей
+    parameters:
+      - name: project_id
+        in: query
+        required: true
+        description: ID проекта для отчета
+        schema:
+          type: integer
+          format: int64
+      - name: date_from
+        in: query
+        required: false
+        description: Дата начала периода (для фильтрации выполненных работ и платежей)
+        schema:
+          type: string
+          format: date
+      - name: date_to
+        in: query
+        required: false
+        description: Дата окончания периода (для фильтрации выполненных работ и платежей)
+        schema:
+          type: string
+          format: date
+      - name: contractor_ids
+        in: query
+        required: false
+        description: Массив ID подрядчиков для фильтрации
+        schema:
+          type: array
+          items:
+            type: integer
+            format: int64
+        style: form
+        explode: true
+      - name: contract_status
+        in: query
+        required: false
+        description: Статус контрактов для фильтрации
+        schema:
+          type: string
+          enum: [active, completed, cancelled, draft]
+      - name: include_completed_works
+        in: query
+        required: false
+        description: Включать ли данные о выполненных работах
+        schema:
+          type: boolean
+          default: true
+      - name: include_payments
+        in: query
+        required: false
+        description: Включать ли данные о платежах
+        schema:
+          type: boolean
+          default: true
+      - name: include_materials
+        in: query
+        required: false
+        description: Включать ли данные о материалах
+        schema:
+          type: boolean
+          default: false
+      - name: sort_by
+        in: query
+        required: false
+        description: Поле для сортировки
+        schema:
+          type: string
+          enum: [contractor_name, total_amount, completed_amount, payment_amount]
+          default: total_amount
+      - name: sort_direction
+        in: query
+        required: false
+        description: Направление сортировки
+        schema:
+          type: string
+          enum: [asc, desc]
+          default: desc
+      - name: export_format
+        in: query
+        required: false
+        description: Формат экспорта отчета
+        schema:
+          type: string
+          enum: [json, csv, excel]
+          default: json
+    responses:
+      '200':
+        description: Успешно получен отчет
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractorSummaryReport.yaml'
+          text/csv:
+            schema:
+              type: string
+              format: binary
+          application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+            schema:
+              type: string
+              format: binary
+      '400':
+        $ref: '../components/responses/BadRequest.yaml'
+      '401':
+        $ref: '../components/responses/Unauthorized.yaml'
+      '403':
+        $ref: '../components/responses/Forbidden.yaml'
+      '422':
+        $ref: '../components/responses/ValidationError.yaml'
+
+/api/v1/admin/reports/contractor-detail/{contractorId}:
+  get:
+    tags:
+      - Reports
+    summary: Детальный отчет по подрядчику
+    description: Получить детальный отчет по конкретному подрядчику в рамках проекта с разбивкой по контрактам, выполненным работам и платежам
+    parameters:
+      - name: contractorId
+        in: path
+        required: true
+        description: ID подрядчика
+        schema:
+          type: integer
+          format: int64
+      - name: project_id
+        in: query
+        required: true
+        description: ID проекта для отчета
+        schema:
+          type: integer
+          format: int64
+      - name: date_from
+        in: query
+        required: false
+        description: Дата начала периода
+        schema:
+          type: string
+          format: date
+      - name: date_to
+        in: query
+        required: false
+        description: Дата окончания периода
+        schema:
+          type: string
+          format: date
+      - name: export_format
+        in: query
+        required: false
+        description: Формат экспорта отчета
+        schema:
+          type: string
+          enum: [json, csv, excel]
+          default: json
+    responses:
+      '200':
+        description: Успешно получен детальный отчет
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractorDetailReport.yaml'
+          text/csv:
+            schema:
+              type: string
+              format: binary
+          application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+            schema:
+              type: string
+              format: binary
+      '400':
+        $ref: '../components/responses/BadRequest.yaml'
+      '401':
+        $ref: '../components/responses/Unauthorized.yaml'
+      '403':
+        $ref: '../components/responses/Forbidden.yaml'
+      '404':
+        $ref: '../components/responses/NotFound.yaml'
+      '422':
+        $ref: '../components/responses/ValidationError.yaml'

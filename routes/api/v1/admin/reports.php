@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\ReportController;
+use App\Http\Controllers\Api\V1\Admin\ContractorReportController;
 
 /*
 |--------------------------------------------------------------------------
@@ -19,4 +20,8 @@ Route::prefix('reports')->name('reports.')->group(function () {
     Route::get('foreman-activity', [ReportController::class, 'foremanActivityReport'])->name('foreman_activity');
     Route::get('project-status-summary', [ReportController::class, 'projectStatusSummaryReport'])->name('project_status_summary');
     Route::get('official-material-usage', [ReportController::class, 'officialMaterialUsageReport'])->name('official_material_usage');
-}); 
+    
+    // Отчеты по подрядчикам
+    Route::get('contractor-summary', [ContractorReportController::class, 'contractorSummaryReport'])->name('contractor_summary');
+    Route::get('contractor-detail/{contractorId}', [ContractorReportController::class, 'contractorDetailReport'])->name('contractor_detail');
+});

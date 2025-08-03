@@ -189,6 +189,10 @@
   $ref: './reports_advance_accounts.yaml#/~1reports~1advance-accounts~1overdue'
 /reports/advance-accounts/export/{format}:
   $ref: './reports_advance_accounts.yaml#/~1reports~1advance-accounts~1export~1{format}'
+/reports/contractor-summary:
+  $ref: './contractor-reports.yaml#/~1reports~1contractor-summary'
+/reports/contractor-detail/{contractorId}:
+  $ref: './contractor-reports.yaml#/~1reports~1contractor-detail~1{contractorId}'
 
 /users:
   $ref: './users.yaml#/~1users'
@@ -282,4 +286,4 @@
 /specifications:
   $ref: './specifications.yaml#/~1specifications'
 /specifications/{specificationId}:
-  $ref: './specifications.yaml#/~1specifications~1{specificationId}' 
+  $ref: './specifications.yaml#/~1specifications~1{specificationId}'
