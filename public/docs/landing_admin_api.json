@@ -1,0 +1,3045 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ProHelper Landing Admin API",
+    "description": "Спецификация API админ-панели (Landing Admin). Добавляйте пути через `$ref` в папку `paths/`.\n",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/api/v1/landing",
+      "description": "Production server"
+    },
+    {
+      "url": "http://localhost:8000/api/v1/landing",
+      "description": "Local development"
+    }
+  ],
+  "paths": {
+    "/landingAdminAuth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful login",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/landingAdminAuth/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Current admin",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authenticated admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandingAdmin"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/landingAdminAuth/refresh": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Refresh token",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "New token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/landingAdminAuth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Logout",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Logged out"
+          }
+        }
+      }
+    },
+    "/landing-admins": {
+      "get": {
+        "tags": [
+          "LandingAdmins"
+        ],
+        "summary": "List landing admins",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of landing admins",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LandingAdmin"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "LandingAdmins"
+        ],
+        "summary": "Create landing admin",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LandingAdminCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandingAdmin"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/landing-admins/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "LandingAdmins"
+        ],
+        "summary": "Get landing admin",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Landing admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandingAdmin"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "LandingAdmins"
+        ],
+        "summary": "Update landing admin",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LandingAdminUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LandingAdmin"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "LandingAdmins"
+        ],
+        "summary": "Delete landing admin",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/blog/dashboard/overview": {
+      "get": {
+        "tags": [
+          "Blog Dashboard"
+        ],
+        "summary": "Обзор блога",
+        "description": "Возвращает общую статистику блога: количество статей, комментариев, популярные статьи",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Успешный ответ",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlogDashboard"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/blog/dashboard/analytics": {
+      "get": {
+        "tags": [
+          "Blog Dashboard"
+        ],
+        "summary": "Аналитика блога",
+        "description": "Детальная аналитика с графиками и статистикой за период",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "week",
+                "month",
+                "quarter",
+                "year"
+              ],
+              "default": "month"
+            }
+          },
+          {
+            "name": "start_date",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "end_date",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Аналитические данные",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlogAnalytics"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/blog/dashboard/quick-stats": {
+      "get": {
+        "tags": [
+          "Blog Dashboard"
+        ],
+        "summary": "Быстрая статистика",
+        "description": "Сравнение показателей сегодня/вчера, этот/прошлый месяц",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Быстрая статистика"
+          }
+        }
+      }
+    },
+    "/blog/articles": {
+      "get": {
+        "tags": [
+          "Blog Articles"
+        ],
+        "summary": "Список статей",
+        "description": "Получение списка статей с фильтрацией и поиском",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "published",
+                "scheduled",
+                "archived"
+              ]
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "author_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 15
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список статей",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/BlogArticle"
+                      }
+                    },
+                    "meta": {
+                      "type": "object"
+                    },
+                    "links": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Blog Articles"
+        ],
+        "summary": "Создание статьи",
+        "description": "Создание новой статьи блога",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlogArticleCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Статья создана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/BlogArticle"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/blog/articles/{id}": {
+      "get": {
+        "tags": [
+          "Blog Articles"
+        ],
+        "summary": "Получение статьи",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Данные статьи",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/BlogArticle"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Blog Articles"
+        ],
+        "summary": "Обновление статьи",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlogArticleUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Статья обновлена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/BlogArticle"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Blog Articles"
+        ],
+        "summary": "Удаление статьи",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Статья удалена"
+          }
+        }
+      }
+    },
+    "/blog/articles/{id}/publish": {
+      "post": {
+        "tags": [
+          "Blog Articles"
+        ],
+        "summary": "Публикация статьи",
+        "description": "Немедленная публикация статьи или в указанное время",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "publish_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Время публикации (опционально)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Статья опубликована"
+          }
+        }
+      }
+    },
+    "/blog/articles/{id}/schedule": {
+      "post": {
+        "tags": [
+          "Blog Articles"
+        ],
+        "summary": "Планирование статьи",
+        "description": "Запланировать публикацию статьи на определенное время",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "scheduled_at"
+                ],
+                "properties": {
+                  "scheduled_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Статья запланирована"
+          }
+        }
+      }
+    },
+    "/blog/articles/{id}/archive": {
+      "post": {
+        "tags": [
+          "Blog Articles"
+        ],
+        "summary": "Архивирование статьи",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Статья архивирована"
+          }
+        }
+      }
+    },
+    "/blog/articles/{id}/duplicate": {
+      "post": {
+        "tags": [
+          "Blog Articles"
+        ],
+        "summary": "Дублирование статьи",
+        "description": "Создает копию статьи в статусе черновика",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Статья дублирована",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/BlogArticle"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/blog/articles/{id}/seo-data": {
+      "get": {
+        "tags": [
+          "Blog Articles"
+        ],
+        "summary": "Генерация SEO данных",
+        "description": "Автоматическая генерация SEO данных для статьи",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SEO данные сгенерированы"
+          }
+        }
+      }
+    },
+    "/blog/articles-scheduled": {
+      "get": {
+        "tags": [
+          "Blog Articles"
+        ],
+        "summary": "Запланированные статьи",
+        "description": "Список статей, запланированных к публикации",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список запланированных статей"
+          }
+        }
+      }
+    },
+    "/blog/articles-drafts": {
+      "get": {
+        "tags": [
+          "Blog Articles"
+        ],
+        "summary": "Черновики автора",
+        "description": "Черновики текущего автора",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список черновиков"
+          }
+        }
+      }
+    },
+    "/blog/categories": {
+      "get": {
+        "tags": [
+          "Blog Categories"
+        ],
+        "summary": "Список категорий",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список категорий",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/BlogCategory"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Blog Categories"
+        ],
+        "summary": "Создание категории",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlogCategoryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Категория создана"
+          }
+        }
+      }
+    },
+    "/blog/categories/{id}": {
+      "get": {
+        "tags": [
+          "Blog Categories"
+        ],
+        "summary": "Получение категории",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Данные категории"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Blog Categories"
+        ],
+        "summary": "Обновление категории",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlogCategoryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Категория обновлена"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Blog Categories"
+        ],
+        "summary": "Удаление категории",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Категория удалена"
+          }
+        }
+      }
+    },
+    "/blog/categories/reorder": {
+      "post": {
+        "tags": [
+          "Blog Categories"
+        ],
+        "summary": "Изменение порядка категорий",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "category_ids"
+                ],
+                "properties": {
+                  "category_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Порядок изменен"
+          }
+        }
+      }
+    },
+    "/blog/comments": {
+      "get": {
+        "tags": [
+          "Blog Comments"
+        ],
+        "summary": "Список комментариев",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "approved",
+                "rejected",
+                "spam"
+              ]
+            }
+          },
+          {
+            "name": "article_id",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список комментариев"
+          }
+        }
+      }
+    },
+    "/blog/comments/{id}": {
+      "get": {
+        "tags": [
+          "Blog Comments"
+        ],
+        "summary": "Получение комментария",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Данные комментария",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/BlogComment"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Blog Comments"
+        ],
+        "summary": "Удаление комментария",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Комментарий удален"
+          }
+        }
+      }
+    },
+    "/blog/comments/{id}/status": {
+      "put": {
+        "tags": [
+          "Blog Comments"
+        ],
+        "summary": "Изменение статуса комментария",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlogCommentStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Статус изменен"
+          }
+        }
+      }
+    },
+    "/blog/comments/bulk-status": {
+      "post": {
+        "tags": [
+          "Blog Comments"
+        ],
+        "summary": "Массовое изменение статуса",
+        "description": "Изменение статуса нескольких комментариев одновременно",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "status",
+                  "comment_ids"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "approved",
+                      "rejected",
+                      "spam"
+                    ]
+                  },
+                  "comment_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Статусы изменены"
+          }
+        }
+      }
+    },
+    "/blog/comments-pending": {
+      "get": {
+        "tags": [
+          "Blog Comments"
+        ],
+        "summary": "Ожидающие комментарии",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список ожидающих модерации комментариев"
+          }
+        }
+      }
+    },
+    "/blog/comments-recent": {
+      "get": {
+        "tags": [
+          "Blog Comments"
+        ],
+        "summary": "Последние комментарии",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список последних комментариев"
+          }
+        }
+      }
+    },
+    "/blog/comments/stats": {
+      "get": {
+        "tags": [
+          "Blog Comments"
+        ],
+        "summary": "Статистика комментариев",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Статистика по статусам комментариев"
+          }
+        }
+      }
+    },
+    "/blog/seo/settings": {
+      "get": {
+        "tags": [
+          "Blog SEO"
+        ],
+        "summary": "Получение SEO настроек",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SEO настройки",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/BlogSeoSettings"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Blog SEO"
+        ],
+        "summary": "Обновление SEO настроек",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BlogSeoSettings"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Настройки обновлены"
+          }
+        }
+      }
+    },
+    "/blog/seo/sitemap": {
+      "get": {
+        "tags": [
+          "Blog SEO"
+        ],
+        "summary": "Генерация sitemap.xml",
+        "description": "Генерирует XML sitemap для поисковых систем",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "XML sitemap",
+            "content": {
+              "application/xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/blog/seo/rss": {
+      "get": {
+        "tags": [
+          "Blog SEO"
+        ],
+        "summary": "Генерация RSS-ленты",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "RSS feed",
+            "content": {
+              "application/rss+xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/blog/seo/robots": {
+      "get": {
+        "tags": [
+          "Blog SEO"
+        ],
+        "summary": "Генерация robots.txt",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "robots.txt content",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/blog/seo/preview/sitemap": {
+      "get": {
+        "tags": [
+          "Blog SEO"
+        ],
+        "summary": "Предпросмотр sitemap",
+        "description": "Предпросмотр XML sitemap в JSON формате",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Предпросмотр sitemap"
+          }
+        }
+      }
+    },
+    "/blog/seo/preview/rss": {
+      "get": {
+        "tags": [
+          "Blog SEO"
+        ],
+        "summary": "Предпросмотр RSS",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Предпросмотр RSS"
+          }
+        }
+      }
+    },
+    "/blog/seo/preview/robots": {
+      "get": {
+        "tags": [
+          "Blog SEO"
+        ],
+        "summary": "Предпросмотр robots.txt",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Предпросмотр robots.txt"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "LandingAdmin": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "role": {
+            "type": "string",
+            "description": "Роль администратора (admin, super_admin, ... )"
+          },
+          "is_super": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email",
+          "role",
+          "is_super",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "LandingAdminCreateRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8
+          },
+          "role": {
+            "type": "string",
+            "description": "Роль администратора"
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "password"
+        ]
+      },
+      "LandingAdminUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8
+          },
+          "role": {
+            "type": "string",
+            "description": "Роль администратора"
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          }
+        }
+      },
+      "TokenResponse": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
+      "BlogArticle": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "example": 1
+          },
+          "title": {
+            "type": "string",
+            "example": "Как создать SEO-оптимизированный блог"
+          },
+          "slug": {
+            "type": "string",
+            "example": "kak-sozdat-seo-optimizirovannyj-blog"
+          },
+          "excerpt": {
+            "type": "string",
+            "nullable": true,
+            "example": "Краткое описание статьи для превью"
+          },
+          "content": {
+            "type": "string",
+            "example": "<p>Полное содержимое статьи в HTML формате</p>"
+          },
+          "featured_image": {
+            "type": "string",
+            "nullable": true,
+            "example": "/storage/blog/images/article-1.jpg"
+          },
+          "gallery_images": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "/storage/blog/images/gallery-1.jpg",
+              "/storage/blog/images/gallery-2.jpg"
+            ]
+          },
+          "meta_title": {
+            "type": "string",
+            "nullable": true,
+            "example": "Как создать SEO-оптимизированный блог | ProHelper"
+          },
+          "meta_description": {
+            "type": "string",
+            "nullable": true,
+            "example": "Подробное руководство по созданию блога с учетом SEO требований. Пошаговая инструкция для начинающих."
+          },
+          "meta_keywords": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "seo",
+              "блог",
+              "оптимизация",
+              "контент-маркетинг"
+            ]
+          },
+          "og_title": {
+            "type": "string",
+            "nullable": true,
+            "example": "Как создать SEO-оптимизированный блог"
+          },
+          "og_description": {
+            "type": "string",
+            "nullable": true,
+            "example": "Узнайте, как создать блог, который будет привлекать трафик из поисковых систем"
+          },
+          "og_image": {
+            "type": "string",
+            "nullable": true,
+            "example": "/storage/blog/images/og-article-1.jpg"
+          },
+          "structured_data": {
+            "type": "object",
+            "nullable": true,
+            "example": {
+              "@context": "https://schema.org",
+              "@type": "BlogPosting",
+              "headline": "Как создать SEO-оптимизированный блог"
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "published",
+              "scheduled",
+              "archived"
+            ],
+            "example": "published"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "example": "2025-01-19T15:30:00.000000Z"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "example": "2025-01-20T10:00:00.000000Z"
+          },
+          "views_count": {
+            "type": "integer",
+            "example": 1250
+          },
+          "likes_count": {
+            "type": "integer",
+            "example": 45
+          },
+          "comments_count": {
+            "type": "integer",
+            "example": 12
+          },
+          "reading_time": {
+            "type": "integer",
+            "nullable": true,
+            "example": 5
+          },
+          "estimated_reading_time": {
+            "type": "integer",
+            "example": 5
+          },
+          "is_featured": {
+            "type": "boolean",
+            "example": true
+          },
+          "allow_comments": {
+            "type": "boolean",
+            "example": true
+          },
+          "is_published_in_rss": {
+            "type": "boolean",
+            "example": true
+          },
+          "noindex": {
+            "type": "boolean",
+            "example": false
+          },
+          "sort_order": {
+            "type": "integer",
+            "example": 0
+          },
+          "url": {
+            "type": "string",
+            "example": "/blog/kak-sozdat-seo-optimizirovannyj-blog"
+          },
+          "is_published": {
+            "type": "boolean",
+            "example": true
+          },
+          "readable_published_at": {
+            "type": "string",
+            "example": "19.01.2025 15:30"
+          },
+          "category": {
+            "$ref": "#/components/schemas/BlogCategory"
+          },
+          "author": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "example": 1
+              },
+              "name": {
+                "type": "string",
+                "example": "Иван Петров"
+              },
+              "email": {
+                "type": "string",
+                "example": "ivan@example.com"
+              }
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlogTag"
+            }
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BlogComment"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-01-19T12:00:00.000000Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-01-19T15:30:00.000000Z"
+          }
+        }
+      },
+      "BlogArticleCreateRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "category_id",
+          "content",
+          "status"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 255,
+            "example": "Как создать SEO-оптимизированный блог",
+            "description": "Заголовок статьи"
+          },
+          "slug": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true,
+            "example": "kak-sozdat-seo-optimizirovannyj-blog",
+            "description": "URL slug (будет сгенерирован автоматически, если не указан)"
+          },
+          "category_id": {
+            "type": "integer",
+            "example": 1,
+            "description": "ID категории блога"
+          },
+          "excerpt": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "example": "Краткое описание статьи для превью",
+            "description": "Краткое описание статьи"
+          },
+          "content": {
+            "type": "string",
+            "example": "<p>Полное содержимое статьи в HTML формате</p>",
+            "description": "Содержимое статьи в HTML"
+          },
+          "featured_image": {
+            "type": "string",
+            "nullable": true,
+            "example": "/storage/blog/images/article-1.jpg",
+            "description": "URL главного изображения"
+          },
+          "gallery_images": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "/storage/blog/images/gallery-1.jpg",
+              "/storage/blog/images/gallery-2.jpg"
+            ],
+            "description": "Массив URL изображений галереи"
+          },
+          "meta_title": {
+            "type": "string",
+            "maxLength": 60,
+            "nullable": true,
+            "example": "Как создать SEO-оптимизированный блог | ProHelper",
+            "description": "Meta title для SEO (до 60 символов)"
+          },
+          "meta_description": {
+            "type": "string",
+            "maxLength": 160,
+            "nullable": true,
+            "example": "Подробное руководство по созданию блога с учетом SEO требований.",
+            "description": "Meta description для SEO (до 160 символов)"
+          },
+          "meta_keywords": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string",
+              "maxLength": 50
+            },
+            "example": [
+              "seo",
+              "блог",
+              "оптимизация"
+            ],
+            "description": "Ключевые слова для SEO"
+          },
+          "og_title": {
+            "type": "string",
+            "maxLength": 60,
+            "nullable": true,
+            "example": "Как создать SEO-оптимизированный блог",
+            "description": "Open Graph title"
+          },
+          "og_description": {
+            "type": "string",
+            "maxLength": 200,
+            "nullable": true,
+            "example": "Узнайте, как создать блог, который будет привлекать трафик",
+            "description": "Open Graph description"
+          },
+          "og_image": {
+            "type": "string",
+            "nullable": true,
+            "example": "/storage/blog/images/og-article-1.jpg",
+            "description": "Open Graph изображение"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "published",
+              "scheduled",
+              "archived"
+            ],
+            "example": "draft",
+            "description": "Статус статьи"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "example": "2025-01-19T15:30:00.000000Z",
+            "description": "Дата публикации (для статуса published)"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "example": "2025-01-20T10:00:00.000000Z",
+            "description": "Дата запланированной публикации (для статуса scheduled)"
+          },
+          "is_featured": {
+            "type": "boolean",
+            "nullable": true,
+            "example": false,
+            "description": "Рекомендуемая статья"
+          },
+          "allow_comments": {
+            "type": "boolean",
+            "nullable": true,
+            "example": true,
+            "description": "Разрешить комментарии"
+          },
+          "is_published_in_rss": {
+            "type": "boolean",
+            "nullable": true,
+            "example": true,
+            "description": "Включить в RSS-ленту"
+          },
+          "noindex": {
+            "type": "boolean",
+            "nullable": true,
+            "example": false,
+            "description": "Запретить индексацию поисковыми системами"
+          },
+          "sort_order": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "example": 0,
+            "description": "Порядок сортировки"
+          },
+          "tags": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string",
+              "maxLength": 50
+            },
+            "example": [
+              "seo",
+              "блог",
+              "контент-маркетинг"
+            ],
+            "description": "Массив названий тегов (существующие или новые)"
+          }
+        }
+      },
+      "BlogArticleUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 255,
+            "example": "Как создать SEO-оптимизированный блог (обновлено)",
+            "description": "Заголовок статьи"
+          },
+          "slug": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true,
+            "example": "kak-sozdat-seo-optimizirovannyj-blog",
+            "description": "URL slug"
+          },
+          "category_id": {
+            "type": "integer",
+            "example": 2,
+            "description": "ID категории блога"
+          },
+          "excerpt": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true,
+            "example": "Обновленное краткое описание статьи",
+            "description": "Краткое описание статьи"
+          },
+          "content": {
+            "type": "string",
+            "example": "<p>Обновленное содержимое статьи в HTML формате</p>",
+            "description": "Содержимое статьи в HTML"
+          },
+          "featured_image": {
+            "type": "string",
+            "nullable": true,
+            "example": "/storage/blog/images/article-1-updated.jpg",
+            "description": "URL главного изображения"
+          },
+          "gallery_images": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "/storage/blog/images/gallery-1.jpg"
+            ],
+            "description": "Массив URL изображений галереи"
+          },
+          "meta_title": {
+            "type": "string",
+            "maxLength": 60,
+            "nullable": true,
+            "example": "Как создать SEO-оптимизированный блог | ProHelper",
+            "description": "Meta title для SEO (до 60 символов)"
+          },
+          "meta_description": {
+            "type": "string",
+            "maxLength": 160,
+            "nullable": true,
+            "example": "Обновленное руководство по созданию блога.",
+            "description": "Meta description для SEO (до 160 символов)"
+          },
+          "meta_keywords": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string",
+              "maxLength": 50
+            },
+            "example": [
+              "seo",
+              "блог",
+              "контент"
+            ],
+            "description": "Ключевые слова для SEO"
+          },
+          "og_title": {
+            "type": "string",
+            "maxLength": 60,
+            "nullable": true,
+            "example": "Как создать SEO-оптимизированный блог",
+            "description": "Open Graph title"
+          },
+          "og_description": {
+            "type": "string",
+            "maxLength": 200,
+            "nullable": true,
+            "example": "Обновленное описание для социальных сетей",
+            "description": "Open Graph description"
+          },
+          "og_image": {
+            "type": "string",
+            "nullable": true,
+            "example": "/storage/blog/images/og-article-1.jpg",
+            "description": "Open Graph изображение"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "published",
+              "scheduled",
+              "archived"
+            ],
+            "example": "published",
+            "description": "Статус статьи"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "example": "2025-01-19T15:30:00.000000Z",
+            "description": "Дата публикации"
+          },
+          "scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "example": "2025-01-20T10:00:00.000000Z",
+            "description": "Дата запланированной публикации"
+          },
+          "is_featured": {
+            "type": "boolean",
+            "nullable": true,
+            "example": true,
+            "description": "Рекомендуемая статья"
+          },
+          "allow_comments": {
+            "type": "boolean",
+            "nullable": true,
+            "example": true,
+            "description": "Разрешить комментарии"
+          },
+          "is_published_in_rss": {
+            "type": "boolean",
+            "nullable": true,
+            "example": true,
+            "description": "Включить в RSS-ленту"
+          },
+          "noindex": {
+            "type": "boolean",
+            "nullable": true,
+            "example": false,
+            "description": "Запретить индексацию поисковыми системами"
+          },
+          "sort_order": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "example": 5,
+            "description": "Порядок сортировки"
+          },
+          "tags": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string",
+              "maxLength": 50
+            },
+            "example": [
+              "seo",
+              "блог",
+              "контент-маркетинг"
+            ],
+            "description": "Массив названий тегов (существующие или новые)"
+          }
+        }
+      },
+      "BlogCategory": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "example": 1
+          },
+          "name": {
+            "type": "string",
+            "example": "SEO и Маркетинг"
+          },
+          "slug": {
+            "type": "string",
+            "example": "seo-i-marketing"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true,
+            "example": "Статьи о поисковой оптимизации и маркетинге"
+          },
+          "meta_title": {
+            "type": "string",
+            "nullable": true,
+            "example": "SEO и Маркетинг | ProHelper Blog"
+          },
+          "meta_description": {
+            "type": "string",
+            "nullable": true,
+            "example": "Советы по SEO-оптимизации и маркетинговые стратегии для бизнеса"
+          },
+          "color": {
+            "type": "string",
+            "example": "#007bff",
+            "description": "Цвет категории в формате HEX"
+          },
+          "image": {
+            "type": "string",
+            "nullable": true,
+            "example": "/storage/blog/categories/seo-marketing.jpg"
+          },
+          "sort_order": {
+            "type": "integer",
+            "example": 0
+          },
+          "is_active": {
+            "type": "boolean",
+            "example": true
+          },
+          "articles_count": {
+            "type": "integer",
+            "example": 15,
+            "description": "Общее количество статей в категории"
+          },
+          "published_articles_count": {
+            "type": "integer",
+            "example": 12,
+            "description": "Количество опубликованных статей"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-01-15T10:00:00.000000Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-01-19T14:30:00.000000Z"
+          }
+        }
+      },
+      "BlogCategoryRequest": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255,
+            "example": "SEO и Маркетинг",
+            "description": "Название категории"
+          },
+          "slug": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true,
+            "example": "seo-i-marketing",
+            "description": "URL slug (будет сгенерирован автоматически, если не указан)"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000,
+            "nullable": true,
+            "example": "Статьи о поисковой оптимизации и маркетинге",
+            "description": "Описание категории"
+          },
+          "meta_title": {
+            "type": "string",
+            "maxLength": 60,
+            "nullable": true,
+            "example": "SEO и Маркетинг | ProHelper Blog",
+            "description": "Meta title для SEO"
+          },
+          "meta_description": {
+            "type": "string",
+            "maxLength": 160,
+            "nullable": true,
+            "example": "Советы по SEO-оптимизации и маркетинговые стратегии для бизнеса",
+            "description": "Meta description для SEO"
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9a-fA-F]{6}$",
+            "nullable": true,
+            "example": "#007bff",
+            "description": "Цвет категории в формате #RRGGBB"
+          },
+          "image": {
+            "type": "string",
+            "nullable": true,
+            "example": "/storage/blog/categories/seo-marketing.jpg",
+            "description": "URL изображения категории"
+          },
+          "sort_order": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true,
+            "example": 0,
+            "description": "Порядок сортировки"
+          },
+          "is_active": {
+            "type": "boolean",
+            "nullable": true,
+            "example": true,
+            "description": "Активность категории"
+          }
+        }
+      },
+      "BlogComment": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "example": 1
+          },
+          "article_id": {
+            "type": "integer",
+            "example": 5
+          },
+          "parent_id": {
+            "type": "integer",
+            "nullable": true,
+            "example": null,
+            "description": "ID родительского комментария (для ответов)"
+          },
+          "author_name": {
+            "type": "string",
+            "example": "Иван Петров"
+          },
+          "author_email": {
+            "type": "string",
+            "example": "ivan@example.com"
+          },
+          "author_website": {
+            "type": "string",
+            "nullable": true,
+            "example": "https://example.com"
+          },
+          "content": {
+            "type": "string",
+            "example": "Отличная статья! Много полезной информации."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "spam"
+            ],
+            "example": "approved"
+          },
+          "approved_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true,
+            "example": "2025-01-19T16:00:00.000000Z"
+          },
+          "likes_count": {
+            "type": "integer",
+            "example": 3
+          },
+          "is_approved": {
+            "type": "boolean",
+            "example": true
+          },
+          "is_root": {
+            "type": "boolean",
+            "example": true,
+            "description": "Является ли комментарий корневым (не ответом)"
+          },
+          "article": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": {
+                "type": "integer",
+                "example": 5
+              },
+              "title": {
+                "type": "string",
+                "example": "Как создать SEO-оптимизированный блог"
+              },
+              "slug": {
+                "type": "string",
+                "example": "kak-sozdat-seo-optimizirovannyj-blog"
+              }
+            }
+          },
+          "parent": {
+            "type": "object",
+            "nullable": true,
+            "description": "Родительский комментарий (если это ответ)",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "author_name": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              }
+            }
+          },
+          "replies": {
+            "type": "array",
+            "description": "Ответы на комментарий",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "author_name": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          },
+          "approved_by": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": {
+                "type": "integer",
+                "example": 1
+              },
+              "name": {
+                "type": "string",
+                "example": "Администратор"
+              }
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-01-19T15:45:00.000000Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-01-19T16:00:00.000000Z"
+          }
+        }
+      },
+      "BlogCommentStatusRequest": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "spam"
+            ],
+            "example": "approved",
+            "description": "Новый статус комментария"
+          },
+          "comment_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "example": [
+              1,
+              2,
+              3
+            ],
+            "description": "Массив ID комментариев (для массовых операций)"
+          }
+        }
+      },
+      "BlogTag": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "example": 1
+          },
+          "name": {
+            "type": "string",
+            "example": "SEO"
+          },
+          "slug": {
+            "type": "string",
+            "example": "seo"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true,
+            "example": "Поисковая оптимизация"
+          },
+          "color": {
+            "type": "string",
+            "example": "#6c757d",
+            "description": "Цвет тега в формате HEX"
+          },
+          "usage_count": {
+            "type": "integer",
+            "example": 25,
+            "description": "Количество использований тега"
+          },
+          "is_active": {
+            "type": "boolean",
+            "example": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-01-15T10:00:00.000000Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-01-19T14:30:00.000000Z"
+          }
+        }
+      },
+      "BlogSeoSettings": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "example": 1
+          },
+          "site_name": {
+            "type": "string",
+            "example": "ProHelper Blog",
+            "description": "Название сайта"
+          },
+          "site_description": {
+            "type": "string",
+            "nullable": true,
+            "example": "Блог о технологиях и бизнесе",
+            "description": "Описание сайта"
+          },
+          "site_keywords": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "технологии",
+              "бизнес",
+              "seo"
+            ],
+            "description": "Ключевые слова сайта"
+          },
+          "default_og_image": {
+            "type": "string",
+            "nullable": true,
+            "example": "/storage/blog/default-og.jpg",
+            "description": "Изображение по умолчанию для Open Graph"
+          },
+          "auto_generate_meta_description": {
+            "type": "boolean",
+            "example": true,
+            "description": "Автоматически генерировать meta description"
+          },
+          "meta_description_length": {
+            "type": "integer",
+            "example": 160,
+            "description": "Максимальная длина meta description"
+          },
+          "enable_breadcrumbs": {
+            "type": "boolean",
+            "example": true,
+            "description": "Включить хлебные крошки"
+          },
+          "enable_structured_data": {
+            "type": "boolean",
+            "example": true,
+            "description": "Включить структурированные данные"
+          },
+          "enable_sitemap": {
+            "type": "boolean",
+            "example": true,
+            "description": "Включить генерацию sitemap"
+          },
+          "enable_rss": {
+            "type": "boolean",
+            "example": true,
+            "description": "Включить RSS-ленту"
+          },
+          "robots_txt": {
+            "type": "string",
+            "nullable": true,
+            "example": "User-agent: *\nAllow: /\nDisallow: /admin/\nSitemap: https://example.com/blog/sitemap.xml\n",
+            "description": "Содержимое robots.txt"
+          },
+          "social_media_links": {
+            "type": "object",
+            "nullable": true,
+            "example": {
+              "facebook": "https://facebook.com/prohelper",
+              "twitter": "https://twitter.com/prohelper",
+              "linkedin": "https://linkedin.com/company/prohelper"
+            },
+            "description": "Ссылки на социальные сети"
+          },
+          "google_analytics_id": {
+            "type": "string",
+            "nullable": true,
+            "example": "GA-XXXXXXXX-X",
+            "description": "Google Analytics ID"
+          },
+          "yandex_metrica_id": {
+            "type": "string",
+            "nullable": true,
+            "example": "12345678",
+            "description": "Yandex Metrica ID"
+          },
+          "google_search_console_verification": {
+            "type": "string",
+            "nullable": true,
+            "example": "verification_code_here",
+            "description": "Код верификации Google Search Console"
+          },
+          "yandex_webmaster_verification": {
+            "type": "string",
+            "nullable": true,
+            "example": "verification_code_here",
+            "description": "Код верификации Yandex Webmaster"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-01-15T10:00:00.000000Z"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-01-19T14:30:00.000000Z"
+          }
+        }
+      },
+      "BlogDashboard": {
+        "type": "object",
+        "properties": {
+          "articles": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "example": 45,
+                "description": "Общее количество статей"
+              },
+              "published": {
+                "type": "integer",
+                "example": 32,
+                "description": "Количество опубликованных статей"
+              },
+              "drafts": {
+                "type": "integer",
+                "example": 8,
+                "description": "Количество черновиков"
+              },
+              "scheduled": {
+                "type": "integer",
+                "example": 5,
+                "description": "Количество запланированных статей"
+              }
+            }
+          },
+          "categories": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "example": 6,
+                "description": "Общее количество категорий"
+              },
+              "active": {
+                "type": "integer",
+                "example": 5,
+                "description": "Количество активных категорий"
+              }
+            }
+          },
+          "tags": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "example": 24,
+                "description": "Общее количество тегов"
+              },
+              "active": {
+                "type": "integer",
+                "example": 20,
+                "description": "Количество активных тегов"
+              }
+            }
+          },
+          "comments": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "example": 156,
+                "description": "Общее количество комментариев"
+              },
+              "pending": {
+                "type": "integer",
+                "example": 12,
+                "description": "Комментарии ожидающие модерации"
+              },
+              "approved": {
+                "type": "integer",
+                "example": 130,
+                "description": "Одобренные комментарии"
+              },
+              "rejected": {
+                "type": "integer",
+                "example": 8,
+                "description": "Отклоненные комментарии"
+              },
+              "spam": {
+                "type": "integer",
+                "example": 6,
+                "description": "Спам комментарии"
+              }
+            }
+          },
+          "popular_articles": {
+            "type": "array",
+            "description": "Популярные статьи",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "example": 1
+                },
+                "title": {
+                  "type": "string",
+                  "example": "Как создать SEO-оптимизированный блог"
+                },
+                "views_count": {
+                  "type": "integer",
+                  "example": 1250
+                },
+                "likes_count": {
+                  "type": "integer",
+                  "example": 45
+                },
+                "comments_count": {
+                  "type": "integer",
+                  "example": 12
+                },
+                "category": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "example": 1
+                    },
+                    "name": {
+                      "type": "string",
+                      "example": "SEO и Маркетинг"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "recent_articles": {
+            "type": "array",
+            "description": "Последние статьи",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "example": 5
+                },
+                "title": {
+                  "type": "string",
+                  "example": "Новые тренды в веб-разработке 2025"
+                },
+                "status": {
+                  "type": "string",
+                  "example": "published"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "example": "2025-01-19T15:30:00.000000Z"
+                },
+                "author": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "example": 1
+                    },
+                    "name": {
+                      "type": "string",
+                      "example": "Иван Петров"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "recent_comments": {
+            "type": "array",
+            "description": "Последние комментарии",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "example": 25
+                },
+                "author_name": {
+                  "type": "string",
+                  "example": "Мария Иванова"
+                },
+                "content": {
+                  "type": "string",
+                  "example": "Отличная статья, спасибо за информацию!"
+                },
+                "status": {
+                  "type": "string",
+                  "example": "pending"
+                },
+                "created_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "example": "2025-01-19T16:15:00.000000Z"
+                },
+                "article": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "example": 3
+                    },
+                    "title": {
+                      "type": "string",
+                      "example": "Основы контент-маркетинга"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "BlogAnalytics": {
+        "type": "object",
+        "properties": {
+          "articles_by_date": {
+            "type": "array",
+            "description": "Статистика создания статей по дням",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "format": "date",
+                  "example": "2025-01-19"
+                },
+                "count": {
+                  "type": "integer",
+                  "example": 3
+                }
+              }
+            }
+          },
+          "comments_by_date": {
+            "type": "array",
+            "description": "Статистика комментариев по дням",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "format": "date",
+                  "example": "2025-01-19"
+                },
+                "count": {
+                  "type": "integer",
+                  "example": 15
+                }
+              }
+            }
+          },
+          "views_by_date": {
+            "type": "array",
+            "description": "Статистика просмотров по дням",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string",
+                  "format": "date",
+                  "example": "2025-01-19"
+                },
+                "total_views": {
+                  "type": "integer",
+                  "example": 2450
+                }
+              }
+            }
+          },
+          "categories_stats": {
+            "type": "array",
+            "description": "Статистика по категориям",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "example": 1
+                },
+                "name": {
+                  "type": "string",
+                  "example": "SEO и Маркетинг"
+                },
+                "published_articles_count": {
+                  "type": "integer",
+                  "example": 12
+                }
+              }
+            }
+          },
+          "tags_stats": {
+            "type": "array",
+            "description": "Статистика по тегам",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "example": "SEO"
+                },
+                "usage_count": {
+                  "type": "integer",
+                  "example": 25
+                }
+              }
+            }
+          },
+          "authors_stats": {
+            "type": "array",
+            "description": "Статистика по авторам",
+            "items": {
+              "type": "object",
+              "properties": {
+                "author_id": {
+                  "type": "integer",
+                  "example": 1
+                },
+                "author": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer",
+                      "example": 1
+                    },
+                    "name": {
+                      "type": "string",
+                      "example": "Иван Петров"
+                    }
+                  }
+                },
+                "articles_count": {
+                  "type": "integer",
+                  "example": 15
+                },
+                "total_views": {
+                  "type": "integer",
+                  "example": 12500
+                },
+                "total_likes": {
+                  "type": "integer",
+                  "example": 340
+                }
+              }
+            }
+          },
+          "top_articles": {
+            "type": "array",
+            "description": "Топ статей за период",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "example": 1
+                },
+                "title": {
+                  "type": "string",
+                  "example": "Как создать SEO-оптимизированный блог"
+                },
+                "views_count": {
+                  "type": "integer",
+                  "example": 1250
+                },
+                "likes_count": {
+                  "type": "integer",
+                  "example": 45
+                },
+                "comments_count": {
+                  "type": "integer",
+                  "example": 12
+                },
+                "category": {
+                  "type": "string",
+                  "example": "SEO и Маркетинг"
+                },
+                "author": {
+                  "type": "string",
+                  "example": "Иван Петров"
+                },
+                "published_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "example": "2025-01-15T10:00:00.000000Z"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {},
+    "parameters": {}
+  }
+}

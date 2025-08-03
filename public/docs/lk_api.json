@@ -1,0 +1,5900 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ProHelper LK API",
+    "description": "Спецификация API личного кабинета (Landing). Добавляйте детали по мере готовности.\n",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/api/v1/landing",
+      "description": "Production server"
+    },
+    {
+      "url": "http://localhost:8000/api/v1/landing",
+      "description": "Local development"
+    }
+  ],
+  "paths": {
+    "/auth/register": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Регистрация пользователя ЛК",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Успешная регистрация",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Авторизация пользователя ЛК",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Успешный вход",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Получить профиль",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Профиль",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/UserProfile"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Обновить профиль",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              },
+              "example": {
+                "name": "Антон Сидоров",
+                "avatar": "(binary)"
+              }
+            },
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Профиль обновлён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfile"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Обновить JWT",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Токен обновлён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "Auth"
+        ],
+        "summary": "Выход",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Успешный выход",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/organization": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Получить данные организации текущего контекста",
+        "responses": {
+          "200": {
+            "description": "Организация",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationProfile"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Обновить данные организации",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOrganizationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Обновлено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/organization/verification": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Получить статус верификации организации",
+        "responses": {
+          "200": {
+            "description": "Статус",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationVerification"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Обновить данные верификации организации",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrganizationVerificationUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Обновлено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/organization/verification/request": {
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Отправить запрос на верификацию",
+        "responses": {
+          "200": {
+            "description": "Запрос отправлен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/organization/verification/recommendations": {
+      "get": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Получить рекомендации по верификации",
+        "responses": {
+          "200": {
+            "description": "Рекомендации",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dadata/suggest/organizations": {
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Подсказка организации по ИНН/названию",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Список организаций",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dadata/suggest/addresses": {
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Подсказка адресов",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Список адресов",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dadata/clean/address": {
+      "post": {
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Organization"
+        ],
+        "summary": "Очистка/нормализация адреса",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "address": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Очищенный адрес",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/roles": {
+      "get": {
+        "tags": [
+          "OrganizationRoles"
+        ],
+        "summary": "Список ролей организации (кастомные + системные)",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список ролей",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "custom_roles": {
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/components/schemas/OrganizationRole"
+                              }
+                            },
+                            "system_roles": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "slug": {
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "OrganizationRoles"
+        ],
+        "summary": "Создать новую роль",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreOrganizationRoleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Роль создана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationRole"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/roles/{roleId}": {
+      "parameters": [
+        {
+          "name": "roleId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "OrganizationRoles"
+        ],
+        "summary": "Получить роль по ID",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Роль",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationRole"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "OrganizationRoles"
+        ],
+        "summary": "Обновить роль",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOrganizationRoleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Роль обновлена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationRole"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "OrganizationRoles"
+        ],
+        "summary": "Удалить роль",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Роль удалена"
+          }
+        }
+      }
+    },
+    "/roles/permissions/available": {
+      "get": {
+        "tags": [
+          "OrganizationRoles"
+        ],
+        "summary": "Доступные разрешения для ролей",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список разрешений",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/roles/{roleId}/duplicate": {
+      "post": {
+        "tags": [
+          "OrganizationRoles"
+        ],
+        "summary": "Дублировать роль",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "roleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Новая роль создана на основе существующей",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationRole"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invitations": {
+      "get": {
+        "tags": [
+          "UserInvitations"
+        ],
+        "summary": "Список приглашений",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список приглашений",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/UserInvitation"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "UserInvitations"
+        ],
+        "summary": "Создать приглашение",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreUserInvitationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Приглашение создано",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/UserInvitation"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invitations/{invitationId}": {
+      "parameters": [
+        {
+          "name": "invitationId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "UserInvitations"
+        ],
+        "summary": "Получить приглашение",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Приглашение",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/UserInvitation"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "UserInvitations"
+        ],
+        "summary": "Удалить приглашение",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Удалено"
+          }
+        }
+      }
+    },
+    "/invitations/{invitationId}/resend": {
+      "post": {
+        "tags": [
+          "UserInvitations"
+        ],
+        "summary": "Повторно отправить приглашение",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "invitationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Отправлено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invitations/stats/overview": {
+      "get": {
+        "tags": [
+          "UserInvitations"
+        ],
+        "summary": "Статистика приглашений",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Статистика",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invitation/{token}": {
+      "parameters": [
+        {
+          "name": "token",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "UserInvitations"
+        ],
+        "summary": "Получить приглашение по токену (публичный)",
+        "responses": {
+          "200": {
+            "description": "Информация о приглашении",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/UserInvitation"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/invitation/{token}/accept": {
+      "post": {
+        "tags": [
+          "UserInvitations"
+        ],
+        "summary": "Принять приглашение (публичный)",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "password": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "password"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Приглашение принято",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/organization-users": {
+      "get": {
+        "tags": [
+          "OrganizationUsers"
+        ],
+        "summary": "Список пользователей организации",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список пользователей",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/OrganizationUser"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/organization-users/{userId}": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "OrganizationUsers"
+        ],
+        "summary": "Получить пользователя организации",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Пользователь",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationUser"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "OrganizationUsers"
+        ],
+        "summary": "Обновить пользователя",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateOrganizationUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Пользователь обновлён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationUser"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "OrganizationUsers"
+        ],
+        "summary": "Удалить пользователя",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Удалено"
+          }
+        }
+      }
+    },
+    "/organization-users/{userId}/toggle-status": {
+      "post": {
+        "tags": [
+          "OrganizationUsers"
+        ],
+        "summary": "Переключить статус активности пользователя",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Статус изменён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/organization-users/{userId}/roles": {
+      "get": {
+        "tags": [
+          "OrganizationUsers"
+        ],
+        "summary": "Список ролей пользователя",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Роли",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "OrganizationUsers"
+        ],
+        "summary": "Обновить роли пользователя",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role_slugs": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "role_slugs"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Роли обновлены",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/user-limits": {
+      "get": {
+        "tags": [
+          "OrganizationUsers"
+        ],
+        "summary": "Лимиты пользователя в рамках подписки",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Лимиты",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/plans": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Список тарифных планов",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Планы",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/BillingPlan"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/subscription": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Текущая подписка пользователя",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Подписка",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/UserSubscription"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/subscribe": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Оформить подписку",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscribeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Подписка оформлена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/subscription/cancel": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Отменить подписку",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Отменена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/subscription/auto-payment": {
+      "patch": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Включить/выключить автоплатеж для подписки",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutoPaymentToggleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Подписка обновлена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/UserSubscription"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/balance": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Баланс организации",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Баланс",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationBalance"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/balance/transactions": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Транзакции баланса",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Транзакции",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/BalanceTransaction"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/balance/top-up": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Пополнить баланс",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "number",
+                    "format": "float"
+                  }
+                },
+                "required": [
+                  "amount"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Пополнено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/subscription/limits": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Лимиты подписки",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Лимиты",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/SubscriptionLimits"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/modules": {
+      "get": {
+        "tags": [
+          "Modules"
+        ],
+        "summary": "Список активных модулей организации",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Модули",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/Module"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/modules/available": {
+      "get": {
+        "tags": [
+          "Modules"
+        ],
+        "summary": "Доступные для активации модули",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/modules/expiring": {
+      "get": {
+        "tags": [
+          "Modules"
+        ],
+        "summary": "Модули с ближайшим окончанием действия",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/modules/check-access": {
+      "post": {
+        "tags": [
+          "Modules"
+        ],
+        "summary": "Проверить доступ к модулю",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModuleCheckAccessRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Доступ",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/modules/activate": {
+      "post": {
+        "tags": [
+          "Modules"
+        ],
+        "summary": "Активировать модуль",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModuleActivateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Активировано",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/modules/{moduleId}": {
+      "parameters": [
+        {
+          "name": "moduleId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "delete": {
+        "tags": [
+          "Modules"
+        ],
+        "summary": "Деактивировать модуль",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Удалено"
+          }
+        }
+      }
+    },
+    "/modules/{moduleId}/renew": {
+      "patch": {
+        "tags": [
+          "Modules"
+        ],
+        "summary": "Продлить модуль",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "moduleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModuleRenewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Продлено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/multi-organization/check-availability": {
+      "get": {
+        "tags": [
+          "MultiOrganization"
+        ],
+        "summary": "Проверить, доступен ли модуль Multi-Organization",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Доступность",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModuleAvailabilityResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/multi-organization/hierarchy": {
+      "get": {
+        "tags": [
+          "MultiOrganization"
+        ],
+        "summary": "Получить иерархию холдинга",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Иерархия",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/HoldingHierarchy"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/multi-organization/accessible": {
+      "get": {
+        "tags": [
+          "MultiOrganization"
+        ],
+        "summary": "Список доступных организаций",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Организации",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/OrganizationSummary"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/multi-organization/organization/{organizationId}": {
+      "parameters": [
+        {
+          "name": "organizationId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "MultiOrganization"
+        ],
+        "summary": "Данные организации",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Организация",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationData"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/multi-organization/switch-context": {
+      "post": {
+        "tags": [
+          "MultiOrganization"
+        ],
+        "summary": "Переключить контекст организации",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SwitchContextRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Переключено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SwitchContextResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/multi-organization/dashboard": {
+      "get": {
+        "tags": [
+          "MultiOrganization"
+        ],
+        "summary": "Дашборд холдинга",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Дашборд",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/HoldingDashboard"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/multi-organization/child-organizations": {
+      "get": {
+        "tags": [
+          "MultiOrganization"
+        ],
+        "summary": "Список дочерних организаций",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ChildOrganizationsList"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/multi-organization/create-holding": {
+      "post": {
+        "tags": [
+          "MultiOrganization"
+        ],
+        "summary": "Создать холдинг",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateHoldingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Создано",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationGroup"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/multi-organization/add-child": {
+      "post": {
+        "tags": [
+          "MultiOrganization"
+        ],
+        "summary": "Добавить дочернюю организацию",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddChildOrganizationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Добавлено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/ChildOrganizationCreated"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/support": {
+      "post": {
+        "tags": [
+          "Support"
+        ],
+        "summary": "Отправить запрос в поддержку",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupportRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Запрос отправлен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/adminPanelUsers": {
+      "get": {
+        "tags": [
+          "AdminPanelUsers"
+        ],
+        "summary": "Список пользователей админ-панели",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список пользователей",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/AdminPanelUser"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "AdminPanelUsers"
+        ],
+        "summary": "Создать пользователя админ-панели",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreAdminPanelUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Пользователь создан",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/AdminPanelUser"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/adminPanelUsers/{userId}": {
+      "parameters": [
+        {
+          "name": "userId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "AdminPanelUsers"
+        ],
+        "summary": "Получить пользователя админ-панели",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Пользователь",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/AdminPanelUser"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "AdminPanelUsers"
+        ],
+        "summary": "Обновить пользователя админ-панели",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateAdminPanelUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Обновлено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/AdminPanelUser"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "AdminPanelUsers"
+        ],
+        "summary": "Удалить пользователя админ-панели",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Удалено"
+          }
+        }
+      }
+    },
+    "/roles/{roleId}/assign-user": {
+      "post": {
+        "tags": [
+          "OrganizationRoles"
+        ],
+        "summary": "Назначить пользователя на роль",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "roleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "user_id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "user_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Пользователь назначен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/roles/{roleId}/remove-user": {
+      "delete": {
+        "tags": [
+          "OrganizationRoles"
+        ],
+        "summary": "Удалить пользователя из роли",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "roleId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "user_id": {
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "user_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Пользователь удалён"
+          }
+        }
+      }
+    },
+    "/billing/addons": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Список доступных add-ons",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список add-ons",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/AddonsResponse"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/org-subscription": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Подписка организации",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Подписка",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationSubscription"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Обновить подписку организации",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrgSubscribeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Подписка обновлена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationSubscription"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/org-subscription/auto-payment": {
+      "patch": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Включить/выключить автоплатеж для подписки организации",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutoPaymentToggleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Подписка организации обновлена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationSubscription"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/org-subscribe": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Оформить/сменить подписку организации",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrgSubscribeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Подписка оформлена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationSubscription"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/org-addon": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Подключить add-on",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrgAddonAttachRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Add-on подключён",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationSubscriptionAddon"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/org-addon/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "integer"
+          }
+        }
+      ],
+      "delete": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Отключить add-on",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Add-on отключён"
+          }
+        }
+      }
+    },
+    "/billing/org-one-time-purchase": {
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Совершить одноразовую покупку",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OneTimePurchaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Покупка совершена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationOneTimePurchase"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/org-one-time-purchases": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "История одноразовых покупок",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "История",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/OrganizationOneTimePurchase"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/billing/org-dashboard": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "Дашборд организации",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Данные дашборда",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "$ref": "#/components/schemas/OrganizationDashboard"
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dashboard": {
+      "get": {
+        "summary": "Получить дашборд организации",
+        "tags": [
+          "Dashboard"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrganizationDashboardExtended"
+                },
+                "examples": {
+                  "success": {
+                    "$ref": "#/components/examples/OrganizationDashboardExtended"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/multi-organization/summary": {
+      "get": {
+        "tags": [
+          "MultiOrganization"
+        ],
+        "summary": "Сводная информация по холдингу (все организации, проекты, договоры, акты, выполненные работы, статистика)",
+        "description": "Возвращает агрегированную сводку по всем организациям холдинга. Поддерживает экспорт CSV по секциям (projects, contracts, acts, completed_works).\n\nПример: `/multi-organization/summary?export=csv&section=projects`\n",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date_from",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "required": false,
+            "description": "Начальная дата фильтра"
+          },
+          {
+            "in": "query",
+            "name": "date_to",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            },
+            "required": false,
+            "description": "Конечная дата фильтра"
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "description": "Фильтр по статусу"
+          },
+          {
+            "in": "query",
+            "name": "is_approved",
+            "schema": {
+              "type": "boolean"
+            },
+            "required": false,
+            "description": "Фильтр по утверждённости акта"
+          },
+          {
+            "in": "query",
+            "name": "export",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "csv"
+              ]
+            },
+            "required": false,
+            "description": "Если указан, возвращает CSV-файл"
+          },
+          {
+            "in": "query",
+            "name": "section",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "projects",
+                "contracts",
+                "acts",
+                "completed_works"
+              ]
+            },
+            "required": false,
+            "description": "Секция для экспорта CSV"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Сводная информация по холдингу",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "organizations": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "integer"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "is_active": {
+                                "type": "boolean"
+                              },
+                              "projects_count": {
+                                "type": "integer"
+                              },
+                              "contracts_count": {
+                                "type": "integer"
+                              }
+                            }
+                          }
+                        },
+                        "projects": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/ProjectDTO"
+                          }
+                        },
+                        "contracts": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/ContractDTO"
+                          }
+                        },
+                        "acts": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/ContractPerformanceActDTO"
+                          }
+                        },
+                        "completed_works": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/components/schemas/CompletedWorkDTO"
+                          }
+                        },
+                        "stats": {
+                          "type": "object",
+                          "properties": {
+                            "contracts": {
+                              "type": "object",
+                              "properties": {
+                                "count": {
+                                  "type": "integer"
+                                },
+                                "total_amount": {
+                                  "type": "number",
+                                  "format": "float"
+                                }
+                              }
+                            },
+                            "acts": {
+                              "type": "object",
+                              "properties": {
+                                "count": {
+                                  "type": "integer"
+                                },
+                                "total_amount": {
+                                  "type": "number",
+                                  "format": "float"
+                                }
+                              }
+                            },
+                            "projects": {
+                              "type": "object",
+                              "properties": {
+                                "count": {
+                                  "type": "integer"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Ошибка запроса (например, неверная секция для экспорта)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "RegisterRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "email",
+          "password",
+          "password_confirmation",
+          "organization_name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 255
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "minLength": 8
+          },
+          "password_confirmation": {
+            "type": "string",
+            "format": "password"
+          },
+          "phone": {
+            "type": "string",
+            "maxLength": 20,
+            "nullable": true
+          },
+          "position": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "avatar": {
+            "type": "string",
+            "format": "binary",
+            "nullable": true
+          },
+          "organization_name": {
+            "type": "string",
+            "maxLength": 255
+          },
+          "organization_legal_name": {
+            "type": "string",
+            "maxLength": 255,
+            "nullable": true
+          },
+          "organization_tax_number": {
+            "type": "string",
+            "pattern": "^(\\\\d{10}|\\\\d{12})$",
+            "nullable": true
+          },
+          "organization_registration_number": {
+            "type": "string",
+            "pattern": "^(\\\\d{13}|\\\\d{15})$",
+            "nullable": true
+          },
+          "organization_phone": {
+            "type": "string",
+            "maxLength": 20,
+            "nullable": true
+          },
+          "organization_email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 255,
+            "nullable": true
+          },
+          "organization_address": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "organization_city": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          },
+          "organization_postal_code": {
+            "type": "string",
+            "pattern": "^\\\\d{6}$",
+            "nullable": true
+          },
+          "organization_country": {
+            "type": "string",
+            "maxLength": 100,
+            "nullable": true
+          }
+        }
+      },
+      "ApiResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Флаг успешности запроса"
+          },
+          "message": {
+            "type": "string",
+            "description": "Сообщение для пользователя"
+          },
+          "data": {
+            "type": "object",
+            "description": "Полезная нагрузка (может быть объектом любого типа или null)",
+            "nullable": true
+          }
+        }
+      },
+      "UserSimple": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          }
+        }
+      },
+      "LoginResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ApiResponse"
+          }
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "token": {
+                "type": "string"
+              },
+              "user": {
+                "$ref": "#/components/schemas/UserSimple"
+              }
+            }
+          }
+        },
+        "example": {
+          "success": true,
+          "message": "Вход выполнен успешно",
+          "data": {
+            "token": "jwt_token_here",
+            "user": {
+              "id": 1,
+              "name": "Admin",
+              "email": "admin@example.com"
+            }
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          }
+        }
+      },
+      "UserProfile": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "position": {
+            "type": "string",
+            "nullable": true
+          },
+          "avatar_url": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "user_type": {
+            "type": "string",
+            "description": "Тип пользователя"
+          },
+          "current_organization_id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "last_login_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UpdateProfileRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "phone": {
+            "type": "string"
+          },
+          "avatar": {
+            "type": "string",
+            "format": "binary",
+            "description": "Файл изображения"
+          },
+          "remove_avatar": {
+            "type": "boolean",
+            "description": "Удалить существующий аватар"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          },
+          "password_confirmation": {
+            "type": "string",
+            "format": "password"
+          }
+        },
+        "required": []
+      },
+      "OrganizationVerification": {
+        "type": "object",
+        "properties": {
+          "is_verified": {
+            "type": "boolean"
+          },
+          "verified_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "verification_status": {
+            "type": "string"
+          },
+          "verification_status_text": {
+            "type": "string"
+          },
+          "verification_score": {
+            "type": "number",
+            "format": "float"
+          },
+          "verification_data": {
+            "type": "object",
+            "nullable": true
+          },
+          "verification_notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "can_be_verified": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "is_verified",
+          "verification_status",
+          "verification_status_text",
+          "verification_score",
+          "can_be_verified"
+        ]
+      },
+      "OrganizationProfile": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "legal_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "tax_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "registration_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "address": {
+            "type": "string",
+            "nullable": true
+          },
+          "city": {
+            "type": "string",
+            "nullable": true
+          },
+          "postal_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "country": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "logo_path": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "subscription_expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "verification": {
+            "$ref": "#/components/schemas/OrganizationVerification"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "is_active",
+          "verification"
+        ]
+      },
+      "UpdateOrganizationRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 255
+          },
+          "legal_name": {
+            "type": "string",
+            "minLength": 2,
+            "nullable": true
+          },
+          "tax_number": {
+            "type": "string",
+            "pattern": "^(\\d{10}|\\d{12})$",
+            "nullable": true
+          },
+          "registration_number": {
+            "type": "string",
+            "pattern": "^(\\d{13}|\\d{15})$",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string",
+            "pattern": "^(\\+7|8)[\\- ]?\\(?[0-9]{3}\\)?[\\- ]?[0-9]{3}[\\- ]?[0-9]{2}[\\- ]?[0-9]{2}$",
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "nullable": true
+          },
+          "address": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 500,
+            "nullable": true
+          },
+          "city": {
+            "type": "string",
+            "pattern": "^[а-яёА-ЯЁa-zA-Z\\s\\-.]+$",
+            "nullable": true
+          },
+          "postal_code": {
+            "type": "string",
+            "pattern": "^\\d{6}$",
+            "nullable": true
+          },
+          "country": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 1000,
+            "nullable": true
+          }
+        },
+        "required": []
+      },
+      "OrganizationVerificationUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "verification_data": {
+            "type": "object",
+            "description": "Произвольные данные/документы для верификации"
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "verification_data"
+        ]
+      },
+      "OrganizationRole": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "color": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "is_system": {
+            "type": "boolean"
+          },
+          "display_order": {
+            "type": "integer"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "permissions_formatted": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "users_count": {
+            "type": "integer",
+            "nullable": true
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "assigned_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "nullable": true
+                },
+                "assigned_by": {
+                  "type": "integer",
+                  "nullable": true
+                }
+              }
+            },
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "color",
+          "is_active",
+          "is_system"
+        ]
+      },
+      "StoreOrganizationRoleRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+$",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "permissions": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "nullable": true
+          },
+          "is_active": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "display_order": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          }
+        },
+        "required": [
+          "name",
+          "permissions"
+        ]
+      },
+      "UpdateOrganizationRoleRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "slug": {
+            "type": "string",
+            "pattern": "^[a-z0-9_-]+$",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "nullable": true
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "color": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "nullable": true
+          },
+          "is_active": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "display_order": {
+            "type": "integer",
+            "minimum": 0,
+            "nullable": true
+          }
+        },
+        "required": []
+      },
+      "UserInvitation": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role_slugs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "role_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string"
+          },
+          "status_text": {
+            "type": "string"
+          },
+          "status_color": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string",
+            "nullable": true
+          },
+          "invitation_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "accepted_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "is_expired": {
+            "type": "boolean"
+          },
+          "can_be_accepted": {
+            "type": "boolean"
+          },
+          "metadata": {
+            "type": "object",
+            "nullable": true
+          },
+          "invited_by": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              }
+            }
+          },
+          "accepted_by": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              }
+            }
+          },
+          "organization": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "inn": {
+                "type": "string"
+              }
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "plain_password": {
+            "type": "string",
+            "description": "Сгенерированный пароль"
+          },
+          "sent_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "status",
+          "plain_password"
+        ]
+      },
+      "StoreUserInvitationRequest": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Слаги ролей, которые будут назначены приглашённому пользователю. \nОт них зависит ссылка в письме:\n  • foreman → ссылка на APK \n  • organization_admin / accountant / web_admin → admin.prohelper.pro\n  • organization_owner или пустой массив → prohelper.pro\n",
+            "example": [
+              "organization_admin"
+            ]
+          }
+        },
+        "required": [
+          "email",
+          "name"
+        ]
+      },
+      "OrganizationUser": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "description": "active|blocked"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrganizationRole"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email",
+          "status",
+          "is_active"
+        ]
+      },
+      "UpdateOrganizationUserRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 100
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_active": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": []
+      },
+      "BillingPlan": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number",
+            "format": "float"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "period": {
+            "type": "string",
+            "description": "month|year"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "price",
+          "currency",
+          "period"
+        ]
+      },
+      "UserSubscription": {
+        "type": "object",
+        "properties": {
+          "plan": {
+            "$ref": "#/components/schemas/BillingPlan"
+          },
+          "status": {
+            "type": "string",
+            "description": "active|cancelled|trial|expired"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "cancel_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "is_auto_payment_enabled": {
+            "type": "boolean",
+            "description": "Включен ли автоплатеж"
+          }
+        },
+        "required": [
+          "plan",
+          "status"
+        ]
+      },
+      "SubscribeRequest": {
+        "type": "object",
+        "properties": {
+          "plan_slug": {
+            "type": "string"
+          },
+          "payment_method_token": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_auto_payment_enabled": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "plan_slug"
+        ]
+      },
+      "AutoPaymentToggleRequest": {
+        "type": "object",
+        "properties": {
+          "is_auto_payment_enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "is_auto_payment_enabled"
+        ]
+      },
+      "OrganizationBalance": {
+        "type": "object",
+        "properties": {
+          "balance": {
+            "type": "number",
+            "format": "float"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "balance",
+          "currency"
+        ]
+      },
+      "BalanceTransaction": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "amount": {
+            "type": "number",
+            "format": "float"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "description": "top_up|payment|refund"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "amount",
+          "currency",
+          "type",
+          "created_at"
+        ]
+      },
+      "SubscriptionLimits": {
+        "type": "object",
+        "properties": {
+          "max_users": {
+            "type": "integer"
+          },
+          "max_projects": {
+            "type": "integer"
+          },
+          "storage_quota_gb": {
+            "type": "integer"
+          },
+          "current_users": {
+            "type": "integer"
+          },
+          "current_projects": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "max_users",
+          "max_projects",
+          "storage_quota_gb",
+          "current_users",
+          "current_projects"
+        ]
+      },
+      "Module": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "activated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "is_active"
+        ]
+      },
+      "ModuleCheckAccessRequest": {
+        "type": "object",
+        "properties": {
+          "module_slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "module_slug"
+        ]
+      },
+      "ModuleActivateRequest": {
+        "type": "object",
+        "properties": {
+          "module_slug": {
+            "type": "string"
+          },
+          "period_months": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "module_slug"
+        ]
+      },
+      "ModuleRenewRequest": {
+        "type": "object",
+        "properties": {
+          "period_months": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": []
+      },
+      "ModuleAvailabilityResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "message": {
+            "type": "string",
+            "example": "",
+            "nullable": true
+          },
+          "available": {
+            "type": "boolean",
+            "description": "Доступен ли модуль",
+            "example": true
+          },
+          "can_create_holding": {
+            "type": "boolean",
+            "description": "Может ли текущая организация создать холдинг",
+            "example": true
+          },
+          "current_type": {
+            "type": "string",
+            "description": "Тип текущей организации (single | parent | child)",
+            "example": "single"
+          },
+          "is_holding": {
+            "type": "boolean",
+            "description": "Является ли текущая организация холдингом",
+            "example": false
+          },
+          "required_module": {
+            "type": "string",
+            "description": "Требуемый модуль (присутствует только при ошибке)",
+            "nullable": true
+          }
+        },
+        "required": [
+          "success",
+          "available"
+        ]
+      },
+      "HoldingHierarchy": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "example": 1
+          },
+          "name": {
+            "type": "string",
+            "example": "Головная организация"
+          },
+          "children": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HoldingHierarchy"
+            },
+            "example": [
+              {
+                "id": 2,
+                "name": "Дочерняя организация 1",
+                "children": []
+              },
+              {
+                "id": 3,
+                "name": "Дочерняя организация 2",
+                "children": [
+                  {
+                    "id": 4,
+                    "name": "Внучатая организация",
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name"
+        ]
+      },
+      "OrganizationSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "organization_type": {
+            "type": "string"
+          },
+          "is_holding": {
+            "type": "boolean"
+          },
+          "hierarchy_level": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "organization_type",
+          "is_holding"
+        ]
+      },
+      "OrganizationStats": {
+        "type": "object",
+        "properties": {
+          "users_count": {
+            "type": "integer"
+          },
+          "projects_count": {
+            "type": "integer"
+          },
+          "contracts_count": {
+            "type": "integer"
+          },
+          "active_contracts_value": {
+            "type": "number",
+            "format": "float"
+          }
+        },
+        "required": [
+          "users_count",
+          "projects_count",
+          "contracts_count"
+        ]
+      },
+      "OrganizationRecentActivity": {
+        "type": "object",
+        "properties": {
+          "last_project_created": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "last_contract_signed": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "last_user_added": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        }
+      },
+      "OrganizationData": {
+        "type": "object",
+        "properties": {
+          "organization": {
+            "$ref": "#/components/schemas/OrganizationProfile"
+          },
+          "stats": {
+            "$ref": "#/components/schemas/OrganizationStats"
+          },
+          "recent_activity": {
+            "$ref": "#/components/schemas/OrganizationRecentActivity"
+          }
+        },
+        "required": [
+          "organization"
+        ]
+      },
+      "SwitchContextRequest": {
+        "type": "object",
+        "properties": {
+          "target_organization_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "target_organization_id"
+        ]
+      },
+      "SwitchContextResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "message": {
+            "type": "string",
+            "example": "Контекст организации изменен",
+            "nullable": true
+          },
+          "current_organization_id": {
+            "type": "integer",
+            "description": "ID текущей организации после переключения",
+            "example": 123
+          }
+        },
+        "required": [
+          "success",
+          "current_organization_id"
+        ]
+      },
+      "HoldingDashboard": {
+        "type": "object",
+        "properties": {
+          "organizations_count": {
+            "type": "integer"
+          },
+          "total_revenue": {
+            "type": "number",
+            "format": "float"
+          },
+          "contracts_active": {
+            "type": "integer"
+          },
+          "acts_active": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "organizations_count",
+          "total_revenue"
+        ]
+      },
+      "ChildOrganizationItem": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "organization_type": {
+            "type": "string"
+          },
+          "is_holding": {
+            "type": "boolean"
+          },
+          "hierarchy_level": {
+            "type": "integer"
+          },
+          "users_count": {
+            "type": "integer"
+          },
+          "projects_count": {
+            "type": "integer"
+          },
+          "contracts_count": {
+            "type": "integer"
+          },
+          "is_active": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "organization_type",
+          "is_active"
+        ]
+      },
+      "PaginationMeta": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer"
+          },
+          "per_page": {
+            "type": "integer"
+          },
+          "current_page": {
+            "type": "integer"
+          },
+          "last_page": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "per_page",
+          "current_page",
+          "last_page"
+        ]
+      },
+      "ChildOrganizationsList": {
+        "type": "object",
+        "properties": {
+          "organizations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChildOrganizationItem"
+            }
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/PaginationMeta"
+          }
+        },
+        "required": [
+          "organizations",
+          "pagination"
+        ]
+      },
+      "CreateHoldingRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "OrganizationGroup": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "parent_organization_id": {
+            "type": "integer"
+          },
+          "max_child_organizations": {
+            "type": "integer"
+          },
+          "settings": {
+            "type": "object",
+            "nullable": true
+          },
+          "permissions_config": {
+            "type": "object",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "parent_organization_id"
+        ]
+      },
+      "AddChildOrganizationRequest": {
+        "type": "object",
+        "properties": {
+          "group_id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "inn": {
+            "type": "string",
+            "nullable": true
+          },
+          "kpp": {
+            "type": "string",
+            "nullable": true
+          },
+          "address": {
+            "type": "string",
+            "nullable": true
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "email": {
+            "type": "string",
+            "nullable": true
+          },
+          "owner": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string",
+                "format": "email"
+              },
+              "password": {
+                "type": "string",
+                "nullable": true
+              }
+            },
+            "required": [
+              "name",
+              "email"
+            ]
+          }
+        },
+        "required": [
+          "group_id",
+          "name",
+          "owner"
+        ]
+      },
+      "ChildOrganizationCreated": {
+        "type": "object",
+        "properties": {
+          "organization": {
+            "$ref": "#/components/schemas/OrganizationProfile"
+          },
+          "owner_user": {
+            "$ref": "#/components/schemas/UserProfile"
+          }
+        },
+        "required": [
+          "organization",
+          "owner_user"
+        ]
+      },
+      "SupportRequest": {
+        "type": "object",
+        "properties": {
+          "subject": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject",
+          "message"
+        ]
+      },
+      "AdminPanelUser": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "role_slug": {
+            "type": "string"
+          },
+          "is_active": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email"
+        ]
+      },
+      "StoreAdminPanelUserRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          },
+          "password_confirmation": {
+            "type": "string",
+            "format": "password"
+          },
+          "role_slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "email",
+          "password",
+          "password_confirmation",
+          "role_slug"
+        ]
+      },
+      "UpdateAdminPanelUserRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          },
+          "password_confirmation": {
+            "type": "string",
+            "format": "password"
+          },
+          "role_slug": {
+            "type": "string"
+          }
+        }
+      },
+      "SubscriptionAddon": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "price": {
+            "type": "number",
+            "format": "float"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "price",
+          "currency"
+        ]
+      },
+      "OrganizationSubscriptionAddon": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "addon": {
+            "$ref": "#/components/schemas/SubscriptionAddon"
+          },
+          "status": {
+            "type": "string",
+            "description": "active|expired|canceled"
+          },
+          "activated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "addon",
+          "status",
+          "activated_at"
+        ]
+      },
+      "AddonsResponse": {
+        "type": "object",
+        "properties": {
+          "all": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SubscriptionAddon"
+            }
+          },
+          "connected": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrganizationSubscriptionAddon"
+            }
+          }
+        },
+        "required": [
+          "all",
+          "connected"
+        ]
+      },
+      "OrganizationSubscription": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/BillingPlan"
+          },
+          "status": {
+            "type": "string"
+          },
+          "trial_ends_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "starts_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ends_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "next_billing_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "canceled_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "is_auto_payment_enabled": {
+            "type": "boolean",
+            "description": "Включен ли автоплатеж"
+          },
+          "addons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrganizationSubscriptionAddon"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "plan",
+          "status",
+          "starts_at",
+          "ends_at"
+        ]
+      },
+      "OrgSubscribeRequest": {
+        "type": "object",
+        "properties": {
+          "plan_id": {
+            "type": "integer"
+          },
+          "addon_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            }
+          },
+          "is_auto_payment_enabled": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "plan_id"
+        ]
+      },
+      "OrgAddonAttachRequest": {
+        "type": "object",
+        "properties": {
+          "addon_id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "addon_id"
+        ]
+      },
+      "OneTimePurchaseRequest": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number",
+            "format": "float"
+          },
+          "currency": {
+            "type": "string",
+            "default": "RUB"
+          }
+        },
+        "required": [
+          "type",
+          "amount"
+        ]
+      },
+      "OrganizationOneTimePurchase": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "amount": {
+            "type": "number",
+            "format": "float"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "purchased_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "amount",
+          "currency",
+          "status",
+          "purchased_at"
+        ]
+      },
+      "OrganizationDashboard": {
+        "type": "object",
+        "properties": {
+          "plan": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "ends_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "days_left": {
+                "type": "integer",
+                "nullable": true
+              },
+              "max_foremen": {
+                "type": "integer",
+                "nullable": true
+              },
+              "max_projects": {
+                "type": "integer",
+                "nullable": true
+              },
+              "max_storage_gb": {
+                "type": "integer",
+                "nullable": true
+              },
+              "used_foremen": {
+                "type": "integer",
+                "nullable": true
+              },
+              "used_projects": {
+                "type": "integer",
+                "nullable": true
+              },
+              "used_storage_gb": {
+                "type": "integer",
+                "nullable": true
+              }
+            }
+          },
+          "addons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OrganizationSubscriptionAddon"
+            }
+          }
+        },
+        "required": [
+          "plan",
+          "addons"
+        ]
+      },
+      "TeamMember": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "avatar_url": {
+            "type": "string",
+            "format": "uri",
+            "nullable": true
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "email",
+          "roles"
+        ]
+      },
+      "ChartTimeseries": {
+        "type": "object",
+        "properties": {
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Массив подпунктов оси X (формат YYYY-MM)"
+          },
+          "values": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "Значения метрики, соответствующие labels"
+          }
+        },
+        "required": [
+          "labels",
+          "values"
+        ]
+      },
+      "ChartPie": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "integer",
+          "description": "Количество элементов в данном статусе"
+        },
+        "example": {
+          "draft": 3,
+          "active": 5,
+          "completed": 2
+        }
+      },
+      "OrganizationDashboardExtended": {
+        "type": "object",
+        "properties": {
+          "financial": {
+            "type": "object",
+            "properties": {
+              "balance": {
+                "type": "number"
+              },
+              "credits_this_month": {
+                "type": "number"
+              },
+              "debits_this_month": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "balance"
+            ]
+          },
+          "projects": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "active": {
+                "type": "integer"
+              },
+              "completed": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "total"
+            ]
+          },
+          "contracts": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "active": {
+                "type": "integer"
+              },
+              "draft": {
+                "type": "integer"
+              },
+              "completed": {
+                "type": "integer"
+              },
+              "total_amount": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "total"
+            ]
+          },
+          "works_materials": {
+            "type": "object",
+            "properties": {
+              "works": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer"
+                  },
+                  "confirmed": {
+                    "type": "integer"
+                  },
+                  "confirmed_amount": {
+                    "type": "number"
+                  }
+                }
+              },
+              "materials": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          },
+          "acts": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "approved": {
+                "type": "integer"
+              },
+              "total_amount": {
+                "type": "number"
+              }
+            }
+          },
+          "team": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer"
+              },
+              "by_roles": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "team_details": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamMember"
+            }
+          },
+          "charts": {
+            "type": "object",
+            "properties": {
+              "projects_monthly": {
+                "$ref": "#/components/schemas/ChartTimeseries"
+              },
+              "contracts_monthly": {
+                "$ref": "#/components/schemas/ChartTimeseries"
+              },
+              "completed_works_monthly": {
+                "$ref": "#/components/schemas/ChartTimeseries"
+              },
+              "balance_monthly": {
+                "$ref": "#/components/schemas/ChartTimeseries"
+              },
+              "projects_status": {
+                "$ref": "#/components/schemas/ChartPie"
+              },
+              "contracts_status": {
+                "$ref": "#/components/schemas/ChartPie"
+              }
+            }
+          }
+        },
+        "required": [
+          "financial",
+          "projects",
+          "contracts"
+        ]
+      },
+      "ProjectDTO": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "customer": {
+            "type": "string",
+            "nullable": true
+          },
+          "designer": {
+            "type": "string",
+            "nullable": true
+          },
+          "start_date": {
+            "type": "string",
+            "nullable": true
+          },
+          "end_date": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string"
+          },
+          "is_archived": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "additional_info": {
+            "type": "array",
+            "nullable": true
+          },
+          "external_code": {
+            "type": "string",
+            "nullable": true
+          },
+          "cost_category_id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "accounting_data": {
+            "type": "array",
+            "nullable": true
+          },
+          "use_in_accounting_reports": {
+            "type": "boolean",
+            "nullable": true
+          }
+        },
+        "required": [
+          "name",
+          "status"
+        ]
+      },
+      "ContractDTO": {
+        "type": "object",
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "contractor_id": {
+            "type": "integer"
+          },
+          "parent_contract_id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "number": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "contract",
+              "agreement",
+              "specification"
+            ]
+          },
+          "subject": {
+            "type": "string",
+            "nullable": true
+          },
+          "work_type_category": {
+            "type": "string",
+            "enum": [
+              "smr",
+              "supply",
+              "services",
+              "rent",
+              "other"
+            ],
+            "nullable": true
+          },
+          "payment_terms": {
+            "type": "string",
+            "nullable": true
+          },
+          "total_amount": {
+            "type": "number"
+          },
+          "gp_percentage": {
+            "type": "number",
+            "nullable": true
+          },
+          "planned_advance_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "actual_advance_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "active",
+              "completed",
+              "on_hold",
+              "terminated"
+            ]
+          },
+          "start_date": {
+            "type": "string",
+            "nullable": true
+          },
+          "end_date": {
+            "type": "string",
+            "nullable": true
+          },
+          "notes": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "contractor_id",
+          "number",
+          "date",
+          "type",
+          "total_amount",
+          "status"
+        ]
+      },
+      "ContractPerformanceActDTO": {
+        "type": "object",
+        "properties": {
+          "act_document_number": {
+            "type": "string",
+            "nullable": true
+          },
+          "act_date": {
+            "type": "string"
+          },
+          "amount": {
+            "type": "number"
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "is_approved": {
+            "type": "boolean"
+          },
+          "approval_date": {
+            "type": "string",
+            "nullable": true
+          },
+          "completed_works": {
+            "type": "array"
+          }
+        },
+        "required": [
+          "act_date",
+          "amount",
+          "is_approved",
+          "completed_works"
+        ]
+      },
+      "CompletedWorkDTO": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "organization_id": {
+            "type": "integer"
+          },
+          "project_id": {
+            "type": "integer"
+          },
+          "contract_id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "work_type_id": {
+            "type": "integer"
+          },
+          "user_id": {
+            "type": "integer"
+          },
+          "quantity": {
+            "type": "number"
+          },
+          "price": {
+            "type": "number",
+            "nullable": true
+          },
+          "total_amount": {
+            "type": "number",
+            "nullable": true
+          },
+          "completion_date": [],
+          "notes": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string"
+          },
+          "additional_info": {
+            "type": "array",
+            "nullable": true
+          },
+          "materials": {
+            "type": "array",
+            "nullable": true
+          }
+        },
+        "required": [
+          "organization_id",
+          "project_id",
+          "work_type_id",
+          "user_id",
+          "quantity",
+          "completion_date",
+          "status"
+        ]
+      }
+    },
+    "responses": {},
+    "parameters": {},
+    "examples": {
+      "OrganizationDashboardExtended": {
+        "summary": "Пример расширенного дашборда",
+        "value": {
+          "financial": {
+            "balance": 61200,
+            "credits_this_month": 15000,
+            "debits_this_month": 4800
+          },
+          "projects": {
+            "total": 12,
+            "active": 6,
+            "completed": 4
+          },
+          "contracts": {
+            "total": 18,
+            "active": 9,
+            "draft": 5,
+            "completed": 4,
+            "total_amount": 24500000
+          },
+          "works_materials": {
+            "works": {
+              "total": 120,
+              "confirmed": 84,
+              "confirmed_amount": 7800000
+            },
+            "materials": {
+              "total": 56
+            }
+          },
+          "acts": {
+            "total": 14,
+            "approved": 9,
+            "total_amount": 5600000
+          },
+          "team": {
+            "total": 7,
+            "by_roles": {
+              "organization_owner": 1,
+              "organization_admin": 2,
+              "foreman": 1,
+              "worker": 3
+            }
+          },
+          "team_details": [
+            {
+              "id": 1,
+              "name": "Иван Петров",
+              "email": "ivan@example.com",
+              "avatar_url": "https://cdn.prohelper.pro/avatars/1.png",
+              "roles": [
+                "organization_owner"
+              ]
+            },
+            {
+              "id": 2,
+              "name": "Анна Иванова",
+              "email": "anna@example.com",
+              "avatar_url": null,
+              "roles": [
+                "organization_admin"
+              ]
+            }
+          ],
+          "charts": {
+            "projects_monthly": {
+              "labels": [
+                "2025-02",
+                "2025-03",
+                "2025-04",
+                "2025-05",
+                "2025-06",
+                "2025-07"
+              ],
+              "values": [
+                2,
+                3,
+                4,
+                5,
+                4,
+                6
+              ]
+            },
+            "contracts_monthly": {
+              "labels": [
+                "2025-02",
+                "2025-03",
+                "2025-04",
+                "2025-05",
+                "2025-06",
+                "2025-07"
+              ],
+              "values": [
+                1,
+                2,
+                3,
+                2,
+                3,
+                4
+              ]
+            },
+            "completed_works_monthly": {
+              "labels": [
+                "2025-02",
+                "2025-03",
+                "2025-04",
+                "2025-05",
+                "2025-06",
+                "2025-07"
+              ],
+              "values": [
+                10,
+                12,
+                15,
+                14,
+                13,
+                20
+              ]
+            },
+            "balance_monthly": {
+              "labels": [
+                "2025-02",
+                "2025-03",
+                "2025-04",
+                "2025-05",
+                "2025-06",
+                "2025-07"
+              ],
+              "values": [
+                50000,
+                53000,
+                56000,
+                58000,
+                62000,
+                61200
+              ]
+            },
+            "projects_status": {
+              "draft": 5,
+              "active": 6,
+              "completed": 4
+            },
+            "contracts_status": {
+              "draft": 5,
+              "active": 9,
+              "completed": 4
+            }
+          }
+        }
+      }
+    }
+  }
+}

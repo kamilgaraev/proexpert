@@ -1,6 +1,6 @@
 # Отчеты по подрядчикам
 
-/api/v1/admin/reports/contractor-summary:
+/reports/contractor-summary:
   get:
     tags:
       - Reports
@@ -106,16 +106,9 @@
             schema:
               type: string
               format: binary
-      '400':
-        $ref: '../components/responses/BadRequest.yaml'
-      '401':
-        $ref: '../components/responses/Unauthorized.yaml'
-      '403':
-        $ref: '../components/responses/Forbidden.yaml'
-      '422':
-        $ref: '../components/responses/ValidationError.yaml'
 
-/api/v1/admin/reports/contractor-detail/{contractorId}:
+
+/reports/contractor-detail/{contractorId}:
   get:
     tags:
       - Reports
@@ -173,13 +166,3 @@
             schema:
               type: string
               format: binary
-      '400':
-        $ref: '../components/responses/BadRequest.yaml'
-      '401':
-        $ref: '../components/responses/Unauthorized.yaml'
-      '403':
-        $ref: '../components/responses/Forbidden.yaml'
-      '404':
-        $ref: '../components/responses/NotFound.yaml'
-      '422':
-        $ref: '../components/responses/ValidationError.yaml'
