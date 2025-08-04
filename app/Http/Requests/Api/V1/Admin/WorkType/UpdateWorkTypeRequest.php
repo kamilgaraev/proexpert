@@ -14,17 +14,8 @@ class UpdateWorkTypeRequest extends FormRequest
         /** @var WorkType|null $workType */
         $workType = $this->route('work_type'); // Laravel автоматически инжектирует модель
         
-        if (!$workType || !($workType instanceof WorkType)) {
-            return false;
-        }
-        
-        $organizationId = $this->get('current_organization_id');
-        if (!$organizationId) {
-            return false;
-        }
-        
         // Проверяем права и принадлежность объекта к организации текущего пользователя
-        return Gate::allows('manage-catalogs') && $workType->organization_id === (int)$organizationId;
+        return $workType && Gate::allows('manage-catalogs') && $workType->organization_id === (int)$this->get('current_organization_id');
     }
 
     public function rules(): array

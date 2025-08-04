@@ -1,0 +1,1 @@
+http_requests_total{method="GET",route="/",status="200"}
