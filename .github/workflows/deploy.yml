@@ -36,7 +36,11 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
             cd /var/www/prohelper && \
-            git pull origin main && \
+            # Reset any local changes and force pull from main
+            git reset --hard HEAD && \
+            git clean -fd && \
+            git fetch origin && \
+            git reset --hard origin/main && \
             composer install --no-interaction --prefer-dist --optimize-autoloader && \
             # Download RR binary only if not present to avoid interactive prompt
             if [ ! -f /usr/local/bin/rr ]; then vendor/bin/rr get-binary --location=/usr/local/bin --no-config --stability=stable; fi && \
@@ -45,4 +49,4 @@ jobs:
             php artisan config:cache && \
             php artisan view:cache && \
             # Restart Octane (RoadRunner) service
-            sudo systemctl restart prohelper-octane" 
+            sudo systemctl restart prohelper-octane"

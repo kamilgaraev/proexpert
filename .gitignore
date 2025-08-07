@@ -26,4 +26,10 @@ scripts/nginx-config-lk.conf
 scripts/SETUP_OTHER_SERVERS_INSTRUCTIONS.md
 scripts/ssl-setup-lk.sh
 scripts/ssl-setup-admin.sh
-scripts/nginx-config-lk.conf    
+scripts/nginx-config-lk.conf
+
+# Generated documentation files
+/public/docs/admin_api.html
+/public/docs/admin_api.json
+/public/docs/mobile_api.html
+/public/docs/mobile_api.json
