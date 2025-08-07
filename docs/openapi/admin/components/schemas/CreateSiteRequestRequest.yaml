@@ -1,0 +1,73 @@
+type: object
+required:
+  - request_type
+  - title
+  - description
+  - priority
+  - required_date
+  - project_id
+properties:
+  request_type:
+    type: string
+    enum: [material_request, equipment_request, personnel_request]
+    description: Тип заявки
+  title:
+    type: string
+    maxLength: 255
+    description: Заголовок заявки
+  description:
+    type: string
+    description: Описание заявки
+  priority:
+    type: string
+    enum: [low, medium, high, urgent]
+    description: Приоритет заявки
+  required_date:
+    type: string
+    format: date
+    description: Требуемая дата выполнения
+  project_id:
+    type: integer
+    description: ID проекта
+  # Поля для заявок на персонал
+  personnel_type:
+    $ref: './PersonnelTypeEnum.yaml'
+    description: Тип персонала (обязательно для personnel_request)
+  personnel_count:
+    type: integer
+    minimum: 1
+    description: Количество требуемого персонала (обязательно для personnel_request)
+  hourly_rate:
+    type: number
+    format: float
+    minimum: 0
+    description: Почасовая ставка (опционально для personnel_request)
+  required_skills:
+    type: array
+    items:
+      type: string
+    description: Требуемые навыки (опционально для personnel_request)
+  experience_level:
+    type: string
+    enum: [junior, middle, senior, lead]
+    description: Уровень опыта (опционально для personnel_request)
+  work_schedule:
+    type: string
+    description: График работы (опционально для personnel_request)
+  additional_requirements:
+    type: string
+    description: Дополнительные требования (опционально для personnel_request)
+example:
+  request_type: "personnel_request"
+  title: "Требуются сварщики для монтажных работ"
+  description: "Необходимы квалифицированные сварщики для выполнения монтажных работ на объекте"
+  priority: "high"
+  required_date: "2024-02-15"
+  project_id: 123
+  personnel_type: "welder"
+  personnel_count: 3
+  hourly_rate: 1500.00
+  required_skills: ["Аргонодуговая сварка", "Работа с нержавеющей сталью"]
+  experience_level: "middle"
+  work_schedule: "5/2, 8 часов"
+  additional_requirements: "Наличие собственного инструмента приветствуется"

@@ -8,10 +8,10 @@ use App\DTOs\SiteRequest\SiteRequestDTO;
 use App\Enums\SiteRequest\SiteRequestStatusEnum;
 use App\Enums\SiteRequest\SiteRequestPriorityEnum;
 use App\Enums\SiteRequest\SiteRequestTypeEnum;
-use Carbon\Carbon;
+use App\Enums\SiteRequest\PersonnelTypeEnum;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Rules\Enum;
-use App\Models\SiteRequest; // Для получения siteRequest из роута
+use App\Models\SiteRequest;
 
 class UpdateSiteRequestRequest extends FormRequest
 {
@@ -19,7 +19,6 @@ class UpdateSiteRequestRequest extends FormRequest
     {
         /** @var SiteRequest $siteRequest */
         $siteRequest = $this->route('site_request');
-        // Проверка, что пользователь обновляет свою заявку или имеет на это права (например, админ)
         return Auth::check() && ($siteRequest->user_id === Auth::id() || Auth::user()->can('manage_site_requests'));
     }
 
@@ -40,6 +39,16 @@ class UpdateSiteRequestRequest extends FormRequest
             'notes' => 'sometimes|nullable|string|max:65535',
             'files' => 'sometimes|nullable|array|max:10',
             'files.*' => 'sometimes|required|file|image|mimes:jpeg,png,jpg,gif|max:5120',
+            
+            'personnel_type' => ['sometimes', 'nullable', new Enum(PersonnelTypeEnum::class)],
+            'personnel_count' => 'sometimes|nullable|integer|min:1|max:100',
+            'personnel_requirements' => 'sometimes|nullable|string|max:2000',
+            'hourly_rate' => 'sometimes|nullable|numeric|min:0|max:10000',
+            'work_hours_per_day' => 'sometimes|nullable|integer|min:1|max:24',
+            'work_start_date' => 'sometimes|nullable|date_format:Y-m-d|after_or_equal:today',
+            'work_end_date' => 'sometimes|nullable|date_format:Y-m-d|after_or_equal:work_start_date',
+            'work_location' => 'sometimes|nullable|string|max:500',
+            'additional_conditions' => 'sometimes|nullable|string|max:2000',
         ];
     }
 
@@ -61,17 +70,17 @@ class UpdateSiteRequestRequest extends FormRequest
 
         return new SiteRequestDTO(
             id: $siteRequest->id,
-            organization_id: $siteRequest->organization_id, // Не меняется
+            organization_id: $siteRequest->organization_id,
             project_id: $validatedData['project_id'] ?? $siteRequest->project_id,
-            user_id: $siteRequest->user_id, // Автор заявки не меняется
+            user_id: $siteRequest->user_id,
             title: $validatedData['title'] ?? $siteRequest->title,
             description: $validatedData['description'] ?? $siteRequest->description,
             status: isset($validatedData['status']) ? SiteRequestStatusEnum::from($validatedData['status']) : $siteRequest->status,
             priority: isset($validatedData['priority']) ? SiteRequestPriorityEnum::from($validatedData['priority']) : $siteRequest->priority,
             request_type: isset($validatedData['request_type']) ? SiteRequestTypeEnum::from($validatedData['request_type']) : $siteRequest->request_type,
-            required_date: isset($validatedData['required_date']) ? Carbon::parse($validatedData['required_date']) : $siteRequest->required_date,
+            required_date: $validatedData['required_date'] ?? $siteRequest->required_date,
             notes: $validatedData['notes'] ?? $siteRequest->notes,
-            files: $this->file('files') ?? null // Новые файлы, если переданы
+            files: $this->file('files') ?? null
         );
     }
-} 
+}

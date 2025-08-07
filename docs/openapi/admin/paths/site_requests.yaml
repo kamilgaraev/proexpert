@@ -1,0 +1,344 @@
+paths:
+  /api/v1/admin/site-requests:
+    get:
+      tags:
+        - Admin Site Requests
+      summary: Получить список заявок
+      description: Получить список всех заявок с возможностью фильтрации
+      parameters:
+        - name: page
+          in: query
+          description: Номер страницы
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          description: Количество элементов на странице
+          schema:
+            type: integer
+            default: 15
+            maximum: 100
+        - name: status
+          in: query
+          description: Фильтр по статусу
+          schema:
+            type: string
+            enum: [pending, in_progress, completed, cancelled]
+        - name: request_type
+          in: query
+          description: Фильтр по типу заявки
+          schema:
+            type: string
+            enum: [material_request, equipment_request, personnel_request]
+        - name: project_id
+          in: query
+          description: Фильтр по проекту
+          schema:
+            type: integer
+        - name: personnel_type
+          in: query
+          description: Фильтр по типу персонала (только для personnel_request)
+          schema:
+            $ref: '../components/schemas/PersonnelTypeEnum.yaml'
+      responses:
+        '200':
+          description: Список заявок
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '../components/schemas/SiteRequestDTO.yaml'
+                  meta:
+                    type: object
+                    properties:
+                      current_page:
+                        type: integer
+                      last_page:
+                        type: integer
+                      per_page:
+                        type: integer
+                      total:
+                        type: integer
+        '401':
+          $ref: '../components/responses/Unauthorized.yaml'
+        '403':
+          $ref: '../components/responses/Forbidden.yaml'
+    post:
+      tags:
+        - Admin Site Requests
+      summary: Создать новую заявку
+      description: Создать новую заявку (включая заявки на персонал)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CreateSiteRequestRequest.yaml'
+      responses:
+        '201':
+          description: Заявка успешно создана
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '../components/schemas/SiteRequestDTO.yaml'
+        '422':
+          $ref: '../components/responses/ValidationError.yaml'
+        '401':
+          $ref: '../components/responses/Unauthorized.yaml'
+        '403':
+          $ref: '../components/responses/Forbidden.yaml'
+
+  /api/v1/admin/site-requests/{id}:
+    get:
+      tags:
+        - Admin Site Requests
+      summary: Получить заявку по ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Данные заявки
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '../components/schemas/SiteRequestDTO.yaml'
+        '404':
+          $ref: '../components/responses/NotFound.yaml'
+        '401':
+          $ref: '../components/responses/Unauthorized.yaml'
+        '403':
+          $ref: '../components/responses/Forbidden.yaml'
+    put:
+      tags:
+        - Admin Site Requests
+      summary: Обновить заявку
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/UpdateSiteRequestRequest.yaml'
+      responses:
+        '200':
+          description: Заявка успешно обновлена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '../components/schemas/SiteRequestDTO.yaml'
+        '422':
+          $ref: '../components/responses/ValidationError.yaml'
+        '404':
+          $ref: '../components/responses/NotFound.yaml'
+        '401':
+          $ref: '../components/responses/Unauthorized.yaml'
+        '403':
+          $ref: '../components/responses/Forbidden.yaml'
+    delete:
+      tags:
+        - Admin Site Requests
+      summary: Удалить заявку
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Заявка успешно удалена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Заявка успешно удалена"
+        '404':
+          $ref: '../components/responses/NotFound.yaml'
+        '401':
+          $ref: '../components/responses/Unauthorized.yaml'
+        '403':
+          $ref: '../components/responses/Forbidden.yaml'
+
+  /api/v1/admin/site-requests-stats:
+    get:
+      tags:
+        - Admin Site Requests
+      summary: Получить статистику по заявкам
+      description: Получить агрегированную статистику по заявкам для дашборда
+      responses:
+        '200':
+          description: Статистика по заявкам
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      total_requests:
+                        type: integer
+                        description: Общее количество заявок
+                      by_status:
+                        type: object
+                        properties:
+                          pending:
+                            type: integer
+                          in_progress:
+                            type: integer
+                          completed:
+                            type: integer
+                          overdue:
+                            type: integer
+                      by_type:
+                        type: object
+                        properties:
+                          personnel_request:
+                            type: integer
+                          material_request:
+                            type: integer
+                          equipment_request:
+                            type: integer
+                      by_priority:
+                        type: object
+                        properties:
+                          urgent:
+                            type: integer
+                          high:
+                            type: integer
+                      personnel_stats:
+                        type: object
+                        properties:
+                          total_requests:
+                            type: integer
+                          total_personnel_needed:
+                            type: integer
+                          average_hourly_rate:
+                            type: number
+                            format: float
+                          by_personnel_type:
+                            type: object
+                            additionalProperties:
+                              type: object
+                              properties:
+                                count:
+                                  type: integer
+                                total_personnel:
+                                  type: integer
+                                average_rate:
+                                  type: number
+                                  format: float
+        '401':
+          $ref: '../components/responses/Unauthorized.yaml'
+        '403':
+          $ref: '../components/responses/Forbidden.yaml'
+
+  /api/v1/admin/dashboard/site-requests/statistics:
+    get:
+      tags:
+        - Admin Dashboard
+      summary: Получить статистику заявок для дашборда
+      description: Получить статистику по заявкам для отображения в дашборде админской панели
+      responses:
+        '200':
+          description: Статистика заявок для дашборда
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      total_requests:
+                        type: integer
+                      by_status:
+                        type: object
+                        properties:
+                          pending:
+                            type: integer
+                          in_progress:
+                            type: integer
+                          completed:
+                            type: integer
+                          overdue:
+                            type: integer
+                      by_type:
+                        type: object
+                        properties:
+                          personnel_request:
+                            type: integer
+                          material_request:
+                            type: integer
+                          equipment_request:
+                            type: integer
+                      by_priority:
+                        type: object
+                        properties:
+                          urgent:
+                            type: integer
+                          high:
+                            type: integer
+                      personnel_stats:
+                        type: object
+                        properties:
+                          total_requests:
+                            type: integer
+                          total_personnel_needed:
+                            type: integer
+                          average_hourly_rate:
+                            type: number
+                            format: float
+                          by_personnel_type:
+                            type: object
+        '401':
+          $ref: '../components/responses/Unauthorized.yaml'
+        '403':
+          $ref: '../components/responses/Forbidden.yaml'

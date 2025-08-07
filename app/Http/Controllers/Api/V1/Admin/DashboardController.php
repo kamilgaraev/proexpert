@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use App\Services\Admin\DashboardService;
+use App\Services\SiteRequest\SiteRequestService;
 use Illuminate\Http\Request;
 use App\Models\Contract;
 use App\Models\CompletedWork;
@@ -17,10 +18,12 @@ use Carbon\Carbon;
 class DashboardController extends Controller
 {
     protected DashboardService $dashboardService;
+    protected SiteRequestService $siteRequestService;
 
-    public function __construct(DashboardService $dashboardService)
+    public function __construct(DashboardService $dashboardService, SiteRequestService $siteRequestService)
     {
         $this->dashboardService = $dashboardService;
+        $this->siteRequestService = $siteRequestService;
         $this->middleware('can:access-admin-panel');
     }
 
@@ -346,5 +349,27 @@ class DashboardController extends Controller
         $priority += $completionPercentage;
 
         return $priority;
+    }
+
+    /**
+     * Получить статистику по заявкам для дашборда
+     */
+    public function siteRequestsStatistics(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization context is required.'
+            ], 400);
+        }
+
+        $stats = $this->siteRequestService->getSiteRequestStats($organizationId);
+
+        return response()->json([
+            'success' => true,
+            'data' => $stats
+        ]);
     }
 }

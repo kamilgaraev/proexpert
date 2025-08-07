@@ -2,7 +2,29 @@
   get:
     tags: [SiteRequests]
     summary: Список заявок
+    description: Получить список всех заявок с возможностью фильтрации
     security: [{ bearerAuth: [] }]
+    parameters:
+      - name: request_type
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [material, info, issue, work_order, personnel_request, other]
+        description: Фильтр по типу заявки
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [pending, in_progress, completed, cancelled]
+        description: Фильтр по статусу
+      - name: project_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: Фильтр по проекту
     responses:
       "200":
         description: Заявки
@@ -34,6 +56,17 @@
           application/json:
             schema:
               $ref: '../../lk/components/schemas/ApiResponse.yaml'
+      "422":
+        description: Ошибка валидации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                errors:
+                  type: object
 /site-requests/{site_request}:
   parameters:
     - name: site_request
@@ -96,4 +129,54 @@
     security: [{ bearerAuth: [] }]
     responses:
       "204":
-        description: Удалено 
+        description: Удалено
+/site-requests/personnel:
+  post:
+    tags: [SiteRequests]
+    summary: Создать заявку на персонал
+    description: Специализированный эндпоинт для создания заявок на персонал с валидацией специфичных полей
+    security: [{ bearerAuth: [] }]
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/CreatePersonnelRequestRequest.yaml'
+        application/json:
+          schema:
+            $ref: '../components/schemas/CreatePersonnelRequestRequest.yaml'
+    responses:
+      "201":
+        description: Заявка на персонал создана
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../../lk/components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../../lk/components/schemas/SiteRequestDTO.yaml'
+      "422":
+        description: Ошибка валидации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Ошибка валидации данных заявки на персонал"
+                errors:
+                  type: object
+                  additionalProperties:
+                    type: array
+                    items:
+                      type: string
+                  example:
+                    personnel_type: ["Поле personnel_type обязательно для заявок на персонал"]
+                    personnel_count: ["Количество персонала должно быть больше 0"]
+      "401":
+        description: Не авторизован
+      "403":
+        description: Нет доступа к проекту

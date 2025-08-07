@@ -1,31 +1,23 @@
 type: object
 properties:
-  id:
-    type: integer
-    nullable: true
   organization_id:
     type: integer
+    description: ID организации
   project_id:
     type: integer
-  user_id:
-    type: integer
+    description: ID проекта
   title:
     type: string
+    maxLength: 255
+    description: Заголовок заявки
   description:
     type: string
     nullable: true
-  status:
-    type: string
-    enum: [pending, in_progress, completed, cancelled]
-    description: Статус заявки
+    description: Описание заявки
   priority:
     type: string
     enum: [low, medium, high, urgent]
     description: Приоритет заявки
-  request_type:
-    type: string
-    enum: [material, info, issue, work_order, personnel_request, other]
-    description: Тип заявки
   required_date:
     type: string
     format: date
@@ -33,38 +25,33 @@ properties:
   notes:
     type: string
     nullable: true
-  files:
-    type: array
-    nullable: true
-    items:
-      type: object
-  # Поля для заявок на персонал
+    description: Дополнительные заметки
+  # Обязательные поля для заявок на персонал
   personnel_type:
-    type: string
-    enum: [general_worker, skilled_worker, foreman, engineer, specialist, operator, electrician, plumber, welder, carpenter, mason, painter, security, driver, other]
-    nullable: true
-    description: Тип персонала (только для personnel_request)
+    $ref: './PersonnelTypeEnum.yaml'
   personnel_count:
     type: integer
     minimum: 1
-    nullable: true
+    maximum: 100
     description: Количество требуемого персонала
   personnel_requirements:
     type: string
     nullable: true
-    description: Требования к персоналу
+    maxLength: 1000
+    description: Требования к персоналу (опыт, навыки, сертификаты)
   hourly_rate:
     type: number
     format: decimal
     minimum: 0
+    maximum: 10000
     nullable: true
-    description: Почасовая ставка
+    description: Почасовая ставка (руб/час)
   work_hours_per_day:
     type: integer
     minimum: 1
     maximum: 24
     nullable: true
-    description: Рабочих часов в день
+    description: Количество рабочих часов в день
   work_start_date:
     type: string
     format: date
@@ -78,17 +65,25 @@ properties:
   work_location:
     type: string
     nullable: true
-    description: Место работы
+    maxLength: 500
+    description: Место работы (адрес, участок)
   additional_conditions:
     type: string
     nullable: true
-    description: Дополнительные условия
+    maxLength: 1000
+    description: Дополнительные условия работы
+  files:
+    type: array
+    nullable: true
+    items:
+      type: string
+      format: binary
+    description: Прикрепленные файлы
 required:
   - organization_id
   - project_id
-  - user_id
   - title
-  - status
   - priority
-  - request_type
   - required_date
+  - personnel_type
+  - personnel_count

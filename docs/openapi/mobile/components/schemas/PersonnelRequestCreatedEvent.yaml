@@ -1,0 +1,66 @@
+type: object
+properties:
+  site_request_id:
+    type: integer
+    description: ID заявки на персонал
+  project_id:
+    type: integer
+    description: ID проекта
+  title:
+    type: string
+    description: Заголовок заявки
+  personnel_type:
+    type: string
+    enum: [general_worker, skilled_worker, foreman, engineer, specialist, operator, electrician, plumber, welder, carpenter, mason, painter, security, driver, other]
+    description: Тип требуемого персонала
+  personnel_count:
+    type: integer
+    minimum: 1
+    description: Количество требуемого персонала
+  work_start_date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата начала работы
+  work_end_date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата окончания работы
+  hourly_rate:
+    type: number
+    format: decimal
+    minimum: 0
+    nullable: true
+    description: Почасовая ставка
+  author:
+    type: object
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+      email:
+        type: string
+        format: email
+    description: Автор заявки (прораб)
+  project:
+    type: object
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+    description: Проект
+  message:
+    type: string
+    description: Сообщение для уведомления
+required:
+  - site_request_id
+  - project_id
+  - title
+  - personnel_type
+  - personnel_count
+  - author
+  - project
+  - message

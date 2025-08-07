@@ -12,5 +12,6 @@ enum SiteRequestTypeEnum: string
     case INFO_REQUEST = 'info_request';         // Запрос информации
     case ISSUE_REPORT = 'issue_report';         // Сообщение о проблеме
     case WORK_ORDER = 'work_order';             // Заявка на выполнение работ (наряд)
+    case PERSONNEL_REQUEST = 'personnel_request'; // Заявка на людей/персонал
     case OTHER = 'other';                     // Другое
-} 
+}

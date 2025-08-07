@@ -234,6 +234,9 @@ Route::prefix('admin')->name('admin.')->group(function () {
         if (file_exists(__DIR__ . '/api/v1/admin/contractor_invitations.php')) {
             require __DIR__ . '/api/v1/admin/contractor_invitations.php';
         }
+        if (file_exists(__DIR__ . '/api/v1/admin/site_requests.php')) {
+            require __DIR__ . '/api/v1/admin/site_requests.php';
+        }
         if (file_exists(__DIR__ . '/api/v1/schedule.php')) {
             require __DIR__ . '/api/v1/schedule.php';
         }

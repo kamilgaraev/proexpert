@@ -1,0 +1,63 @@
+type: object
+properties:
+  request_type:
+    type: string
+    enum: [material_request, equipment_request, personnel_request]
+    description: Тип заявки
+  title:
+    type: string
+    maxLength: 255
+    description: Заголовок заявки
+  description:
+    type: string
+    description: Описание заявки
+  priority:
+    type: string
+    enum: [low, medium, high, urgent]
+    description: Приоритет заявки
+  status:
+    type: string
+    enum: [pending, in_progress, completed, cancelled]
+    description: Статус заявки
+  required_date:
+    type: string
+    format: date
+    description: Требуемая дата выполнения
+  project_id:
+    type: integer
+    description: ID проекта
+  # Поля для заявок на персонал
+  personnel_type:
+    $ref: './PersonnelTypeEnum.yaml'
+    description: Тип персонала (для personnel_request)
+  personnel_count:
+    type: integer
+    minimum: 1
+    description: Количество требуемого персонала (для personnel_request)
+  hourly_rate:
+    type: number
+    format: float
+    minimum: 0
+    description: Почасовая ставка (для personnel_request)
+  required_skills:
+    type: array
+    items:
+      type: string
+    description: Требуемые навыки (для personnel_request)
+  experience_level:
+    type: string
+    enum: [junior, middle, senior, lead]
+    description: Уровень опыта (для personnel_request)
+  work_schedule:
+    type: string
+    description: График работы (для personnel_request)
+  additional_requirements:
+    type: string
+    description: Дополнительные требования (для personnel_request)
+example:
+  status: "in_progress"
+  priority: "urgent"
+  personnel_count: 5
+  hourly_rate: 1800.00
+  required_skills: ["Аргонодуговая сварка", "Работа с нержавеющей сталью", "Работа на высоте"]
+  experience_level: "senior"

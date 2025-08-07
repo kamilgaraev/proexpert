@@ -17,4 +17,8 @@ Route::get('/dashboard/contracts/statistics', [DashboardController::class, 'cont
 Route::get('/dashboard/contracts/top', [DashboardController::class, 'topContracts'])
     ->name('dashboard.contracts.top');
 Route::get('/dashboard/recent-activity', [DashboardController::class, 'recentActivity'])
-    ->name('dashboard.recent-activity'); 
+    ->name('dashboard.recent-activity');
+
+// Статистика по заявкам (включая заявки на персонал)
+Route::get('/dashboard/site-requests/statistics', [DashboardController::class, 'siteRequestsStatistics'])
+    ->name('dashboard.site-requests.statistics');
