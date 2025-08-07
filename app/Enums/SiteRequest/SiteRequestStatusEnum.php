@@ -9,6 +9,7 @@ enum SiteRequestStatusEnum: string
     use HasValues;
 
     case DRAFT = 'draft'; // Черновик
+    case PENDING = 'pending'; // Ожидает рассмотрения
     case SUBMITTED = 'submitted'; // Подана
     case APPROVED = 'approved'; // Одобрена
     case REJECTED = 'rejected'; // Отклонена
