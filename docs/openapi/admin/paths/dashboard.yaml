@@ -390,4 +390,62 @@
                             format: date
                           created_at:
                             type: string
-                            format: date-time 
+                            format: date-time
+
+/dashboard/site-requests/statistics:
+  get:
+    tags: [Dashboard]
+    summary: Получить статистику по заявкам для дашборда
+    description: Получить агрегированную статистику по заявкам
+    responses:
+      '200':
+        description: Статистика по заявкам
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        total_requests:
+                          type: integer
+                          description: Общее количество заявок
+                        by_status:
+                          type: object
+                          properties:
+                            pending:
+                              type: integer
+                            in_progress:
+                              type: integer
+                            completed:
+                              type: integer
+                            overdue:
+                              type: integer
+                        by_type:
+                          type: object
+                          properties:
+                            personnel_request:
+                              type: integer
+                            material_request:
+                              type: integer
+                            equipment_request:
+                              type: integer
+                        by_priority:
+                          type: object
+                          properties:
+                            urgent:
+                              type: integer
+                            high:
+                              type: integer
+                        personnel_stats:
+                          type: object
+                          properties:
+                            total_personnel_requests:
+                              type: integer
+                            by_personnel_type:
+                              type: object
+                              additionalProperties:
+                                type: integer
