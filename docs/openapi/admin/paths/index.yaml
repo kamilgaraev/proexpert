@@ -150,15 +150,15 @@
   $ref: './dashboard.yaml#/~1dashboard~1site-requests~1statistics'
 
 /site-requests:
-  $ref: './site_requests.yaml#/~1api~1v1~1admin~1site-requests'
+  $ref: './site_requests.yaml#/~1site-requests'
 /site-requests/{id}:
-  $ref: './site_requests.yaml#/~1api~1v1~1admin~1site-requests~1{id}'
+  $ref: './site_requests.yaml#/~1site-requests~1{id}'
 /site-requests-stats:
-  $ref: './site_requests.yaml#/~1api~1v1~1admin~1site-requests-stats'
+  $ref: './site_requests.yaml#/~1site-requests-stats'
 /site-requests/{siteRequest}/files:
-  $ref: './site_requests.yaml#/~1api~1v1~1admin~1site-requests~1{siteRequest}~1files'
+  $ref: './site_requests.yaml#/~1site-requests~1{siteRequest}~1files'
 /site-requests/{siteRequest}/files/{file}:
-  $ref: './site_requests.yaml#/~1api~1v1~1admin~1site-requests~1{siteRequest}~1files~1{file}'
+  $ref: './site_requests.yaml#/~1site-requests~1{siteRequest}~1files~1{file}'
 
 /filters/contracts:
   $ref: './filters.yaml#/~1filters~1contracts'

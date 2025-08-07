@@ -1,5 +1,4 @@
-paths:
-  /api/v1/admin/site-requests:
+/site-requests:
     get:
       tags:
         - Admin Site Requests
@@ -71,6 +70,89 @@ paths:
           $ref: '../components/responses/Unauthorized.yaml'
         '403':
           $ref: '../components/responses/Forbidden.yaml'
+
+/site-requests/{siteRequest}/files:
+    post:
+      tags:
+        - Admin Site Requests
+      summary: Загрузить файл к заявке
+      description: Загрузить файл к существующей заявке
+      parameters:
+        - name: siteRequest
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Файл успешно загружен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Файл успешно загружен"
+                  data:
+                    $ref: '../components/schemas/File.yaml'
+        '404':
+          $ref: '../components/responses/NotFound.yaml'
+        '401':
+          $ref: '../components/responses/Unauthorized.yaml'
+        '403':
+          $ref: '../components/responses/Forbidden.yaml'
+
+/site-requests/{siteRequest}/files/{file}:
+    delete:
+      tags:
+        - Admin Site Requests
+      summary: Удалить файл заявки
+      description: Удалить файл, прикрепленный к заявке
+      parameters:
+        - name: siteRequest
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: file
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Файл успешно удален
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Файл успешно удален"
+        '404':
+          $ref: '../components/responses/NotFound.yaml'
+        '401':
+          $ref: '../components/responses/Unauthorized.yaml'
+        '403':
+          $ref: '../components/responses/Forbidden.yaml'
     post:
       tags:
         - Admin Site Requests
@@ -94,7 +176,7 @@ paths:
                     type: boolean
                     example: true
                   data:
-                    $ref: '../components/schemas/SiteRequestDTO.yaml'
+                     $ref: '../components/schemas/File.yaml'
         '422':
           $ref: '../components/responses/ValidationError.yaml'
         '401':
@@ -102,7 +184,7 @@ paths:
         '403':
           $ref: '../components/responses/Forbidden.yaml'
 
-  /api/v1/admin/site-requests/{id}:
+/site-requests/{id}:
     get:
       tags:
         - Admin Site Requests
@@ -200,7 +282,7 @@ paths:
         '403':
           $ref: '../components/responses/Forbidden.yaml'
 
-  /api/v1/admin/site-requests-stats:
+/site-requests-stats:
     get:
       tags:
         - Admin Site Requests
@@ -272,72 +354,6 @@ paths:
                                 average_rate:
                                   type: number
                                   format: float
-        '401':
-          $ref: '../components/responses/Unauthorized.yaml'
-        '403':
-          $ref: '../components/responses/Forbidden.yaml'
-
-  /api/v1/admin/dashboard/site-requests/statistics:
-    get:
-      tags:
-        - Admin Dashboard
-      summary: Получить статистику заявок для дашборда
-      description: Получить статистику по заявкам для отображения в дашборде админской панели
-      responses:
-        '200':
-          description: Статистика заявок для дашборда
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  data:
-                    type: object
-                    properties:
-                      total_requests:
-                        type: integer
-                      by_status:
-                        type: object
-                        properties:
-                          pending:
-                            type: integer
-                          in_progress:
-                            type: integer
-                          completed:
-                            type: integer
-                          overdue:
-                            type: integer
-                      by_type:
-                        type: object
-                        properties:
-                          personnel_request:
-                            type: integer
-                          material_request:
-                            type: integer
-                          equipment_request:
-                            type: integer
-                      by_priority:
-                        type: object
-                        properties:
-                          urgent:
-                            type: integer
-                          high:
-                            type: integer
-                      personnel_stats:
-                        type: object
-                        properties:
-                          total_requests:
-                            type: integer
-                          total_personnel_needed:
-                            type: integer
-                          average_hourly_rate:
-                            type: number
-                            format: float
-                          by_personnel_type:
-                            type: object
         '401':
           $ref: '../components/responses/Unauthorized.yaml'
         '403':

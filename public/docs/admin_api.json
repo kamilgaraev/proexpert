@@ -4687,6 +4687,666 @@
         }
       }
     },
+    "/dashboard/site-requests/statistics": {
+      "get": {
+        "tags": [
+          "Dashboard"
+        ],
+        "summary": "Получить статистику по заявкам для дашборда",
+        "description": "Получить агрегированную статистику по заявкам",
+        "responses": {
+          "200": {
+            "description": "Статистика по заявкам",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "total_requests": {
+                              "type": "integer",
+                              "description": "Общее количество заявок"
+                            },
+                            "by_status": {
+                              "type": "object",
+                              "properties": {
+                                "pending": {
+                                  "type": "integer"
+                                },
+                                "in_progress": {
+                                  "type": "integer"
+                                },
+                                "completed": {
+                                  "type": "integer"
+                                },
+                                "overdue": {
+                                  "type": "integer"
+                                }
+                              }
+                            },
+                            "by_type": {
+                              "type": "object",
+                              "properties": {
+                                "personnel_request": {
+                                  "type": "integer"
+                                },
+                                "material_request": {
+                                  "type": "integer"
+                                },
+                                "equipment_request": {
+                                  "type": "integer"
+                                }
+                              }
+                            },
+                            "by_priority": {
+                              "type": "object",
+                              "properties": {
+                                "urgent": {
+                                  "type": "integer"
+                                },
+                                "high": {
+                                  "type": "integer"
+                                }
+                              }
+                            },
+                            "personnel_stats": {
+                              "type": "object",
+                              "properties": {
+                                "total_personnel_requests": {
+                                  "type": "integer"
+                                },
+                                "by_personnel_type": {
+                                  "type": "object",
+                                  "additionalProperties": {
+                                    "type": "integer"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/site-requests": {
+      "get": {
+        "tags": [
+          "Admin Site Requests"
+        ],
+        "summary": "Получить список заявок",
+        "description": "Получить список всех заявок с возможностью фильтрации",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Номер страницы",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "Количество элементов на странице",
+            "schema": {
+              "type": "integer",
+              "default": 15,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Фильтр по статусу",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "in_progress",
+                "completed",
+                "cancelled"
+              ]
+            }
+          },
+          {
+            "name": "request_type",
+            "in": "query",
+            "description": "Фильтр по типу заявки",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "material_request",
+                "equipment_request",
+                "personnel_request"
+              ]
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "description": "Фильтр по проекту",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "personnel_type",
+            "in": "query",
+            "description": "Фильтр по типу персонала (только для personnel_request)",
+            "schema": {
+              "$ref": "#/components/schemas/PersonnelTypeEnum"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Список заявок",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SiteRequestDTO"
+                      }
+                    },
+                    "meta": {
+                      "type": "object",
+                      "properties": {
+                        "current_page": {
+                          "type": "integer"
+                        },
+                        "last_page": {
+                          "type": "integer"
+                        },
+                        "per_page": {
+                          "type": "integer"
+                        },
+                        "total": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/site-requests/{id}": {
+      "get": {
+        "tags": [
+          "Admin Site Requests"
+        ],
+        "summary": "Получить заявку по ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Данные заявки",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/SiteRequestDTO"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Admin Site Requests"
+        ],
+        "summary": "Обновить заявку",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSiteRequestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Заявка успешно обновлена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/SiteRequestDTO"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Admin Site Requests"
+        ],
+        "summary": "Удалить заявку",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Заявка успешно удалена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Заявка успешно удалена"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/site-requests-stats": {
+      "get": {
+        "tags": [
+          "Admin Site Requests"
+        ],
+        "summary": "Получить статистику по заявкам",
+        "description": "Получить агрегированную статистику по заявкам для дашборда",
+        "responses": {
+          "200": {
+            "description": "Статистика по заявкам",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "total_requests": {
+                          "type": "integer",
+                          "description": "Общее количество заявок"
+                        },
+                        "by_status": {
+                          "type": "object",
+                          "properties": {
+                            "pending": {
+                              "type": "integer"
+                            },
+                            "in_progress": {
+                              "type": "integer"
+                            },
+                            "completed": {
+                              "type": "integer"
+                            },
+                            "overdue": {
+                              "type": "integer"
+                            }
+                          }
+                        },
+                        "by_type": {
+                          "type": "object",
+                          "properties": {
+                            "personnel_request": {
+                              "type": "integer"
+                            },
+                            "material_request": {
+                              "type": "integer"
+                            },
+                            "equipment_request": {
+                              "type": "integer"
+                            }
+                          }
+                        },
+                        "by_priority": {
+                          "type": "object",
+                          "properties": {
+                            "urgent": {
+                              "type": "integer"
+                            },
+                            "high": {
+                              "type": "integer"
+                            }
+                          }
+                        },
+                        "personnel_stats": {
+                          "type": "object",
+                          "properties": {
+                            "total_requests": {
+                              "type": "integer"
+                            },
+                            "total_personnel_needed": {
+                              "type": "integer"
+                            },
+                            "average_hourly_rate": {
+                              "type": "number",
+                              "format": "float"
+                            },
+                            "by_personnel_type": {
+                              "type": "object",
+                              "additionalProperties": {
+                                "type": "object",
+                                "properties": {
+                                  "count": {
+                                    "type": "integer"
+                                  },
+                                  "total_personnel": {
+                                    "type": "integer"
+                                  },
+                                  "average_rate": {
+                                    "type": "number",
+                                    "format": "float"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/site-requests/{siteRequest}/files": {
+      "post": {
+        "tags": [
+          "Admin Site Requests"
+        ],
+        "summary": "Загрузить файл к заявке",
+        "description": "Загрузить файл к существующей заявке",
+        "parameters": [
+          {
+            "name": "siteRequest",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Файл успешно загружен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Файл успешно загружен"
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/File"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/site-requests/{siteRequest}/files/{file}": {
+      "delete": {
+        "tags": [
+          "Admin Site Requests"
+        ],
+        "summary": "Удалить файл заявки",
+        "description": "Удалить файл, прикрепленный к заявке",
+        "parameters": [
+          {
+            "name": "siteRequest",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "file",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Файл успешно удален",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Файл успешно удален"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Admin Site Requests"
+        ],
+        "summary": "Создать новую заявку",
+        "description": "Создать новую заявку (включая заявки на персонал)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateSiteRequestRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Заявка успешно создана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "example": true
+                    },
+                    "data": {
+                      "$ref": "#/components/schemas/File"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          }
+        }
+      }
+    },
     "/filters/contracts": {
       "get": {
         "tags": [
@@ -11586,6 +12246,371 @@
           }
         ]
       },
+      "PersonnelTypeEnum": {
+        "type": "string",
+        "enum": [
+          "engineer",
+          "foreman",
+          "worker",
+          "electrician",
+          "plumber",
+          "welder",
+          "crane_operator",
+          "driver",
+          "security_guard",
+          "cleaner",
+          "other"
+        ],
+        "description": "Тип персонала",
+        "example": "welder",
+        "x-enum-descriptions": {
+          "engineer": "Инженер",
+          "foreman": "Прораб",
+          "worker": "Рабочий",
+          "electrician": "Электрик",
+          "plumber": "Сантехник",
+          "welder": "Сварщик",
+          "crane_operator": "Крановщик",
+          "driver": "Водитель",
+          "security_guard": "Охранник",
+          "cleaner": "Уборщик",
+          "other": "Другое"
+        }
+      },
+      "SiteRequestDTO": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "ID заявки"
+          },
+          "request_type": {
+            "type": "string",
+            "enum": [
+              "personnel_request",
+              "material_request",
+              "equipment_request"
+            ],
+            "description": "Тип заявки"
+          },
+          "title": {
+            "type": "string",
+            "description": "Заголовок заявки"
+          },
+          "description": {
+            "type": "string",
+            "description": "Описание заявки"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed",
+              "cancelled"
+            ],
+            "description": "Статус заявки"
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "urgent"
+            ],
+            "description": "Приоритет заявки"
+          },
+          "required_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Требуемая дата выполнения"
+          },
+          "project_id": {
+            "type": "integer",
+            "description": "ID проекта"
+          },
+          "project": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          },
+          "personnel_type": {
+            "type": "string",
+            "nullable": true,
+            "description": "Тип персонала (для заявок на персонал)"
+          },
+          "personnel_count": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Количество персонала"
+          },
+          "hourly_rate": {
+            "type": "number",
+            "format": "float",
+            "nullable": true,
+            "description": "Почасовая ставка"
+          },
+          "required_skills": {
+            "type": "string",
+            "nullable": true,
+            "description": "Требуемые навыки"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/File"
+            },
+            "description": "Прикрепленные файлы"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Дата создания"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Дата обновления"
+          },
+          "created_by": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "name": {
+                "type": "string"
+              },
+              "email": {
+                "type": "string"
+              }
+            },
+            "description": "Создатель заявки"
+          }
+        }
+      },
+      "UpdateSiteRequestRequest": {
+        "type": "object",
+        "properties": {
+          "request_type": {
+            "type": "string",
+            "enum": [
+              "material_request",
+              "equipment_request",
+              "personnel_request"
+            ],
+            "description": "Тип заявки"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "Заголовок заявки"
+          },
+          "description": {
+            "type": "string",
+            "description": "Описание заявки"
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "urgent"
+            ],
+            "description": "Приоритет заявки"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed",
+              "cancelled"
+            ],
+            "description": "Статус заявки"
+          },
+          "required_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Требуемая дата выполнения"
+          },
+          "project_id": {
+            "type": "integer",
+            "description": "ID проекта"
+          },
+          "personnel_type": {
+            "$ref": "#/components/schemas/PersonnelTypeEnum",
+            "description": "Тип персонала (для personnel_request)"
+          },
+          "personnel_count": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Количество требуемого персонала (для personnel_request)"
+          },
+          "hourly_rate": {
+            "type": "number",
+            "format": "float",
+            "minimum": 0,
+            "description": "Почасовая ставка (для personnel_request)"
+          },
+          "required_skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Требуемые навыки (для personnel_request)"
+          },
+          "experience_level": {
+            "type": "string",
+            "enum": [
+              "junior",
+              "middle",
+              "senior",
+              "lead"
+            ],
+            "description": "Уровень опыта (для personnel_request)"
+          },
+          "work_schedule": {
+            "type": "string",
+            "description": "График работы (для personnel_request)"
+          },
+          "additional_requirements": {
+            "type": "string",
+            "description": "Дополнительные требования (для personnel_request)"
+          }
+        },
+        "example": {
+          "status": "in_progress",
+          "priority": "urgent",
+          "personnel_count": 5,
+          "hourly_rate": 1800,
+          "required_skills": [
+            "Аргонодуговая сварка",
+            "Работа с нержавеющей сталью",
+            "Работа на высоте"
+          ],
+          "experience_level": "senior"
+        }
+      },
+      "CreateSiteRequestRequest": {
+        "type": "object",
+        "required": [
+          "request_type",
+          "title",
+          "description",
+          "priority",
+          "required_date",
+          "project_id"
+        ],
+        "properties": {
+          "request_type": {
+            "type": "string",
+            "enum": [
+              "material_request",
+              "equipment_request",
+              "personnel_request"
+            ],
+            "description": "Тип заявки"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "Заголовок заявки"
+          },
+          "description": {
+            "type": "string",
+            "description": "Описание заявки"
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "urgent"
+            ],
+            "description": "Приоритет заявки"
+          },
+          "required_date": {
+            "type": "string",
+            "format": "date",
+            "description": "Требуемая дата выполнения"
+          },
+          "project_id": {
+            "type": "integer",
+            "description": "ID проекта"
+          },
+          "personnel_type": {
+            "$ref": "#/components/schemas/PersonnelTypeEnum",
+            "description": "Тип персонала (обязательно для personnel_request)"
+          },
+          "personnel_count": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Количество требуемого персонала (обязательно для personnel_request)"
+          },
+          "hourly_rate": {
+            "type": "number",
+            "format": "float",
+            "minimum": 0,
+            "description": "Почасовая ставка (опционально для personnel_request)"
+          },
+          "required_skills": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Требуемые навыки (опционально для personnel_request)"
+          },
+          "experience_level": {
+            "type": "string",
+            "enum": [
+              "junior",
+              "middle",
+              "senior",
+              "lead"
+            ],
+            "description": "Уровень опыта (опционально для personnel_request)"
+          },
+          "work_schedule": {
+            "type": "string",
+            "description": "График работы (опционально для personnel_request)"
+          },
+          "additional_requirements": {
+            "type": "string",
+            "description": "Дополнительные требования (опционально для personnel_request)"
+          }
+        },
+        "example": {
+          "request_type": "personnel_request",
+          "title": "Требуются сварщики для монтажных работ",
+          "description": "Необходимы квалифицированные сварщики для выполнения монтажных работ на объекте",
+          "priority": "high",
+          "required_date": "2024-02-15",
+          "project_id": 123,
+          "personnel_type": "welder",
+          "personnel_count": 3,
+          "hourly_rate": 1500,
+          "required_skills": [
+            "Аргонодуговая сварка",
+            "Работа с нержавеющей сталью"
+          ],
+          "experience_level": "middle",
+          "work_schedule": "5/2, 8 часов",
+          "additional_requirements": "Наличие собственного инструмента приветствуется"
+        }
+      },
       "CountAmount": {
         "type": "object",
         "properties": {
@@ -12764,6 +13789,46 @@
     "responses": {
       "UnauthorizedError": {
         "description": "Не авторизован",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Не авторизован",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Доступ запрещен",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Ресурс не найден",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Ошибка валидации",
         "content": {
           "application/json": {
             "schema": {
