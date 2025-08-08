@@ -36,70 +36,18 @@ jobs:
             # Wait for services to start
             sleep 15
             
-            # Install requests if not available
-            pip3 install requests 2>/dev/null || echo "requests already installed"
+            # Import Grafana dashboards using curl
+            echo "Importing Grafana dashboards..."
+            for dashboard in monitoring/grafana/dashboards/*.json; do
+              if [ -f "$dashboard" ]; then
+                echo "Importing $(basename "$dashboard")..."
+                curl -X POST \
+                  -H "Content-Type: application/json" \
+                  -u "admin:admin123" \
+                  -d @"$dashboard" \
+                  http://localhost:3000/api/dashboards/db || echo "Failed to import $(basename "$dashboard")"
+              fi
+            done
             
-            # Create dashboard import scrip
-            cat > /tmp/import_dashboards.py << 'PYTHON_SCRIPT'
-            import json
-            import requests
-            import os
-            import time
-            import sys
-            
-            def import_dashboards():
-                # Wait for Grafana to be ready
-                print("Waiting for Grafana to be ready...")
-                time.sleep(10)
-                
-                auth = ('admin', 'admin123')
-                url = 'http://localhost:3000/api/dashboards/db'
-                
-                dashboard_dir = 'monitoring/grafana/dashboards'
-                
-                if not os.path.exists(dashboard_dir):
-                    print(f"Dashboard directory {dashboard_dir} not found")
-                    return
-                
-                for filename in os.listdir(dashboard_dir):
-                    if filename.endswith('.json'):
-                        filepath = os.path.join(dashboard_dir, filename)
-                        try:
-                            print(f"Importing {filename}...")
-                            with open(filepath, 'r', encoding='utf-8') as f:
-                                dashboard = json.load(f)
-                            
-                            payload = {
-                                'dashboard': dashboard,
-                                'overwrite': True
-                            }
-                            
-                            response = requests.post(
-                                url, 
-                                json=payload, 
-                                auth=auth, 
-                                timeout=30
-                            )
-                            
-                            if response.status_code in [200, 412]:
-                                print(f"Successfully imported {filename}")
-                            else:
-                                print(f"Failed to import {filename}: {response.status_code}")
-                                print(f"Response: {response.text[:200]}")
-                                
-                        except Exception as e:
-                            print(f"Error importing {filename}: {str(e)}")
-                
-                print("Dashboard import completed")
-            
-            if __name__ == '__main__':
-                import_dashboards()
-            PYTHON_SCRIPT
-            
-            # Run the import script
-            python3 /tmp/import_dashboards.py
-            
-            # Clean up
-            rm -f /tmp/import_dashboards.py
-            
+            echo "Dashboard import completed"
             echo "Monitoring configuration update completed"
