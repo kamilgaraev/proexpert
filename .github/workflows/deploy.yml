@@ -87,8 +87,10 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
             cd /var/www/prohelper && \
-            # Run monitoring configuration update
+            # Stop existing monitoring stack and restart
             chmod +x start-monitoring.sh stop-monitoring.sh && \
+            ./stop-monitoring.sh && \
+            sleep 5 && \
             ./start-monitoring.sh"
 
       - name: Notify Monitoring
