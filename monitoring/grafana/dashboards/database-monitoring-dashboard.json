@@ -205,15 +205,12 @@
       "pluginVersion": "10.2.0",
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "db_connections_active",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "sum(pg_stat_activity_count)",
           "refId": "A"
         }
       ],
-      "title": "Active DB Connections",
+      "title": "Active DB Connections (Postgres)",
       "type": "stat"
     },
     {
@@ -269,15 +266,12 @@
       "pluginVersion": "10.2.0",
       "targets": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "avg(db_query_duration_ms)",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "1000 * rate(pg_stat_statements_total_time_seconds_sum[5m]) / rate(pg_stat_statements_calls_total[5m])",
           "refId": "A"
         }
       ],
-      "title": "Avg Query Time",
+      "title": "Avg Query Time (ms)",
       "type": "gauge"
     },
     {
@@ -428,18 +422,15 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "db_connections_active",
+          "expr": "sum(pg_stat_activity_count)",
           "refId": "A",
-          "legendFormat": "Active Connections"
+          "legendFormat": "Active"
         },
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "db_connections_max",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "max(pg_settings_max_connections)",
           "refId": "B",
-          "legendFormat": "Max Connections"
+          "legendFormat": "Max"
         }
       ],
       "title": "Database Connections Over Time",
@@ -524,25 +515,19 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, rate(db_query_duration_ms_bucket[5m]))",
+          "expr": "histogram_quantile(0.50, rate(pg_stat_statements_query_time_seconds_bucket[5m])) * 1000",
           "refId": "A",
           "legendFormat": "50th percentile"
         },
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.95, rate(db_query_duration_ms_bucket[5m]))",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "histogram_quantile(0.95, rate(pg_stat_statements_query_time_seconds_bucket[5m])) * 1000",
           "refId": "B",
           "legendFormat": "95th percentile"
         },
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "histogram_quantile(0.99, rate(db_query_duration_ms_bucket[5m]))",
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "expr": "histogram_quantile(0.99, rate(pg_stat_statements_query_time_seconds_bucket[5m])) * 1000",
           "refId": "C",
           "legendFormat": "99th percentile"
         }
@@ -891,42 +876,10 @@
         }
       },
       "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(db_queries_total{operation=\"SELECT\"}[5m])",
-          "refId": "A",
-          "legendFormat": "SELECT queries/sec"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(db_queries_total{operation=\"INSERT\"}[5m])",
-          "refId": "B",
-          "legendFormat": "INSERT queries/sec"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(db_queries_total{operation=\"UPDATE\"}[5m])",
-          "refId": "C",
-          "legendFormat": "UPDATE queries/sec"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "rate(db_queries_total{operation=\"DELETE\"}[5m])",
-          "refId": "D",
-          "legendFormat": "DELETE queries/sec"
-        }
+        {"datasource": {"type":"prometheus","uid":"prometheus"}, "expr": "rate(pg_stat_statements_calls_total{query=~\".*SELECT.*\"}[5m])", "refId": "A", "legendFormat": "SELECT/s"},
+        {"datasource": {"type":"prometheus","uid":"prometheus"}, "expr": "rate(pg_stat_statements_calls_total{query=~\".*INSERT.*\"}[5m])", "refId": "B", "legendFormat": "INSERT/s"},
+        {"datasource": {"type":"prometheus","uid":"prometheus"}, "expr": "rate(pg_stat_statements_calls_total{query=~\".*UPDATE.*\"}[5m])", "refId": "C", "legendFormat": "UPDATE/s"},
+        {"datasource": {"type":"prometheus","uid":"prometheus"}, "expr": "rate(pg_stat_statements_calls_total{query=~\".*DELETE.*\"}[5m])", "refId": "D", "legendFormat": "DELETE/s"}
       ],
       "title": "Database Query Rate by Operation Type",
       "type": "timeseries"

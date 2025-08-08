@@ -149,12 +149,12 @@ scrape_configs:
   # PostgreSQL метрики (если установлен postgres_exporter)
   - job_name: 'postgres'
     static_configs:
-      - targets: ['host.docker.internal:9187']
-    scrape_interval: 30s
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 15s
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
-        replacement: 'postgres-server'
+        replacement: 'postgres-exporter'
       - source_labels: [__address__]
         target_label: service
         replacement: 'database'
