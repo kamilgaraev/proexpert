@@ -2,7 +2,7 @@ name: Update Grafana Dashboard
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
     paths:
       - 'monitoring/grafana/dashboards/**'
       - 'monitoring/prometheus/**'
@@ -12,54 +12,94 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Deploy monitoring configs
-      uses: appleboy/ssh-action@v1.0.0
-      with:
-        host: ${{ secrets.SERVER_HOST }}
-        username: ${{ secrets.SERVER_USER }}
-        key: ${{ secrets.SERVER_SSH_KEY }}
-        script: |
-          cd /var/www/prohelper
-          git pull origin main
-          
-          # Restart Grafana to reload dashboards
-          docker-compose restart grafana
-          
-          # Restart Prometheus if config changed
-          if git diff --name-only HEAD~1 HEAD | grep -q "monitoring/prometheus/"; then
-            docker-compose restart prometheus
-          fi
-          
-          # Wait for services to start
-          sleep 10
-          
-          # Import dashboards via API
-          python3 -c "
-import json
-import requests
-import os
-import time
-
-# Wait for Grafana to be ready
-time.sleep(5)
-
-auth = ('admin', 'admin123')
-url = 'http://localhost:3000/api/dashboards/db'
-
-for filename in os.listdir('monitoring/grafana/dashboards'):
-    if filename.endswith('.json'):
-        try:
-            with open(f'monitoring/grafana/dashboards/{filename}', 'r', encoding='utf-8') as f:
-                dashboard = json.load(f)
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Deploy monitoring configs
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd /var/www/prohelper
+            git pull origin main
             
-            payload = {'dashboard': dashboard, 'overwrite': True}
-            response = requests.post(url, json=payload, auth=auth, timeout=10)
-            print(f'Imported {filename}: {response.status_code}')
-            if response.status_code not in [200, 412]:
-                print(f'Error: {response.text}')
-        except Exception as e:
-            print(f'Failed to import {filename}: {e}')
-"
+            # Restart Grafana to reload dashboards
+            docker-compose restart grafana
+            
+            # Restart Prometheus if config changed
+            if git diff --name-only HEAD~1 HEAD | grep -q "monitoring/prometheus/"; then
+              docker-compose restart prometheus
+            fi
+            
+            # Wait for services to start
+            sleep 15
+            
+            # Install requests if not available
+            pip3 install requests 2>/dev/null || echo "requests already installed"
+            
+            # Create dashboard import script
+            cat > /tmp/import_dashboards.py << 'PYTHON_SCRIPT'
+            import json
+            import requests
+            import os
+            import time
+            import sys
+            
+            def import_dashboards():
+                # Wait for Grafana to be ready
+                print("Waiting for Grafana to be ready...")
+                time.sleep(10)
+                
+                auth = ('admin', 'admin123')
+                url = 'http://localhost:3000/api/dashboards/db'
+                
+                dashboard_dir = 'monitoring/grafana/dashboards'
+                
+                if not os.path.exists(dashboard_dir):
+                    print(f"Dashboard directory {dashboard_dir} not found")
+                    return
+                
+                for filename in os.listdir(dashboard_dir):
+                    if filename.endswith('.json'):
+                        filepath = os.path.join(dashboard_dir, filename)
+                        try:
+                            print(f"Importing {filename}...")
+                            with open(filepath, 'r', encoding='utf-8') as f:
+                                dashboard = json.load(f)
+                            
+                            payload = {
+                                'dashboard': dashboard,
+                                'overwrite': True
+                            }
+                            
+                            response = requests.post(
+                                url, 
+                                json=payload, 
+                                auth=auth, 
+                                timeout=30
+                            )
+                            
+                            if response.status_code in [200, 412]:
+                                print(f"Successfully imported {filename}")
+                            else:
+                                print(f"Failed to import {filename}: {response.status_code}")
+                                print(f"Response: {response.text[:200]}")
+                                
+                        except Exception as e:
+                            print(f"Error importing {filename}: {str(e)}")
+                
+                print("Dashboard import completed")
+            
+            if __name__ == '__main__':
+                import_dashboards()
+            PYTHON_SCRIPT
+            
+            # Run the import script
+            python3 /tmp/import_dashboards.py
+            
+            # Clean up
+            rm -f /tmp/import_dashboards.py
+            
+            echo "Monitoring configuration update completed"
