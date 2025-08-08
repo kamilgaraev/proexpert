@@ -1,5 +1,4 @@
 {
-  "id": null,
   "title": "Ubuntu System Monitoring",
   "tags": ["system", "ubuntu"],
   "timezone": "browser",
@@ -121,4 +120,4 @@
   },
   "refresh": "5s",
   "version": 1
-} 
+}

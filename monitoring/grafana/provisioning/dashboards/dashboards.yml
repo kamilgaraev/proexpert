@@ -9,7 +9,7 @@ providers:
     updateIntervalSeconds: 10
     allowUiUpdates: true
     options:
-      path: /etc/grafana/provisioning/dashboards
+      path: /var/lib/grafana/dashboards
   - name: 'laravel'
     orgId: 1
     folder: 'Laravel Monitoring'
@@ -18,7 +18,7 @@ providers:
     updateIntervalSeconds: 10
     allowUiUpdates: true
     options:
-      path: /etc/grafana/provisioning/dashboards
+      path: /var/lib/grafana/dashboards
   - name: 'system'
     orgId: 1
     folder: 'System Monitoring'
@@ -27,7 +27,7 @@ providers:
     updateIntervalSeconds: 10
     allowUiUpdates: true
     options:
-      path: /etc/grafana/provisioning/dashboards
+      path: /var/lib/grafana/dashboards
   - name: 'security'
     orgId: 1
     folder: 'Security & Operations'
@@ -36,4 +36,4 @@ providers:
     updateIntervalSeconds: 10
     allowUiUpdates: true
     options:
-      path: /etc/grafana/provisioning/dashboards 
+      path: /var/lib/grafana/dashboards

@@ -18,7 +18,6 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 5,
   "links": [],
   "liveNow": false,
   "panels": [
@@ -921,4 +920,4 @@
   "uid": "infrastructure-monitoring",
   "version": 1,
   "weekStart": ""
-} 
+}

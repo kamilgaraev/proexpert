@@ -18,7 +18,6 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 7,
   "links": [],
   "liveNow": false,
   "panels": [
@@ -954,4 +953,4 @@
   "uid": "database-monitoring",
   "version": 1,
   "weekStart": ""
-} 
+}

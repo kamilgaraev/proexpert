@@ -1,5 +1,4 @@
 {
-  "id": null,
   "title": "Laravel Application Monitoring",
   "tags": ["laravel", "application"],
   "timezone": "browser",
@@ -185,4 +184,4 @@
   },
   "refresh": "5s",
   "version": 1
-} 
+}
