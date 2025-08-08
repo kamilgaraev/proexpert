@@ -29,6 +29,94 @@
       "fieldConfig": {
         "defaults": {
           "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "vis": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "id": 106,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "topk(5, sum by (route) (rate(laravel_http_requests_total[5m])))",
+          "refId": "A",
+          "legendFormat": "{{route}}"
+        }
+      ],
+      "title": "RPS по роутам (Top 5)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
             "mode": "thresholds"
           },
           "mappings": [],
@@ -136,11 +224,11 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "laravel_http_request_duration_seconds * 1000",
+          "expr": "1000 * avg_over_time(laravel_http_request_duration_seconds[5m])",
           "refId": "A"
         }
       ],
-      "title": "Время ответа (95p), мс",
+      "title": "Средняя задержка (5м), мс",
       "type": "gauge"
     },
     {
@@ -419,7 +507,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(http_requests_total[1m])",
+          "expr": "sum by (status) (rate(laravel_http_requests_total[5m]))",
           "refId": "A",
           "legendFormat": "Статус {{status}}"
         }
@@ -520,7 +608,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "laravel_exceptions_total",
+          "expr": "sum(rate(laravel_exceptions_total[5m]))",
           "refId": "A"
         }
       ],
