@@ -49,7 +49,7 @@ jobs:
             echo 'Docker Compose конфигурация валидна' && \
             # Проверка конфигурации Prometheus
             docker run --rm -v \$(pwd)/monitoring/prometheus:/etc/prometheus \
-              --entrypoint promtool prom/prometheus:latest check config /etc/prometheus/prometheus.yml && \
+              --entrypoint="" prom/prometheus:latest promtool check config /etc/prometheus/prometheus.yml && \
             echo 'Prometheus конфигурация валидна'"
 
       - name: Graceful Restart Monitoring
