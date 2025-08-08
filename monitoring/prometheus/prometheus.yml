@@ -14,13 +14,16 @@ alerting:
         - targets: []
 
 scrape_configs:
-  # Laravel приложение метрики (через веб-сервер)
+  # Laravel приложение метрики (через веб-сервер HTTPS)
   - job_name: 'laravel-app'
     static_configs:
-      - targets: ['host.docker.internal:80']
+      - targets: ['host.docker.internal:443']
     metrics_path: /metrics
     scrape_interval: 10s
     scrape_timeout: 5s
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true
     honor_labels: true
     params:
       format: ['prometheus']
@@ -206,4 +209,4 @@ scrape_configs:
         replacement: 'php-fpm'
       - source_labels: [__address__]
         target_label: service
-        replacement: 'php' 
+        replacement: 'php'

@@ -73,7 +73,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(http_requests_total[5m]) * 60",
+          "expr": "rate(laravel_http_requests_total[5m]) * 60",
           "refId": "A"
         }
       ],
@@ -136,7 +136,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, rate(http_request_duration_ms_bucket[5m]))",
+          "expr": "laravel_http_request_duration_seconds * 1000",
           "refId": "A"
         }
       ],
