@@ -95,7 +95,16 @@ jobs:
             cd /var/www/prohelper && \
             # Rolling restart monitoring stack (no full down)
             chmod +x start-monitoring.sh stop-monitoring.sh && \
-            (command -v docker-compose >/dev/null && docker-compose up -d --force-recreate prometheus grafana loki promtail node-exporter || docker compose up -d --force-recreate prometheus grafana loki promtail node-exporter)"
+            mkdir -p /var/lock && \
+            flock -n /var/lock/prohelper-monitoring.lock -c '\\
+              # Предварительно остановим/удалим promtail, чтобы избежать race на recreate\\
+              (docker ps -aq --filter name=^promtail$ | xargs -r docker stop) || true && \\
+              docker rm -f promtail 2>/dev/null || true && \\
+              if command -v docker-compose >/dev/null; then \\
+                docker-compose up -d --remove-orphans --force-recreate prometheus grafana loki promtail node-exporter; \\
+              else \\
+                docker compose up -d --remove-orphans --force-recreate prometheus grafana loki promtail node-exporter; \\
+              fi'"
 
       - name: Notify Monitoring
         if: always()
