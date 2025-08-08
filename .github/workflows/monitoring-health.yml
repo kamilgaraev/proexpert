@@ -37,7 +37,7 @@ jobs:
             # Если есть проблемы - перезапускаем
             if [ \$services_down -eq 1 ]; then \
               echo 'Обнаружены проблемы с мониторингом, перезапускаем...' && \
-              docker-compose restart && \
+              (command -v docker-compose >/dev/null && docker-compose restart || docker compose restart) && \
               sleep 60 && \
               # Повторная проверка
               if ! curl -sf http://localhost:9090/-/healthy >/dev/null; then \

@@ -65,7 +65,7 @@ jobs:
               ./start-monitoring.sh; \
             else \
               echo 'Monitoring stack already running, restarting services...' && \
-              docker-compose restart prometheus grafana; \
+              (command -v docker-compose >/dev/null && docker-compose restart prometheus grafana || docker compose restart prometheus grafana); \
             fi"
 
       - name: Health Check

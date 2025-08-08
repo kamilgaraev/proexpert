@@ -37,7 +37,7 @@ if ! crontab -l 2>/dev/null | grep -q "monitoring-health-check.sh"; then
 0 3 * * 0 docker system prune -f --volumes --filter "until=168h" >/dev/null 2>&1
 
 # Проверка обновлений Docker образов каждый понедельник в 4:00
-0 4 * * 1 cd $PROJECT_DIR && docker-compose pull >/dev/null 2>&1
+0 4 * * 1 cd $PROJECT_DIR && (command -v docker-compose >/dev/null && docker-compose pull || docker compose pull) >/dev/null 2>&1
 
 # Бэкап конфигурации мониторинга каждый день в 1:00
 0 1 * * * tar -czf /var/backups/monitoring-config-\$(date +\%Y\%m\%d).tar.gz -C $PROJECT_DIR monitoring/ docker-compose.yml 2>/dev/null && find /var/backups -name "monitoring-config-*.tar.gz" -mtime +30 -delete >/dev/null 2>&1
@@ -99,4 +99,4 @@ echo ""
 echo "📋 Управление cron:"
 echo "   crontab -l                    # Просмотр задач"
 echo "   systemctl status cron         # Статус cron"
-echo "   journalctl -u cron -f         # Логи cron" 
+echo "   journalctl -u cron -f         # Логи cron"

@@ -8,10 +8,20 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
+# Проверяем наличие Docker Compose (v1 или v2)
 if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
     echo "❌ Docker Compose не установлен. Установите Docker Compose и повторите попытку."
     exit 1
 fi
+
+# Определяем команду Docker Compose
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    DOCKER_COMPOSE="docker compose"
+fi
+
+echo "🔧 Используется: $DOCKER_COMPOSE"
 
 # Создаем необходимые директории
 echo "📁 Создание директорий..."
@@ -45,7 +55,7 @@ fi
 
 # Запускаем стек мониторинга
 echo "🐳 Запуск Docker контейнеров..."
-docker-compose up -d
+$DOCKER_COMPOSE up -d
 
 # Ждем запуска сервисов
 echo "⏳ Ожидание запуска сервисов..."
@@ -94,4 +104,4 @@ echo "   2. Проверить права доступа к логам в storag
 echo "   3. Настроить firewall для портов 3000, 3100, 9090, 9100"
 echo ""
 echo "📜 Просмотр логов: docker-compose logs -f [service_name]"
-echo "🛑 Остановка:     docker-compose down" 
+echo "🛑 Остановка:     docker-compose down"

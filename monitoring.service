@@ -9,9 +9,9 @@ After=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=/var/www/prohelper
-ExecStart=/usr/bin/docker-compose up -d
-ExecStop=/usr/bin/docker-compose down
-ExecReload=/usr/bin/docker-compose restart
+ExecStart=/bin/bash -c 'cd /var/www/prohelper && (command -v docker-compose >/dev/null && docker-compose up -d || docker compose up -d)'
+ExecStop=/bin/bash -c 'cd /var/www/prohelper && (command -v docker-compose >/dev/null && docker-compose down || docker compose down)'
+ExecReload=/bin/bash -c 'cd /var/www/prohelper && (command -v docker-compose >/dev/null && docker-compose restart || docker compose restart)'
 TimeoutStartSec=0
 TimeoutStopSec=30
 Restart=on-failure
@@ -27,4 +27,4 @@ StandardError=journal
 SyslogIdentifier=monitoring-stack
 
 [Install]
-WantedBy=multi-user.target 
+WantedBy=multi-user.target

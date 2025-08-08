@@ -45,7 +45,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
             cd /var/www/prohelper && \
             # Проверка синтаксиса docker-compose
-            docker-compose config >/dev/null && \
+            (command -v docker-compose >/dev/null && docker-compose config || docker compose config) >/dev/null && \
             echo 'Docker Compose конфигурация валидна' && \
             # Проверка конфигурации Prometheus
             docker run --rm -v \$(pwd)/monitoring/prometheus:/etc/prometheus \
@@ -64,7 +64,7 @@ jobs:
             fi && \
             # Перезапуск мониторинга с новой конфигурацией
             echo 'Перезапуск мониторинга с обновленной конфигурацией...' && \
-            docker-compose down && \
+            (command -v docker-compose >/dev/null && docker-compose down || docker compose down) && \
             sleep 10 && \
             ./start-monitoring.sh"
 
@@ -120,7 +120,7 @@ jobs:
             if [ -n \"\$latest_backup\" ]; then \
               echo \"Восстановление из \$latest_backup\" && \
               tar -xzf \"\$latest_backup\" && \
-              docker-compose down && \
+              (command -v docker-compose >/dev/null && docker-compose down || docker compose down) && \
               sleep 10 && \
               ./start-monitoring.sh && \
               echo 'Откат завершен'; \
