@@ -83,6 +83,14 @@ jobs:
             # Check metrics endpoint
             curl -f http://localhost/metrics || echo 'Metrics endpoint check failed'"
 
+      - name: Update Monitoring Configuration
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            # Run monitoring configuration update
+            chmod +x start-monitoring.sh stop-monitoring.sh && \
+            ./start-monitoring.sh"
+
       - name: Notify Monitoring
         if: always()
         run: |
