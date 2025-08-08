@@ -1,5 +1,9 @@
 name: Monitoring Health Check
 
+concurrency:
+  group: monitoring-health
+  cancel-in-progress: true
+
 on:
   schedule:
     # Проверка каждые 15 минут
@@ -36,8 +40,8 @@ jobs:
             fi && \
             # Если есть проблемы - перезапускаем
             if [ \$services_down -eq 1 ]; then \
-              echo 'Обнаружены проблемы с мониторингом, перезапускаем...' && \
-              (command -v docker-compose >/dev/null && docker-compose restart || docker compose restart) && \
+              echo 'Обнаружены проблемы с мониторингом, перезапускаем точечно...' && \
+              (command -v docker-compose >/dev/null && docker-compose restart prometheus grafana loki || docker compose restart prometheus grafana loki) && \
               sleep 60 && \
               # Повторная проверка
               if ! curl -sf http://localhost:9090/-/healthy >/dev/null; then \

@@ -1,5 +1,9 @@
 name: Update Monitoring Configuration
 
+concurrency:
+  group: monitoring-config
+  cancel-in-progress: true
+
 on:
   push:
     paths:
@@ -52,7 +56,7 @@ jobs:
               dnanexus/promtool:2.9.2 check config /tmp/prometheus.yml && \
             echo 'Prometheus конфигурация валидна'"
 
-      - name: Graceful Restart Monitoring
+      - name: Graceful Restart Monitoring (no full down)
         run: |
           ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
             cd /var/www/prohelper && \
@@ -62,11 +66,10 @@ jobs:
               curl -X POST http://localhost:9090/api/v1/admin/tsdb/snapshot || true && \
               sleep 5; \
             fi && \
-            # Перезапуск мониторинга с новой конфигурацией
-            echo 'Перезапуск мониторинга с обновленной конфигурацией...' && \
-            (command -v docker-compose >/dev/null && docker-compose down || docker compose down) && \
-            sleep 10 && \
-            ./start-monitoring.sh"
+            # Перезапуск компонентов без полного down
+            echo 'Rolling restart мониторинга...' && \
+            (command -v docker-compose >/dev/null && docker-compose up -d --force-recreate prometheus grafana loki promtail node-exporter || docker compose up -d --force-recreate prometheus grafana loki promtail node-exporter) && \
+            sleep 15"
 
       - name: Verify Services
         run: |
