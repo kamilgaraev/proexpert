@@ -1,0 +1,83 @@
+name: Monitoring Health Check
+
+on:
+  schedule:
+    # Проверка каждые 15 минут
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    # Ручной запуск
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Monitoring Services
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            # Проверка статуса Docker контейнеров
+            if ! docker ps | grep -q prometheus; then \
+              echo 'Prometheus не запущен, перезапускаем мониторинг...' && \
+              ./start-monitoring.sh; \
+            fi && \
+            # Проверка доступности сервисов
+            services_down=0 && \
+            if ! curl -sf http://localhost:9090/-/healthy >/dev/null; then \
+              echo 'Prometheus недоступен' && \
+              services_down=1; \
+            fi && \
+            if ! curl -sf http://localhost:3000/api/health >/dev/null; then \
+              echo 'Grafana недоступна' && \
+              services_down=1; \
+            fi && \
+            if ! curl -sf http://localhost:3100/ready >/dev/null; then \
+              echo 'Loki недоступен' && \
+              services_down=1; \
+            fi && \
+            # Если есть проблемы - перезапускаем
+            if [ \$services_down -eq 1 ]; then \
+              echo 'Обнаружены проблемы с мониторингом, перезапускаем...' && \
+              docker-compose restart && \
+              sleep 60 && \
+              # Повторная проверка
+              if ! curl -sf http://localhost:9090/-/healthy >/dev/null; then \
+                echo 'Критическая ошибка: Prometheus не восстановился' && \
+                exit 1; \
+              fi; \
+            else \
+              echo 'Все сервисы мониторинга работают нормально'; \
+            fi"
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY }}
+
+      - name: Check Disk Space
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            # Проверка свободного места
+            disk_usage=\$(df / | tail -1 | awk '{print \$5}' | sed 's/%//') && \
+            if [ \$disk_usage -gt 85 ]; then \
+              echo 'Предупреждение: Диск заполнен на \${disk_usage}%' && \
+              # Очистка старых логов Docker
+              docker system prune -f --volumes && \
+              # Очистка старых логов Laravel
+              find /var/www/prohelper/storage/logs -name '*.log' -mtime +7 -delete; \
+            fi"
+
+      - name: Backup Monitoring Config
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            # Создание бэкапа конфигурации мониторинга
+            tar -czf /tmp/monitoring-backup-\$(date +%Y%m%d).tar.gz \
+              monitoring/ docker-compose.yml start-monitoring.sh stop-monitoring.sh && \
+            # Сохранение только последних 7 бэкапов
+            find /tmp -name 'monitoring-backup-*.tar.gz' -mtime +7 -delete"
+
+      - name: Send Status Notification
+        if: failure()
+        run: |
+          echo "Обнаружены критические проблемы с мониторингом на сервере"
+          # Здесь можно добавить отправку уведомлений в Slack/Telegram
+          # curl -X POST -H 'Content-type: application/json' \
+          #   --data '{"text":"🚨 Критические проблемы с мониторингом на проде!"}' \
+          #   ${{ secrets.SLACK_WEBHOOK_URL }}

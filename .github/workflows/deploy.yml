@@ -50,3 +50,45 @@ jobs:
             php artisan view:cache && \
             # Restart Octane (RoadRunner) service
             sudo systemctl restart prohelper-octane"
+
+      - name: Setup Monitoring
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            # Ensure monitoring directories exist
+            mkdir -p storage/logs/{api,telemetry} && \
+            chmod -R 777 storage/logs/ && \
+            # Start monitoring stack if not running
+            if ! docker ps | grep -q prometheus; then \
+              echo 'Starting monitoring stack...' && \
+              chmod +x start-monitoring.sh && \
+              ./start-monitoring.sh; \
+            else \
+              echo 'Monitoring stack already running, restarting services...' && \
+              docker-compose restart prometheus grafana; \
+            fi"
+
+      - name: Health Check
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            # Wait for services to start
+            sleep 30 && \
+            # Check application health
+            curl -f http://localhost/health || echo 'App health check failed' && \
+            # Check monitoring services
+            curl -f http://localhost:9090/-/healthy || echo 'Prometheus health check failed' && \
+            curl -f http://localhost:3000/api/health || echo 'Grafana health check failed' && \
+            curl -f http://localhost:3100/ready || echo 'Loki health check failed' && \
+            # Check metrics endpoint
+            curl -f http://localhost/metrics || echo 'Metrics endpoint check failed'"
+
+      - name: Notify Monitoring
+        if: always()
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            # Send deployment notification to monitoring
+            curl -X POST http://localhost:9090/api/v1/admin/tsdb/snapshot || true && \
+            # Log deployment event
+            echo '{\"timestamp\":\"$(date -Iseconds)\",\"event\":\"deployment\",\"version\":\"${{ github.sha }}\",\"branch\":\"${{ github.ref_name }}\"}' >> storage/logs/api/deployment.log"

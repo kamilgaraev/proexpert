@@ -1,0 +1,137 @@
+name: Update Monitoring Configuration
+
+on:
+  push:
+    paths:
+      - 'monitoring/**'
+      - 'docker-compose.yml'
+      - 'start-monitoring.sh'
+      - 'stop-monitoring.sh'
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  update-monitoring:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY }}
+
+      - name: Backup Current Config
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            # Создание бэкапа текущей конфигурации
+            tar -czf /tmp/monitoring-config-backup-\$(date +%Y%m%d-%H%M%S).tar.gz \
+              monitoring/ docker-compose.yml 2>/dev/null || true"
+
+      - name: Update Monitoring Files
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            # Обновление файлов мониторинга
+            git fetch origin && \
+            git checkout origin/main -- monitoring/ docker-compose.yml start-monitoring.sh stop-monitoring.sh && \
+            chmod +x start-monitoring.sh stop-monitoring.sh"
+
+      - name: Validate Configuration
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            # Проверка синтаксиса docker-compose
+            docker-compose config >/dev/null && \
+            echo 'Docker Compose конфигурация валидна' && \
+            # Проверка конфигурации Prometheus
+            docker run --rm -v \$(pwd)/monitoring/prometheus:/etc/prometheus \
+              prom/prometheus:latest promtool check config /etc/prometheus/prometheus.yml && \
+            echo 'Prometheus конфигурация валидна'"
+
+      - name: Graceful Restart Monitoring
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            # Сохранение данных Prometheus перед перезапуском
+            if docker ps | grep -q prometheus; then \
+              echo 'Создание снапшота Prometheus...' && \
+              curl -X POST http://localhost:9090/api/v1/admin/tsdb/snapshot || true && \
+              sleep 5; \
+            fi && \
+            # Перезапуск мониторинга с новой конфигурацией
+            echo 'Перезапуск мониторинга с обновленной конфигурацией...' && \
+            docker-compose down && \
+            sleep 10 && \
+            ./start-monitoring.sh"
+
+      - name: Verify Services
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            # Ожидание запуска сервисов
+            echo 'Ожидание запуска сервисов...' && \
+            sleep 60 && \
+            # Проверка всех сервисов
+            services_ok=0 && \
+            if curl -sf http://localhost:9090/-/healthy >/dev/null; then \
+              echo '✅ Prometheus работает' && \
+              services_ok=\$((services_ok + 1)); \
+            else \
+              echo '❌ Prometheus недоступен'; \
+            fi && \
+            if curl -sf http://localhost:3000/api/health >/dev/null; then \
+              echo '✅ Grafana работает' && \
+              services_ok=\$((services_ok + 1)); \
+            else \
+              echo '❌ Grafana недоступна'; \
+            fi && \
+            if curl -sf http://localhost:3100/ready >/dev/null; then \
+              echo '✅ Loki работает' && \
+              services_ok=\$((services_ok + 1)); \
+            else \
+              echo '❌ Loki недоступен'; \
+            fi && \
+            if curl -sf http://localhost:9100/metrics >/dev/null; then \
+              echo '✅ Node Exporter работает' && \
+              services_ok=\$((services_ok + 1)); \
+            else \
+              echo '❌ Node Exporter недоступен'; \
+            fi && \
+            # Проверка что все сервисы запустились
+            if [ \$services_ok -eq 4 ]; then \
+              echo '🎉 Все сервисы мониторинга успешно обновлены и работают'; \
+            else \
+              echo '⚠️ Не все сервисы запустились корректно' && \
+              exit 1; \
+            fi"
+
+      - name: Rollback on Failure
+        if: failure()
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            cd /var/www/prohelper && \
+            echo '🔄 Откат к предыдущей конфигурации...' && \
+            # Поиск последнего бэкапа
+            latest_backup=\$(ls -t /tmp/monitoring-config-backup-*.tar.gz 2>/dev/null | head -1) && \
+            if [ -n \"\$latest_backup\" ]; then \
+              echo \"Восстановление из \$latest_backup\" && \
+              tar -xzf \"\$latest_backup\" && \
+              docker-compose down && \
+              sleep 10 && \
+              ./start-monitoring.sh && \
+              echo 'Откат завершен'; \
+            else \
+              echo 'Бэкап не найден, попытка перезапуска текущей конфигурации' && \
+              ./start-monitoring.sh; \
+            fi"
+
+      - name: Cleanup Old Backups
+        if: always()
+        run: |
+          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+            # Удаление старых бэкапов (старше 30 дней)
+            find /tmp -name 'monitoring-config-backup-*.tar.gz' -mtime +30 -delete 2>/dev/null || true"
