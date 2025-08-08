@@ -39,7 +39,7 @@ jobs:
             # Install requests if not available
             pip3 install requests 2>/dev/null || echo "requests already installed"
             
-            # Create dashboard import script
+            # Create dashboard import scrip
             cat > /tmp/import_dashboards.py << 'PYTHON_SCRIPT'
             import json
             import requests
