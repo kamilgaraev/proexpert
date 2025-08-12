@@ -9,6 +9,7 @@ use App\Services\Admin\UserDashboardSettingsService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use App\Models\User;
 
 class DashboardSettingsController extends Controller
@@ -43,8 +44,25 @@ class DashboardSettingsController extends Controller
     public function put(SaveDashboardSettingsRequest $request): JsonResponse
     {
         $orgId = $request->query('org_id');
-        $saved = $this->service->saveForCurrentUser($request->validated(), $orgId ? (int)$orgId : null);
-        return response()->json(['success' => true, 'data' => $saved]);
+        try {
+            $payload = $request->validated();
+            $saved = $this->service->saveForCurrentUser($payload, $orgId ? (int)$orgId : null);
+            return response()->json(['success' => true, 'data' => $saved]);
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], $e->getStatusCode());
+        } catch (\Throwable $e) {
+            Log::error('[DashboardSettingsController.put] Unexpected error', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile().':'.$e->getLine(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'error' => 'internal_error',
+            ], 500);
+        }
     }
 
     public function delete(Request $request): JsonResponse

@@ -111,7 +111,7 @@ class UserDashboardSettingsService
             'version' => $registry['version'],
             'layout_mode' => 'simple',
             'items' => $items,
-            'updated_at' => now()->toISOString(),
+            'updated_at' => now()->toIso8601String(),
         ];
     }
 
@@ -153,7 +153,7 @@ class UserDashboardSettingsService
             'version' => $registry['version'],
             'layout_mode' => $settings['layout_mode'] ?? 'simple',
             'items' => $mergedItems,
-            'updated_at' => now()->toISOString(),
+            'updated_at' => now()->toIso8601String(),
         ];
     }
 
