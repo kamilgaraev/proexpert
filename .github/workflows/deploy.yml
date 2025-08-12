@@ -21,13 +21,7 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DEPLOY}}
 
-      - name: Verify SSH key loaded
-        run: |
-          ssh-add -l || (echo 'No SSH identities loaded into agent. Check DEPLOY secret format (OpenSSH, no passphrase)'; exit 1)
 
-      - name: Probe SSH connectivity
-        run: |
-          ssh -vvv -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 'echo connected' | cat
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -40,62 +34,71 @@ jobs:
           npm ci --silent
           npm run docs:build
 
-      - name: Deploy via SSH
-        run: |
-          ssh -o IdentitiesOnly=yes -o PreferredAuthentications=publickey -o PubkeyAuthentication=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
-            cd /var/www/prohelper && \
-            # Reset any local changes and force pull from main
-            git reset --hard HEAD && \
-            git clean -fd -e public/docs -e public/docs/** && \
-            git fetch origin && \
-            git reset --hard origin/main && \
-            php artisan down || true && \
-            composer install --no-interaction --prefer-dist --optimize-autoloader && \
-            # Download RR binary only if not present to avoid interactive prompt
-            if [ ! -f /usr/local/bin/rr ]; then vendor/bin/rr get-binary --location=/usr/local/bin --no-config --stability=stable; fi && \
-            php artisan migrate --force && \
-            php artisan route:cache && \
-            php artisan config:cache && \
-            php artisan view:cache && \
-            php artisan up || true && \
-            # Graceful reload Octane (RoadRunner) to avoid drop
-            php artisan octane:reload || sudo systemctl reload prohelper-octane || sudo systemctl restart prohelper-octane"
+      - name: Deploy via SSH (appleboy)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 89.111.153.146
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          script: |
+            cd /var/www/prohelper
+            git reset --hard HEAD
+            git clean -fd -e public/docs -e public/docs/**
+            git fetch origin
+            git reset --hard origin/main
+            php artisan down || true
+            composer install --no-interaction --prefer-dist --optimize-autoloader
+            if [ ! -f /usr/local/bin/rr ]; then vendor/bin/rr get-binary --location=/usr/local/bin --no-config --stability=stable; fi
+            php artisan migrate --force
+            php artisan route:cache
+            php artisan config:cache
+            php artisan view:cache
+            php artisan up || true
+            php artisan octane:reload || sudo systemctl reload prohelper-octane || sudo systemctl restart prohelper-octane
 
-      - name: Copy docs to server
-        run: |
-          scp -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -r public/docs root@89.111.153.146:/var/www/prohelper/public/
+      - name: Copy docs to server (appleboy)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: 89.111.153.146
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          source: public/docs
+          target: /var/www/prohelper/public/
 
-      - name: Setup Monitoring
-        run: |
-          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
-            cd /var/www/prohelper && \
-            # Ensure monitoring directories exist
-            mkdir -p storage/logs/{api,telemetry} && \
-            chmod -R 777 storage/logs/ && \
-            # Start monitoring stack if not running
-            if ! docker ps | grep -q prometheus; then \
-              echo 'Starting monitoring stack...' && \
-              chmod +x start-monitoring.sh && \
-              ./start-monitoring.sh; \
-            else \
-              echo 'Monitoring stack already running, restarting services...' && \
-              (command -v docker-compose >/dev/null && docker-compose restart prometheus grafana || docker compose restart prometheus grafana); \
-            fi"
+      - name: Setup Monitoring (appleboy)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 89.111.153.146
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          script: |
+            cd /var/www/prohelper
+            mkdir -p storage/logs/{api,telemetry}
+            chmod -R 777 storage/logs/
+            if ! docker ps | grep -q prometheus; then
+              echo 'Starting monitoring stack...'
+              chmod +x start-monitoring.sh
+              ./start-monitoring.sh
+            else
+              echo 'Monitoring stack already running, restarting services...'
+              (command -v docker-compose >/dev/null && docker-compose restart prometheus grafana || docker compose restart prometheus grafana)
+            fi
 
-      - name: Health Check
-        run: |
-          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
-            cd /var/www/prohelper && \
-            # Wait for services to start
-            sleep 30 && \
-            # Check application health
-            (curl -fsS http://localhost/up || curl -kfsS https://localhost/up || echo 'App health check failed') && \
-            # Check monitoring services
-            curl -fsS http://localhost:9090/-/healthy || echo 'Prometheus health check failed' && \
-            curl -fsS http://localhost:3000/api/health || echo 'Grafana health check failed' && \
-            curl -fsS http://localhost:3100/ready || echo 'Loki health check failed' && \
-            # Check metrics endpoint
-            (curl -fsS http://localhost/metrics || curl -kfsS https://localhost/metrics || echo 'Metrics endpoint check failed')"
+      - name: Health Check (appleboy)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 89.111.153.146
+          username: root
+          key: ${{ secrets.DEPLOY }}
+        
+          script: |
+            cd /var/www/prohelper
+            sleep 30
+            (curl -fsS http://localhost/up || curl -kfsS https://localhost/up || echo 'App health check failed')
+            curl -fsS http://localhost:9090/-/healthy || echo 'Prometheus health check failed'
+            curl -fsS http://localhost:3000/api/health || echo 'Grafana health check failed'
+            curl -fsS http://localhost:3100/ready || echo 'Loki health check failed'
+            (curl -fsS http://localhost/metrics || curl -kfsS https://localhost/metrics || echo 'Metrics endpoint check failed')
 
       - name: Update Monitoring Configuration
         run: |
