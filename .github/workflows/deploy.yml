@@ -100,29 +100,33 @@ jobs:
             curl -fsS http://localhost:3100/ready || echo 'Loki health check failed'
             (curl -fsS http://localhost/metrics || curl -kfsS https://localhost/metrics || echo 'Metrics endpoint check failed')
 
-      - name: Update Monitoring Configuration
-        run: |
-          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
-            cd /var/www/prohelper && \
-            # Rolling restart monitoring stack (no full down)
-            chmod +x start-monitoring.sh stop-monitoring.sh && \
-            mkdir -p /var/lock && \
-            flock -n /var/lock/prohelper-monitoring.lock -c '\\
-              # Предварительно остановим/удалим promtail, чтобы избежать race на recreate\\
-              (docker ps -aq --filter name=^promtail$ | xargs -r docker stop) || true && \\
-              docker rm -f promtail 2>/dev/null || true && \\
-              if command -v docker-compose >/dev/null; then \\
-                docker-compose up -d --remove-orphans --force-recreate prometheus grafana loki promtail node-exporter; \\
-              else \\
-                docker compose up -d --remove-orphans --force-recreate prometheus grafana loki promtail node-exporter; \\
-              fi'"
+      - name: Update Monitoring Configuration (appleboy)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 89.111.153.146
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          script: |
+            cd /var/www/prohelper
+            chmod +x start-monitoring.sh stop-monitoring.sh
+            mkdir -p /var/lock
+            flock -n /var/lock/prohelper-monitoring.lock -c '
+              (docker ps -aq --filter name=^promtail$ | xargs -r docker stop) || true &&
+              docker rm -f promtail 2>/dev/null || true &&
+              if command -v docker-compose >/dev/null; then
+                docker-compose up -d --remove-orphans --force-recreate prometheus grafana loki promtail node-exporter;
+              else
+                docker compose up -d --remove-orphans --force-recreate prometheus grafana loki promtail node-exporter;
+              fi'
 
-      - name: Notify Monitoring
+      - name: Notify Monitoring (appleboy)
         if: always()
-        run: |
-          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
-            cd /var/www/prohelper && \
-            # Send deployment notification to monitoring
-            curl -X POST http://localhost:9090/api/v1/admin/tsdb/snapshot || true && \
-            # Log deployment event
-            echo '{\"timestamp\":\"$(date -Iseconds)\",\"event\":\"deployment\",\"version\":\"${{ github.sha }}\",\"branch\":\"${{ github.ref_name }}\"}' >> storage/logs/api/deployment.log"
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 89.111.153.146
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          script: |
+            cd /var/www/prohelper
+            curl -X POST http://localhost:9090/api/v1/admin/tsdb/snapshot || true
+            echo '{"timestamp":"'$(date -Iseconds)'","event":"deployment","version":"${{ github.sha }}","branch":"${{ github.ref_name }}"}' >> storage/logs/api/deployment.log
