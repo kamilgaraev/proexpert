@@ -21,6 +21,14 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.DEPLOY}}
 
+      - name: Verify SSH key loaded
+        run: |
+          ssh-add -l || (echo 'No SSH identities loaded into agent. Check DEPLOY secret format (OpenSSH, no passphrase)'; exit 1)
+
+      - name: Probe SSH connectivity
+        run: |
+          ssh -vvv -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 'echo connected' | cat
+
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -34,7 +42,7 @@ jobs:
 
       - name: Deploy via SSH
         run: |
-          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
+          ssh -o IdentitiesOnly=yes -o PreferredAuthentications=publickey -o PubkeyAuthentication=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
             cd /var/www/prohelper && \
             # Reset any local changes and force pull from main
             git reset --hard HEAD && \
