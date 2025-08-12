@@ -149,6 +149,14 @@
 /dashboard/site-requests/statistics:
   $ref: './dashboard.yaml#/~1dashboard~1site-requests~1statistics'
 
+# Dashboard settings & registry
+/dashboard/widgets:
+  $ref: './dashboard_settings.yaml#/~1dashboard~1widgets'
+/dashboard/settings:
+  $ref: './dashboard_settings.yaml#/~1dashboard~1settings'
+/dashboard/settings/defaults:
+  $ref: './dashboard_settings.yaml#/~1dashboard~1settings~1defaults'
+
 /site-requests:
   $ref: './site_requests.yaml#/~1site-requests'
 /site-requests/{id}:

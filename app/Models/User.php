@@ -356,6 +356,24 @@ class User extends Authenticatable implements JWTSubject
     }
 
     /**
+     * Вернуть список слагов ролей пользователя для указанной организации.
+     * Если организация не указана и нет current_organization_id, вернётся пустой массив.
+     */
+    public function getRoleSlugs(?int $organizationId = null): array
+    {
+        // Системному админу отдаём универсальную роль, чтобы проходили фильтры по ролям
+        if ($this->isSystemAdmin()) {
+            return [Role::ROLE_SUPER_ADMIN];
+        }
+
+        $orgId = $organizationId ?? $this->current_organization_id;
+        if (!$orgId) {
+            return [];
+        }
+        return $this->rolesInOrganization($orgId)->pluck('slug')->all();
+    }
+
+    /**
      * Аксессор для получения URL аватара.
      *
      * @return string|null

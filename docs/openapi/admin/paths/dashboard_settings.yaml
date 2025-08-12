@@ -1,0 +1,176 @@
+"/dashboard/widgets":
+  get:
+    tags: [Dashboard]
+    summary: Реестр доступных виджетов дашборда
+    description: Возвращает перечень виджетов с дефолтами и текущую версию. Может быть отфильтрован по ролям пользователя.
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  $ref: '#/components/schemas/DashboardWidgetsRegistry'
+
+"/dashboard/settings":
+  get:
+    tags: [Dashboard]
+    summary: Получить персональные настройки дашборда пользователя
+    parameters:
+      - in: query
+        name: org_id
+        schema: { type: integer }
+        required: false
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success: { type: boolean, example: true }
+                data:
+                  $ref: '#/components/schemas/UserDashboardSettings'
+      '204': { description: No Content }
+      '401': { $ref: '../components/responses/Unauthorized.yaml' }
+      '403': { $ref: '../components/responses/Forbidden.yaml' }
+
+  put:
+    tags: [Dashboard]
+    summary: Сохранить персональные настройки дашборда пользователя
+    parameters:
+      - in: query
+        name: org_id
+        schema: { type: integer }
+        required: false
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UserDashboardSettings'
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success: { type: boolean, example: true }
+                data:
+                  $ref: '#/components/schemas/UserDashboardSettings'
+      '409':
+        description: Конфликт версий (если версия клиента не совпала с реестром)
+      '422':
+        description: Ошибка валидации (unknown_widget_id, duplicate_order, size_too_small, invalid_version)
+
+  delete:
+    tags: [Dashboard]
+    summary: Сбросить настройки дашборда к дефолтам
+    parameters:
+      - in: query
+        name: org_id
+        schema: { type: integer }
+        required: false
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success: { type: boolean, example: true }
+                message: { type: string, example: reset }
+
+"/dashboard/settings/defaults":
+  get:
+    tags: [Dashboard]
+    summary: Получить дефолтную конфигурацию дашборда
+    parameters:
+      - in: query
+        name: org_id
+        schema: { type: integer }
+        required: false
+    responses:
+      '200':
+        description: OK
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success: { type: boolean, example: true }
+                data:
+                  $ref: '#/components/schemas/UserDashboardSettings'
+
+components:
+  schemas:
+    DashboardWidgetsRegistry:
+      type: object
+      required: [version, widgets]
+      properties:
+        version:
+          type: integer
+          example: 1
+        widgets:
+          type: array
+          items:
+            type: object
+            required: [id, title, default_enabled, default_size]
+            properties:
+              id: { type: string, example: summary }
+              title: { type: string, example: Ключевые показатели }
+              default_enabled: { type: boolean, example: true }
+              default_size:
+                type: object
+                properties:
+                  xs: { type: integer, example: 12 }
+                  md: { type: integer, example: 12 }
+                  lg: { type: integer, example: 12 }
+              min_size:
+                type: object
+                nullable: true
+                properties:
+                  xs: { type: integer, example: 12 }
+                  md: { type: integer, example: 6 }
+                  lg: { type: integer, example: 4 }
+              roles:
+                type: array
+                items: { type: string }
+
+    UserDashboardSettings:
+      type: object
+      required: [version, items]
+      properties:
+        version: { type: integer, example: 1 }
+        layout_mode: { type: string, example: simple }
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, enabled, order]
+            properties:
+              id: { type: string, example: summary }
+              enabled: { type: boolean, example: true }
+              order: { type: integer, example: 10 }
+              size:
+                type: object
+                nullable: true
+                properties:
+                  xs: { type: integer, example: 12 }
+                  md: { type: integer, example: 12 }
+                  lg: { type: integer, example: 12 }
+        updated_at:
+          type: string
+          format: date-time
+          example: '2025-08-12T12:00:00Z'
+
+

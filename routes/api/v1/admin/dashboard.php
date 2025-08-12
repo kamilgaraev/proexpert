@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\DashboardController;
+use App\Http\Controllers\Api\V1\Admin\DashboardSettingsController;
 
 Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard.index');
 Route::get('/dashboard/timeseries', [DashboardController::class, 'timeseries'])->name('dashboard.timeseries');
@@ -22,3 +23,12 @@ Route::get('/dashboard/recent-activity', [DashboardController::class, 'recentAct
 // Статистика по заявкам (включая заявки на персонал)
 Route::get('/dashboard/site-requests/statistics', [DashboardController::class, 'siteRequestsStatistics'])
     ->name('dashboard.site-requests.statistics');
+
+// Настройки виджетов и реестр
+Route::prefix('/dashboard')->group(function () {
+    Route::get('/widgets', [DashboardSettingsController::class, 'widgets']);
+    Route::get('/settings', [DashboardSettingsController::class, 'get']);
+    Route::put('/settings', [DashboardSettingsController::class, 'put']);
+    Route::delete('/settings', [DashboardSettingsController::class, 'delete']);
+    Route::get('/settings/defaults', [DashboardSettingsController::class, 'defaults']);
+});
