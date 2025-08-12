@@ -29,7 +29,7 @@ jobs:
 
       - name: Backup Current Config
         run: |
-          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
             cd /var/www/prohelper && \
             # Создание бэкапа текущей конфигурации
             tar -czf /tmp/monitoring-config-backup-\$(date +%Y%m%d-%H%M%S).tar.gz \
@@ -37,7 +37,7 @@ jobs:
 
       - name: Update Monitoring Files
         run: |
-          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
             cd /var/www/prohelper && \
             # Обновление файлов мониторинга
             git fetch origin && \
@@ -46,7 +46,7 @@ jobs:
 
       - name: Validate Configuration
         run: |
-          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
             cd /var/www/prohelper && \
             # Проверка синтаксиса docker-compose
             (command -v docker-compose >/dev/null && docker-compose config || docker compose config) >/dev/null && \
@@ -58,7 +58,7 @@ jobs:
 
       - name: Graceful Restart Monitoring (no full down)
         run: |
-          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
             cd /var/www/prohelper && \
             # Сохранение данных Prometheus перед перезапуском
             if docker ps | grep -q prometheus; then \
@@ -81,7 +81,7 @@ jobs:
 
       - name: Verify Services
         run: |
-          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
             cd /var/www/prohelper && \
             # Ожидание запуска сервисов
             echo 'Ожидание запуска сервисов...' && \
@@ -123,7 +123,7 @@ jobs:
       - name: Rollback on Failure
         if: failure()
         run: |
-          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
             cd /var/www/prohelper && \
             echo '🔄 Откат к предыдущей конфигурации...' && \
             # Поиск последнего бэкапа
@@ -143,6 +143,6 @@ jobs:
       - name: Cleanup Old Backups
         if: always()
         run: |
-          ssh -o StrictHostKeyChecking=no root@89.111.153.146 "\
+          ssh -o IdentitiesOnly=yes -o StrictHostKeyChecking=no root@89.111.153.146 "\
             # Удаление старых бэкапов (старше 30 дней)
             find /tmp -name 'monitoring-config-backup-*.tar.gz' -mtime +30 -delete 2>/dev/null || true"
