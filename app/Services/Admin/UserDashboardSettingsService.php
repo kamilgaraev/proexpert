@@ -104,6 +104,7 @@ class UserDashboardSettingsService
                 'enabled' => (bool)($w['default_enabled'] ?? true),
                 'order' => $order,
                 'size' => $w['default_size'] ?? null,
+                // layout будет задаваться фронтом, по умолчанию не заполняем
             ];
             $order += 10;
         }
@@ -135,6 +136,7 @@ class UserDashboardSettingsService
                         }
                     }
                 }
+                // layout если пришёл ранее, сохраняем как есть, сервер не трогает
                 $mergedItems[] = $existing;
             } else {
                 $mergedItems[] = [
@@ -142,6 +144,7 @@ class UserDashboardSettingsService
                     'enabled' => (bool)($w['default_enabled'] ?? true),
                     'order' => $order,
                     'size' => $w['default_size'] ?? null,
+                    // layout отсутствует по умолчанию
                 ];
             }
             $order += 10;
@@ -181,6 +184,13 @@ class UserDashboardSettingsService
                 foreach (['xs','md','lg'] as $bp) {
                     if (isset($item['size'][$bp], $minSizeById[$item['id']][$bp]) && $item['size'][$bp] < $minSizeById[$item['id']][$bp]) {
                         abort(422, 'size_too_small');
+                    }
+                }
+            }
+            if (!empty($item['layout'])) {
+                foreach (['x','y','w','h'] as $coord) {
+                    if (isset($item['layout'][$coord]) && !is_int($item['layout'][$coord])) {
+                        abort(422, 'invalid_layout');
                     }
                 }
             }

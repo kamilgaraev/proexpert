@@ -24,6 +24,11 @@ class SaveDashboardSettingsRequest extends FormRequest
             'items.*.size.xs' => ['nullable', 'integer', 'min:1'],
             'items.*.size.md' => ['nullable', 'integer', 'min:1'],
             'items.*.size.lg' => ['nullable', 'integer', 'min:1'],
+            'items.*.layout' => ['nullable', 'array'],
+            'items.*.layout.x' => ['nullable', 'integer', 'min:0'],
+            'items.*.layout.y' => ['nullable', 'integer', 'min:0'],
+            'items.*.layout.w' => ['nullable', 'integer', 'min:1'],
+            'items.*.layout.h' => ['nullable', 'integer', 'min:1'],
         ];
     }
 }
