@@ -23,10 +23,23 @@ Route::get('/metrics', [App\Http\Controllers\MetricsController::class, 'metrics'
 
 Route::get('/docs/{type?}', function (string $type = 'lk') {
     $allowed = ['lk', 'admin', 'mobile', 'landing_admin'];
-    $type = in_array($type, $allowed) ? $type : 'lk';
-    $path = public_path("docs/{$type}_api.html");
-    if (!file_exists($path)) {
-        abort(404, 'Документация не найдена');
+    if (!in_array($type, $allowed)) {
+        $type = 'lk';
     }
-    return response()->file($path);
+
+    // Ищем первый существующий вариант файла документации
+    $candidates = [
+        public_path("docs/{$type}_api.html"),
+        public_path("docs/{$type}/index.html"),
+        public_path("docs/{$type}/api.html"),
+        public_path('docs/api.html'),
+    ];
+
+    foreach ($candidates as $path) {
+        if (file_exists($path)) {
+            return response()->file($path);
+        }
+    }
+
+    abort(404, 'Документация не найдена');
 });
