@@ -27,15 +27,24 @@ Route::get('/docs/{type?}', function (string $type = 'lk') {
         $type = 'lk';
     }
 
-    // Ищем первый существующий вариант файла документации
-    $candidates = [
-        public_path("docs/{$type}_api.html"),
-        public_path("docs/{$type}/index.html"),
-        public_path("docs/{$type}/api.html"),
-        public_path('docs/api.html'),
+    // Поддержка алиаса /docs/admin -> /docs/landing_admin (как в публичной папке)
+    $typeAliases = [
+        'admin' => ['admin', 'landing_admin'],
     ];
 
-    foreach ($candidates as $path) {
+    $searchTypes = $typeAliases[$type] ?? [$type];
+
+    // Ищем первый существующий вариант файла документации по списку типов
+    $candidatePaths = [];
+    foreach ($searchTypes as $t) {
+        $candidatePaths[] = public_path("docs/{$t}_api.html");
+        $candidatePaths[] = public_path("docs/{$t}/index.html");
+        $candidatePaths[] = public_path("docs/{$t}/api.html");
+    }
+    // Общий fallback
+    $candidatePaths[] = public_path('docs/api.html');
+
+    foreach ($candidatePaths as $path) {
         if (file_exists($path)) {
             return response()->file($path);
         }
