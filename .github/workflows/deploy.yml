@@ -44,12 +44,17 @@ jobs:
             cd /var/www/prohelper
             git reset --hard HEAD
             git clean -fd -e public/docs -e public/docs/**
-            git fetch origin
+            git fetch --all --prune
             git reset --hard origin/main
             php artisan down || true
             composer install --no-interaction --prefer-dist --optimize-autoloader
+            php artisan optimize:clear || true
+            php artisan storage:link || true
             if [ ! -f /usr/local/bin/rr ]; then vendor/bin/rr get-binary --location=/usr/local/bin --no-config --stability=stable; fi
             php artisan migrate --force
+            php artisan route:clear || true
+            php artisan config:clear || true
+            php artisan view:clear || true
             php artisan route:cache
             php artisan config:cache
             php artisan view:cache
