@@ -68,4 +68,4 @@ return new class extends Migration
     {
         Schema::dropIfExists('task_dependencies');
     }
-}; 
+};
