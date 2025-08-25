@@ -12,11 +12,11 @@ return new class extends Migration
             $table->id();
             $table->foreignId('project_id')->constrained()->onDelete('cascade');
             $table->foreignId('organization_id')->constrained()->onDelete('cascade');
-            $table->string('role')->default('collaborator');
+            $table->enum('role', ['owner', 'contractor', 'child_contractor', 'observer'])->default('contractor');
             $table->json('permissions')->nullable();
             $table->timestamps();
 
-            $table->unique(['project_id', 'organization_id']);
+            $table->unique(['project_id', 'organization_id'], 'project_organization_unique');
         });
     }
 
@@ -24,4 +24,4 @@ return new class extends Migration
     {
         Schema::dropIfExists('project_organization');
     }
-}; 
+};

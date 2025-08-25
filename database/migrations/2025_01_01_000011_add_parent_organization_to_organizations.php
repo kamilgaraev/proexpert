@@ -15,7 +15,7 @@ return new class extends Migration
             $table->json('multi_org_settings')->nullable();
             $table->integer('hierarchy_level')->default(0);
             $table->string('hierarchy_path')->nullable();
-            
+
             $table->index(['parent_organization_id']);
             $table->index(['organization_type']);
             $table->index(['is_holding']);
@@ -37,4 +37,4 @@ return new class extends Migration
             ]);
         });
     }
-}; 
+};
