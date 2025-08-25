@@ -37,7 +37,7 @@ jobs:
       - name: Deploy via SSH (appleboy)
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: 89.111.153.146
+          host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
           script: |
@@ -59,7 +59,7 @@ jobs:
       - name: Copy docs to server (appleboy)
         uses: appleboy/scp-action@v0.1.7
         with:
-          host: 89.111.153.146
+          host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
           source: public/docs
@@ -68,7 +68,7 @@ jobs:
       - name: Setup Monitoring (appleboy)
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: 89.111.153.146
+          host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
           script: |
@@ -87,7 +87,7 @@ jobs:
       - name: Health Check (appleboy)
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: 89.111.153.146
+          host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
         
@@ -103,7 +103,7 @@ jobs:
       - name: Update Monitoring Configuration (appleboy)
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: 89.111.153.146
+          host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
           script: |
@@ -123,7 +123,7 @@ jobs:
         if: always()
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: 89.111.153.146
+          host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
           script: |
