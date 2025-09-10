@@ -30,6 +30,14 @@ class RouteServiceProvider extends ServiceProvider
         });
 
         $this->routes(function () {
+            // Public API Routes (no authentication required)
+            Route::middleware('api')
+                ->prefix('api/public')
+                ->as('api.public.')
+                ->group(function() {
+                    require base_path('routes/api/public.php');
+                });
+
             // Mobile API Routes
             Route::middleware('api')
                 ->prefix('api/v1/mobile')
