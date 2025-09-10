@@ -25,6 +25,8 @@ class DatabaseSeeder extends Seeder
             RolePermissionSeeder::class,
             MeasurementUnitSeeder::class,
             SubscriptionPlanSeeder::class,
+            SubscriptionAddonSeeder::class,
+            OrganizationModuleSeeder::class,
         ]);
 
         // Базовые данные для работы (организации, проекты, материалы)
