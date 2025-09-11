@@ -15,17 +15,56 @@ use App\Http\Requests\Api\V1\Admin\Report\WorkCompletionReportRequest;
 use App\Http\Requests\Api\V1\Admin\Report\ForemanActivityReportRequest;
 use App\Http\Requests\Api\V1\Admin\Report\ProjectStatusSummaryReportRequest;
 use App\Http\Requests\Api\V1\Admin\Report\OfficialMaterialUsageReportRequest;
+use App\Services\Landing\OrganizationModuleService;
 
 // TODO: Добавить Request классы для валидации фильтров отчетов
 
 class ReportController extends Controller
 {
     protected ReportService $reportService;
+    protected OrganizationModuleService $moduleService;
 
-    public function __construct(ReportService $reportService)
+    public function __construct(ReportService $reportService, OrganizationModuleService $moduleService)
     {
         $this->reportService = $reportService;
+        $this->moduleService = $moduleService;
         $this->middleware('can:view-reports');
+    }
+
+    /**
+     * Проверка доступности модуля базовых отчетов.
+     */
+    public function checkBasicReportsAvailability(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $organizationId = $user->current_organization_id;
+
+        $hasAccess = $this->moduleService->hasModuleAccess($organizationId, 'basic_reports');
+
+        return response()->json([
+            'success' => true,
+            'has_access' => $hasAccess,
+            'module' => 'basic_reports',
+            'features' => $hasAccess ? ['Отчет по материалам', 'Отчет по работам', 'Сводный отчет', 'Экспорт в PDF'] : []
+        ]);
+    }
+
+    /**
+     * Проверка доступности модуля продвинутых отчетов.
+     */
+    public function checkAdvancedReportsAvailability(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $organizationId = $user->current_organization_id;
+
+        $hasAccess = $this->moduleService->hasModuleAccess($organizationId, 'advanced_reports');
+
+        return response()->json([
+            'success' => true,
+            'has_access' => $hasAccess,
+            'module' => 'advanced_reports',
+            'features' => $hasAccess ? ['Активность прорабов', 'Официальные отчеты', 'Конструктор отчетов', 'Автоматизация'] : []
+        ]);
     }
 
     /**
