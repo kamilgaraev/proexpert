@@ -29,5 +29,12 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
                 
                 Route::patch('/{moduleId}/renew', [OrganizationModuleController::class, 'renew'])
                     ->name('renew');
+                
+                // Отмена модулей с возвратом средств
+                Route::get('/{moduleSlug}/cancel-preview', [OrganizationModuleController::class, 'cancelPreview'])
+                    ->name('cancel-preview');
+                
+                Route::post('/{moduleSlug}/cancel', [OrganizationModuleController::class, 'cancel'])
+                    ->name('cancel');
             });
     }); 

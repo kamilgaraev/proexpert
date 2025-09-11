@@ -19,13 +19,20 @@ class OrganizationModuleActivation extends Model
         'settings',
         'paid_amount',
         'payment_method',
+        'cancelled_at',
+        'cancellation_reason',
+        'refund_amount',
+        'refund_details',
     ];
 
     protected $casts = [
         'activated_at' => 'datetime',
         'expires_at' => 'datetime',
+        'cancelled_at' => 'datetime',
         'settings' => 'array',
+        'refund_details' => 'array',
         'paid_amount' => 'decimal:2',
+        'refund_amount' => 'decimal:2',
     ];
 
     public function organization(): BelongsTo

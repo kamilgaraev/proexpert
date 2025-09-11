@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Http\Controllers\Controller;
 use App\Services\Landing\OrganizationModuleService;
+use App\Services\Landing\ModuleCancellationService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -13,10 +14,14 @@ use App\Http\Responses\Api\V1\SuccessResponse;
 class OrganizationModuleController extends Controller
 {
     protected OrganizationModuleService $moduleService;
+    protected ModuleCancellationService $cancellationService;
 
-    public function __construct(OrganizationModuleService $moduleService)
-    {
+    public function __construct(
+        OrganizationModuleService $moduleService,
+        ModuleCancellationService $cancellationService
+    ) {
         $this->moduleService = $moduleService;
+        $this->cancellationService = $cancellationService;
     }
 
     public function index(Request $request): JsonResponse
@@ -168,5 +173,63 @@ class OrganizationModuleController extends Controller
             'success' => true,
             'data' => $expiringModules,
         ]);
+    }
+
+    /**
+     * Предварительный просмотр отмены модуля (сколько вернется денег).
+     */
+    public function cancelPreview(Request $request, string $moduleSlug): JsonResponse
+    {
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        }
+
+        try {
+            $preview = $this->cancellationService->getModuleCancellationPreview($organizationId, $moduleSlug);
+
+            return response()->json([
+                'success' => true,
+                'data' => $preview
+            ]);
+        } catch (\Exception $e) {
+            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+        }
+    }
+
+    /**
+     * Отменить модуль с возвратом денег на баланс.
+     */
+    public function cancel(Request $request, string $moduleSlug): JsonResponse
+    {
+        $request->validate([
+            'confirm' => 'required|boolean|accepted',
+            'reason' => 'sometimes|string|max:500'
+        ]);
+
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        }
+
+        try {
+            $result = $this->cancellationService->cancelModule($organizationId, $moduleSlug);
+
+            return response()->json([
+                'success' => true,
+                'message' => $result['message'],
+                'data' => [
+                    'refund_amount' => $result['refund_amount'],
+                    'days_used' => $result['days_used'] ?? null,
+                    'days_remaining' => $result['days_remaining'] ?? null
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return (new ErrorResponse($e->getMessage(), 400))->toResponse($request);
+        }
     }
 } 
