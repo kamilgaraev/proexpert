@@ -416,15 +416,32 @@ class User extends Authenticatable implements JWTSubject
      */
     protected function getOrganizationForImages(): ?\App\Models\Organization
     {
+        \Illuminate\Support\Facades\Log::info('[User] getOrganizationForImages called', [
+            'user_id' => $this->id,
+            'current_organization_id' => $this->current_organization_id,
+        ]);
+
         // Сначала пытаемся получить текущую организацию пользователя
         if ($this->current_organization_id) {
-            $organization = $this->currentOrganization;
+            // Ищем организацию по ID вместо использования отношения (может не быть загружено)
+            $organization = Organization::find($this->current_organization_id);
             if ($organization) {
+                \Illuminate\Support\Facades\Log::info('[User] Found organization by current_organization_id', [
+                    'user_id' => $this->id,
+                    'org_id' => $organization->id,
+                    'org_name' => $organization->name,
+                ]);
                 return $organization;
             }
         }
 
         // Если не удалось, берем первую организацию пользователя
-        return $this->organizations()->first();
+        $firstOrg = $this->organizations()->first();
+        \Illuminate\Support\Facades\Log::info('[User] Using first organization', [
+            'user_id' => $this->id,
+            'org_id' => $firstOrg?->id,
+            'org_name' => $firstOrg?->name,
+        ]);
+        return $firstOrg;
     }
 }
