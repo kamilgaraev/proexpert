@@ -30,11 +30,13 @@ return new class extends Migration
         // 3. Удаляем связанные колонки из users таблицы (если есть)
         if (Schema::hasTable('users')) {
             Schema::table('users', function (Blueprint $table) {
-                // Удаляем колонки, связанные со старой системой авторизации
-                $table->dropColumn([
-                    'user_type', // Если есть
-                    'role_id',   // Если есть прямая связь с ролью
-                ]);
+                // Удаляем колонки, связанные со старой системой авторизации (только если они существуют)
+                if (Schema::hasColumn('users', 'user_type')) {
+                    $table->dropColumn('user_type');
+                }
+                if (Schema::hasColumn('users', 'role_id')) {
+                    $table->dropColumn('role_id');
+                }
             });
         }
 
