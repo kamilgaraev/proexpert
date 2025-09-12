@@ -34,11 +34,21 @@ trait HasImages
         /** @var FileService $service */
         $service = App::make(FileService::class);
 
-        if ($temporary) {
-            return $service->temporaryUrl($imagePath, $temporaryUrlMinutes, $organization);
-        }
+        try {
+            if ($temporary) {
+                return $service->temporaryUrl($imagePath, $temporaryUrlMinutes, $organization);
+            }
 
-        return $service->url($imagePath, $organization);
+            return $service->url($imagePath, $organization);
+        } catch (\Throwable $e) {
+            // При любых ошибках S3 (квота бакетов, сеть и т.д.) возвращаем дефолтный URL
+            \Illuminate\Support\Facades\Log::error('[HasImages] getImageUrl failed, using default', [
+                'path' => $imagePath,
+                'error' => $e->getMessage(),
+                'model' => get_class($this),
+            ]);
+            return $defaultUrl;
+        }
     }
 
     /**
@@ -61,15 +71,25 @@ trait HasImages
         /** @var FileService $service */
         $service = App::make(FileService::class);
 
-        $existingPath = $this->{$attributeName};
-        $newPath = $service->upload($file, $directory, $existingPath, $visibility, $organization);
+        try {
+            $existingPath = $this->{$attributeName};
+            $newPath = $service->upload($file, $directory, $existingPath, $visibility, $organization);
 
-        if ($newPath) {
-            $this->{$attributeName} = $newPath;
-            return true; // Путь установлен, но модель НЕ сохранена
+            if ($newPath) {
+                $this->{$attributeName} = $newPath;
+                return true; // Путь установлен, но модель НЕ сохранена
+            }
+
+            return false;
+        } catch (\Throwable $e) {
+            // При ошибках S3 логируем, но не ломаем процесс загрузки
+            \Illuminate\Support\Facades\Log::error('[HasImages] uploadImage failed', [
+                'directory' => $directory,
+                'error' => $e->getMessage(),
+                'model' => get_class($this),
+            ]);
+            return false;
         }
-
-        return false;
     }
 
     /**
@@ -91,13 +111,25 @@ trait HasImages
 
         $pathToDelete = $this->{$attributeName};
         
-        if ($service->delete($pathToDelete, $organization)) {
-            $this->{$attributeName} = null; // Очищаем путь в модели
-            return true; // Удаление успешно (или файла не было), модель НЕ сохранена
-        }
+        try {
+            if ($service->delete($pathToDelete, $organization)) {
+                $this->{$attributeName} = null; // Очищаем путь в модели
+                return true; // Удаление успешно (или файла не было), модель НЕ сохранена
+            }
 
-        // Если удаление на диске не удалось, не очищаем путь и возвращаем false
-        return false; 
+            // Если удаление на диске не удалось, не очищаем путь и возвращаем false
+            return false;
+        } catch (\Throwable $e) {
+            // При ошибках S3 логируем, но считаем что удаление "успешно"
+            \Illuminate\Support\Facades\Log::error('[HasImages] deleteImage failed', [
+                'path' => $pathToDelete,
+                'error' => $e->getMessage(),
+                'model' => get_class($this),
+            ]);
+            // Очищаем путь в модели даже если удаление на диске не удалось
+            $this->{$attributeName} = null;
+            return true;
+        } 
     }
 
     /**

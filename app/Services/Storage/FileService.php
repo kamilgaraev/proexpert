@@ -13,44 +13,13 @@ use Illuminate\Support\Facades\Log;
 
 class FileService
 {
-    public function __construct(protected OrgBucketService $bucketService)
-    {
-    }
-
     /**
-     * Получить диск S3 для указанной организации (или текущей пользователя).
+     * Получить диск S3 (всегда используем общий бакет).
      */
     public function disk(?Organization $organization = null): FilesystemAdapter|Filesystem
     {
-        $org = $organization;
-        if (!$org) {
-            $org = Auth::user()?->currentOrganization;
-        }
-        // Фолбек на статический контекст, который уже выставлен middleware
-        if (!$org) {
-            $org = \App\Services\Organization\OrganizationContext::getOrganization();
-        }
-
-        if ($org) {
-            // Если бакета нет для организации, создаем его автоматически
-            if (!$org->s3_bucket) {
-                Log::info('[FileService] disk(): creating bucket for organization', [
-                    'org_id' => $org->id,
-                ]);
-                $this->bucketService->createBucket($org);
-                $org->refresh(); // обновляем модель из БД
-            }
-            
-            $disk = $this->bucketService->getDisk($org);
-            Log::debug('[FileService] disk(): org-specific disk resolved', [
-                'org_id' => $org->id,
-                'bucket' => $org->s3_bucket,
-            ]);
-            return $disk;
-        }
-
-        Log::debug('[FileService] disk(): fallback to shared disk s3');
-        return Storage::disk('s3'); // fallback на общий бакет
+        // Используем единый общий S3 бакет для всех организаций
+        return Storage::disk('s3');
     }
 
     /**
@@ -64,21 +33,16 @@ class FileService
         ?Organization $organization = null
     ): string|false {
         $disk = $this->disk($organization);
+        
+        // Получаем организацию для формирования пути
+        $org = $this->getOrganization($organization);
 
-        // Regru-S3 отклоняет ACL public-read, если бакет закрыт («Доступ по ключам»).
-        // Для орг-бакетов всегда пишем без ACL (по умолчанию private) и используем presigned URL.
-        // Если метод вызван без указания $organization, определяем бакет по конфигу диска.
+        // Для Яндекс S3 используем private доступ по умолчанию
         if ($organization) {
             $visibility = null;
-        } else {
-            $bucketInDisk = $disk->getConfig()['bucket'] ?? null;
-            if ($bucketInDisk && str_starts_with($bucketInDisk, 'org-')) {
-                // Внутренний орг-бакет: Regru отказывается от любых ACL, оставляем по умолчанию
-                $visibility = null;
-            }
         }
 
-        // Пытаемся удалить старый файл без предварительной проверки наличия
+        // Пытаемся удалить старый файл если он существует
         if ($existingPath) {
             try {
                 $disk->delete($existingPath);
@@ -91,22 +55,33 @@ class FileService
         }
 
         $filename = Str::uuid()->toString() . '.' . $file->getClientOriginalExtension();
-        $fullPath = $directory . '/' . $filename;
+        
+        // Формируем путь с префиксом организации: org-{id}/directory/filename
+        $orgPrefix = $org ? "org-{$org->id}" : 'shared';
+        $fullPath = $orgPrefix . '/' . $directory . '/' . $filename;
 
         try {
+            // Используем полный путь для загрузки
             if ($visibility) {
-                $disk->putFileAs($directory, $file, $filename, $visibility);
+                $result = $disk->put($fullPath, file_get_contents($file), $visibility);
             } else {
-                $disk->putFileAs($directory, $file, $filename);
+                $result = $disk->put($fullPath, file_get_contents($file));
             }
-            Log::info('[FileService] upload(): file uploaded', [
-                'path' => $fullPath,
-                'org_id' => $organization?->id,
-                'visibility' => $visibility,
-            ]);
-            return $fullPath;
+            
+            if ($result) {
+                Log::info('[FileService] upload(): file uploaded', [
+                    'path' => $fullPath,
+                    'org_id' => $org?->id,
+                    'visibility' => $visibility,
+                ]);
+                return $fullPath;
+            }
+            return false;
         } catch (\Throwable $e) {
-            // можно логировать здесь, но оставляем на вызывающую сторону
+            Log::error('[FileService] upload(): failed', [
+                'path' => $fullPath,
+                'error' => $e->getMessage(),
+            ]);
             return false;
         }
     }
@@ -167,5 +142,21 @@ class FileService
             'expires_in_minutes' => $minutes,
         ]);
         return $url;
+    }
+
+    /**
+     * Получить организацию для определения префикса пути.
+     */
+    private function getOrganization(?Organization $organization = null): ?Organization
+    {
+        $org = $organization;
+        if (!$org) {
+            $org = Auth::user()?->currentOrganization;
+        }
+        // Фолбек на статический контекст, который уже выставлен middleware
+        if (!$org) {
+            $org = \App\Services\Organization\OrganizationContext::getOrganization();
+        }
+        return $org;
     }
 } 
