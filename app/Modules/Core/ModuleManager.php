@@ -162,6 +162,14 @@ class ModuleManager
             ];
         }
         
+        if (!$module->can_deactivate) {
+            return [
+                'success' => false,
+                'message' => 'Данный модуль нельзя деактивировать, так как он является системным',
+                'code' => 'MODULE_CANNOT_BE_DEACTIVATED'
+            ];
+        }
+        
         $activation = OrganizationModuleActivation::where('organization_id', $organizationId)
             ->where('module_id', $module->id)
             ->where('status', 'active')

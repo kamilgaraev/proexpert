@@ -43,6 +43,7 @@
   
   "auto_activate": true,
   "is_system_module": true,
+  "can_deactivate": false,
   "icon": "users",
   "display_order": 2
 }

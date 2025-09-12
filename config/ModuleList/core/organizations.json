@@ -41,6 +41,7 @@
   
   "auto_activate": true,
   "is_system_module": true,
+  "can_deactivate": false,
   "icon": "building",
   "display_order": 1
 }

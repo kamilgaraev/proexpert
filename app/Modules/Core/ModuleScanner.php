@@ -90,6 +90,8 @@ class ModuleScanner
                 'conflicts' => $config['conflicts'] ?? [],
                 'limits' => $config['limits'] ?? [],
                 'is_active' => $config['is_active'] ?? true,
+                'is_system_module' => $config['is_system_module'] ?? false,
+                'can_deactivate' => $config['can_deactivate'] ?? true,
                 'class_name' => $config['class_name'],
                 'config_file' => $config['config_file'],
                 'icon' => $config['icon'] ?? null,

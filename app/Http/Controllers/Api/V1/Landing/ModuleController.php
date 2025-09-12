@@ -66,6 +66,7 @@ class ModuleController extends Controller
                 'features' => $module->features ?? [],
                 'permissions' => $module->permissions ?? [],
                 'icon' => $module->icon,
+                'can_deactivate' => $module->can_deactivate,
                 'is_active' => $isActive,
                 'activation' => $activation ? [
                     'activated_at' => $activation->activated_at,

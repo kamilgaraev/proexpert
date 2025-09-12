@@ -30,6 +30,7 @@ class Module extends Model
         'display_order',
         'is_active',
         'is_system_module',
+        'can_deactivate',
         'last_scanned_at',
     ];
 
@@ -42,6 +43,7 @@ class Module extends Model
         'limits' => 'array',
         'is_active' => 'boolean',
         'is_system_module' => 'boolean',
+        'can_deactivate' => 'boolean',
         'last_scanned_at' => 'datetime',
         'display_order' => 'integer',
     ];
@@ -148,6 +150,7 @@ class Module extends Model
             'display_order' => $this->display_order,
             'is_active' => $this->is_active,
             'is_system_module' => $this->is_system_module,
+            'can_deactivate' => $this->can_deactivate,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];
