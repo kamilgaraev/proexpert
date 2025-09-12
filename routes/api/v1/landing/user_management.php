@@ -1,22 +1,25 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\V1\Landing\OrganizationRoleController;
+// use App\Http\Controllers\Api\V1\Landing\OrganizationRoleController; // Заменен на CustomRoleController
 use App\Http\Controllers\Api\V1\Landing\UserInvitationController;
 use App\Http\Controllers\Api\V1\Landing\OrganizationUserController;
 
-Route::prefix('roles')->group(function () {
-    Route::get('/', [OrganizationRoleController::class, 'index']);
-    Route::post('/', [OrganizationRoleController::class, 'store']);
-    Route::get('/{roleId}', [OrganizationRoleController::class, 'show']);
-    Route::put('/{roleId}', [OrganizationRoleController::class, 'update']);
-    Route::delete('/{roleId}', [OrganizationRoleController::class, 'destroy']);
-    
-    Route::get('/permissions/available', [OrganizationRoleController::class, 'permissions']);
-    Route::post('/{roleId}/assign-user', [OrganizationRoleController::class, 'assignUser']);
-    Route::delete('/{roleId}/remove-user', [OrganizationRoleController::class, 'removeUser']);
-    Route::post('/{roleId}/duplicate', [OrganizationRoleController::class, 'duplicate']);
-});
+// ВРЕМЕННО ОТКЛЮЧЕНО - заменено на новую систему авторизации
+// Используйте маршруты из routes/api/v1/landing/authorization.php
+// 
+// Route::prefix('roles')->group(function () {
+//     Route::get('/', [OrganizationRoleController::class, 'index']);
+//     Route::post('/', [OrganizationRoleController::class, 'store']);
+//     Route::get('/{roleId}', [OrganizationRoleController::class, 'show']);
+//     Route::put('/{roleId}', [OrganizationRoleController::class, 'update']);
+//     Route::delete('/{roleId}', [OrganizationRoleController::class, 'destroy']);
+//     
+//     Route::get('/permissions/available', [OrganizationRoleController::class, 'permissions']);
+//     Route::post('/{roleId}/assign-user', [OrganizationRoleController::class, 'assignUser']);
+//     Route::delete('/{roleId}/remove-user', [OrganizationRoleController::class, 'removeUser']);
+//     Route::post('/{roleId}/duplicate', [OrganizationRoleController::class, 'duplicate']);
+// });
 
 Route::prefix('invitations')->group(function () {
     Route::get('/', [UserInvitationController::class, 'index']);
