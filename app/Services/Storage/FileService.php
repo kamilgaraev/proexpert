@@ -71,11 +71,18 @@ class FileService
                 'visibility' => $visibility,
             ]);
 
-            // Используем полный путь для загрузки
+            // Используем полный путь для загрузки  
+            $fileContent = file_get_contents($file->getRealPath());
+            
+            Log::info('[FileService] File content prepared', [
+                'file_size' => strlen($fileContent),
+                'file_path' => $file->getRealPath(),
+            ]);
+            
             if ($useVisibility) {
-                $result = $disk->put($fullPath, $file->getContent(), $useVisibility);
+                $result = $disk->put($fullPath, $fileContent, $useVisibility);
             } else {
-                $result = $disk->put($fullPath, $file->getContent());
+                $result = $disk->put($fullPath, $fileContent);
             }
             
             if ($result) {
