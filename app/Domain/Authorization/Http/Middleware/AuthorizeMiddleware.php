@@ -63,11 +63,16 @@ class AuthorizeMiddleware
      */
     protected function resolveContext(Request $request, ?string $contextType, ?string $contextParam): ?array
     {
-        if (!$contextType) {
-            return null;
-        }
-
         $context = [];
+        
+        // Если contextType не задан, пробуем автоматически определить контекст организации
+        if (!$contextType) {
+            $organizationId = $this->getOrganizationFromRequest($request);
+            if ($organizationId) {
+                $context['organization_id'] = $organizationId;
+            }
+            return empty($context) ? null : $context;
+        }
         
         switch ($contextType) {
             case 'organization':
@@ -91,6 +96,26 @@ class AuthorizeMiddleware
         }
 
         return empty($context) ? null : $context;
+    }
+
+    /**
+     * Получить ID организации из запроса (установленный middleware SetOrganizationContext)
+     */
+    protected function getOrganizationFromRequest(Request $request): ?int
+    {
+        // Пробуем из attributes (установленных SetOrganizationContext)
+        $organizationId = $request->attributes->get('current_organization_id');
+        if ($organizationId) {
+            return (int) $organizationId;
+        }
+        
+        // Пробуем из текущего пользователя
+        $user = $request->user();
+        if ($user && isset($user->current_organization_id)) {
+            return (int) $user->current_organization_id;
+        }
+        
+        return null;
     }
 
     /**

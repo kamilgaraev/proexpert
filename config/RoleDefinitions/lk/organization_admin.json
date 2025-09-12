@@ -9,8 +9,10 @@
   "system_permissions": [
     "organization.view",
     "organization.edit",
+    "modules.manage",
     "users.invite",
     "users.manage",
+    "users.manage_admin",
     "users.assign_roles",
     "roles.view_custom",
     "profile.view",
