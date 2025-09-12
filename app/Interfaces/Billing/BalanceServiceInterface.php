@@ -5,7 +5,7 @@ namespace App\Interfaces\Billing;
 use App\Models\Organization;
 use App\Models\OrganizationBalance;
 use App\Models\Payment;
-use App\Models\UserSubscription;
+use App\Models\OrganizationSubscription;
 
 interface BalanceServiceInterface
 {
@@ -42,7 +42,7 @@ interface BalanceServiceInterface
      * @param Organization $organization
      * @param int $amount Сумма в минорных единицах (копейках).
      * @param string $description Описание списания.
-     * @param UserSubscription|null $subscription Связанная подписка (если списание за подписку).
+     * @param OrganizationSubscription|null $subscription Связанная подписка (если списание за подписку).
      * @param array $meta Дополнительные метаданные.
      * @return OrganizationBalance Обновленный баланс.
      * @throws \App\Exceptions\Billing\InsufficientBalanceException
@@ -52,7 +52,7 @@ interface BalanceServiceInterface
         Organization $organization,
         int $amount,
         string $description,
-        ?UserSubscription $subscription = null,
+        ?OrganizationSubscription $subscription = null,
         array $meta = []
     ): OrganizationBalance;
 

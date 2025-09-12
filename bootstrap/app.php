@@ -86,7 +86,7 @@ return Application::configure(basePath: dirname(__DIR__))
             if ($request->expectsJson()) {
                 return response()->json([
                     'success' => false,
-                    'message' => $e->getMessage() ?: 'Недостаточно средств на балансе.'
+                    'message' => $e->getMessage() ?: 'Недостаточно средств на балансе для выполнения операции.'
                 ], 402); // 402 Payment Required
             }
         });

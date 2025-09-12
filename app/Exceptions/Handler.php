@@ -112,7 +112,7 @@ class Handler extends ExceptionHandler
 
                 if ($e instanceof InsufficientBalanceException) {
                     return response()->json([
-                        'message' => $e->getMessage() ?: 'Недостаточно средств на балансе.'
+                        'message' => $e->getMessage() ?: 'Недостаточно средств на балансе для выполнения операции.'
                     ], 402, $corsHeaders); // 402 Payment Required
                 }
 

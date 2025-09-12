@@ -158,6 +158,15 @@ Route::prefix('landing')->name('landing.')->group(function () {
                 ->group(function () {
                     require __DIR__ . '/api/v1/landing/authorization.php';
                 });
+
+            // Подключение маршрутов для проверки прав пользователя (ЛК)
+            Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
+                ->prefix('v1')
+                ->group(function () {
+                    if (file_exists(__DIR__ . '/api/v1/permissions.php')) {
+                        require __DIR__ . '/api/v1/permissions.php';
+                    }
+                });
 });
 
 // --- Admin Panel API ---
@@ -167,6 +176,13 @@ Route::prefix('admin')->name('admin.')->group(function () {
 
     // Защищенные маршруты Admin Panel  
     Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])->group(function() {
+        
+        // Маршруты для проверки прав пользователя (Admin Panel)
+        Route::prefix('v1')->group(function () {
+            if (file_exists(__DIR__ . '/api/v1/permissions.php')) {
+                require __DIR__ . '/api/v1/permissions.php';
+            }
+        });
         // Подключаем существующие файлы маршрутов для админки
         if (file_exists(__DIR__ . '/api/v1/admin/projects.php')) {
             require __DIR__ . '/api/v1/admin/projects.php';
@@ -263,6 +279,13 @@ Route::prefix('mobile')->name('mobile.')->group(function () {
 
     // Защищенные маршруты Mobile App (требуют токен mobile + контекст организации)
     Route::middleware(['auth:api_mobile', 'auth.jwt:api_mobile', 'organization.context', 'can:access-mobile-app'])->group(function() {
+        
+        // Маршруты для проверки прав пользователя (Mobile App)
+        Route::prefix('v1')->group(function () {
+            if (file_exists(__DIR__ . '/api/v1/permissions.php')) {
+                require __DIR__ . '/api/v1/permissions.php';
+            }
+        });
         if (file_exists(__DIR__ . '/api/v1/mobile/projects.php')) {
             require __DIR__ . '/api/v1/mobile/projects.php';
         }

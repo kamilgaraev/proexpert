@@ -7,7 +7,7 @@ use App\Models\Organization;
 use App\Models\OrganizationBalance;
 use App\Models\BalanceTransaction;
 use App\Models\Payment;
-use App\Models\UserSubscription;
+use App\Models\OrganizationSubscription;
 use App\Exceptions\Billing\BalanceException;
 use App\Exceptions\Billing\InsufficientBalanceException;
 use Illuminate\Support\Facades\DB;
@@ -60,7 +60,7 @@ class BalanceService implements BalanceServiceInterface
         Organization $organization,
         int $amount,
         string $description,
-        ?UserSubscription $subscription = null,
+        ?OrganizationSubscription $subscription = null,
         array $meta = []
     ): OrganizationBalance {
         if ($amount <= 0) {
@@ -71,8 +71,11 @@ class BalanceService implements BalanceServiceInterface
             $orgBalance = $this->getOrCreateOrganizationBalance($organization);
             
             if ($orgBalance->balance < $amount) {
+                $amountRubles = number_format($amount / 100, 2, '.', '');
+                $balanceRubles = number_format($orgBalance->balance / 100, 2, '.', '');
+                
                 throw new InsufficientBalanceException(
-                    "Insufficient balance for organization {$organization->id} to debit {$amount}. Current balance: {$orgBalance->balance}"
+                    "Недостаточно средств на балансе организации {$organization->id} для списания {$amountRubles} руб. Текущий баланс: {$balanceRubles} руб."
                 );
             }
             $balanceBefore = $orgBalance->balance;
@@ -82,7 +85,7 @@ class BalanceService implements BalanceServiceInterface
 
             BalanceTransaction::create([
                 'organization_balance_id' => $orgBalance->id,
-                'user_subscription_id' => $subscription?->id,
+                'organization_subscription_id' => $subscription?->id,
                 'type' => BalanceTransaction::TYPE_DEBIT,
                 'amount' => $amount,
                 'balance_before' => $balanceBefore,
