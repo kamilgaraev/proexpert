@@ -31,7 +31,16 @@ class FileService
             $org = \App\Services\Organization\OrganizationContext::getOrganization();
         }
 
-        if ($org && $org->s3_bucket) {
+        if ($org) {
+            // Если бакета нет для организации, создаем его автоматически
+            if (!$org->s3_bucket) {
+                Log::info('[FileService] disk(): creating bucket for organization', [
+                    'org_id' => $org->id,
+                ]);
+                $this->bucketService->createBucket($org);
+                $org->refresh(); // обновляем модель из БД
+            }
+            
             $disk = $this->bucketService->getDisk($org);
             Log::debug('[FileService] disk(): org-specific disk resolved', [
                 'org_id' => $org->id,

@@ -18,7 +18,7 @@ class OrgBucketService
         $config = Config::get('filesystems.disks.s3');
 
         $this->client = new S3Client([
-            'region' => $config['region'] ?? 'us-east-1',
+            'region' => $config['region'] ?? 'ru-central1',
             'version' => 'latest',
             'credentials' => [
                 'key'    => $config['key'] ?? '',
@@ -77,7 +77,7 @@ class OrgBucketService
 
         $organization->forceFill([
             's3_bucket' => $bucket,
-            'bucket_region' => 'us-east-1',
+            'bucket_region' => 'ru-central1',
         ])->save();
 
         return $bucket;
@@ -105,8 +105,8 @@ class OrgBucketService
         Log::debug('[OrgBucketService] Region after sanitize', [
             'region' => $region,
         ]);
-        // Если регион не указан, содержит XML/«default» ИЛИ равен us-east-1 (заглушка), пробуем получить реальный регион
-        if ($region === '' || strtolower($region) === 'default' || str_contains($region, '<') || strtolower($region) === 'us-east-1') {
+        // Если регион не указан, содержит XML/«default», пробуем получить реальный регион
+        if ($region === '' || strtolower($region) === 'default' || str_contains($region, '<')) {
             try {
                 Log::debug('[OrgBucketService] Fetching bucket location from S3');
                 $loc = $this->client->getBucketLocation(['Bucket' => $bucket]);
@@ -115,22 +115,22 @@ class OrgBucketService
                     : ($loc->get('LocationConstraint') ?? '');
 
                 $region = trim(strip_tags((string) $regionRaw));
-                // Regru-S3: для подписи нужен «ru-msk». Пустое, default или us-east-1 приводим к ru-msk
-                if ($region === '' || strtolower($region) === 'us-east-1' || strtolower($region) === 'default') {
-                    $region = 'ru-msk';
+                // Yandex Object Storage: для подписи нужен «ru-central1». Пустое или default приводим к ru-central1
+                if ($region === '' || strtolower($region) === 'default') {
+                    $region = 'ru-central1';
                 }
                 Log::debug('[OrgBucketService] getBucketLocation() result', [ 'raw' => $regionRaw, 'clean' => $region ]);
             } catch (\Throwable $e) {
                 Log::warning('[OrgBucketService] Failed to getBucketLocation()', [
                     'error' => $e->getMessage(),
                 ]);
-                $region = 'us-east-1';
+                $region = 'ru-central1';
             }
         }
 
         // fallback, если после всех манипуляций регион всё ещё пуст
         if ($region === '') {
-            $region = 'ru-msk';
+            $region = 'ru-central1';
         }
         
         // Если регион обновился после санитации или получения из S3 — сохраняем изменение, обрезая до 120 символов
