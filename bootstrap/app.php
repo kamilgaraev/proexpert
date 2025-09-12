@@ -81,6 +81,15 @@ return Application::configure(basePath: dirname(__DIR__))
                 );
             }
         });
+
+        $exceptions->renderable(function (\App\Exceptions\Billing\InsufficientBalanceException $e, $request) {
+            if ($request->expectsJson()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage() ?: 'Недостаточно средств на балансе.'
+                ], 402); // 402 Payment Required
+            }
+        });
         
         // Обработка всех остальных ошибок для API, когда НЕ в режиме отладки
         $exceptions->renderable(function (\Throwable $e, $request) {
@@ -103,8 +112,18 @@ return Application::configure(basePath: dirname(__DIR__))
              }
         });
 
+        // Не логируем business logic исключения как критические ошибки
+        $exceptions->reportable(function (\App\Exceptions\Billing\InsufficientBalanceException $e) {
+            return false; // Не логируем
+        });
+
         // Добавляем трекинг исключений в Prometheus
         $exceptions->reportable(function (Throwable $e) {
+            // Исключаем business logic исключения из мониторинга
+            if ($e instanceof \App\Exceptions\Billing\InsufficientBalanceException) {
+                return;
+            }
+            
             try {
                 $prometheus = app(\App\Services\Monitoring\PrometheusService::class);
                 $prometheus->incrementExceptions(get_class($e));
