@@ -75,7 +75,7 @@ class ModuleController extends Controller
             ];
         })->groupBy('category');
 
-        return (new SuccessResponse($modulesWithStatus))->toResponse($request);
+        return (new SuccessResponse($modulesWithStatus->toArray()))->toResponse($request);
     }
 
     /**
@@ -92,7 +92,7 @@ class ModuleController extends Controller
 
         $activeModules = $this->moduleManager->getOrganizationModules($organizationId);
 
-        return (new SuccessResponse($activeModules))->toResponse($request);
+        return (new SuccessResponse($activeModules->toArray()))->toResponse($request);
     }
 
     /**
