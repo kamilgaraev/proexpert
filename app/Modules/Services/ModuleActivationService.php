@@ -31,6 +31,36 @@ class ModuleActivationService
         return $this->moduleManager->deactivateModule($organizationId, $moduleSlug, $withRefund);
     }
     
+    public function getActivationPreview(int $organizationId, string $moduleSlug): array
+    {
+        $module = Module::where('slug', $moduleSlug)->first();
+        
+        if (!$module) {
+            return [
+                'success' => false,
+                'message' => 'Модуль не найден'
+            ];
+        }
+        
+        // Получаем данные модуля без class_name
+        $moduleData = $module->toPublicArray();
+        
+        // Проверяем доступность и зависимости
+        $checks = $this->accessController->checkDependencies($organizationId, $module);
+        $organization = Organization::findOrFail($organizationId);
+        $canAfford = app(\App\Modules\Core\BillingEngine::class)->canAfford($organization, $module);
+        
+        return [
+            'success' => true,
+            'module' => $moduleData,
+            'checks' => array_merge($checks, ['can_afford' => $canAfford]),
+            'can_activate' => empty($checks['missing_dependencies']) && 
+                             empty($checks['conflicts']) && 
+                             $canAfford && 
+                             !$checks['is_already_active']
+        ];
+    }
+    
     public function renewModule(int $organizationId, string $moduleSlug, int $additionalDays = 30): array
     {
         $module = Module::where('slug', $moduleSlug)->first();
@@ -53,6 +83,15 @@ class ModuleActivationService
                 'success' => false,
                 'message' => 'Модуль не активирован',
                 'code' => 'MODULE_NOT_ACTIVE'
+            ];
+        }
+        
+        // Бесплатные модули нельзя продлить
+        if ($module->billing_model === 'free') {
+            return [
+                'success' => false,
+                'message' => 'Бесплатные модули не требуют продления',
+                'code' => 'FREE_MODULE_CANNOT_RENEW'
             ];
         }
         
@@ -87,45 +126,6 @@ class ModuleActivationService
                 'code' => 'RENEWAL_ERROR'
             ];
         }
-    }
-    
-    public function getActivationPreview(int $organizationId, string $moduleSlug): array
-    {
-        $module = Module::where('slug', $moduleSlug)->first();
-        
-        if (!$module) {
-            return [
-                'success' => false,
-                'message' => 'Модуль не найден'
-            ];
-        }
-        
-        $organization = Organization::findOrFail($organizationId);
-        $missingDependencies = $this->accessController->checkDependencies($organizationId, $module);
-        $conflicts = $this->accessController->checkConflicts($organizationId, $module);
-        $canAfford = app(\App\Modules\Core\BillingEngine::class)->canAfford($organization, $module);
-        $currentBalance = app(\App\Modules\Core\BillingEngine::class)->getBalance($organization);
-        
-        return [
-            'success' => true,
-            'module' => [
-                'name' => $module->name,
-                'description' => $module->description,
-                'price' => $module->getPrice(),
-                'currency' => $module->getCurrency(),
-                'duration_days' => $module->getDurationDays(),
-                'features' => $module->features ?? []
-            ],
-            'checks' => [
-                'can_afford' => $canAfford,
-                'current_balance' => $currentBalance,
-                'missing_dependencies' => $missingDependencies,
-                'conflicts' => $conflicts,
-                'is_already_active' => $this->accessController->hasModuleAccess($organizationId, $moduleSlug)
-            ],
-            'can_activate' => $canAfford && empty($missingDependencies) && empty($conflicts) && 
-                            !$this->accessController->hasModuleAccess($organizationId, $moduleSlug)
-        ];
     }
     
     public function getExpiringModules(int $organizationId, int $daysAhead = 7): array

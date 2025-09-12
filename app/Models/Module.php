@@ -123,4 +123,43 @@ class Module extends Model
     {
         return $query->where('category', $category);
     }
+
+    /**
+     * Получить публичные данные модуля для фронтенда (без внутренних полей)
+     */
+    public function toPublicArray(): array
+    {
+        return [
+            'id' => $this->id,
+            'name' => $this->name,
+            'slug' => $this->slug,
+            'version' => $this->version,
+            'type' => $this->type,
+            'billing_model' => $this->billing_model,
+            'category' => $this->category,
+            'description' => $this->description,
+            'pricing_config' => $this->pricing_config,
+            'features' => $this->features,
+            'permissions' => $this->permissions,
+            'dependencies' => $this->dependencies,
+            'conflicts' => $this->conflicts,
+            'limits' => $this->limits,
+            'icon' => $this->icon,
+            'display_order' => $this->display_order,
+            'is_active' => $this->is_active,
+            'is_system_module' => $this->is_system_module,
+            'created_at' => $this->created_at,
+            'updated_at' => $this->updated_at,
+        ];
+    }
+
+    /**
+     * Получить публичные данные для коллекции модулей
+     */
+    public static function toPublicCollection($modules): array
+    {
+        return $modules->map(function ($module) {
+            return $module->toPublicArray();
+        })->toArray();
+    }
 }

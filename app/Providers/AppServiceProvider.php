@@ -63,6 +63,8 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(AccessController::class);
         
         // Регистрируем модули
+        $this->app->register(\App\BusinessModules\Core\Organizations\OrganizationsServiceProvider::class);
+        $this->app->register(\App\BusinessModules\Core\Users\UsersServiceProvider::class);
         $this->app->register(\App\BusinessModules\Core\MultiOrganization\MultiOrganizationServiceProvider::class);
         $this->app->register(\App\BusinessModules\Features\BasicReports\BasicReportsServiceProvider::class);
         $this->app->register(\App\BusinessModules\Features\AdvancedReports\AdvancedReportsServiceProvider::class);

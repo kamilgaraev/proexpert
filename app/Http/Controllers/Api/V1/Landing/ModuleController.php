@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1\Landing;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\Api\V1\ErrorResponse;
+use App\Http\Responses\Api\V1\SuccessResponse;
+use App\Models\Module;
 use App\Modules\Core\ModuleManager;
 use App\Modules\Services\ModuleActivationService;
 use App\Modules\Services\ModuleBillingService;
@@ -10,8 +13,6 @@ use App\Modules\Services\ModulePermissionService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
-use App\Http\Responses\Api\V1\ErrorResponse;
-use App\Http\Responses\Api\V1\SuccessResponse;
 
 class ModuleController extends Controller
 {
@@ -91,8 +92,9 @@ class ModuleController extends Controller
         }
 
         $activeModules = $this->moduleManager->getOrganizationModules($organizationId);
+        $modules = $activeModules->pluck('module')->filter();
 
-        return (new SuccessResponse($activeModules->toArray()))->toResponse($request);
+        return (new SuccessResponse(Module::toPublicCollection($modules)))->toResponse($request);
     }
 
     /**
