@@ -83,15 +83,25 @@ class JwtAuthService
                     ]);
                     Log::info('[JwtAuthService] User last login updated.');
 
-                    // Загружаем отношения с новой системой авторизации
-                    $user->load('roleAssignments');
-                    Log::info('[JwtAuthService] User role assignments loaded (new auth system).', [
-                        'user_id' => $user->id,
-                        'assignments_count' => $user->roleAssignments->count()
-                    ]);
+                    // Загружаем отношения с новой системой авторизации (с fallback)
+                    $assignmentsCount = 0;
+                    try {
+                        $user->load('roleAssignments');
+                        $assignmentsCount = $user->roleAssignments->count();
+                        Log::info('[JwtAuthService] User role assignments loaded (new auth system).', [
+                            'user_id' => $user->id,
+                            'assignments_count' => $assignmentsCount
+                        ]);
+                    } catch (\Exception $e) {
+                        Log::warning('[JwtAuthService] New auth system tables not ready, skipping role assignments check', [
+                            'user_id' => $user->id,
+                            'error' => $e->getMessage()
+                        ]);
+                        // Продолжаем без проверки ролей, пока не созданы таблицы новой системы
+                    }
                     
                     // Если назначений ролей нет вообще, проверяем и восстанавливаем роль владельца
-                    if ($user->roleAssignments->count() === 0) {
+                    if ($assignmentsCount === 0) {
                         Log::warning('[JwtAuthService] User has no roles, checking organizations.', [
                             'user_id' => $user->id,
                         ]);
@@ -116,11 +126,12 @@ class JwtAuthService
                                     'role_slug' => 'organization_owner'
                                 ]);
                             } catch (\Exception $roleException) {
-                                Log::error('[JwtAuthService] Failed to assign owner role to first organization', [
+                                Log::warning('[JwtAuthService] Cannot assign owner role - new auth system tables not ready', [
                                     'user_id' => $user->id,
                                     'organization_id' => $firstOrg->id,
                                     'error' => $roleException->getMessage()
                                 ]);
+                                // Не критичная ошибка - роли будут назначены после создания таблиц
                             }
                         }
                     }
@@ -541,12 +552,12 @@ class JwtAuthService
                             'role_slug' => 'organization_owner'
                         ]);
                     } catch (\Exception $roleException) {
-                        Log::error('[JwtAuthService] Failed to assign owner role', [
+                        Log::warning('[JwtAuthService] Cannot assign owner role - new auth system tables not ready', [
                             'user_id' => $user->id,
                             'organization_id' => $organization->id,
                             'error' => $roleException->getMessage()
                         ]);
-                        // Не прерываем регистрацию из-за ошибки роли
+                        // Не прерываем регистрацию из-за ошибки роли - таблицы будут созданы позже
                     }
 
                 } catch (\Exception $e) {

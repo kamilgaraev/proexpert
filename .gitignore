@@ -33,3 +33,4 @@ scripts/nginx-config-lk.conf
 /public/docs/admin_api.json
 /public/docs/mobile_api.html
 /public/docs/mobile_api.json
+app/Console/Commands/Authorization/AssignOwnerRolesCommand.php

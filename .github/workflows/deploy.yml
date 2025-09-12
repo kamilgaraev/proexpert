@@ -41,6 +41,7 @@ jobs:
           username: root
           key: ${{ secrets.DEPLOY }}
           script: |
+            set -e # Остановить выполнение при первой ошибке
             cd /var/www/prohelper
             git reset --hard HEAD
             git clean -fd -e public/docs -e public/docs/**
@@ -51,7 +52,12 @@ jobs:
             php artisan optimize:clear || true
             php artisan storage:link || true
             if [ ! -f /usr/local/bin/rr ]; then vendor/bin/rr get-binary --location=/usr/local/bin --no-config --stability=stable; fi
+            
+            # КРИТИЧЕСКАЯ СЕКЦИЯ: миграции должны пройти успешно
+            echo "🔄 Running migrations..."
             php artisan migrate --force
+            echo "✅ Migrations completed successfully"
+            
             php artisan route:clear || true
             php artisan config:clear || true
             php artisan view:clear || true

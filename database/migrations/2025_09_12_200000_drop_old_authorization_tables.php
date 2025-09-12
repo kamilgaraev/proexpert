@@ -14,7 +14,8 @@ return new class extends Migration
         // Отключаем проверку внешних ключей
         Schema::disableForeignKeyConstraints();
 
-        // 1. Удаляем pivot таблицы первыми (с внешними ключами)
+        // 1. Удаляем таблицы с зависимостями на roles первыми
+        Schema::dropIfExists('landing_admin_role'); // Зависит на roles
         Schema::dropIfExists('role_user');
         Schema::dropIfExists('organization_role_user');
         Schema::dropIfExists('role_permission');

@@ -152,39 +152,55 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
             throw new \Exception("User not found: $userId");
         }
 
-        // Получаем или создаем контекст организации
-        $context = AuthorizationContext::getOrganizationContext($organizationId);
+        try {
+            // Получаем или создаем контекст организации
+            $context = AuthorizationContext::getOrganizationContext($organizationId);
 
-        // Проверяем, не назначена ли уже роль
-        $existing = UserRoleAssignment::where([
-            'user_id' => $userId,
-            'role_slug' => $roleSlug,
-            'context_id' => $context->id,
-            'is_active' => true
-        ])->exists();
-
-        if (!$existing) {
-            UserRoleAssignment::create([
+            // Проверяем, не назначена ли уже роль
+            $existing = UserRoleAssignment::where([
                 'user_id' => $userId,
                 'role_slug' => $roleSlug,
-                'role_type' => 'system', // Системная роль из JSON
                 'context_id' => $context->id,
-                'assigned_by' => auth()->id(),
                 'is_active' => true
-            ]);
+            ])->exists();
 
-            Log::info("[UserRepository] assignRoleToUser: Role assigned (new auth system)", [
-                'user_id' => $userId,
-                'role_slug' => $roleSlug,
-                'organization_id' => $organizationId,
-                'context_id' => $context->id
-            ]);
-        } else {
-            Log::debug("[UserRepository] assignRoleToUser: Role already assigned", [
-                'user_id' => $userId,
-                'role_slug' => $roleSlug,
-                'organization_id' => $organizationId
-            ]);
+            if (!$existing) {
+                UserRoleAssignment::create([
+                    'user_id' => $userId,
+                    'role_slug' => $roleSlug,
+                    'role_type' => 'system', // Системная роль из JSON
+                    'context_id' => $context->id,
+                    'assigned_by' => auth()->id(),
+                    'is_active' => true
+                ]);
+
+                Log::info("[UserRepository] assignRoleToUser: Role assigned (new auth system)", [
+                    'user_id' => $userId,
+                    'role_slug' => $roleSlug,
+                    'organization_id' => $organizationId,
+                    'context_id' => $context->id
+                ]);
+            } else {
+                Log::debug("[UserRepository] assignRoleToUser: Role already assigned", [
+                    'user_id' => $userId,
+                    'role_slug' => $roleSlug,
+                    'organization_id' => $organizationId
+                ]);
+            }
+        } catch (\Exception $e) {
+            // Таблицы новой системы авторизации еще не созданы - это нормально
+            if (str_contains($e->getMessage(), 'does not exist') || str_contains($e->getMessage(), 'Undefined table')) {
+                Log::info("[UserRepository] assignRoleToUser: New auth tables not ready, skipping role assignment", [
+                    'user_id' => $userId,
+                    'role_slug' => $roleSlug,
+                    'organization_id' => $organizationId,
+                    'error' => 'Auth tables not created yet'
+                ]);
+                return;
+            }
+            
+            // Любая другая ошибка - пробрасываем дальше
+            throw $e;
         }
     }
 
