@@ -238,8 +238,12 @@ class JwtAuthService
                 ];
             }
 
-            // Загружаем дополнительные данные
-            $userWithRoles = $this->userRepository->findWithRoles($user->id);
+            // Загружаем дополнительные данные с кэшированием
+            $cacheKey = "user_with_roles_{$user->id}_" . ($user->current_organization_id ?? 'no_org');
+            $userWithRoles = cache()->remember($cacheKey, 300, function() use ($user) {
+                return $this->userRepository->findWithRoles($user->id);
+            });
+            
             if (!$userWithRoles) {
                 Log::warning('[JwtAuthService::me] User not found by findWithRoles', ['user_id' => $user->id]);
             } else {

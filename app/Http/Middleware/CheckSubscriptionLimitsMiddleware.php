@@ -5,16 +5,16 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use App\Services\Billing\UserSubscriptionService;
+use App\Interfaces\Billing\SubscriptionLimitsServiceInterface;
 use Symfony\Component\HttpFoundation\Response;
 
 class CheckSubscriptionLimitsMiddleware
 {
-    protected UserSubscriptionService $subscriptionService;
+    protected SubscriptionLimitsServiceInterface $limitsService;
 
-    public function __construct(UserSubscriptionService $subscriptionService)
+    public function __construct(SubscriptionLimitsServiceInterface $limitsService)
     {
-        $this->subscriptionService = $subscriptionService;
+        $this->limitsService = $limitsService;
     }
 
     public function handle(Request $request, Closure $next, string $limitType): Response
@@ -28,7 +28,7 @@ class CheckSubscriptionLimitsMiddleware
             ], 401);
         }
 
-        $canProceed = $this->subscriptionService->checkUserLimit($user, $limitType);
+        $canProceed = $this->checkUserLimit($user, $limitType);
         
         if (!$canProceed) {
             return response()->json([
@@ -40,6 +40,17 @@ class CheckSubscriptionLimitsMiddleware
         }
 
         return $next($request);
+    }
+
+    private function checkUserLimit($user, string $limitType): bool
+    {
+        return match ($limitType) {
+            'max_foremen' => $this->limitsService->canCreateForeman($user),
+            'max_projects' => $this->limitsService->canCreateProject($user),
+            'max_users' => $this->limitsService->canCreateUser($user),
+            'max_contractor_invitations' => $this->limitsService->canCreateContractorInvitation($user),
+            default => true,
+        };
     }
 
     private function getLimitExceededMessage(string $limitType): string

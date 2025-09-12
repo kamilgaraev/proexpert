@@ -95,9 +95,9 @@ class Handler extends ExceptionHandler
                 $statusCode = $e instanceof HttpExceptionInterface ? $e->getStatusCode() : 500;
                 $message = $e->getMessage();
 
-                if ($statusCode === 500 && !config('app.debug')) {
+                if ($statusCode >= 500 && !config('app.debug')) {
                     $message = 'Произошла внутренняя ошибка сервера. Мы уже работаем над её исправлением. ' .
-                               'Если проблема повторяется, пожалуйста, свяжитесь с нашей службой поддержки.';
+                               'Если проблема повторяется, пожалуйста, свяжитесь с администрацией.';
                 }
                 
                 $response = ['message' => $message];
@@ -135,7 +135,7 @@ class Handler extends ExceptionHandler
             if ($status >= 500) {
                 return response(
                     'Произошла внутренняя ошибка сервера. Мы уже работаем над её исправлением. ' .
-                    'Если проблема повторяется, пожалуйста, свяжитесь с нашей службой поддержки.',
+                    'Если проблема повторяется, пожалуйста, свяжитесь с администрацией.',
                     $status,
                     ['Content-Type' => 'text/plain; charset=utf-8']
                 );

@@ -58,7 +58,10 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
 
     public function findWithRoles(int $id): ?User
     {
-        return $this->model->with('roles')->find($id);
+        return $this->model->with(['roles' => function($query) {
+            $query->select('roles.id', 'roles.name', 'roles.slug')
+                  ->where('role_user.organization_id', request()->attributes->get('current_organization_id'));
+        }])->find($id);
     }
 
     public function getUsersInOrganization(int $organizationId)
