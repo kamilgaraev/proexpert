@@ -79,10 +79,28 @@ class FileService
                 'file_path' => $file->getRealPath(),
             ]);
             
-            if ($useVisibility) {
-                $result = $disk->put($fullPath, $fileContent, $useVisibility);
-            } else {
-                $result = $disk->put($fullPath, $fileContent);
+            // Логируем конфигурацию диска
+            $diskConfig = $disk->getConfig();
+            Log::info('[FileService] Disk config', [
+                'driver' => $diskConfig['driver'] ?? 'unknown',
+                'bucket' => $diskConfig['bucket'] ?? 'unknown',
+                'endpoint' => $diskConfig['endpoint'] ?? 'unknown',
+                'region' => $diskConfig['region'] ?? 'unknown',
+            ]);
+            
+            try {
+                if ($useVisibility) {
+                    $result = $disk->put($fullPath, $fileContent, $useVisibility);
+                } else {
+                    $result = $disk->put($fullPath, $fileContent);
+                }
+            } catch (\Exception $e) {
+                Log::error('[FileService] S3 put() exception', [
+                    'path' => $fullPath,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
+                return false;
             }
             
             if ($result) {
