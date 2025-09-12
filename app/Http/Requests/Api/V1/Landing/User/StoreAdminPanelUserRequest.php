@@ -5,7 +5,6 @@ namespace App\Http\Requests\Api\V1\Landing\User;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
-use App\Models\Role; // Используем для проверки существования роли
 
 class StoreAdminPanelUserRequest extends FormRequest
 {
@@ -34,8 +33,11 @@ class StoreAdminPanelUserRequest extends FormRequest
             return false;
         }
 
-        // Разрешаем, если пользователь - владелец ИЛИ администратор организации
-        return $user->isOrganizationAdmin($organizationId);
+        // Проверяем права через новую систему авторизации
+        $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+        return $authService->can($user, 'organization.manage', ['context_type' => 'organization', 'context_id' => $organizationId]) ||
+               $authService->hasRole($user, 'organization_owner', $organizationId) ||
+               $authService->hasRole($user, 'organization_admin', $organizationId);
     }
 
     /**
@@ -53,10 +55,15 @@ class StoreAdminPanelUserRequest extends FormRequest
                 'required',
                 'string',
                 Rule::in($this->allowedRoles), // Роль должна быть из списка разрешенных
-                // Дополнительно проверяем, что такая роль вообще существует в БД
-                Rule::exists('roles', 'slug')->where(function ($query) {
-                    $query->where('type', Role::TYPE_SYSTEM); // Ищем только системные роли
-                }),
+                // Проверяем, что такая роль существует в новой системе авторизации
+                function ($attribute, $value, $fail) {
+                    $roleScanner = app(\App\Domain\Authorization\Services\RoleScanner::class);
+                    $allRoles = $roleScanner->getAllRoles();
+                    
+                    if (!isset($allRoles[$value])) {
+                        $fail("Роль '{$value}' не найдена в системе авторизации.");
+                    }
+                },
             ],
             // Можно добавить другие поля при необходимости
         ];

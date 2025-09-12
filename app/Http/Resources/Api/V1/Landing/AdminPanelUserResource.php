@@ -25,11 +25,14 @@ class AdminPanelUserResource extends JsonResource
             // Используем новую систему авторизации для получения ролей
             try {
                 $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
-                $roles = $authService->getUserRoleSlugs($this, ['organization_id' => $organizationId]);
+                $roles = $authService->getUserRoleSlugs($this->resource, ['organization_id' => $organizationId]);
                 
                 // Ищем первую роль, которая дает доступ к админ панели
+                $adminPanelRoles = [
+                    'super_admin', 'admin', 'content_admin', 'support_admin', 'web_admin', 'accountant'
+                ];
                 foreach ($roles as $role) {
-                    if (in_array($role, \App\Models\User::ADMIN_PANEL_ACCESS_ROLES)) {
+                    if (in_array($role, $adminPanelRoles)) {
                         $roleSlug = $role;
                         break;
                     }

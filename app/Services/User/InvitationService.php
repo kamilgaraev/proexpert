@@ -49,12 +49,10 @@ class InvitationService
 
         // Определяем ссылку для входа в зависимости от ролей
         $loginUrl = 'https://prohelper.pro/login';
-        if (in_array(\App\Models\Role::ROLE_FOREMAN, $roleSlugs, true)) {
+        if (in_array('foreman', $roleSlugs, true)) {
             $loginUrl = 'https://disk.yandex.ru/d/EUIo_ZBxzhLyjw';
         } elseif (array_intersect($roleSlugs, [
-            \App\Models\Role::ROLE_ADMIN,
-            \App\Models\Role::ROLE_ACCOUNTANT,
-            \App\Models\Role::ROLE_WEB_ADMIN,
+            'organization_admin', 'admin', 'accountant', 'web_admin'
         ])) {
             $loginUrl = 'https://admin.prohelper.pro/login';
         }
@@ -70,12 +68,10 @@ class InvitationService
         $roleSlugs = $invitation->role_slugs ?? [];
 
         $loginUrl = 'https://prohelper.pro/login';
-        if (in_array(\App\Models\Role::ROLE_FOREMAN, $roleSlugs, true)) {
+        if (in_array('foreman', $roleSlugs, true)) {
             $loginUrl = 'https://disk.yandex.ru/d/EUIo_ZBxzhLyjw';
         } elseif (array_intersect($roleSlugs, [
-            \App\Models\Role::ROLE_ADMIN,
-            \App\Models\Role::ROLE_ACCOUNTANT,
-            \App\Models\Role::ROLE_WEB_ADMIN,
+            'organization_admin', 'admin', 'accountant', 'web_admin'
         ])) {
             $loginUrl = 'https://admin.prohelper.pro/login';
         }

@@ -5,7 +5,6 @@ namespace App\Http\Requests\Api\V1\Landing\User;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
-use App\Models\Role; // Импортируем Role для использования констант
 
 class UpdateAdminRequest extends FormRequest
 {
@@ -24,9 +23,11 @@ class UpdateAdminRequest extends FormRequest
             return false;
         }
 
-        // Разрешаем, если пользователь - владелец ИЛИ администратор
-        // Используем isOrganizationAdmin, который мы исправили ранее
-        return $user->isOrganizationAdmin($organizationId);
+        // Проверяем права через новую систему авторизации
+        $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+        return $authService->can($user, 'organization.manage', ['context_type' => 'organization', 'context_id' => $organizationId]) ||
+               $authService->hasRole($user, 'organization_owner', $organizationId) ||
+               $authService->hasRole($user, 'organization_admin', $organizationId);
     }
 
     /**

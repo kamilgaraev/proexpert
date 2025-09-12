@@ -34,12 +34,12 @@ class SyncChildWorksPermissionJob implements ShouldQueue
         );
 
         $targetRoleSlugs = [
-            Role::ROLE_OWNER,
-            Role::ROLE_ADMIN,
-            Role::ROLE_ACCOUNTANT,
+            'organization_owner',
+            'organization_admin', 
+            'accountant',
         ];
 
-        $roles = Role::whereIn('slug', $targetRoleSlugs)->get();
+        // В новой системе роли определены в JSON файлах, данный код не используется
         foreach ($roles as $role) {
             if ($this->force || !$role->permissions()->where('permissions.id', $permission->id)->exists()) {
                 $role->permissions()->syncWithoutDetaching([$permission->id]);

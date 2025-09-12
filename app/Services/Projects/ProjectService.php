@@ -46,7 +46,12 @@ class ProjectService
                 }
 
                 // Для системного админа или администратора организации возвращаем все проекты
-                if ($user->isSystemAdmin() || $user->isOrganizationAdmin($organizationId)) {
+                $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+                $isAdmin = $authService->hasRole($user, 'system_admin') ||
+                          $authService->hasRole($user, 'organization_admin', $organizationId) ||
+                          $authService->hasRole($user, 'organization_owner', $organizationId);
+                
+                if ($isAdmin) {
                     $projects = $this->projectRepository->getProjectsForOrganization($organizationId);
                 } else {
                     // Для обычных пользователей возвращаем только назначенные им проекты
@@ -110,8 +115,10 @@ class ProjectService
                 }
 
                 // Проверяем доступ пользователя к проекту
-                $hasAccess = $user->isSystemAdmin() ||
-                    $user->isOrganizationAdmin($project->organization_id) ||
+                $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+                $hasAccess = $authService->hasRole($user, 'system_admin') ||
+                    $authService->hasRole($user, 'organization_admin', $project->organization_id) ||
+                    $authService->hasRole($user, 'organization_owner', $project->organization_id) ||
                     $project->users->contains('id', $user->id);
 
                 if (!$hasAccess) {
@@ -173,7 +180,13 @@ class ProjectService
                 $organizationId = $data['organization_id'] ?? null;
 
                 // Проверяем, имеет ли пользователь право создавать проекты
-                if (!$user->isSystemAdmin() && !$user->hasPermission('create_projects', $organizationId)) {
+                $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+                $canCreateProjects = $authService->hasRole($user, 'system_admin') ||
+                                   $authService->hasRole($user, 'organization_admin', $organizationId) ||
+                                   $authService->hasRole($user, 'organization_owner', $organizationId) ||
+                                   $authService->can($user, 'projects.create', ['context_type' => 'organization', 'context_id' => $organizationId]);
+                
+                if (!$canCreateProjects) {
                     LogService::authLog('project_creation_denied', [
                         'user_id' => $user->id,
                         'organization_id' => $organizationId,
@@ -272,8 +285,10 @@ class ProjectService
                 }
 
                 // Проверяем, имеет ли пользователь право редактировать проект
-                $hasAccess = $user->isSystemAdmin() ||
-                    $user->isOrganizationAdmin($project->organization_id) ||
+                $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+                $hasAccess = $authService->hasRole($user, 'system_admin') ||
+                    $authService->hasRole($user, 'organization_admin', $project->organization_id) ||
+                    $authService->hasRole($user, 'organization_owner', $project->organization_id) ||
                     ($project->users->contains('id', $user->id) && 
                      $project->users->where('id', $user->id)->first()->pivot->role === 'project_manager');
 
@@ -367,8 +382,10 @@ class ProjectService
                 }
 
                 // Проверяем, имеет ли пользователь право управлять участниками проекта
-                $hasAccess = $user->isSystemAdmin() ||
-                    $user->isOrganizationAdmin($project->organization_id) ||
+                $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+                $hasAccess = $authService->hasRole($user, 'system_admin') ||
+                    $authService->hasRole($user, 'organization_admin', $project->organization_id) ||
+                    $authService->hasRole($user, 'organization_owner', $project->organization_id) ||
                     ($project->users->contains('id', $user->id) && 
                      $project->users->where('id', $user->id)->first()->pivot->role === 'project_manager');
 
