@@ -1,0 +1,68 @@
+{
+  "name": "Продвинутые отчеты",
+  "slug": "advanced-reports", 
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "reports",
+  "description": "Расширенная аналитика, детализированные отчеты и бизнес-интеллект",
+  
+  "class_name": "App\\BusinessModules\\Features\\AdvancedReports\\AdvancedReportsModule",
+  "service_provider": "App\\BusinessModules\\Features\\AdvancedReports\\AdvancedReportsServiceProvider",
+  
+  "pricing": {
+    "base_price": 2900,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "advanced_reports.view",
+    "advanced_reports.foreman_activity",
+    "advanced_reports.financial_analytics", 
+    "advanced_reports.performance_metrics",
+    "advanced_reports.predictive_analytics",
+    "advanced_reports.custom_reports",
+    "advanced_reports.automated_reports",
+    "advanced_reports.api_access",
+    "advanced_reports.unlimited_export"
+  ],
+  
+  "features": [
+    "Детализированная активность прорабов",
+    "Финансовая аналитика по проектам",
+    "Метрики производительности",
+    "Прогнозная аналитика",
+    "Конструктор отчетов",
+    "Автоматическая отправка отчетов",
+    "API доступ к отчетам",
+    "Неограниченный экспорт данных",
+    "Интеграция с BI системами",
+    "Дашборды в реальном времени"
+  ],
+  
+  "dependencies": [
+    "basic-reports",
+    "organizations",
+    "users"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_reports_per_month": -1,
+    "max_export_rows": -1,
+    "retention_days": 365,
+    "max_custom_reports": 50,
+    "max_automated_reports": 10
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "icon": "chart-line",
+  "display_order": 11
+}

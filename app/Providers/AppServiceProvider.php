@@ -64,6 +64,8 @@ class AppServiceProvider extends ServiceProvider
         
         // Регистрируем модули
         $this->app->register(\App\BusinessModules\Core\MultiOrganization\MultiOrganizationServiceProvider::class);
+        $this->app->register(\App\BusinessModules\Features\BasicReports\BasicReportsServiceProvider::class);
+        $this->app->register(\App\BusinessModules\Features\AdvancedReports\AdvancedReportsServiceProvider::class);
     }
 
     /**

@@ -22,15 +22,15 @@ Route::prefix('reports')->name('reports.')->group(function () {
     Route::get('/check-advanced-availability', [ReportController::class, 'checkAdvancedReportsAvailability'])
         ->name('checkAdvancedAvailability');
     
-    // БАЗОВЫЕ ОТЧЕТЫ (модуль basic_reports - бесплатный)
-    Route::middleware(['module.access:basic_reports'])->group(function () {
+    // БАЗОВЫЕ ОТЧЕТЫ (модуль basic-reports - бесплатный)
+    Route::middleware(['module.access:basic-reports'])->group(function () {
         Route::get('material-usage', [ReportController::class, 'materialUsageReport'])->name('material_usage');
         Route::get('work-completion', [ReportController::class, 'workCompletionReport'])->name('work_completion');
         Route::get('project-status-summary', [ReportController::class, 'projectStatusSummaryReport'])->name('project_status_summary');
     });
     
-    // ПРОДВИНУТЫЕ ОТЧЕТЫ (модуль advanced_reports - платный)
-    Route::middleware(['module.access:advanced_reports'])->group(function () {
+    // ПРОДВИНУТЫЕ ОТЧЕТЫ (модуль advanced-reports - платный)
+    Route::middleware(['module.access:advanced-reports'])->group(function () {
         Route::get('foreman-activity', [ReportController::class, 'foremanActivityReport'])->name('foreman_activity');
         Route::get('official-material-usage', [ReportController::class, 'officialMaterialUsageReport'])->name('official_material_usage');
         

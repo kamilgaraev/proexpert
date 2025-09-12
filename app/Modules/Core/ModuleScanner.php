@@ -98,6 +98,48 @@ class ModuleScanner
             ]
         );
         
+        // Автоактивация модуля если указано в конфигурации
+        if (isset($config['auto_activate']) && $config['auto_activate'] === true) {
+            $this->autoActivateModule($config['slug']);
+        }
+        
         event(new ModuleDiscovered($config['slug']));
+    }
+    
+    private function autoActivateModule(string $moduleSlug): void
+    {
+        try {
+            $module = Module::where('slug', $moduleSlug)->first();
+            if (!$module) {
+                return;
+            }
+            
+            // Получаем все организации
+            $organizations = \App\Models\Organization::all();
+            
+            foreach ($organizations as $organization) {
+                // Проверяем что модуль еще не активирован
+                $existingActivation = \App\Models\OrganizationModuleActivation::where('organization_id', $organization->id)
+                    ->where('module_id', $module->id)
+                    ->first();
+                    
+                if (!$existingActivation) {
+                    // Активируем модуль для организации
+                    \App\Models\OrganizationModuleActivation::create([
+                        'organization_id' => $organization->id,
+                        'module_id' => $module->id,
+                        'activated_at' => now(),
+                        'expires_at' => null, // Бесплатные модули не истекают
+                        'status' => 'active',
+                        'activation_cost' => 0.0,
+                        'module_settings' => []
+                    ]);
+                    
+                    Log::info("Автоактивирован модуль {$moduleSlug} для организации {$organization->id}");
+                }
+            }
+        } catch (\Exception $e) {
+            Log::error("Ошибка автоактивации модуля {$moduleSlug}: " . $e->getMessage());
+        }
     }
 }

@@ -1,0 +1,58 @@
+{
+  "name": "Базовые отчеты",
+  "slug": "basic-reports", 
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "free",
+  "category": "reports",
+  "description": "Базовые отчеты по материалам, работам и проектам",
+  
+  "class_name": "App\\BusinessModules\\Features\\BasicReports\\BasicReportsModule",
+  "service_provider": "App\\BusinessModules\\Features\\BasicReports\\BasicReportsServiceProvider",
+  
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plan": true,
+    "duration_days": 0
+  },
+  
+  "permissions": [
+    "basic_reports.view",
+    "basic_reports.material_usage",
+    "basic_reports.work_completion", 
+    "basic_reports.project_summary",
+    "basic_reports.export_excel",
+    "basic_reports.export_pdf"
+  ],
+  
+  "features": [
+    "Отчет по использованию материалов",
+    "Отчет по выполненным работам", 
+    "Сводка по статусам проектов",
+    "Экспорт в Excel и PDF",
+    "Фильтрация по датам",
+    "Базовая аналитика"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_reports_per_month": 100,
+    "max_export_rows": 1000,
+    "retention_days": 30
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": true,
+  "is_system_module": false,
+  "icon": "chart-bar",
+  "display_order": 10
+}
