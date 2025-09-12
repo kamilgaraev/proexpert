@@ -25,7 +25,8 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         $organizationId = $user->current_organization_id;
         if ($organizationId) {
             $orgSubscription = $this->organizationSubscriptionRepo->getByOrganizationId($organizationId);
-            if ($orgSubscription && $orgSubscription->status === 'active') {
+            // Подписка активна, если не истекла (даже если отменена, но срок еще не закончился)
+            if ($orgSubscription && $orgSubscription->status === 'active' && $orgSubscription->ends_at > now()) {
                 return $this->getOrganizationLimitsData($user, $orgSubscription);
             }
         }
@@ -321,6 +322,34 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         return max(0, $invitationLimit['limit'] - $invitationLimit['used']);
     }
 
+    private function generateSubscriptionWarnings(OrganizationSubscription $subscription, SubscriptionPlan $plan, array $currentUsage): array
+    {
+        $warnings = $this->generateWarnings($plan, $currentUsage);
+        
+        // Добавляем предупреждение об отмененной подписке
+        if ($subscription->isCanceled()) {
+            $warnings[] = [
+                'type' => 'subscription_canceled',
+                'level' => 'warning',
+                'message' => 'Подписка отменена и закончится ' . $subscription->ends_at->format('d.m.Y') . '. Автопродление отключено.',
+            ];
+        }
+        
+        // Предупреждение о скором окончании подписки
+        $daysLeft = now()->diffInDays($subscription->ends_at, false);
+        if ($daysLeft <= 7 && $daysLeft > 0 && !$subscription->isCanceled()) {
+            $warnings[] = [
+                'type' => 'subscription_expiring',
+                'level' => $daysLeft <= 3 ? 'critical' : 'warning',
+                'message' => $daysLeft <= 3 
+                    ? "Подписка заканчивается через {$daysLeft} дн. Пополните баланс для автопродления."
+                    : "Подписка заканчивается через {$daysLeft} дн.",
+            ];
+        }
+        
+        return $warnings;
+    }
+
     private function getOrganizationLimitsData(User $user, OrganizationSubscription $subscription): array
     {
         $plan = $subscription->plan;
@@ -330,14 +359,17 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
             'has_subscription' => true,
             'subscription' => [
                 'id' => $subscription->id,
-                'status' => $subscription->status,
+                'status' => $subscription->getEffectiveStatus(),
                 'plan_name' => $plan->name,
                 'plan_description' => $plan->description,
                 'is_trial' => false,
                 'trial_ends_at' => $subscription->trial_ends_at?->format('Y-m-d H:i:s'),
                 'ends_at' => $subscription->ends_at?->format('Y-m-d H:i:s'),
                 'next_billing_at' => $subscription->next_billing_at?->format('Y-m-d H:i:s'),
-                'is_canceled' => $subscription->canceled_at !== null,
+                'is_canceled' => $subscription->isCanceled(),
+                'canceled_at' => $subscription->canceled_at?->format('Y-m-d H:i:s'),
+                'is_auto_payment_enabled' => $subscription->is_auto_payment_enabled,
+                'upgrade_required' => false,
             ],
             'limits' => [
                 'foremen' => $this->formatLimitData($plan->max_foremen, $currentUsage['foremen']),
@@ -347,7 +379,7 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
                 'contractor_invitations' => $this->formatLimitData($plan->max_contractor_invitations ?? null, $currentUsage['contractor_invitations']),
             ],
             'features' => $plan->features ? (array) $plan->features : [],
-            'warnings' => $this->generateWarnings($plan, $currentUsage),
+            'warnings' => $this->generateSubscriptionWarnings($subscription, $plan, $currentUsage),
         ];
     }
 } 

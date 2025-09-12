@@ -26,6 +26,10 @@ Route::middleware(['auth:api_landing', 'role:organization_owner']) // Приме
         Route::get('subscription', [OrganizationSubscriptionController::class, 'show'])->name('subscription.show');
         // POST /api/v1/landing/billing/subscribe
         Route::post('subscribe', [OrganizationSubscriptionController::class, 'subscribe'])->name('subscription.subscribe');
+        // POST /api/v1/landing/billing/subscription/cancel
+        Route::post('subscription/cancel', [OrganizationSubscriptionController::class, 'cancel'])->name('subscription.cancel');
+        // POST /api/v1/landing/billing/subscription/change-plan
+        Route::post('subscription/change-plan', [OrganizationSubscriptionController::class, 'changePlan'])->name('subscription.change_plan');
         // PATCH /api/v1/landing/billing/subscription/auto-payment
         Route::patch('subscription/auto-payment', [OrganizationSubscriptionController::class, 'updateAutoPayment'])->name('subscription.auto_payment');
         // PATCH /api/v1/landing/billing/subscription

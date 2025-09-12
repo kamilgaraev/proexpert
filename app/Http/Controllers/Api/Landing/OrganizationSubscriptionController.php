@@ -94,6 +94,63 @@ class OrganizationSubscriptionController extends Controller
         ]);
     }
 
+    public function cancel(Request $request)
+    {
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId || $organizationId != $user->current_organization_id) {
+            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+        }
+        
+        $service = new OrganizationSubscriptionService();
+        $result = $service->cancelSubscription($organizationId);
+        
+        if (!$result['success']) {
+            return response()->json([
+                'success' => false,
+                'message' => $result['message']
+            ], $result['status_code'] ?? 400);
+        }
+        
+        return response()->json([
+            'success' => true,
+            'data' => $result['subscription'],
+            'message' => 'Подписка отменена. Доступ сохранится до ' . $result['subscription']->ends_at->format('d.m.Y')
+        ]);
+    }
+
+    public function changePlan(Request $request)
+    {
+        $request->validate([
+            'plan_slug' => 'required|string|exists:subscription_plans,slug',
+        ]);
+        
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId || $organizationId != $user->current_organization_id) {
+            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+        }
+        
+        $service = new OrganizationSubscriptionService();
+        $result = $service->changePlan($organizationId, $request->input('plan_slug'));
+        
+        if (!$result['success']) {
+            return response()->json([
+                'success' => false,
+                'message' => $result['message']
+            ], $result['status_code'] ?? 400);
+        }
+        
+        return response()->json([
+            'success' => true,
+            'data' => $result['subscription'],
+            'billing_info' => $result['billing_info'] ?? null,
+            'message' => $result['message']
+        ]);
+    }
+
     public function updateAutoPayment(Request $request)
     {
         $request->validate([

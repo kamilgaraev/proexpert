@@ -50,4 +50,46 @@ class OrganizationSubscription extends Model
     {
         return $this->hasMany(OrganizationSubscriptionAddon::class);
     }
+
+    /**
+     * Проверить, активна ли подписка (не истекла и не отменена)
+     */
+    public function isActive(): bool
+    {
+        return $this->status === 'active' 
+            && $this->ends_at > now()
+            && !$this->isCanceled();
+    }
+
+    /**
+     * Проверить, отменена ли подписка
+     */
+    public function isCanceled(): bool
+    {
+        return $this->canceled_at !== null;
+    }
+
+    /**
+     * Проверить, истекла ли подписка
+     */
+    public function isExpired(): bool
+    {
+        return $this->ends_at <= now();
+    }
+
+    /**
+     * Получить статус подписки с учетом отмены и срока действия
+     */
+    public function getEffectiveStatus(): string
+    {
+        if ($this->isExpired()) {
+            return 'expired';
+        }
+        
+        if ($this->isCanceled()) {
+            return 'canceled_active'; // Отменена, но еще действует
+        }
+        
+        return $this->status;
+    }
 } 
