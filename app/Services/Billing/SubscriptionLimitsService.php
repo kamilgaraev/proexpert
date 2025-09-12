@@ -124,10 +124,12 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
 
     private function getForemenCount(int $organizationId): int
     {
-        return DB::table('role_user')
-            ->join('roles', 'role_user.role_id', '=', 'roles.id')
-            ->where('role_user.organization_id', $organizationId)
-            ->where('roles.slug', 'foreman')
+        // Используем новую систему авторизации
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+        
+        return \App\Domain\Authorization\Models\UserRoleAssignment::where('context_id', $context->id)
+            ->where('role_slug', 'foreman')
+            ->where('is_active', true)
             ->count();
     }
 

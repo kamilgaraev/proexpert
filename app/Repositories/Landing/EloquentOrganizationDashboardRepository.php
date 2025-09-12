@@ -106,16 +106,18 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
 
     public function getTeamSummary(int $organizationId): array
     {
-        // Считаем пользователей и распределяем по ролям через pivot role_user
+        // Используем новую систему авторизации с user_role_assignments
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+        
         $usersQuery = DB::table('users')
-            ->join('role_user', 'users.id', '=', 'role_user.user_id')
-            ->join('roles', 'role_user.role_id', '=', 'roles.id')
-            ->where('role_user.organization_id', $organizationId)
+            ->join('user_role_assignments', 'users.id', '=', 'user_role_assignments.user_id')
+            ->where('user_role_assignments.context_id', $context->id)
+            ->where('user_role_assignments.is_active', true)
             ->whereNull('users.deleted_at');
 
-        $rolesCount = $usersQuery->select('roles.slug', DB::raw('COUNT(*) as cnt'))
-            ->groupBy('roles.slug')
-            ->pluck('cnt', 'roles.slug')
+        $rolesCount = $usersQuery->select('user_role_assignments.role_slug', DB::raw('COUNT(*) as cnt'))
+            ->groupBy('user_role_assignments.role_slug')
+            ->pluck('cnt', 'user_role_assignments.role_slug')
             ->toArray();
 
         $total = array_sum($rolesCount);
