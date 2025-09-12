@@ -39,7 +39,7 @@ class AdminPanelUserController extends Controller
         Log::info('[AdminPanelUserController@index] Method entered.', ['user_id' => Auth::id(), 'organization_id' => $request->attributes->get('current_organization_id')]);
         try {
             $users = $this->userService->getAdminPanelUsersForCurrentOrg($request);
-            // TODO: Обновить для новой системы авторизации
+            // Загружаем роли через новую систему авторизации
             try {
                 $users->load('roleAssignments');
             } catch (\Exception $e) {

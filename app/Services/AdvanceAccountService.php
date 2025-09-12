@@ -447,8 +447,13 @@ class AdvanceAccountService
         $query = User::whereHas('organizations', function ($q) use ($organizationId) {
                 $q->where('organization_id', $organizationId);
             })
-            ->whereHas('roles', function ($q) {
-                $q->whereIn('slug', ['foreman', 'site_manager', 'project_manager']);
+            ->whereHas('roleAssignments', function ($q) use ($organizationId) {
+                $q->whereIn('role_slug', ['foreman', 'site_manager', 'project_manager'])
+                  ->whereHas('context', function ($contextQuery) use ($organizationId) {
+                      $contextQuery->where('context_type', 'organization')
+                                   ->where('context_id', $organizationId);
+                  })
+                  ->where('is_active', true);
             })
             ->select([
                 'id', 'name', 'current_balance', 'has_overdue_balance', 'position', 'avatar_path'

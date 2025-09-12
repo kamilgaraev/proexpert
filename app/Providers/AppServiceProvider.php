@@ -42,10 +42,22 @@ class AppServiceProvider extends ServiceProvider
             return new MaterialReportService($app->make(RateCoefficientService::class));
         });
 
-        // TODO: Временно закомментировано до интеграции новой системы авторизации
-        // $this->app->singleton(ChildOrganizationUserService::class, function ($app) {
-        //     return new ChildOrganizationUserService($app->make(OrganizationRoleService::class));
-        // });
+        // Регистрируем ChildOrganizationUserService с новыми зависимостями
+        $this->app->singleton(ChildOrganizationUserService::class, function ($app) {
+            return new ChildOrganizationUserService(
+                $app->make(\App\Domain\Authorization\Services\CustomRoleService::class),
+                $app->make(\App\Domain\Authorization\Services\AuthorizationService::class),
+                $app->make(\App\Services\UserInvitationService::class)
+            );
+        });
+        
+        // Регистрируем UserService с AuthorizationService
+        $this->app->singleton(\App\Services\User\UserService::class, function ($app) {
+            return new \App\Services\User\UserService(
+                $app->make(\App\Repositories\Interfaces\UserRepositoryInterface::class),
+                $app->make(\App\Domain\Authorization\Services\AuthorizationService::class)
+            );
+        });
         
         // Репозиторий дашборда ЛК
         $this->app->bind(\App\Repositories\Landing\OrganizationDashboardRepositoryInterface::class, \App\Repositories\Landing\EloquentOrganizationDashboardRepository::class);

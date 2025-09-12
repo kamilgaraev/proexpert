@@ -31,9 +31,11 @@ class ForemanActivityReportRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('users', 'id')->where(function ($query) use ($organizationId) {
-                    return $query->whereHas('roles', function ($roleQuery) use ($organizationId) {
-                        // TODO: Обновить для новой системы авторизации
-                        $roleQuery->where('role_user.organization_id', $organizationId);
+                    return $query->whereHas('roleAssignments', function ($assignmentQuery) use ($organizationId) {
+                        $assignmentQuery->whereHas('context', function ($contextQuery) use ($organizationId) {
+                            $contextQuery->where('context_type', 'organization')
+                                         ->where('context_id', $organizationId);
+                        })->where('is_active', true);
                     });
                 })
             ],

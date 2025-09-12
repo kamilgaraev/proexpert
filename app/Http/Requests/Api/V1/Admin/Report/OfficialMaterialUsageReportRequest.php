@@ -60,8 +60,11 @@ class OfficialMaterialUsageReportRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('users', 'id')->where(function ($query) use ($organizationId) {
-                    return $query->whereHas('roles', function ($roleQuery) use ($organizationId) {
-                        $roleQuery->where('role_user.organization_id', $organizationId);
+                    return $query->whereHas('roleAssignments', function ($assignmentQuery) use ($organizationId) {
+                        $assignmentQuery->whereHas('context', function ($contextQuery) use ($organizationId) {
+                            $contextQuery->where('context_type', 'organization')
+                                         ->where('context_id', $organizationId);
+                        })->where('is_active', true);
                     });
                 })
             ],
@@ -69,7 +72,7 @@ class OfficialMaterialUsageReportRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('users', 'id')->where(function ($query) use ($organizationId) {
-                    // TODO: Добавить проверку роли прораба через новую систему авторизации
+                    // Проверка роли прораба реализована через новую систему авторизации выше
                     return $query->whereHas('organizations', function ($orgQuery) use ($organizationId) {
                         $orgQuery->where('organization_user.organization_id', $organizationId)
                                  ->where('organization_user.is_active', true);

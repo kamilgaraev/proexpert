@@ -38,9 +38,12 @@ class WorkCompletionReportRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('users', 'id')->where(function ($query) use ($organizationId) {
-                    return $query->whereHas('roles', function ($roleQuery) use ($organizationId) {
-                        $roleQuery->where('slug', 'foreman' // Обновлено для новой системы авторизации)
-                                  ->where('role_user.organization_id', $organizationId);
+                    return $query->whereHas('roleAssignments', function ($assignmentQuery) use ($organizationId) {
+                        $assignmentQuery->where('role_slug', 'foreman')
+                                        ->whereHas('context', function ($contextQuery) use ($organizationId) {
+                                            $contextQuery->where('context_type', 'organization')
+                                                         ->where('context_id', $organizationId);
+                                        })->where('is_active', true);
                     });
                 })
             ],

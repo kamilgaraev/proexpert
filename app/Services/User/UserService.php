@@ -4,7 +4,8 @@ namespace App\Services\User;
 
 use App\Models\User;
 use App\Repositories\Interfaces\UserRepositoryInterface;
-// TODO: RoleRepositoryInterface больше не используется - заменен на новую систему авторизации
+// Интеграция с новой системой авторизации
+use App\Domain\Authorization\Services\AuthorizationService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\Request;
@@ -21,13 +22,15 @@ use App\Services\Organization\OrganizationContext;
 class UserService
 {
     protected UserRepositoryInterface $userRepository;
-    // TODO: RoleRepositoryInterface удален - используем новую систему авторизации
+    protected AuthorizationService $authorizationService;
 
     public function __construct(
-        UserRepositoryInterface $userRepository
+        UserRepositoryInterface $userRepository,
+        AuthorizationService $authorizationService
     )
     {
         $this->userRepository = $userRepository;
+        $this->authorizationService = $authorizationService;
     }
 
     // --- Helper Methods ---
@@ -45,7 +48,7 @@ class UserService
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id');
 
-        if (!$user || !$organizationId || !$user->isOwnerOfOrganization($organizationId)) {
+        if (!$user || !$organizationId || !$this->authorizationService->hasRole($user, 'organization_owner', $organizationId)) {
             throw new BusinessLogicException('Действие доступно только владельцу организации.', 403);
         }
     }
@@ -70,33 +73,31 @@ class UserService
             throw new BusinessLogicException('Действие доступно только авторизованному пользователю в контексте организации.', 403);
         }
 
-        // Проверяем, является ли пользователь системным админом, админом организации ИЛИ веб-админом
-        // Роль веб-админа (Role::ROLE_WEB_ADMIN) теперь также дает доступ
-        if (!(
-              $user->isSystemAdmin() ||
-              $user->isOrganizationAdmin($organizationId) ||
-              $user->isOwnerOfOrganization($organizationId) ||
-              $user->hasRole(Role::ROLE_WEB_ADMIN, $organizationId)
-            )) {
+        // Проверяем права через новую систему авторизации
+        if (!($this->authorizationService->can($user, 'organization.manage', ['context_type' => 'organization', 'context_id' => $organizationId]) ||
+              $this->authorizationService->hasRole($user, 'system_admin') ||
+              $this->authorizationService->hasRole($user, 'organization_owner', $organizationId) ||
+              $this->authorizationService->hasRole($user, 'organization_admin', $organizationId) ||
+              $this->authorizationService->hasRole($user, 'web_admin', $organizationId))) {
             throw new BusinessLogicException('Действие доступно только администратору организации или веб-администратору.', 403);
         }
     }
 
 
     /**
-     * Finds the specified role or throws an exception.
+     * Проверяет, существует ли роль в новой системе авторизации
      *
      * @param string $roleSlug
-     * @return Role
      * @throws BusinessLogicException
      */
-    protected function findRoleOrFail(string $roleSlug): Role
+    protected function validateRoleExists(string $roleSlug): void
     {
-        $role = $this->roleRepository->findBySlug($roleSlug);
-        if (!$role) {
-            throw new BusinessLogicException("Роль '{$roleSlug}' не найдена.", 500);
+        $roleScanner = app(\App\Domain\Authorization\Services\RoleScanner::class);
+        $allRoles = $roleScanner->getAllRoles();
+        
+        if (!isset($allRoles[$roleSlug])) {
+            throw new BusinessLogicException("Роль '{$roleSlug}' не найдена в системе.", 500);
         }
-        return $role;
     }
 
 
@@ -120,8 +121,8 @@ class UserService
 
         $intOrganizationId = (int) $organizationId;
 
-        $adminRoleSlug = Role::ROLE_ADMIN;
-        $ownerRoleSlug = Role::ROLE_OWNER;
+        $adminRoleSlug = 'organization_admin';
+        $ownerRoleSlug = 'organization_owner';
 
         $adminUsers = $this->userRepository->findByRoleInOrganization($intOrganizationId, $adminRoleSlug);
         $ownerUsers = $this->userRepository->findByRoleInOrganization($intOrganizationId, $ownerRoleSlug);
@@ -149,22 +150,23 @@ class UserService
             throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
         $intOrganizationId = (int) $organizationId; // Приводим к int
-        $adminRole = $this->findRoleOrFail(Role::ROLE_ADMIN);
+        $adminRoleSlug = 'organization_admin';
+        $this->validateRoleExists($adminRoleSlug);
 
         $data['password'] = Hash::make($data['password']);
-        $data['user_type'] = Role::ROLE_ADMIN; // Or a more specific type if needed
+        $data['user_type'] = 'organization_admin'; // Or a more specific type if needed
 
         // Check if user already exists
         $existingUser = $this->userRepository->findByEmail($data['email']);
 
         if ($existingUser) {
-            // Используем $intOrganizationId
-            if ($this->userRepository->hasRoleInOrganization($existingUser->id, $adminRole->id, $intOrganizationId)) {
+            // Проверяем, есть ли уже роль администратора
+            if ($this->authorizationService->hasRole($existingUser, $adminRoleSlug, $intOrganizationId)) {
                  throw new BusinessLogicException('Пользователь с таким email уже является администратором в этой организации.', 409); // 409 Conflict
             }
             // Используем $intOrganizationId
             $this->userRepository->attachToOrganization($existingUser->id, $intOrganizationId);
-            $this->userRepository->assignRole($existingUser->id, $adminRole->id, $intOrganizationId);
+            $this->userRepository->assignRoleToUser($existingUser->id, $adminRoleSlug, $intOrganizationId);
              // Optionally update user data if provided (name, etc.)?
             $this->userRepository->update($existingUser->id, ['name' => $data['name']]); // Update name if needed
             return $this->userRepository->find($existingUser->id); // Return the existing user
@@ -173,7 +175,7 @@ class UserService
             $newUser = $this->userRepository->create($data);
             // Используем $intOrganizationId
             $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId);
-            $this->userRepository->assignRole($newUser->id, $adminRole->id, $intOrganizationId);
+            $this->userRepository->assignRoleToUser($newUser->id, $adminRoleSlug, $intOrganizationId);
             return $newUser;
         }
     }
@@ -206,7 +208,8 @@ class UserService
 
         // Дополнительно: Убедимся, что у пользователя есть роль админа или владельца В ЭТОЙ ОРГАНИЗАЦИИ
         // Это важно, чтобы случайно не показать/изменить пользователя с другой ролью
-        if (!($user->hasRole(Role::ROLE_ADMIN, $intOrganizationId) || $user->hasRole(Role::ROLE_OWNER, $intOrganizationId))) {
+        if (!($this->authorizationService->hasRole($user, 'organization_admin', $intOrganizationId) || 
+              $this->authorizationService->hasRole($user, 'organization_owner', $intOrganizationId))) {
             // Можно вернуть null или выбросить исключение, если это считается ошибкой прав
             Log::warning('Attempted to find user by ID who is not an Admin or Owner in the current org', [
                 'requesting_user_id' => $request->user()->id,
@@ -252,9 +255,9 @@ class UserService
         }
 
         // Проверяем, является ли целевой пользователь владельцем
-        if ($targetUser->hasRole(Role::ROLE_OWNER, $intOrganizationId)) {
+        if ($this->authorizationService->hasRole($targetUser, 'organization_owner', $intOrganizationId)) {
             // Разрешаем обновление владельца только системному администратору
-            if (!$requestingUser->isSystemAdmin()) {
+            if (!$this->authorizationService->hasRole($requestingUser, 'system_admin')) {
                  throw new BusinessLogicException('Только системный администратор может изменять данные владельца организации.', 403);
             }
             // Дополнительно: Запретить изменять роль владельца?
@@ -314,7 +317,7 @@ class UserService
         }
 
         // Запрещаем удалять Владельца организации
-        if ($adminUser->hasRole(Role::ROLE_OWNER, $intOrganizationId)) {
+        if ($this->authorizationService->hasRole($adminUser, 'organization_owner', $intOrganizationId)) {
             throw new BusinessLogicException('Нельзя удалить владельца организации.', 403);
         }
         // Запрещаем удалять себя (даже если ты админ)
@@ -323,11 +326,16 @@ class UserService
         }
 
         // Вместо удаления пользователя, отвязываем его от организации и удаляем роль админа
-        $adminRole = $this->findRoleOrFail(Role::ROLE_ADMIN);
-        $this->userRepository->revokeRole($adminUserId, $adminRole->id, $intOrganizationId);
+        $adminRoleSlug = 'organization_admin';
+        $this->userRepository->revokeRole($adminUserId, 0, $intOrganizationId); // Передаем 0 для совместимости, метод deprecated
 
         // Отвязываем от организации, если нет других ролей в этой организации
-        $otherRolesCount = $adminUser->rolesInOrganization($intOrganizationId)->count();
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($intOrganizationId);
+        $otherRolesCount = \App\Domain\Authorization\Models\UserRoleAssignment::where([
+            'user_id' => $adminUserId,
+            'context_id' => $context->id,
+            'is_active' => true
+        ])->count();
         if ($otherRolesCount === 0) {
              $this->userRepository->detachFromOrganization($adminUserId, $intOrganizationId);
         }
@@ -366,7 +374,7 @@ class UserService
         $sortBy = $request->query('sort_by', 'created_at'); // Значение по умолчанию 'created_at'
         $sortDirection = $request->query('sort_direction', 'desc'); // Значение по умолчанию 'desc'
 
-        $foremanRoleSlug = Role::ROLE_FOREMAN;
+        $foremanRoleSlug = 'foreman';
 
         // Используем метод репозитория, который поддерживает фильтрацию и пагинацию
         return $this->userRepository->paginateByRoleInOrganization(
@@ -427,29 +435,30 @@ class UserService
         if(!$organizationId) {
             throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
-        $foremanRole = $this->findRoleOrFail(Role::ROLE_FOREMAN);
+        $foremanRoleSlug = 'foreman';
+        $this->validateRoleExists($foremanRoleSlug);
 
         $data['password'] = Hash::make($data['password']);
-        $data['user_type'] = Role::ROLE_FOREMAN; // Set user type
+        $data['user_type'] = 'foreman'; // Set user type
 
         // Check if user already exists
         $existingUser = $this->userRepository->findByEmail($data['email']);
 
         if ($existingUser) {
             // If user exists, check if they are already a foreman in this org
-            if ($this->userRepository->hasRoleInOrganization($existingUser->id, $foremanRole->id, $organizationId)) {
+            if ($this->authorizationService->hasRole($existingUser, $foremanRoleSlug, $organizationId)) {
                  throw new BusinessLogicException('Пользователь с таким email уже является прорабом в этой организации.', 409);
             }
             // If user exists but not foreman, add them to the org with the foreman role
             $this->userRepository->attachToOrganization($existingUser->id, $organizationId, false); // Ensure attached, NOT as owner
-            $this->userRepository->assignRole($existingUser->id, $foremanRole->id, $organizationId);
+            $this->userRepository->assignRoleToUser($existingUser->id, $foremanRoleSlug, $organizationId);
             $this->userRepository->update($existingUser->id, ['name' => $data['name']]); // Update name
             return $this->userRepository->find($existingUser->id);
         } else {
              // If user doesn't exist, create them and assign role/org
             $newUser = $this->userRepository->create($data);
             $this->userRepository->attachToOrganization($newUser->id, $organizationId, false); // Attach as NOT an owner
-            $this->userRepository->assignRole($newUser->id, $foremanRole->id, $organizationId);
+            $this->userRepository->assignRoleToUser($newUser->id, $foremanRoleSlug, $organizationId);
             return $newUser;
         }
     }
@@ -479,9 +488,9 @@ class UserService
         }
 
         // Проверяем, что это действительно прораб (foreman)
-        $foremanRole = $this->findRoleOrFail(Role::ROLE_FOREMAN); // Получаем объект Role
-        if (!$this->userRepository->hasRoleInOrganization($user->id, $foremanRole->id, $intOrganizationId)) { // Используем $foremanRole->id
-            Log::warning("[UserService::findForemanById] User {$foremanUserId} is not a foreman in org {$intOrganizationId}. Roles: " . $user->rolesInOrganization($intOrganizationId)->pluck('slug')->implode(', '));
+        $foremanRoleSlug = 'foreman';
+        if (!$this->authorizationService->hasRole($user, $foremanRoleSlug, $intOrganizationId)) {
+            Log::warning("[UserService::findForemanById] User {$foremanUserId} is not a foreman in org {$intOrganizationId}");
             // Если мы строго ищем прораба, то это null
             return null; 
         }
@@ -557,13 +566,18 @@ class UserService
         }
 
         // Revoke the foreman role in this organization
-        $foremanRole = $this->findRoleOrFail(Role::ROLE_FOREMAN);
-        $this->userRepository->revokeRole($foremanUserId, $foremanRole->id, $organizationId);
+        $foremanRoleSlug = 'foreman';
+        $this->userRepository->revokeRole($foremanUserId, 0, $organizationId); // Deprecated method, passing 0 for compatibility
 
         // Detach from organization if they have no other roles in this org
         // Reload user to get fresh role count
         $foremanUser = $this->userRepository->find($foremanUserId); 
-        $otherRolesCount = $foremanUser->rolesInOrganization($organizationId)->count();
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+        $otherRolesCount = \App\Domain\Authorization\Models\UserRoleAssignment::where([
+            'user_id' => $foremanUserId,
+            'context_id' => $context->id,
+            'is_active' => true
+        ])->count();
         if ($otherRolesCount === 0) {
              $this->userRepository->detachFromOrganization($foremanUserId, $organizationId);
         }
@@ -597,12 +611,10 @@ class UserService
         }
         $intOrganizationId = (int) $organizationId;
 
-        // Находим нужную роль по слагу или выбрасываем исключение
-        $role = $this->findRoleOrFail($roleSlug);
-        // Дополнительная проверка, что роль системная (не привязана к конкретной организации)
-        if ($role->type !== Role::TYPE_SYSTEM) {
-             throw new BusinessLogicException("Роль '{$roleSlug}' не является системной и не может быть назначена таким образом.", 400);
-        }
+        // Проверяем существование роли
+        $this->validateRoleExists($roleSlug);
+        // В новой системе все роли определяются в JSON файлах
+        // Дополнительная проверка не требуется
 
 
         $userData['password'] = Hash::make($userData['password']);
@@ -614,12 +626,12 @@ class UserService
 
         if ($existingUser) {
             // Пользователь существует. Проверяем, есть ли у него уже ЭТА роль В ЭТОЙ организации.
-            if ($this->userRepository->hasRoleInOrganization($existingUser->id, $role->id, $intOrganizationId)) {
-                 throw new BusinessLogicException("Пользователь с таким email уже имеет роль '{$role->name}' в этой организации.", 409);
+            if ($this->authorizationService->hasRole($existingUser, $roleSlug, $intOrganizationId)) {
+                 throw new BusinessLogicException("Пользователь с таким email уже имеет роль '{$roleSlug}' в этой организации.", 409);
             }
             // Пользователь существует, но роли нет. Привязываем к организации и назначаем роль.
             $this->userRepository->attachToOrganization($existingUser->id, $intOrganizationId, false, true); // Не владелец, активный
-            $this->userRepository->assignRole($existingUser->id, $role->id, $intOrganizationId);
+            $this->userRepository->assignRoleToUser($existingUser->id, $roleSlug, $intOrganizationId);
             // Обновляем имя, если оно изменилось
             $this->userRepository->update($existingUser->id, ['name' => $userData['name']]);
             return $this->userRepository->find($existingUser->id);
@@ -630,7 +642,7 @@ class UserService
             $newUser = $this->userRepository->create($userData);
             // Привязываем к организации и назначаем роль.
             $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId, false, true); // Не владелец, активный
-            $this->userRepository->assignRole($newUser->id, $role->id, $intOrganizationId);
+            $this->userRepository->assignRoleToUser($newUser->id, $roleSlug, $intOrganizationId);
             return $newUser;
         }
     }
@@ -723,7 +735,7 @@ class UserService
         // Проверяем, что у пользователя есть хотя бы одна из разрешенных ролей в ЭТОЙ организации
         $hasAllowedRole = false;
         foreach ($allowedRoles as $roleSlug) {
-            if ($user->hasRole($roleSlug, $intOrganizationId)) {
+            if ($this->authorizationService->hasRole($user, $roleSlug, $intOrganizationId)) {
                 $hasAllowedRole = true;
                 break;
             }
@@ -770,7 +782,7 @@ class UserService
         }
 
         // Запрещаем обновлять владельца организации через этот интерфейс
-        if ($targetUser->hasRole(Role::ROLE_OWNER, $intOrganizationId)) {
+        if ($this->authorizationService->hasRole($targetUser, 'organization_owner', $intOrganizationId)) {
             // Эта проверка может быть избыточной, если owner не входит в $allowedRoles, но на всякий случай
             throw new BusinessLogicException('Владельца организации нельзя изменять через этот интерфейс.', 403);
         }
@@ -816,14 +828,16 @@ class UserService
         $requestingUser = $request->user();
 
         // Используем findAdminPanelUserById для проверки
-        $rolesToDelete = $rolesToDelete ?? \App\Models\User::ADMIN_PANEL_ACCESS_ROLES;
+        $rolesToDelete = $rolesToDelete ?? [
+            'super_admin', 'admin', 'content_admin', 'support_admin', 'web_admin', 'accountant'
+        ];
         $targetUser = $this->findAdminPanelUserById($targetUserId, $request, $rolesToDelete);
         if (!$targetUser) {
             throw new BusinessLogicException('Пользователь админ-панели не найден или нет прав на его просмотр/удаление.', 404);
         }
 
         // Запрещаем удалять владельца
-        if ($targetUser->hasRole(Role::ROLE_OWNER, $intOrganizationId)) {
+        if ($this->authorizationService->hasRole($targetUser, 'organization_owner', $intOrganizationId)) {
              throw new BusinessLogicException('Владельца организации удалить нельзя.', 403);
         }
         // Запрещаем удалять себя
@@ -831,19 +845,28 @@ class UserService
             throw new BusinessLogicException('Нельзя удалить самого себя.', 403);
         }
 
-        // Отзываем все указанные роли
+        // Отзываем все указанные роли через новую систему
         $revokedAny = false;
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($intOrganizationId);
         foreach($rolesToDelete as $roleSlug) {
-            $role = $this->roleRepository->findBySlug($roleSlug);
-            if ($role) {
-               $revoked = $this->userRepository->revokeRole($targetUserId, $role->id, $intOrganizationId);
-               if ($revoked) $revokedAny = true;
-            }
+            $revoked = \App\Domain\Authorization\Models\UserRoleAssignment::where([
+                'user_id' => $targetUserId,
+                'role_slug' => $roleSlug,
+                'context_id' => $context->id,
+                'is_active' => true
+            ])->update(['is_active' => false]);
+            if ($revoked) $revokedAny = true;
         }
 
         // Отвязываем от организации, если нет других ролей в этой организации
         $targetUser = $this->userRepository->find($targetUserId);
-        if ($targetUser && $targetUser->rolesInOrganization($intOrganizationId)->count() === 0) {
+        $remainingRoles = \App\Domain\Authorization\Models\UserRoleAssignment::where([
+            'user_id' => $targetUserId,
+            'context_id' => $context->id,
+            'is_active' => true
+        ])->count();
+        
+        if ($targetUser && $remainingRoles === 0) {
              $this->userRepository->detachFromOrganization($targetUserId, $intOrganizationId);
         }
 
@@ -927,7 +950,9 @@ class UserService
         }
         $intOrganizationId = (int) $organizationId;
 
-        $adminPanelRoles = User::ADMIN_PANEL_ACCESS_ROLES; // Получаем все роли из константы
+        $adminPanelRoles = [
+            'super_admin', 'admin', 'content_admin', 'support_admin', 'web_admin', 'accountant'
+        ]; // Роли для доступа к админ-панели
 
         $users = $this->userRepository->findByRolesInOrganization($intOrganizationId, $adminPanelRoles);
 

@@ -490,8 +490,55 @@ class MultiOrganizationController extends Controller
                 throw new \Exception('Организация не является дочерней для данного холдинга');
             }
 
-            // TODO: После интеграции новой системы авторизации - заменить на новые модели
-            $roles = collect(); // Временная заглушка
+            // Получаем роли для дочерней организации через новую систему авторизации
+            $roleScanner = app(\App\Domain\Authorization\Services\RoleScanner::class);
+            $customRoleService = app(\App\Domain\Authorization\Services\CustomRoleService::class);
+            
+            // Получаем системные роли из JSON файлов
+            $systemRoles = $roleScanner->getInterfaceRoles('lk');
+            
+            // Получаем кастомные роли организации
+            $customRoles = $customRoleService->getOrganizationRoles($childOrgId);
+            
+            // Объединяем системные и кастомные роли
+            $allRoles = collect();
+            
+            // Добавляем системные роли
+            foreach ($systemRoles as $roleSlug => $roleData) {
+                $allRoles->push((object)[
+                    'id' => $roleSlug, // В новой системе используем slug как id
+                    'name' => $roleData['name'],
+                    'slug' => $roleSlug,
+                    'description' => $roleData['description'] ?? '',
+                    'color' => null,
+                    'permissions' => array_merge(
+                        $roleData['system_permissions'] ?? [],
+                        array_values($roleData['module_permissions'] ?? [])
+                    ),
+                    'permissions_count' => count($roleData['system_permissions'] ?? []) + count($roleData['module_permissions'] ?? []),
+                    'users_count' => 0, // TODO: подсчитать количество пользователей с этой ролью
+                    'is_system' => true,
+                    'is_active' => true,
+                ]);
+            }
+            
+            // Добавляем кастомные роли
+            foreach ($customRoles as $customRole) {
+                $allRoles->push((object)[
+                    'id' => $customRole->id,
+                    'name' => $customRole->name,
+                    'slug' => $customRole->slug,
+                    'description' => $customRole->description,
+                    'color' => $customRole->color,
+                    'permissions' => $customRole->permissions,
+                    'permissions_count' => count($customRole->permissions),
+                    'users_count' => 0, // TODO: подсчитать количество пользователей с этой ролью
+                    'is_system' => false,
+                    'is_active' => $customRole->is_active,
+                ]);
+            }
+            
+            $roles = $allRoles;
 
             return response()->json([
                 'success' => true,

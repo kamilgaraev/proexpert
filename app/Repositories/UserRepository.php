@@ -268,12 +268,20 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     {
         $user = $this->model->find($userId);
         if ($user) {
-            // В случае detach мы используем специальный синтаксис с условиями
-            // TODO: Обновить для новой системы авторизации
-            Log::warning("[UserRepository] revokeRole using old system - needs update", [
-                'user_id' => $user->id, 'role_id' => $roleId, 'org_id' => $organizationId
+            // Отзываем роль в новой системе авторизации
+            $context = AuthorizationContext::getOrganizationContext($organizationId);
+            
+            $updated = UserRoleAssignment::where([
+                'user_id' => $userId,
+                'context_id' => $context->id,
+                'is_active' => true
+            ])->update(['is_active' => false]);
+            
+            Log::info("[UserRepository] revokeRole completed (new auth system)", [
+                'user_id' => $user->id, 'organization_id' => $organizationId, 'updated' => $updated
             ]);
-            return false; // Временно отключаем до полной миграции
+            
+            return $updated > 0;
         }
         return false;
     }
@@ -289,10 +297,17 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     {
         $user = $this->model->find($userId);
         if ($user) {
-            // TODO: Обновить для новой системы авторизации
-            // Удаляем все роли пользователя в этой организации перед откреплением
-            Log::warning("[UserRepository] detachFromOrganization using old roles system - needs update", [
-                'user_id' => $userId, 'organization_id' => $organizationId
+            // Отключаем все роли пользователя в этой организации
+            $context = AuthorizationContext::getOrganizationContext($organizationId);
+            
+            $disabledRoles = UserRoleAssignment::where([
+                'user_id' => $userId,
+                'context_id' => $context->id,
+                'is_active' => true
+            ])->update(['is_active' => false]);
+            
+            Log::info("[UserRepository] detachFromOrganization - roles disabled (new auth system)", [
+                'user_id' => $userId, 'organization_id' => $organizationId, 'disabled_roles' => $disabledRoles
             ]);
             // Открепляем от организации
             $detached = $user->organizations()->detach($organizationId) > 0;
@@ -313,11 +328,15 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     {
         $user = $this->model->find($userId);
         if ($user) {
-            // TODO: Обновить для новой системы авторизации
-            Log::warning("[UserRepository] hasRoleInOrganization using old roles system - needs update", [
+            // Проверяем роль в новой системе авторизации
+            $context = AuthorizationContext::getOrganizationContext($organizationId);
+            
+            // Поскольку у нас теперь роли по slug, а не по ID, нужна другая логика
+            // Этот метод устарел и не должен использоваться с новой системой
+            Log::info("[UserRepository] hasRoleInOrganization called with role_id - method deprecated", [
                 'user_id' => $userId, 'role_id' => $roleId, 'organization_id' => $organizationId
             ]);
-            return false; // Временно возвращаем false
+            return false; // Устаревший метод не поддерживается
         }
         return false;
     }

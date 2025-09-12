@@ -19,7 +19,6 @@ class SyncChildWorksPermissionJob implements ShouldQueue
 
     public function handle(): void
     {
-        // TODO: Переписать для новой системы авторизации
         // В новой системе права определяются в JSON файлах ролей
         // Данный Job больше не нужен, так как синхронизация происходит автоматически
         

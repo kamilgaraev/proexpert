@@ -3,21 +3,33 @@
 namespace App\Services\Landing;
 
 use App\Models\Organization;
-use App\Models\OrganizationRole;
 use App\Models\User;
-use App\Services\OrganizationRoleService;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Domain\Authorization\Services\CustomRoleService;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Services\UserInvitationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
+use Illuminate\Support\Collection;
 
 class ChildOrganizationUserService
 {
-    protected OrganizationRoleService $roleService;
+    protected CustomRoleService $customRoleService;
+    protected AuthorizationService $authorizationService;
+    protected UserInvitationService $invitationService;
 
-    public function __construct(OrganizationRoleService $roleService)
-    {
-        $this->roleService = $roleService;
+    public function __construct(
+        CustomRoleService $customRoleService,
+        AuthorizationService $authorizationService,
+        UserInvitationService $invitationService
+    ) {
+        $this->customRoleService = $customRoleService;
+        $this->authorizationService = $authorizationService;
+        $this->invitationService = $invitationService;
     }
 
     public function createUserWithRole(int $childOrgId, array $userData, User $createdBy): array
@@ -30,17 +42,26 @@ class ChildOrganizationUserService
 
         return DB::transaction(function () use ($childOrg, $userData, $createdBy) {
             $user = $this->createOrFindUser($userData);
-            $role = $this->createCustomRole($childOrg->id, $userData['role_data'], $createdBy);
             
-            $this->attachUserToOrganization($user, $childOrg, $role);
+            // Создаем кастомную роль или используем существующую
+            if (isset($userData['role_data']['is_custom']) && $userData['role_data']['is_custom']) {
+                $role = $this->createCustomRole($childOrg->id, $userData['role_data'], $createdBy);
+                $roleSlug = $role->slug;
+            } else {
+                // Используем системную роль
+                $roleSlug = $userData['role_data']['slug'] ?? 'organization_user';
+                $role = null;
+            }
+            
+            $this->attachUserToOrganization($user, $childOrg, $roleSlug);
             
             if ($userData['send_invitation'] ?? false) {
-                $this->sendInvitation($user, $childOrg, $role);
+                $this->sendInvitation($user, $childOrg, $roleSlug);
             }
 
             return [
-                'user' => $this->formatUserData($user, $role),
-                'role' => $this->formatRoleData($role),
+                'user' => $this->formatUserData($user, $roleSlug, $role),
+                'role' => $role ? $this->formatRoleData($role) : $this->formatSystemRoleData($roleSlug),
             ];
         });
     }
@@ -55,20 +76,36 @@ class ChildOrganizationUserService
         }
 
         return DB::transaction(function () use ($childOrg, $user, $roleData, $updatedBy) {
-            $currentRole = $this->getUserRoleInOrganization($user->id, $childOrg->id);
+            $context = AuthorizationContext::getOrganizationContext($childOrg->id);
             
-            if ($currentRole && !$currentRole->is_system) {
-                $this->roleService->updateRole($currentRole->id, $roleData, $childOrg->id);
-                $updatedRole = $currentRole->fresh();
+            // Отключаем все старые роли пользователя в этой организации
+            UserRoleAssignment::where([
+                'user_id' => $user->id,
+                'context_id' => $context->id,
+                'is_active' => true
+            ])->update(['is_active' => false]);
+            
+            // Назначаем новую роль
+            if (isset($roleData['is_custom']) && $roleData['is_custom']) {
+                $role = $this->createCustomRole($childOrg->id, $roleData, $updatedBy);
+                $roleSlug = $role->slug;
             } else {
-                $this->removeUserFromOrganization($user, $childOrg);
-                $updatedRole = $this->createCustomRole($childOrg->id, $roleData, $updatedBy);
-                $this->attachUserToOrganization($user, $childOrg, $updatedRole);
+                $roleSlug = $roleData['slug'] ?? 'organization_user';
+                $role = null;
             }
+            
+            UserRoleAssignment::create([
+                'user_id' => $user->id,
+                'role_slug' => $roleSlug,
+                'role_type' => $role ? 'custom' : 'system',
+                'context_id' => $context->id,
+                'assigned_by' => $updatedBy->id,
+                'is_active' => true
+            ]);
 
             return [
-                'user' => $this->formatUserData($user, $updatedRole),
-                'role' => $this->formatRoleData($updatedRole),
+                'user' => $this->formatUserData($user, $roleSlug, $role),
+                'role' => $role ? $this->formatRoleData($role) : $this->formatSystemRoleData($roleSlug),
             ];
         });
     }
@@ -163,7 +200,7 @@ class ChildOrganizationUserService
         ];
     }
 
-    public function createRoleFromTemplate(int $organizationId, string $templateKey, array $customData, User $createdBy): OrganizationRole
+    public function createRoleFromTemplate(int $organizationId, string $templateKey, array $customData, User $createdBy): OrganizationCustomRole
     {
         $templates = $this->getAvailableRoleTemplates();
         
@@ -179,33 +216,76 @@ class ChildOrganizationUserService
             'permissions' => $customData['permissions'] ?? $template['permissions'],
             'color' => $customData['color'] ?? $template['color'],
             'is_active' => true,
-            'display_order' => $customData['display_order'] ?? 0,
         ];
 
-        return $this->roleService->createRole($roleData, $organizationId, $createdBy);
+        return $this->customRoleService->createRole($roleData, $organizationId, $createdBy);
     }
 
     public function getOrganizationRolesWithStats(int $organizationId): array
     {
-        $roles = OrganizationRole::forOrganization($organizationId)
-            ->withCount('users')
-            ->ordered()
-            ->get();
-
-        return $roles->map(function ($role) {
-            return [
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+        
+        // Получаем кастомные роли
+        $customRoles = $this->customRoleService->getOrganizationRoles($organizationId);
+        
+        // Получаем системные роли которые используются в организации
+        $systemRoleSlugs = UserRoleAssignment::where('context_id', $context->id)
+            ->where('role_type', 'system')
+            ->where('is_active', true)
+            ->distinct()
+            ->pluck('role_slug');
+        
+        $result = [];
+        
+        // Добавляем кастомные роли
+        foreach ($customRoles as $role) {
+            $usersCount = UserRoleAssignment::where('context_id', $context->id)
+                ->where('role_slug', $role->slug)
+                ->where('is_active', true)
+                ->count();
+                
+            $result[] = [
                 'id' => $role->id,
                 'name' => $role->name,
                 'slug' => $role->slug,
                 'description' => $role->description,
                 'color' => $role->color,
                 'permissions_count' => count($role->permissions ?? []),
-                'users_count' => $role->users_count,
-                'is_system' => $role->is_system,
+                'users_count' => $usersCount,
+                'is_system' => false,
                 'is_active' => $role->is_active,
                 'created_at' => $role->created_at,
             ];
-        })->toArray();
+        }
+        
+        // Добавляем системные роли
+        $roleScanner = app(\App\Domain\Authorization\Services\RoleScanner::class);
+        $systemRoles = $roleScanner->getAllRoles();
+        
+        foreach ($systemRoleSlugs as $roleSlug) {
+            if (isset($systemRoles[$roleSlug])) {
+                $roleData = $systemRoles[$roleSlug];
+                $usersCount = UserRoleAssignment::where('context_id', $context->id)
+                    ->where('role_slug', $roleSlug)
+                    ->where('is_active', true)
+                    ->count();
+                    
+                $result[] = [
+                    'id' => $roleSlug,
+                    'name' => $roleData['name'],
+                    'slug' => $roleSlug,
+                    'description' => $roleData['description'] ?? '',
+                    'color' => '#6B7280',
+                    'permissions_count' => count($roleData['system_permissions'] ?? []) + count($roleData['module_permissions'] ?? []),
+                    'users_count' => $usersCount,
+                    'is_system' => true,
+                    'is_active' => true,
+                    'created_at' => null,
+                ];
+            }
+        }
+        
+        return $result;
     }
 
     public function createBulkUsers(int $childOrgId, array $usersData, User $createdBy): array
@@ -259,7 +339,7 @@ class ChildOrganizationUserService
         return $user;
     }
 
-    private function createCustomRole(int $organizationId, array $roleData, User $createdBy): OrganizationRole
+    private function createCustomRole(int $organizationId, array $roleData, User $createdBy): OrganizationCustomRole
     {
         if (isset($roleData['template'])) {
             return $this->createRoleFromTemplate($organizationId, $roleData['template'], $roleData, $createdBy);
@@ -271,63 +351,133 @@ class ChildOrganizationUserService
             'permissions' => $roleData['permissions'] ?? [],
             'color' => $roleData['color'] ?? '#6B7280',
             'is_active' => true,
-            'display_order' => $roleData['display_order'] ?? 0,
         ];
 
-        return $this->roleService->createRole($data, $organizationId, $createdBy);
+        return $this->customRoleService->createRole($data, $organizationId, $createdBy);
     }
 
-    private function attachUserToOrganization(User $user, Organization $organization, OrganizationRole $role): void
+    private function attachUserToOrganization(User $user, Organization $organization, string $roleSlug): void
     {
         if (!$organization->users()->where('user_id', $user->id)->exists()) {
             $organization->users()->attach($user->id, [
-                'is_owner' => in_array('users.delete', $role->permissions ?? []),
+                'is_owner' => false, // Определяется через роли
                 'is_active' => true,
-                'settings' => ['primary_role_id' => $role->id]
+                'settings' => ['primary_role_slug' => $roleSlug]
             ]);
         }
 
-        $this->roleService->assignRoleToUser($role->id, $user->id, $organization->id, Auth::user() ?? $user);
+        $context = AuthorizationContext::getOrganizationContext($organization->id);
+        
+        // Проверяем, не назначена ли уже эта роль
+        $existing = UserRoleAssignment::where([
+            'user_id' => $user->id,
+            'role_slug' => $roleSlug,
+            'context_id' => $context->id,
+            'is_active' => true
+        ])->exists();
+        
+        if (!$existing) {
+            UserRoleAssignment::create([
+                'user_id' => $user->id,
+                'role_slug' => $roleSlug,
+                'role_type' => 'system', // По умолчанию системная
+                'context_id' => $context->id,
+                'assigned_by' => Auth::id(),
+                'is_active' => true
+            ]);
+        }
     }
 
     private function removeUserFromOrganization(User $user, Organization $organization): void
     {
-        $userRoles = $this->roleService->getUserRoles($user->id, $organization->id);
+        $context = AuthorizationContext::getOrganizationContext($organization->id);
         
-        foreach ($userRoles as $role) {
-            $this->roleService->removeRoleFromUser($role->id, $user->id, $organization->id);
+        UserRoleAssignment::where([
+            'user_id' => $user->id,
+            'context_id' => $context->id,
+            'is_active' => true
+        ])->update(['is_active' => false]);
+    }
+
+    private function getUserRoleInOrganization(int $userId, int $organizationId): ?UserRoleAssignment
+    {
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+        
+        return UserRoleAssignment::where([
+            'user_id' => $userId,
+            'context_id' => $context->id,
+            'is_active' => true
+        ])->first();
+    }
+
+    private function sendInvitation(User $user, Organization $organization, string $roleSlug): void
+    {
+        // Используем UserInvitationService для отправки приглашения
+        $invitationData = [
+            'email' => $user->email,
+            'name' => $user->name,
+            'role_slugs' => [$roleSlug],
+            'metadata' => [
+                'organization_type' => 'child',
+                'invited_for' => 'child_organization_user'
+            ]
+        ];
+        
+        try {
+            $this->invitationService->createInvitation(
+                $invitationData, 
+                $organization->id, 
+                Auth::user() ?? $user
+            );
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning(
+                "Failed to send invitation to {$user->email} for organization {$organization->name}: {$e->getMessage()}"
+            );
         }
     }
 
-    private function getUserRoleInOrganization(int $userId, int $organizationId): ?OrganizationRole
+    private function formatUserData(User $user, string $roleSlug, ?OrganizationCustomRole $role = null): array
     {
-        return OrganizationRole::whereHas('users', function ($query) use ($userId, $organizationId) {
-            $query->where('user_id', $userId)
-                  ->where('organization_id', $organizationId);
-        })->first();
+        if ($role) {
+            return [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role_id' => $role->id,
+                'role_slug' => $role->slug,
+                'role_name' => $role->name,
+                'role_color' => $role->color,
+                'permissions' => $role->permissions ?? [],
+                'is_active' => true,
+                'is_system_role' => false,
+                'created_at' => $user->created_at,
+            ];
+        } else {
+            // Системная роль
+            $roleScanner = app(\App\Domain\Authorization\Services\RoleScanner::class);
+            $systemRoles = $roleScanner->getAllRoles();
+            $roleData = $systemRoles[$roleSlug] ?? null;
+            
+            return [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'role_id' => $roleSlug,
+                'role_slug' => $roleSlug,
+                'role_name' => $roleData['name'] ?? $roleSlug,
+                'role_color' => '#6B7280',
+                'permissions' => array_merge(
+                    $roleData['system_permissions'] ?? [],
+                    array_values($roleData['module_permissions'] ?? [])
+                ),
+                'is_active' => true,
+                'is_system_role' => true,
+                'created_at' => $user->created_at,
+            ];
+        }
     }
 
-    private function sendInvitation(User $user, Organization $organization, OrganizationRole $role): void
-    {
-        \Illuminate\Support\Facades\Log::info("Invitation sent to {$user->email} for organization {$organization->name} with role {$role->name}");
-    }
-
-    private function formatUserData(User $user, OrganizationRole $role): array
-    {
-        return [
-            'id' => $user->id,
-            'name' => $user->name,
-            'email' => $user->email,
-            'role_id' => $role->id,
-            'role_name' => $role->name,
-            'role_color' => $role->color,
-            'permissions' => $role->permissions ?? [],
-            'is_active' => true,
-            'created_at' => $user->created_at,
-        ];
-    }
-
-    private function formatRoleData(OrganizationRole $role): array
+    private function formatRoleData(OrganizationCustomRole $role): array
     {
         return [
             'id' => $role->id,
@@ -337,8 +487,32 @@ class ChildOrganizationUserService
             'color' => $role->color,
             'permissions' => $role->permissions ?? [],
             'permissions_count' => count($role->permissions ?? []),
-            'is_system' => $role->is_system,
+            'is_system' => false,
+            'is_active' => $role->is_active,
             'created_at' => $role->created_at,
+        ];
+    }
+    
+    private function formatSystemRoleData(string $roleSlug): array
+    {
+        $roleScanner = app(\App\Domain\Authorization\Services\RoleScanner::class);
+        $systemRoles = $roleScanner->getAllRoles();
+        $roleData = $systemRoles[$roleSlug] ?? null;
+        
+        return [
+            'id' => $roleSlug,
+            'name' => $roleData['name'] ?? $roleSlug,
+            'slug' => $roleSlug,
+            'description' => $roleData['description'] ?? '',
+            'color' => '#6B7280',
+            'permissions' => array_merge(
+                $roleData['system_permissions'] ?? [],
+                array_values($roleData['module_permissions'] ?? [])
+            ),
+            'permissions_count' => count($roleData['system_permissions'] ?? []) + count($roleData['module_permissions'] ?? []),
+            'is_system' => true,
+            'is_active' => true,
+            'created_at' => null,
         ];
     }
 } 

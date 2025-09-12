@@ -17,14 +17,14 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Arr;
 use App\Traits\HasImages;
 
-// TODO: Добавить импорты для новой системы авторизации
+// Импорты для новой системы авторизации добавлены ниже
 
 class User extends Authenticatable implements JWTSubject
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable, SoftDeletes, HasImages;
 
-    // TODO: Константы для новой системы авторизации
+    // Константы для новой системы авторизации (роли определяются в JSON файлах)
 
     /**
      * The attributes that are mass assignable.
@@ -137,7 +137,7 @@ class User extends Authenticatable implements JWTSubject
         return $this->organizations()->where('organization_user.is_active', true);
     }
 
-    // TODO: Связи для новой системы авторизации
+    // Связи для новой системы авторизации добавлены ниже в разделе авторизации
 
 
 
