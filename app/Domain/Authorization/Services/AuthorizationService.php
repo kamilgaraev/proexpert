@@ -267,4 +267,22 @@ class AuthorizationService
         
         return true;
     }
+
+    /**
+     * Получить слаги ролей пользователя для совместимости со старой системой
+     */
+    public function getUserRoleSlugs(User $user, ?array $context = null): array
+    {
+        try {
+            $authContext = null;
+            if ($context && isset($context['organization_id'])) {
+                $authContext = AuthorizationContext::getOrganizationContext($context['organization_id']);
+            }
+            
+            return $this->getUserRoles($user, $authContext)->pluck('role_slug')->toArray();
+        } catch (\Exception $e) {
+            // Если таблицы новой системы еще не созданы - возвращаем пустой массив
+            return [];
+        }
+    }
 }

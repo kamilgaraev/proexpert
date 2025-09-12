@@ -21,11 +21,22 @@ class AdminPanelUserResource extends JsonResource
         // Получаем id текущей организации из запроса (через middleware organization.context)
         $organizationId = $request->attributes->get('current_organization_id');
         $roleSlug = null;
-        if ($organizationId && $this->relationLoaded('roles')) {
-            // Получаем все роли пользователя в этой организации
-            $role = $this->roles->where('pivot.organization_id', $organizationId)
-                ->first(fn($role) => in_array($role->slug, \App\Models\User::ADMIN_PANEL_ACCESS_ROLES));
-            $roleSlug = $role?->slug;
+        if ($organizationId) {
+            // Используем новую систему авторизации для получения ролей
+            try {
+                $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+                $roles = $authService->getUserRoleSlugs($this, ['organization_id' => $organizationId]);
+                
+                // Ищем первую роль, которая дает доступ к админ панели
+                foreach ($roles as $role) {
+                    if (in_array($role, \App\Models\User::ADMIN_PANEL_ACCESS_ROLES)) {
+                        $roleSlug = $role;
+                        break;
+                    }
+                }
+            } catch (\Exception $e) {
+                // Таблицы новой системы еще не готовы
+            }
         }
         return [
             'id' => $this->id,

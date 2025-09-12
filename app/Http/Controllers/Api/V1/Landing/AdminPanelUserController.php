@@ -39,7 +39,12 @@ class AdminPanelUserController extends Controller
         Log::info('[AdminPanelUserController@index] Method entered.', ['user_id' => Auth::id(), 'organization_id' => $request->attributes->get('current_organization_id')]);
         try {
             $users = $this->userService->getAdminPanelUsersForCurrentOrg($request);
-            $users->load('roles');
+            // TODO: Обновить для новой системы авторизации
+            try {
+                $users->load('roleAssignments');
+            } catch (\Exception $e) {
+                \Log::warning('[AdminPanelUserController] Cannot load roleAssignments - new auth tables not ready');
+            }
             Log::info('[AdminPanelUserController@index] Users received from service.', ['count' => $users->count()]);
             
             // --- ВРЕМЕННОЕ ДИАГНОСТИЧЕСКОЕ ИЗМЕНЕНИЕ (возвращаем как было) ---
@@ -86,7 +91,7 @@ class AdminPanelUserController extends Controller
 
             // Возвращаем правильный Responsable ответ
             return new SuccessCreationResponse(
-                new AdminPanelUserResource($user->load('roles')),
+                new AdminPanelUserResource($user), // TODO: load('roleAssignments') когда будет готова новая система
                 'Пользователь админ-панели успешно создан'
             );
          } catch (\Illuminate\Validation\ValidationException $e) {

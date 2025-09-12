@@ -134,19 +134,24 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
         $users = \App\Models\User::whereHas('organizations', function ($q) use ($organizationId) {
                 $q->where('organization_id', $organizationId);
             })
-            ->with(['roles' => function ($q) use ($organizationId) {
-                $q->where('role_user.organization_id', $organizationId);
+            ->with(['roleAssignments' => function ($q) use ($organizationId) {
+                $q->whereHas('context', function($contextQuery) use ($organizationId) {
+                    $contextQuery->where('type', 'organization')
+                                 ->where('resource_id', $organizationId);
+                })->where('is_active', true);
             }])
             ->whereNull('deleted_at')
             ->get();
 
-        return $users->map(function ($user) {
+        $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+
+        return $users->map(function ($user) use ($organizationId, $authService) {
             return [
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
                 'avatar_url' => $user->avatar_url,
-                'roles' => $user->roles->pluck('slug')->values()->all(),
+                'roles' => $authService->getUserRoleSlugs($user, ['organization_id' => $organizationId]),
             ];
         })->toArray();
     }

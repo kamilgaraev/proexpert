@@ -60,9 +60,15 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
 
     public function findWithRoles(int $id): ?User
     {
-        return $this->model->with(['roles' => function($query) {
-            $query->select('roles.id', 'roles.name', 'roles.slug')
-                  ->where('role_user.organization_id', request()->attributes->get('current_organization_id'));
+        // Используем новую систему авторизации
+        return $this->model->with(['roleAssignments' => function($query) {
+            $organizationId = request()->attributes->get('current_organization_id');
+            if ($organizationId) {
+                $query->whereHas('context', function($contextQuery) use ($organizationId) {
+                    $contextQuery->where('type', 'organization')
+                                 ->where('resource_id', $organizationId);
+                })->where('is_active', true);
+            }
         }])->find($id);
     }
 
@@ -213,10 +219,14 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
      */
     public function findByRoleInOrganization(int $organizationId, string $roleSlug): Collection
     {
+        // Получаем контекст организации
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+        
         return $this->model
-            ->whereHas('roles', function ($query) use ($roleSlug, $organizationId) {
-                $query->where('slug', $roleSlug)
-                      ->where('role_user.organization_id', $organizationId);
+            ->whereHas('roleAssignments', function ($query) use ($roleSlug, $context) {
+                $query->where('role_slug', $roleSlug)
+                      ->where('context_id', $context->id)
+                      ->where('is_active', true);
             })
             ->get();
     }
@@ -234,10 +244,14 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
             return new Collection(); // Возвращаем пустую коллекцию, если массив ролей пуст
         }
 
+        // Получаем контекст организации
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+
         return $this->model
-            ->whereHas('roles', function ($query) use ($roleSlugs, $organizationId) {
-                $query->whereIn('slug', $roleSlugs) // Используем whereIn для массива слагов
-                      ->where('role_user.organization_id', $organizationId);
+            ->whereHas('roleAssignments', function ($query) use ($roleSlugs, $context) {
+                $query->whereIn('role_slug', $roleSlugs) // Используем whereIn для массива слагов
+                      ->where('context_id', $context->id)
+                      ->where('is_active', true);
             })
             ->get();
     }
@@ -255,7 +269,11 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         $user = $this->model->find($userId);
         if ($user) {
             // В случае detach мы используем специальный синтаксис с условиями
-            return $user->roles()->where('role_user.organization_id', $organizationId)->detach($roleId) > 0;
+            // TODO: Обновить для новой системы авторизации
+            Log::warning("[UserRepository] revokeRole using old system - needs update", [
+                'user_id' => $user->id, 'role_id' => $roleId, 'org_id' => $organizationId
+            ]);
+            return false; // Временно отключаем до полной миграции
         }
         return false;
     }
@@ -271,8 +289,11 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     {
         $user = $this->model->find($userId);
         if ($user) {
+            // TODO: Обновить для новой системы авторизации
             // Удаляем все роли пользователя в этой организации перед откреплением
-            $user->roles()->where('role_user.organization_id', $organizationId)->detach();
+            Log::warning("[UserRepository] detachFromOrganization using old roles system - needs update", [
+                'user_id' => $userId, 'organization_id' => $organizationId
+            ]);
             // Открепляем от организации
             $detached = $user->organizations()->detach($organizationId) > 0;
             // Если это была текущая организация, сбрасываем ее
@@ -292,10 +313,11 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     {
         $user = $this->model->find($userId);
         if ($user) {
-            return $user->roles()
-                        ->where('role_user.organization_id', $organizationId)
-                        ->where('role_id', $roleId)
-                        ->exists();
+            // TODO: Обновить для новой системы авторизации
+            Log::warning("[UserRepository] hasRoleInOrganization using old roles system - needs update", [
+                'user_id' => $userId, 'role_id' => $roleId, 'organization_id' => $organizationId
+            ]);
+            return false; // Временно возвращаем false
         }
         return false;
     }
@@ -309,10 +331,14 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         string $sortDirection = 'asc'
     ): LengthAwarePaginator
     {
+        // Получаем контекст организации
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+        
         $query = $this->model->query()
-            ->whereHas('roles', function ($q) use ($roleSlug, $organizationId) {
-                $q->where('slug', $roleSlug);
-                $q->where('role_user.organization_id', $organizationId);
+            ->whereHas('roleAssignments', function ($q) use ($roleSlug, $context) {
+                $q->where('role_slug', $roleSlug);
+                $q->where('context_id', $context->id);
+                $q->where('is_active', true);
             });
 
         if (!empty($filters['name'])) {
@@ -344,10 +370,14 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
      */
     public function getForemanActivity(int $organizationId, array $filters = []): Collection
     {
-        $query = $this->model->whereHas('roles', function ($roleQuery) use ($organizationId) {
-            $roleQuery->where('slug', 'foreman')
-                      ->where('role_user.organization_id', $organizationId);
-        })->with(['roles']);
+        // Получаем контекст организации
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+        
+        $query = $this->model->whereHas('roleAssignments', function ($roleQuery) use ($context) {
+            $roleQuery->where('role_slug', 'foreman')
+                      ->where('context_id', $context->id)
+                      ->where('is_active', true);
+        })->with(['roleAssignments']);
 
         if (!empty($filters['user_id'])) {
             $query->where('id', $filters['user_id']);
@@ -403,10 +433,14 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
     // Добавляем реализацию недостающего метода
     public function findByRoleInOrganizationPaginated(int $organizationId, string $roleSlug, int $perPage = 15): PaginationLengthAwarePaginator
     {
+        // Получаем контекст организации
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+        
         return $this->model
-            ->whereHas('roles', function ($query) use ($roleSlug, $organizationId) {
-                $query->where('slug', $roleSlug)
-                      ->where('role_user.organization_id', $organizationId);
+            ->whereHas('roleAssignments', function ($query) use ($roleSlug, $context) {
+                $query->where('role_slug', $roleSlug)
+                      ->where('context_id', $context->id)
+                      ->where('is_active', true);
             })
             ->paginate($perPage);
     }
@@ -416,9 +450,13 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
      */
     public function getForemanMaterialLogs(int $organizationId, array $filters = []): Collection
     {
-        $query = MaterialUsageLog::whereHas('user.roles', function ($roleQuery) use ($organizationId) {
-            $roleQuery->where('slug', 'foreman')
-                      ->where('role_user.organization_id', $organizationId);
+        // Получаем контекст организации
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+        
+        $query = MaterialUsageLog::whereHas('user.roleAssignments', function ($roleQuery) use ($context) {
+            $roleQuery->where('role_slug', 'foreman')
+                      ->where('context_id', $context->id)
+                      ->where('is_active', true);
         })
         ->with(['project:id,name', 'material:id,name', 'user:id,name']);
 
@@ -456,9 +494,13 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
      */
     public function getForemanCompletedWorks(int $organizationId, array $filters = []): Collection
     {
-        $query = CompletedWork::whereHas('user.roles', function ($roleQuery) use ($organizationId) {
-            $roleQuery->where('slug', 'foreman')
-                      ->where('role_user.organization_id', $organizationId);
+        // Получаем контекст организации
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+        
+        $query = CompletedWork::whereHas('user.roleAssignments', function ($roleQuery) use ($context) {
+            $roleQuery->where('role_slug', 'foreman')
+                      ->where('context_id', $context->id)
+                      ->where('is_active', true);
         })
         ->with(['project:id,name', 'workType:id,name', 'user:id,name']);
 

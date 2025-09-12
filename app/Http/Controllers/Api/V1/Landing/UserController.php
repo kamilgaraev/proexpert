@@ -32,8 +32,13 @@ class UserController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        // Загружаем связь roles для каждого пользователя
-        $admins = $this->userService->getAdminsForCurrentOrg($request)->load('roles');
+        // Загружаем роли через новую систему авторизации
+        $admins = $this->userService->getAdminsForCurrentOrg($request);
+        try {
+            $admins->load('roleAssignments');
+        } catch (\Exception $e) {
+            // Таблицы новой системы еще не готовы
+        }
         return AdminUserResource::collection($admins)->response();
     }
 
@@ -81,7 +86,7 @@ class UserController extends Controller
                 return new \App\Http\Responses\Api\V1\NotFoundResponse('Admin user not found');
             }
             // $admin->load('organizations'); // Раскомментировать, если ресурс использует данные организации
-            // $admin->load('roles'); // Загружаем роли, если AdminUserResource их использует (уже добавлено в index)
+            // Роли теперь загружаются через новую систему авторизации при необходимости
             return new \App\Http\Responses\Api\V1\SuccessResourceResponse(new AdminUserResource($admin));
         } catch (\Throwable $e) {
              report($e);
@@ -105,7 +110,7 @@ class UserController extends Controller
 
             // Используем обновленного пользователя напрямую
             return new \App\Http\Responses\Api\V1\SuccessResourceResponse(
-                new AdminUserResource($updatedAdmin), // $updatedAdmin->load('roles') - если нужно
+                new AdminUserResource($updatedAdmin), // roleAssignments загружаются автоматически при необходимости
                 message: 'Administrator updated successfully'
             );
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -145,7 +150,12 @@ class UserController extends Controller
     public function adminPanelUsersIndex(Request $request): JsonResponse
     {
         try {
-            $users = $this->userService->getAllAdminPanelUsersForCurrentOrg($request)->load('roles');
+            $users = $this->userService->getAllAdminPanelUsersForCurrentOrg($request);
+            try {
+                $users->load('roleAssignments');
+            } catch (\Exception $e) {
+                // Таблицы новой системы еще не готовы
+            }
             // Используем тот же ресурс, что и для index, если он подходит
             return AdminUserResource::collection($users)->response(); 
         } catch (BusinessLogicException $e) {

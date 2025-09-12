@@ -22,7 +22,9 @@ class UserDashboardSettingsService
         $user = Auth::user();
         $orgId = $organizationId ?? (int)($user->current_organization_id ?? 0);
 
-        $roles = method_exists($user, 'roles') ? $user->roles()->where('role_user.organization_id', $orgId)->pluck('slug')->all() : [];
+        // Получаем роли через новую систему авторизации
+        $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $roles = $authService->getUserRoleSlugs($user, ['organization_id' => $orgId]);
         $registry = $this->registry->get($roles);
 
         $existing = UserDashboardSetting::query()
@@ -52,7 +54,9 @@ class UserDashboardSettingsService
         $user = Auth::user();
         $orgId = $organizationId ?? (int)($user->current_organization_id ?? 0);
 
-        $roles = method_exists($user, 'roles') ? $user->roles()->where('role_user.organization_id', $orgId)->pluck('slug')->all() : [];
+        // Получаем роли через новую систему авторизации
+        $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $roles = $authService->getUserRoleSlugs($user, ['organization_id' => $orgId]);
         $registry = $this->registry->get($roles);
 
         $this->validateAgainstRegistry($payload, $registry);
@@ -89,7 +93,9 @@ class UserDashboardSettingsService
         /** @var User $user */
         $user = Auth::user();
         $orgId = $organizationId ?? (int)($user->current_organization_id ?? 0);
-        $roles = method_exists($user, 'roles') ? $user->roles()->where('role_user.organization_id', $orgId)->pluck('slug')->all() : [];
+        // Получаем роли через новую систему авторизации
+        $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+        $roles = $authService->getUserRoleSlugs($user, ['organization_id' => $orgId]);
         $registry = $this->registry->get($roles);
         return $this->buildDefaultsFromRegistry($registry);
     }

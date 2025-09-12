@@ -5,7 +5,9 @@ namespace App\Services;
 use App\Models\UserInvitation;
 use App\Models\User;
 use App\Models\Organization;
-use App\Models\Role;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Enums\UserInvitation\InvitationStatus;
 use App\Exceptions\BusinessLogicException;
 use App\Services\Billing\SubscriptionLimitsService;
 use Illuminate\Support\Collection;
@@ -38,7 +40,7 @@ class UserInvitationService
 
         $existingInvitation = UserInvitation::where('email', $data['email'])
             ->where('organization_id', $organizationId)
-            ->where('status', UserInvitation::STATUS_PENDING)
+            ->where('status', InvitationStatus::PENDING)
             ->first();
 
         if ($existingInvitation && !$existingInvitation->isExpired()) {
@@ -113,7 +115,7 @@ class UserInvitationService
             throw new BusinessLogicException('Приглашение не найдено');
         }
 
-        if ($invitation->status !== UserInvitation::STATUS_PENDING) {
+        if ($invitation->status !== InvitationStatus::PENDING) {
             throw new BusinessLogicException('Можно отменить только ожидающие приглашения');
         }
 
@@ -131,7 +133,7 @@ class UserInvitationService
             throw new BusinessLogicException('Приглашение не найдено');
         }
 
-        if ($invitation->status !== UserInvitation::STATUS_PENDING) {
+        if ($invitation->status !== InvitationStatus::PENDING) {
             throw new BusinessLogicException('Можно переслать только ожидающие приглашения');
         }
 
@@ -166,13 +168,13 @@ class UserInvitationService
 
     public function cleanupExpiredInvitations(): int
     {
-        $expiredCount = UserInvitation::where('status', UserInvitation::STATUS_PENDING)
+        $expiredCount = UserInvitation::where('status', InvitationStatus::PENDING)
             ->where('expires_at', '<', now())
             ->count();
 
-        UserInvitation::where('status', UserInvitation::STATUS_PENDING)
+        UserInvitation::where('status', InvitationStatus::PENDING)
             ->where('expires_at', '<', now())
-            ->update(['status' => UserInvitation::STATUS_EXPIRED]);
+            ->update(['status' => InvitationStatus::EXPIRED]);
 
         return $expiredCount;
     }
@@ -233,11 +235,26 @@ class UserInvitationService
 
     private function assignRolesToUser(User $user, UserInvitation $invitation): void
     {
+        // Получаем или создаем контекст организации
+        $context = AuthorizationContext::getOrganizationContext($invitation->organization_id);
+        
         foreach ($invitation->role_slugs as $roleSlug) {
-            $role = Role::where('slug', $roleSlug)->first();
-            if ($role) {
-                $user->roles()->syncWithoutDetaching([
-                    $role->id => ['organization_id' => $invitation->organization_id]
+            // Проверяем, не назначена ли уже роль
+            $existing = UserRoleAssignment::where([
+                'user_id' => $user->id,
+                'role_slug' => $roleSlug,
+                'context_id' => $context->id,
+                'is_active' => true
+            ])->exists();
+            
+            if (!$existing) {
+                UserRoleAssignment::create([
+                    'user_id' => $user->id,
+                    'role_slug' => $roleSlug,
+                    'role_type' => 'system', // Системная роль из JSON
+                    'context_id' => $context->id,
+                    'assigned_by' => auth()->id(),
+                    'is_active' => true
                 ]);
             }
         }
@@ -252,13 +269,13 @@ class UserInvitationService
     {
         $total = UserInvitation::where('organization_id', $organizationId)->count();
         $pending = UserInvitation::where('organization_id', $organizationId)
-            ->where('status', UserInvitation::STATUS_PENDING)
+            ->where('status', InvitationStatus::PENDING)
             ->count();
         $accepted = UserInvitation::where('organization_id', $organizationId)
-            ->where('status', UserInvitation::STATUS_ACCEPTED)
+            ->where('status', InvitationStatus::ACCEPTED)
             ->count();
         $expired = UserInvitation::where('organization_id', $organizationId)
-            ->where('status', UserInvitation::STATUS_EXPIRED)
+            ->where('status', InvitationStatus::EXPIRED)
             ->count();
 
         return [

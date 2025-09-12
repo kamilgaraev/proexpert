@@ -36,10 +36,26 @@ class CreateLandingSuperAdminCommand extends Command
         $admin->is_super = true;
         $admin->save();
 
-        // attach role relation if super_admin role exists
-        $roleModel = \App\Models\Role::where('slug', 'super_admin')->first();
-        if ($roleModel) {
-            $admin->roles()->attach($roleModel->id);
+        // Назначаем роль super_admin через новую систему авторизации
+        try {
+            $userRepository = app(\App\Repositories\Interfaces\UserRepositoryInterface::class);
+            // Создаем системный контекст для super_admin
+            $systemContext = \App\Domain\Authorization\Models\AuthorizationContext::firstOrCreate([
+                'type' => 'system',
+                'resource_id' => 0
+            ]);
+            
+            \App\Domain\Authorization\Models\UserRoleAssignment::create([
+                'user_id' => $admin->id,
+                'role_slug' => 'super_admin',
+                'role_type' => 'system',
+                'context_id' => $systemContext->id,
+                'is_active' => true
+            ]);
+            
+            $this->info("Super admin role assigned");
+        } catch (\Exception $e) {
+            $this->warn("Could not assign super_admin role: " . $e->getMessage());
         }
 
         $this->info("Super admin created with ID {$admin->id}");
