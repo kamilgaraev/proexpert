@@ -2,7 +2,6 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\Billing\SubscriptionPlanController;
-use App\Http\Controllers\Api\Billing\UserSubscriptionController;
 use App\Http\Controllers\Api\Billing\BalanceController;
 use App\Http\Controllers\Api\Landing\OrganizationSubscriptionAddonController;
 use App\Http\Controllers\Api\Landing\OrganizationSubscriptionController;
@@ -22,17 +21,15 @@ Route::middleware(['auth:api_landing', 'role:organization_owner']) // Приме
         // GET /api/v1/landing/billing/plans
         Route::get('plans', [SubscriptionPlanController::class, 'index'])->name('plans.index');
 
-        // Маршруты для управления подпиской пользователя
+        // Маршруты для управления подпиской организации
         // GET /api/v1/landing/billing/subscription
-        Route::get('subscription', [UserSubscriptionController::class, 'show'])->name('subscription.show');
+        Route::get('subscription', [OrganizationSubscriptionController::class, 'show'])->name('subscription.show');
         // POST /api/v1/landing/billing/subscribe
-        Route::post('subscribe', [UserSubscriptionController::class, 'subscribe'])->name('subscription.subscribe');
-        // POST /api/v1/landing/billing/subscription/cancel
-        Route::post('subscription/cancel', [UserSubscriptionController::class, 'cancel'])->name('subscription.cancel');
+        Route::post('subscribe', [OrganizationSubscriptionController::class, 'subscribe'])->name('subscription.subscribe');
         // PATCH /api/v1/landing/billing/subscription/auto-payment
-        Route::patch('subscription/auto-payment', [UserSubscriptionController::class, 'updateAutoPayment'])->name('subscription.auto_payment');
-        // TODO: Route::post('subscription/switch', [UserSubscriptionController::class, 'switch'])->name('subscription.switch');
-        // TODO: Route::post('subscription/resume', [UserSubscriptionController::class, 'resume'])->name('subscription.resume');
+        Route::patch('subscription/auto-payment', [OrganizationSubscriptionController::class, 'updateAutoPayment'])->name('subscription.auto_payment');
+        // PATCH /api/v1/landing/billing/subscription
+        Route::patch('subscription', [OrganizationSubscriptionController::class, 'update'])->name('subscription.update');
 
         // Управление балансом организации
         // GET /api/v1/landing/billing/balance
@@ -42,28 +39,20 @@ Route::middleware(['auth:api_landing', 'role:organization_owner']) // Приме
         // POST /api/v1/landing/billing/balance/top-up
         Route::post('balance/top-up', [BalanceController::class, 'topUp'])->name('balance.top-up');
 
-        // --- Организационная монетизация ---
+        // --- Дополнительные возможности подписки ---
         // Получить список add-on'ов
         Route::get('addons', [OrganizationSubscriptionAddonController::class, 'index'])->name('addons.index');
-        // Получить текущую подписку организации
-        Route::get('org-subscription', [OrganizationSubscriptionController::class, 'show'])->name('org_subscription.show');
-        // Оформить/сменить подписку организации
-        Route::post('org-subscribe', [OrganizationSubscriptionController::class, 'subscribe'])->name('org_subscription.subscribe');
-        // Изменить параметры подписки (например, апгрейд/даунгрейд)
-        Route::patch('org-subscription', [OrganizationSubscriptionController::class, 'update'])->name('org_subscription.update');
-        // PATCH /api/v1/landing/billing/org-subscription/auto-payment
-        Route::patch('org-subscription/auto-payment', [OrganizationSubscriptionController::class, 'updateAutoPayment'])->name('org_subscription.auto_payment');
         // Подключить add-on
-        Route::post('org-addon', [OrganizationSubscriptionAddonController::class, 'attach'])->name('org_addon.attach');
+        Route::post('addon', [OrganizationSubscriptionAddonController::class, 'attach'])->name('addon.attach');
         // Отключить add-on
-        Route::delete('org-addon/{id}', [OrganizationSubscriptionAddonController::class, 'detach'])->name('org_addon.detach');
+        Route::delete('addon/{id}', [OrganizationSubscriptionAddonController::class, 'detach'])->name('addon.detach');
         // Совершить одноразовую покупку
-        Route::post('org-one-time-purchase', [OrganizationOneTimePurchaseController::class, 'store'])->name('org_one_time_purchase.store');
+        Route::post('one-time-purchase', [OrganizationOneTimePurchaseController::class, 'store'])->name('one_time_purchase.store');
         // Получить историю одноразовых покупок
-        Route::get('org-one-time-purchases', [OrganizationOneTimePurchaseController::class, 'index'])->name('org_one_time_purchase.index');
+        Route::get('one-time-purchases', [OrganizationOneTimePurchaseController::class, 'index'])->name('one_time_purchase.index');
 
-        // --- Дашборд организации ---
-        Route::get('org-dashboard', [OrganizationDashboardController::class, 'index'])->name('org_dashboard.index');
+        // --- Дашборд ---
+        Route::get('dashboard', [OrganizationDashboardController::class, 'index'])->name('dashboard.index');
         
         // --- Лимиты подписки ---
         Route::get('subscription/limits', [SubscriptionLimitsController::class, 'show'])->name('subscription.limits');

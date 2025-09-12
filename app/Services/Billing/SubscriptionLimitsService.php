@@ -3,9 +3,7 @@
 namespace App\Services\Billing;
 
 use App\Models\User;
-use App\Models\UserSubscription;
 use App\Models\SubscriptionPlan;
-use App\Services\Billing\UserSubscriptionService;
 use App\Interfaces\Billing\SubscriptionLimitsServiceInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
@@ -14,18 +12,16 @@ use App\Models\OrganizationSubscription;
 
 class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
 {
-    protected UserSubscriptionService $subscriptionService;
     protected OrganizationSubscriptionRepository $organizationSubscriptionRepo;
 
-    public function __construct(UserSubscriptionService $subscriptionService, OrganizationSubscriptionRepository $organizationSubscriptionRepo)
+    public function __construct(OrganizationSubscriptionRepository $organizationSubscriptionRepo)
     {
-        $this->subscriptionService = $subscriptionService;
         $this->organizationSubscriptionRepo = $organizationSubscriptionRepo;
     }
 
     public function getUserLimitsData(User $user): array
     {
-        // 1) Сначала смотрим подписку организации, так как она общая для всех пользователей.
+        // Смотрим только подписку организации
         $organizationId = $user->current_organization_id;
         if ($organizationId) {
             $orgSubscription = $this->organizationSubscriptionRepo->getByOrganizationId($organizationId);
@@ -34,45 +30,10 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
             }
         }
 
-        // 2) Если активной организации-подписки нет, используем персональную
-        $userSubscription = $this->subscriptionService->getUserCurrentValidSubscription($user);
-        if ($userSubscription) {
-            return $this->getSubscriptionLimitsData($user, $userSubscription);
-        }
-
-        // 3) Ни того, ни другого — отдаём базовые лимиты
+        // Если нет активной организационной подписки — отдаём базовые лимиты
         return $this->getDefaultLimitsData($user);
     }
 
-    private function getSubscriptionLimitsData(User $user, UserSubscription $subscription): array
-    {
-        $plan = $subscription->plan;
-        $currentUsage = $this->getCurrentUsage($user);
-
-        return [
-            'has_subscription' => true,
-            'subscription' => [
-                'id' => $subscription->id,
-                'status' => $subscription->status,
-                'plan_name' => $plan->name,
-                'plan_description' => $plan->description,
-                'is_trial' => $subscription->isOnTrial(),
-                'trial_ends_at' => $subscription->trial_ends_at?->format('Y-m-d H:i:s'),
-                'ends_at' => $subscription->ends_at?->format('Y-m-d H:i:s'),
-                'next_billing_at' => $subscription->next_billing_at?->format('Y-m-d H:i:s'),
-                'is_canceled' => $subscription->isCanceled(),
-            ],
-            'limits' => [
-                'foremen' => $this->formatLimitData($plan->max_foremen, $currentUsage['foremen']),
-                'projects' => $this->formatLimitData($plan->max_projects, $currentUsage['projects']),
-                'users' => $this->formatLimitData($plan->max_users, $currentUsage['users']),
-                'storage' => $this->formatStorageLimitData($plan->max_storage_gb, $currentUsage['storage_mb']),
-                'contractor_invitations' => $this->formatLimitData($plan->max_contractor_invitations ?? null, $currentUsage['contractor_invitations']),
-            ],
-            'features' => $plan->features ? (array) $plan->features : [],
-            'warnings' => $this->generateWarnings($plan, $currentUsage),
-        ];
-    }
 
     private function getDefaultLimitsData(User $user): array
     {
