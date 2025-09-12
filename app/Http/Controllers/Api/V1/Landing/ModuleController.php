@@ -92,9 +92,8 @@ class ModuleController extends Controller
         }
 
         $activeModules = $this->moduleManager->getOrganizationModules($organizationId);
-        $modules = $activeModules->pluck('module')->filter();
 
-        return (new SuccessResponse(Module::toPublicCollection($modules)))->toResponse($request);
+        return (new SuccessResponse(Module::toPublicCollection($activeModules)))->toResponse($request);
     }
 
     /**
