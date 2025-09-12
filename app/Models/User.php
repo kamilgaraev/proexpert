@@ -407,4 +407,24 @@ class User extends Authenticatable implements JWTSubject
         // Для приватного бакета генерируем временную ссылку (60 минут)
         return $this->getImageUrl('avatar_path', asset('images/default-avatar.png'), true, 60);
     }
+
+    /**
+     * Получить организацию для работы с изображениями (аватарами).
+     * Переопределяем метод из HasImages трейта.
+     *
+     * @return \App\Models\Organization|null
+     */
+    protected function getOrganizationForImages(): ?\App\Models\Organization
+    {
+        // Сначала пытаемся получить текущую организацию пользователя
+        if ($this->current_organization_id) {
+            $organization = $this->currentOrganization;
+            if ($organization) {
+                return $organization;
+            }
+        }
+
+        // Если не удалось, берем первую организацию пользователя
+        return $this->organizations()->first();
+    }
 }

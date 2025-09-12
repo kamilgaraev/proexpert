@@ -11,6 +11,7 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 use Symfony\Component\Routing\Exception\RouteNotFoundException;
 use App\Services\Monitoring\PrometheusService;
+use App\Exceptions\Billing\InsufficientBalanceException;
 
 class Handler extends ExceptionHandler
 {
@@ -33,6 +34,7 @@ class Handler extends ExceptionHandler
         \Symfony\Component\HttpKernel\Exception\HttpException::class,
         \Illuminate\Database\Eloquent\ModelNotFoundException::class,
         ValidationException::class,
+        InsufficientBalanceException::class,
     ];
 
     /**
@@ -90,6 +92,12 @@ class Handler extends ExceptionHandler
                     return response()->json([
                         'message' => 'Маршрут не найден или доступ запрещён.'
                     ], 401);
+                }
+
+                if ($e instanceof InsufficientBalanceException) {
+                    return response()->json([
+                        'message' => $e->getMessage() ?: 'Недостаточно средств на балансе.'
+                    ], 402); // 402 Payment Required
                 }
 
                 $statusCode = $e instanceof HttpExceptionInterface ? $e->getStatusCode() : 500;
