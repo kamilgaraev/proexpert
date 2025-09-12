@@ -4,8 +4,6 @@ namespace App\Providers;
 
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\App;
-use App\Http\Middleware\CorsMiddleware;
-use Illuminate\Routing\Router;
 use App\Services\Organization\OrganizationContext;
 use App\Services\FileService;
 use App\Services\Export\ExcelExporterService;
@@ -73,7 +71,6 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        
         // Регистрируем observers для автоматической синхронизации данных
         MaterialUsageLog::observe(MaterialUsageLogObserver::class);
         CompletedWork::observe(CompletedWorkObserver::class);

@@ -26,7 +26,9 @@ class CorsMiddleware
         Log::info('CORS Middleware вызван', [
             'request_method' => $request->method(),
             'origin' => $origin,
-            'uri' => $request->getRequestUri()
+            'uri' => $request->getRequestUri(),
+            'all_headers' => $request->headers->all(),
+            'app_env' => app()->environment()
         ]);
         
         // Получаем конфигурацию CORS
@@ -76,13 +78,23 @@ class CorsMiddleware
                     $allowCredentials = 'true';
                     $originMatched = true;
                 } else {
-                    Log::warning('CORS: Отклонен запрос с недопустимого origin', [
-                        'origin' => $origin,
-                        'allowed_origins' => $allowedOrigins,
-                        'allowed_patterns' => $allowedOriginsPatterns
-                    ]);
-                    $allowedOrigin = 'null';
-                    $allowCredentials = 'false';
+                    // В продакшене для prohelper.pro доменов разрешаем
+                    if ($origin && (strpos($origin, '.prohelper.pro') !== false || $origin === 'https://prohelper.pro')) {
+                        Log::warning('CORS: Принимаем prohelper.pro домен не из списка', [
+                            'origin' => $origin
+                        ]);
+                        $allowedOrigin = $origin;
+                        $allowCredentials = 'true';
+                        $originMatched = true;
+                    } else {
+                        Log::warning('CORS: Отклонен запрос с недопустимого origin', [
+                            'origin' => $origin,
+                            'allowed_origins' => $allowedOrigins,
+                            'allowed_patterns' => $allowedOriginsPatterns
+                        ]);
+                        $allowedOrigin = 'null';
+                        $allowCredentials = 'false';
+                    }
                 }
             }
         } else {
@@ -113,7 +125,13 @@ class CorsMiddleware
         
         // Если это preflight OPTIONS-запрос
         if ($request->isMethod('OPTIONS')) {
-            Log::info('CORS: Обработка preflight OPTIONS запроса', ['headers' => $headers]);
+            Log::info('CORS: Обработка preflight OPTIONS запроса', [
+                'headers' => $headers,
+                'origin' => $origin,
+                'allowed_origin' => $allowedOrigin,
+                'origin_matched' => $originMatched,
+                'allowed_origins_config' => $allowedOrigins
+            ]);
             // Возвращаем пустой ответ 200 с нужными CORS-заголовками
             return response('', 200, $headers);
         }

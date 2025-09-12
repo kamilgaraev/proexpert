@@ -38,6 +38,8 @@ return [
         'https://lk.prohelper.pro',
         'https://api.prohelper.pro',
         'https://admin.prohelper.pro',
+        'https://www.prohelper.pro',
+        'http://www.prohelper.pro',
         // '*'  // Убираем, чтобы избежать конфликта с supports_credentials = true
     ],
 
@@ -80,5 +82,6 @@ return [
     */
     
     // Разрешить любой origin в режиме разработки (env=local)
-    'allow_any_origin_in_dev' => true,
+    // ВРЕМЕННО ОТКЛЮЧЕНО для продакшена
+    'allow_any_origin_in_dev' => false,
 ]; 
