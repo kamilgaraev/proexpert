@@ -1,0 +1,42 @@
+{
+  "name": "Системный администратор",
+  "slug": "system_admin",
+  "version": "1.0.0",
+  "context": "system",
+  "interface": "admin",
+  "description": "Администрирование системы без доступа к биллингу",
+  
+  "system_permissions": [
+    "system.view",
+    "system.manage_users",
+    "system.manage_organizations",
+    "system.view_logs",
+    "system.manage_modules",
+    "profile.view",
+    "profile.edit",
+    "admin.access"
+  ],
+  
+  "module_permissions": {
+    "users": ["users.*"],
+    "organizations": ["organizations.*"],
+    "projects": ["projects.view", "projects.edit"],
+    "materials": ["materials.view", "materials.edit"],
+    "reports": ["reports.*"],
+    "finance": ["finance.view"]
+  },
+  
+  "interface_access": ["admin"],
+  
+  "hierarchy": {
+    "can_manage_roles": [
+      "organization_owner", 
+      "organization_admin", 
+      "accountant",
+      "project_manager",
+      "foreman",
+      "worker"
+    ],
+    "cannot_manage": ["super_admin", "system_admin"]
+  }
+}

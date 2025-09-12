@@ -1,0 +1,62 @@
+{
+  "name": "Руководитель проекта",
+  "slug": "project_manager",
+  "version": "1.0.0",
+  "context": "project",
+  "interface": "lk",
+  "description": "Полное управление проектом и командой",
+  
+  "system_permissions": [
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "projects": ["projects.*"],
+    "materials": [
+      "materials.view",
+      "materials.edit",
+      "materials.request",
+      "materials.approve_requests"
+    ],
+    "reports": ["reports.*"],
+    "finance": [
+      "finance.view_project_budget",
+      "finance.manage_project_expenses"
+    ],
+    "contracts": [
+      "contracts.view",
+      "contracts.edit_project_contracts"
+    ],
+    "personnel": [
+      "personnel.view",
+      "personnel.assign",
+      "personnel.manage_team"
+    ]
+  },
+  
+  "interface_access": ["lk", "mobile"],
+  
+  "hierarchy": {
+    "can_manage_roles": [
+      "site_engineer",
+      "foreman",
+      "worker",
+      "observer"
+    ],
+    "cannot_manage": [
+      "project_manager",
+      "organization_admin",
+      "organization_owner"
+    ]
+  },
+  
+  "conditions": {
+    "project_count": {
+      "max_projects": 10
+    },
+    "budget": {
+      "max_project_budget": 5000000
+    }
+  }
+}

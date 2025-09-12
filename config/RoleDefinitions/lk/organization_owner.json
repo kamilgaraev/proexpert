@@ -1,0 +1,47 @@
+{
+  "name": "Владелец организации",
+  "slug": "organization_owner",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "lk",
+  "description": "Полное управление организацией, включая биллинг",
+  
+  "system_permissions": [
+    "organization.view",
+    "organization.edit",
+    "organization.delete",
+    "organization.manage_billing",
+    "organization.manage_modules",
+    "users.invite",
+    "users.manage",
+    "users.assign_roles",
+    "roles.create_custom",
+    "roles.manage_custom",
+    "profile.view",
+    "profile.edit",
+    "admin.access"
+  ],
+  
+  "module_permissions": {
+    "projects": ["projects.*"],
+    "materials": ["materials.*"],
+    "reports": ["reports.*"],
+    "finance": ["finance.*"],
+    "contracts": ["contracts.*"],
+    "personnel": ["personnel.*"]
+  },
+  
+  "interface_access": ["lk", "admin"],
+  
+  "hierarchy": {
+    "can_manage_roles": [
+      "organization_admin",
+      "accountant", 
+      "viewer",
+      "project_manager",
+      "foreman",
+      "worker"
+    ],
+    "cannot_manage": ["organization_owner", "system_admin", "super_admin"]
+  }
+}

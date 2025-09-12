@@ -1,0 +1,40 @@
+{
+  "name": "Бухгалтер",
+  "slug": "accountant",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "lk",
+  "description": "Управление финансами и отчетностью организации",
+  
+  "system_permissions": [
+    "organization.view",
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "projects": ["projects.view", "projects.view_budget"],
+    "materials": ["materials.view", "materials.view_costs"],
+    "reports": ["reports.*"],
+    "finance": ["finance.*"],
+    "contracts": ["contracts.view", "contracts.view_financial"]
+  },
+  
+  "interface_access": ["lk"],
+  
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": ["*"]
+  },
+  
+  "conditions": {
+    "time": {
+      "working_hours": "09:00-18:00",
+      "working_days": [1, 2, 3, 4, 5]
+    },
+    "budget": {
+      "max_transaction": 100000,
+      "daily_limit": 500000
+    }
+  }
+}

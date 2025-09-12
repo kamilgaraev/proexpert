@@ -1,0 +1,43 @@
+{
+  "name": "Наблюдатель",
+  "slug": "observer",
+  "version": "1.0.0",
+  "context": "project",
+  "interface": "mobile",
+  "description": "Контроль и мониторинг работ на объекте",
+  
+  "system_permissions": [
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "projects": [
+      "projects.view",
+      "projects.view_progress",
+      "projects.photo_upload"
+    ],
+    "materials": [
+      "materials.view",
+      "materials.track_usage"
+    ],
+    "reports": [
+      "reports.view",
+      "reports.create_inspection",
+      "reports.photo_upload"
+    ]
+  },
+  
+  "interface_access": ["mobile"],
+  
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": ["*"]
+  },
+  
+  "conditions": {
+    "location": {
+      "require_geolocation": true
+    }
+  }
+}

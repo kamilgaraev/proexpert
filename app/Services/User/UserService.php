@@ -3,9 +3,8 @@
 namespace App\Services\User;
 
 use App\Models\User;
-use App\Models\Role;
 use App\Repositories\Interfaces\UserRepositoryInterface;
-use App\Repositories\Interfaces\RoleRepositoryInterface;
+// TODO: RoleRepositoryInterface больше не используется - заменен на новую систему авторизации
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\Request;
@@ -18,20 +17,17 @@ use App\Services\Organization\OrganizationContext;
 
 /**
  * @property UserRepositoryInterface $userRepository
- * @property RoleRepositoryInterface $roleRepository
  */
 class UserService
 {
     protected UserRepositoryInterface $userRepository;
-    protected RoleRepositoryInterface $roleRepository;
+    // TODO: RoleRepositoryInterface удален - используем новую систему авторизации
 
     public function __construct(
-        UserRepositoryInterface $userRepository,
-        RoleRepositoryInterface $roleRepository
+        UserRepositoryInterface $userRepository
     )
     {
         $this->userRepository = $userRepository;
-        $this->roleRepository = $roleRepository;
     }
 
     // --- Helper Methods ---

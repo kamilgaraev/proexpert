@@ -12,10 +12,18 @@ class UpdateOrganizationRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        // Проверяем, что пользователь авторизован и имеет роль 'organization_owner'
-        // Реальная проверка роли должна быть в middleware или сервисе
-        return Auth::check();
-        // return Auth::check() && Auth::user()->hasRole('organization_owner'); // Пример
+        $user = Auth::user();
+        if (!$user) {
+            return false;
+        }
+
+        $organizationId = $user->current_organization_id;
+        if (!$organizationId) {
+            return false;
+        }
+
+        // Используем новую систему авторизации
+        return $user->hasPermission('organization.manage', ['organization_id' => $organizationId]);
     }
 
     /**

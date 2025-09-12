@@ -4,7 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\UserController;
 use App\Http\Controllers\Api\V1\Landing\AdminPanelUserController;
 
-Route::middleware(['auth:api_landing', 'role:organization_owner|organization_admin']) // Используем | как разделитель
+Route::middleware(['auth:api_landing', 'authorize:users.manage', 'interface:lk']) 
     ->prefix('users') // Префикс для управления администраторами
     ->name('users.') // Префикс имени маршрута
     ->group(function () {
@@ -19,7 +19,7 @@ Route::middleware(['auth:api_landing', 'role:organization_owner|organization_adm
 // но явное определение дает больше контроля над именами и методами.
 
 // --- Маршруты для управления Пользователями Админ-Панели (web_admin, accountant, etc.) ---
-Route::middleware(['auth:api_landing', 'role:organization_owner|organization_admin'])
+Route::middleware(['auth:api_landing', 'authorize:users.manage_admin', 'interface:lk'])
     ->prefix('adminPanelUsers') // Новый префикс
     ->name('adminPanelUsers.')  // Новый неймспейс имен
     ->group(function () {

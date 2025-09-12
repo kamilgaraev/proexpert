@@ -1,0 +1,30 @@
+{
+  "name": "Суперадминистратор",
+  "slug": "super_admin",
+  "version": "1.0.0",
+  "context": "system",
+  "interface": "admin",
+  "description": "Полный контроль над системой и всеми организациями",
+  
+  "system_permissions": [
+    "*"
+  ],
+  
+  "module_permissions": {
+    "*": ["*"]
+  },
+  
+  "interface_access": ["admin", "lk", "mobile"],
+  
+  "hierarchy": {
+    "can_manage_roles": ["*"],
+    "cannot_manage": []
+  },
+  
+  "conditions": {
+    "time": {
+      "working_hours": null,
+      "working_days": null
+    }
+  }
+}

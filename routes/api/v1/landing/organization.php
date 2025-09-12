@@ -4,7 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\OrganizationController;
 use App\Http\Controllers\Api\V1\Landing\OrganizationVerificationController;
 
-Route::middleware(['auth:api_landing', 'organization.context', 'role:organization_owner|organization_admin'])
+Route::middleware(['auth:api_landing', 'organization.context', 'authorize:organization.manage', 'interface:lk'])
     ->prefix('organization')
     ->group(function () {
         Route::get('/', [OrganizationController::class, 'show'])

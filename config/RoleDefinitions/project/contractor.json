@@ -1,0 +1,53 @@
+{
+  "name": "Подрядчик",
+  "slug": "contractor",
+  "version": "1.0.0",
+  "context": "project",
+  "interface": "lk",
+  "description": "Выполнение подрядных работ на объекте",
+  
+  "system_permissions": [
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "projects": [
+      "projects.view_assigned",
+      "projects.update_progress",
+      "projects.upload_work_photos"
+    ],
+    "materials": [
+      "materials.view_assigned",
+      "materials.request_contractor"
+    ],
+    "reports": [
+      "reports.create_contractor",
+      "reports.photo_upload",
+      "reports.submit_completion"
+    ],
+    "finance": [
+      "finance.view_contractor_payments",
+      "finance.submit_invoices"
+    ],
+    "contracts": [
+      "contracts.view_own"
+    ]
+  },
+  
+  "interface_access": ["lk", "mobile"],
+  
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": ["*"]
+  },
+  
+  "conditions": {
+    "time": {
+      "working_hours": "08:00-18:00"
+    },
+    "budget": {
+      "max_invoice": 500000
+    }
+  }
+}

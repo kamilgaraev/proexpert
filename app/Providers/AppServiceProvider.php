@@ -9,7 +9,6 @@ use App\Services\FileService;
 use App\Services\Export\ExcelExporterService;
 use App\Services\Report\MaterialReportService;
 use App\Services\Landing\ChildOrganizationUserService;
-use App\Services\OrganizationRoleService;
 use App\Services\RateCoefficient\RateCoefficientService;
 use App\Models\Models\Log\MaterialUsageLog;
 use App\Models\CompletedWork;
@@ -43,9 +42,10 @@ class AppServiceProvider extends ServiceProvider
             return new MaterialReportService($app->make(RateCoefficientService::class));
         });
 
-        $this->app->singleton(ChildOrganizationUserService::class, function ($app) {
-            return new ChildOrganizationUserService($app->make(OrganizationRoleService::class));
-        });
+        // TODO: Временно закомментировано до интеграции новой системы авторизации
+        // $this->app->singleton(ChildOrganizationUserService::class, function ($app) {
+        //     return new ChildOrganizationUserService($app->make(OrganizationRoleService::class));
+        // });
         
         // Репозиторий дашборда ЛК
         $this->app->bind(\App\Repositories\Landing\OrganizationDashboardRepositoryInterface::class, \App\Repositories\Landing\EloquentOrganizationDashboardRepository::class);

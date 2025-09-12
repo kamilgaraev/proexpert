@@ -178,6 +178,7 @@ return [
         App\Providers\RouteServiceProvider::class,
         App\Providers\BillingServiceProvider::class,
         App\Providers\ModuleServiceProvider::class,
+        App\Domain\Authorization\Providers\AuthorizationServiceProvider::class,
         App\Providers\TelegramServiceProvider::class,
         // App\Providers\TelescopeServiceProvider::class,
         // App\Providers\FortifyServiceProvider::class,

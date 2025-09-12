@@ -27,6 +27,7 @@ interface UserRepositoryInterface extends BaseRepositoryInterface // Новое 
     public function findByRoleInOrganizationPaginated(int $organizationId, string $roleSlug, int $perPage = 15): \Illuminate\Pagination\LengthAwarePaginator;
     public function attachToOrganization(int $userId, int $organizationId, bool $isOwner = false, bool $isActive = true): void;
     public function assignRole(int $userId, int $roleId, int $organizationId): void;
+    public function assignRoleToUser(int $userId, string $roleSlug, int $organizationId): void;
     public function revokeRole(int $userId, int $roleId, int $organizationId): bool;
     public function detachFromOrganization(int $userId, int $organizationId): bool;
     public function findByEmail(string $email): ?\App\Models\User;

@@ -1,0 +1,52 @@
+{
+  "name": "Инженер объекта",
+  "slug": "site_engineer",
+  "version": "1.0.0",
+  "context": "project",
+  "interface": "lk",
+  "description": "Техническое руководство строительными работами",
+  
+  "system_permissions": [
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "projects": [
+      "projects.view",
+      "projects.edit_technical",
+      "projects.create_technical_reports",
+      "projects.upload_drawings"
+    ],
+    "materials": [
+      "materials.view",
+      "materials.calculate_requirements",
+      "materials.approve_technical"
+    ],
+    "reports": [
+      "reports.view",
+      "reports.create_technical",
+      "reports.create_quality_control"
+    ],
+    "finance": [
+      "finance.view_project_budget"
+    ]
+  },
+  
+  "interface_access": ["lk", "mobile"],
+  
+  "hierarchy": {
+    "can_manage_roles": ["worker"],
+    "cannot_manage": [
+      "site_engineer",
+      "foreman", 
+      "project_manager"
+    ]
+  },
+  
+  "conditions": {
+    "project_count": {
+      "max_projects": 3
+    }
+  }
+}

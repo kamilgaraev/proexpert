@@ -15,9 +15,10 @@ class ViewChildWorksPolicy
      */
     public function view(User $user, Project $project): bool
     {
-        $hasPermission = method_exists($user, 'hasPermission')
-            ? $user->hasPermission('projects.view_child_works')
-            : false;
+        // Используем новую систему авторизации
+        $hasPermission = $user->hasPermission('projects.view_child_works', [
+            'organization_id' => $user->current_organization_id
+        ]);
 
         $currentOrgId = $user->current_organization_id;
 

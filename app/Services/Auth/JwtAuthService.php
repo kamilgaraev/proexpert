@@ -83,15 +83,15 @@ class JwtAuthService
                     ]);
                     Log::info('[JwtAuthService] User last login updated.');
 
-                    // Загружаем отношения с ролями для корректной работы Gate
-                    $user->load('roles');
-                    Log::info('[JwtAuthService] User roles loaded.', [
+                    // Загружаем отношения с новой системой авторизации
+                    $user->load('roleAssignments');
+                    Log::info('[JwtAuthService] User role assignments loaded (new auth system).', [
                         'user_id' => $user->id,
-                        'roles_count' => $user->roles->count()
+                        'assignments_count' => $user->roleAssignments->count()
                     ]);
                     
-                    // Если ролей нет вообще, проверяем и восстанавливаем роль владельца
-                    if ($user->roles->count() === 0) {
+                    // Если назначений ролей нет вообще, проверяем и восстанавливаем роль владельца
+                    if ($user->roleAssignments->count() === 0) {
                         Log::warning('[JwtAuthService] User has no roles, checking organizations.', [
                             'user_id' => $user->id,
                         ]);
@@ -107,28 +107,20 @@ class JwtAuthService
                             // Берем первую организацию и назначаем роль владельца
                             $firstOrg = $userOrganizations->first();
                             
-                            // Находим роль Owner
-                            $ownerRole = \App\Models\Role::where('slug', \App\Models\Role::ROLE_OWNER)->first();
-                            if ($ownerRole) {
-                                // Проверяем, что связь в pivot таблице отсутствует
-                                $roleExists = DB::table('role_user')
-                                    ->where('user_id', $user->id)
-                                    ->where('role_id', $ownerRole->id)
-                                    ->where('organization_id', $firstOrg->id)
-                                    ->exists();
-                                    
-                                if (!$roleExists) {
-                                    // Создаем связь
-                                    $user->roles()->attach($ownerRole->id, ['organization_id' => $firstOrg->id]);
-                                    Log::info('[JwtAuthService] Fixed: Owner role assigned.', [
-                                        'user_id' => $user->id,
-                                        'organization_id' => $firstOrg->id,
-                                        'role_id' => $ownerRole->id
-                                    ]);
-                                    
-                                    // Перезагружаем отношения
-                                    $user->load('roles');
-                                }
+                            // Назначаем роль владельца через новую систему авторизации
+                            try {
+                                $this->userRepository->assignRoleToUser($user->id, 'organization_owner', $firstOrg->id);
+                                Log::info('[JwtAuthService] Fixed: Owner role assigned (new auth system)', [
+                                    'user_id' => $user->id,
+                                    'organization_id' => $firstOrg->id,
+                                    'role_slug' => 'organization_owner'
+                                ]);
+                            } catch (\Exception $roleException) {
+                                Log::error('[JwtAuthService] Failed to assign owner role to first organization', [
+                                    'user_id' => $user->id,
+                                    'organization_id' => $firstOrg->id,
+                                    'error' => $roleException->getMessage()
+                                ]);
                             }
                         }
                     }
@@ -540,22 +532,23 @@ class JwtAuthService
                         'current_org_id' => $organization->current_organization_id ?? $organization->id
                     ]);
 
-                    // Назначаем пользователю роль владельца организации (organization_owner)
-                    $ownerRole = \App\Models\Role::where('slug', \App\Models\Role::ROLE_OWNER)->first();
-                    if ($ownerRole) {
-                        $alreadyHas = $user->roles()
-                            ->where('roles.id', $ownerRole->id)
-                            ->wherePivot('organization_id', $organization->id)
-                            ->exists();
-                        if (!$alreadyHas) {
-                            $user->roles()->attach($ownerRole->id, ['organization_id' => $organization->id]);
-                            Log::info('[JwtAuthService] Owner role attached to user after registration.', [
-                                'user_id' => $user->id,
-                                'organization_id' => $organization->id,
-                                'role_id' => $ownerRole->id,
-                            ]);
-                        }
+                    // Назначаем роль владельца организации через новую систему авторизации
+                    try {
+                        $this->userRepository->assignRoleToUser($user->id, 'organization_owner', $organization->id);
+                        Log::info('[JwtAuthService] Owner role assigned to user after registration (new auth system)', [
+                            'user_id' => $user->id,
+                            'organization_id' => $organization->id,
+                            'role_slug' => 'organization_owner'
+                        ]);
+                    } catch (\Exception $roleException) {
+                        Log::error('[JwtAuthService] Failed to assign owner role', [
+                            'user_id' => $user->id,
+                            'organization_id' => $organization->id,
+                            'error' => $roleException->getMessage()
+                        ]);
+                        // Не прерываем регистрацию из-за ошибки роли
                     }
+
                 } catch (\Exception $e) {
                     Log::error('[JwtAuthService] Failed to create organization', [
                         'error' => $e->getMessage(),

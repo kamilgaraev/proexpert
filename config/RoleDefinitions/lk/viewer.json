@@ -1,0 +1,29 @@
+{
+  "name": "Наблюдатель",
+  "slug": "viewer",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "lk",
+  "description": "Только просмотр информации без права редактирования",
+  
+  "system_permissions": [
+    "organization.view",
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "projects": ["projects.view"],
+    "materials": ["materials.view"],
+    "reports": ["reports.view"],
+    "finance": ["finance.view_summary"],
+    "contracts": ["contracts.view"]
+  },
+  
+  "interface_access": ["lk"],
+  
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": ["*"]
+  }
+}

@@ -17,7 +17,13 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware) {
         // Регистрация псевдонимов
         $middleware->alias([
-            'role' => \App\Http\Middleware\CheckRoleMiddleware::class,
+            // === НОВАЯ СИСТЕМА АВТОРИЗАЦИИ ===
+            'authorize' => \App\Domain\Authorization\Http\Middleware\AuthorizeMiddleware::class,
+            'role' => \App\Domain\Authorization\Http\Middleware\RoleMiddleware::class,
+            'interface' => \App\Domain\Authorization\Http\Middleware\InterfaceMiddleware::class,
+            
+            
+            // === ОСТАЛЬНЫЕ MIDDLEWARE ===
             'auth.jwt' => JwtMiddleware::class,
             'jwt.auth' => JwtMiddleware::class,
             'organization.context' => SetOrganizationContext::class,

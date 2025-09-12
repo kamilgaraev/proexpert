@@ -4,8 +4,6 @@ namespace App\Http\Requests\Api\V1\Landing\User;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Validation\Rules\Password;
-use App\Models\Role;
 
 class StoreAdminRequest extends FormRequest
 {
@@ -24,10 +22,8 @@ class StoreAdminRequest extends FormRequest
             return false;
         }
 
-        $isOwner = $user->isOwnerOfOrganization($organizationId);
-        $isAdmin = $user->hasRole(Role::ROLE_ADMIN, $organizationId);
-
-        return $isOwner || $isAdmin;
+        // Используем новую систему авторизации
+        return $user->hasPermission('users.manage_admin', ['organization_id' => $organizationId]);
     }
 
     /**

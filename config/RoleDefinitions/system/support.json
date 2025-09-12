@@ -1,0 +1,39 @@
+{
+  "name": "Техподдержка",
+  "slug": "support",
+  "version": "1.0.0",
+  "context": "system",
+  "interface": "admin",
+  "description": "Служба технической поддержки пользователей",
+  
+  "system_permissions": [
+    "support.view_tickets",
+    "support.manage_tickets",
+    "support.view_users",
+    "support.view_organizations",
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "users": ["users.view"],
+    "organizations": ["organizations.view"],
+    "projects": ["projects.view"],
+    "materials": ["materials.view"],
+    "reports": ["reports.view"]
+  },
+  
+  "interface_access": ["admin"],
+  
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": ["*"]
+  },
+  
+  "conditions": {
+    "time": {
+      "working_hours": "09:00-18:00",
+      "working_days": [1, 2, 3, 4, 5]
+    }
+  }
+}

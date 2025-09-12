@@ -175,7 +175,7 @@ class ProjectService
         $user = $this->userRepository->find($userId);
         if (!$user 
             || !$user->is_active 
-            || !$user->hasRole(Role::ROLE_FOREMAN, $organizationId) 
+            || !$user->hasRole('foreman', null) // Обновлено для новой системы авторизации
             || !$user->organizations()->where('organization_user.organization_id', $organizationId)->exists()
            ) { 
             throw new BusinessLogicException('Пользователь не найден, неактивен или не является прорабом в вашей организации.', 404);

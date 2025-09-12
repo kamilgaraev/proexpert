@@ -9,7 +9,6 @@ use App\Models\Material;
 use App\Models\User;
 use App\Models\Supplier;
 use App\Models\WorkType;
-use App\Models\Role;
 
 class OfficialMaterialUsageReportRequest extends FormRequest
 {
@@ -70,9 +69,10 @@ class OfficialMaterialUsageReportRequest extends FormRequest
                 'nullable',
                 'integer',
                 Rule::exists('users', 'id')->where(function ($query) use ($organizationId) {
-                    return $query->whereHas('roles', function ($roleQuery) use ($organizationId) {
-                        $roleQuery->where('slug', Role::ROLE_FOREMAN)
-                                  ->where('role_user.organization_id', $organizationId);
+                    // TODO: Добавить проверку роли прораба через новую систему авторизации
+                    return $query->whereHas('organizations', function ($orgQuery) use ($organizationId) {
+                        $orgQuery->where('organization_user.organization_id', $organizationId)
+                                 ->where('organization_user.is_active', true);
                     });
                 })
             ],

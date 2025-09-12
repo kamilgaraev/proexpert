@@ -39,7 +39,7 @@ class WorkCompletionReportRequest extends FormRequest
                 'integer',
                 Rule::exists('users', 'id')->where(function ($query) use ($organizationId) {
                     return $query->whereHas('roles', function ($roleQuery) use ($organizationId) {
-                        $roleQuery->where('slug', Role::ROLE_FOREMAN)
+                        $roleQuery->where('slug', 'foreman' // Обновлено для новой системы авторизации)
                                   ->where('role_user.organization_id', $organizationId);
                     });
                 })

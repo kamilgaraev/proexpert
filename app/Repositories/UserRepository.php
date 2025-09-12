@@ -6,8 +6,10 @@ use App\Models\User;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use App\Models\Role;
 use Illuminate\Support\Collection;
+use App\Domain\Authorization\Services\AuthorizationService;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Pagination\LengthAwarePaginator as PaginationLengthAwarePaginator;
 use App\Models\Models\Log\MaterialUsageLog;
@@ -103,20 +105,15 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
                     'organization_id' => $organizationId
                 ]);
             }
-            // Присваиваем роль владельца (Owner) только если $isOwner = true
+            // Присваиваем роль владельца (Owner) только если $isOwner = true - новая система авторизации
             if ($isOwner) {
                 try {
-                    $ownerRole = Role::where('slug', Role::ROLE_OWNER)->first();
-                    if ($ownerRole) {
-                        $this->assignRole($userId, $ownerRole->id, $organizationId);
-                        Log::info("[UserRepository] Assigned owner role to user", [
-                            'user_id' => $userId,
-                            'organization_id' => $organizationId,
-                            'role_id' => $ownerRole->id
-                        ]);
-                    } else {
-                        Log::error("[UserRepository] Owner role not found in the system");
-                    }
+                    $this->assignRoleToUser($userId, 'organization_owner', $organizationId);
+                    Log::info("[UserRepository] Assigned owner role to user (new auth system)", [
+                        'user_id' => $userId,
+                        'organization_id' => $organizationId,
+                        'role_slug' => 'organization_owner'
+                    ]);
                 } catch (\Exception $e) {
                     Log::error("[UserRepository] Failed to assign owner role: " . $e->getMessage(), [
                         'user_id' => $userId,
@@ -131,28 +128,63 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
         }
     }
 
+    /**
+     * @deprecated Используйте assignRoleToUser() с новой системой авторизации
+     */
     public function assignRole(int $userId, int $roleId, int $organizationId): void
     {
+        Log::warning("[UserRepository] assignRole is deprecated - use assignRoleToUser with new auth system", [
+            'user_id' => $userId,
+            'role_id' => $roleId,
+            'organization_id' => $organizationId
+        ]);
+        
+        // TODO: Пока оставляем для совместимости, но нужно перевести на новую систему
+    }
+
+    /**
+     * Назначить роль пользователю в новой системе авторизации
+     */
+    public function assignRoleToUser(int $userId, string $roleSlug, int $organizationId): void
+    {
         $user = $this->model->find($userId);
-        if ($user) {
-            $exists = $user->roles()
-                ->where('role_user.organization_id', $organizationId)
-                ->where('role_user.role_id', $roleId)
-                ->exists();
-            if (!$exists) {
-                $user->roles()->attach($roleId, ['organization_id' => $organizationId]);
-                Log::info("[UserRepository] assignRole: Role assigned", [
-                    'user_id' => $userId,
-                    'role_id' => $roleId,
-                    'organization_id' => $organizationId
-                ]);
-            } else {
-                Log::debug("[UserRepository] assignRole: Role already assigned", [
-                    'user_id' => $userId,
-                    'role_id' => $roleId,
-                    'organization_id' => $organizationId
-                ]);
-            }
+        if (!$user) {
+            throw new \Exception("User not found: $userId");
+        }
+
+        // Получаем или создаем контекст организации
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+
+        // Проверяем, не назначена ли уже роль
+        $existing = UserRoleAssignment::where([
+            'user_id' => $userId,
+            'role_slug' => $roleSlug,
+            'context_id' => $context->id,
+            'is_active' => true
+        ])->exists();
+
+        if (!$existing) {
+            UserRoleAssignment::create([
+                'user_id' => $userId,
+                'role_slug' => $roleSlug,
+                'role_type' => 'system', // Системная роль из JSON
+                'context_id' => $context->id,
+                'assigned_by' => auth()->id(),
+                'is_active' => true
+            ]);
+
+            Log::info("[UserRepository] assignRoleToUser: Role assigned (new auth system)", [
+                'user_id' => $userId,
+                'role_slug' => $roleSlug,
+                'organization_id' => $organizationId,
+                'context_id' => $context->id
+            ]);
+        } else {
+            Log::debug("[UserRepository] assignRoleToUser: Role already assigned", [
+                'user_id' => $userId,
+                'role_slug' => $roleSlug,
+                'organization_id' => $organizationId
+            ]);
         }
     }
 

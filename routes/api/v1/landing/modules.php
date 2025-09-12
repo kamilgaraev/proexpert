@@ -28,7 +28,7 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
             ->name('permissions');
         
         // Методы для владельцев организации
-        Route::middleware(['role:organization_owner'])
+        Route::middleware(['authorize:modules.manage'])
             ->group(function () {
                 
                 Route::post('/activate', [ModuleController::class, 'activate'])
@@ -45,7 +45,7 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
             });
         
         // Биллинг информация (доступна владельцам и бухгалтерам)
-        Route::middleware(['role:organization_owner,organization_accountant'])
+        Route::middleware(['authorize:modules.billing'])
             ->prefix('billing')
             ->name('billing.')
             ->group(function () {

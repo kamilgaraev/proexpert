@@ -1,0 +1,58 @@
+{
+  "name": "Прораб",
+  "slug": "foreman",
+  "version": "1.0.0",
+  "context": "project",
+  "interface": "mobile",
+  "description": "Руководство строительным процессом на объекте",
+  
+  "system_permissions": [
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "projects": [
+      "projects.view",
+      "projects.update_progress",
+      "projects.upload_photos",
+      "projects.create_reports"
+    ],
+    "materials": [
+      "materials.view",
+      "materials.request",
+      "materials.track_usage"
+    ],
+    "reports": [
+      "reports.create",
+      "reports.photo_upload",
+      "reports.daily_report"
+    ],
+    "personnel": [
+      "personnel.view_assigned",
+      "personnel.assign_tasks",
+      "personnel.track_attendance"
+    ]
+  },
+  
+  "interface_access": ["mobile"],
+  
+  "hierarchy": {
+    "can_manage_roles": ["worker"],
+    "cannot_manage": [
+      "foreman",
+      "project_manager",
+      "organization_admin",
+      "organization_owner"
+    ]
+  },
+  
+  "conditions": {
+    "project_count": {
+      "max_projects": 5
+    },
+    "location": {
+      "require_geolocation": true
+    }
+  }
+}

@@ -6,7 +6,6 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use App\Models\Project;
 use App\Models\User;
-use App\Models\Role;
 
 class ForemanActivityReportRequest extends FormRequest
 {
@@ -33,8 +32,8 @@ class ForemanActivityReportRequest extends FormRequest
                 'integer',
                 Rule::exists('users', 'id')->where(function ($query) use ($organizationId) {
                     return $query->whereHas('roles', function ($roleQuery) use ($organizationId) {
-                        $roleQuery->where('slug', Role::ROLE_FOREMAN)
-                                  ->where('role_user.organization_id', $organizationId);
+                        // TODO: Обновить для новой системы авторизации
+                        $roleQuery->where('role_user.organization_id', $organizationId);
                     });
                 })
             ],

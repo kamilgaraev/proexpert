@@ -1,0 +1,46 @@
+{
+  "name": "Рабочий",
+  "slug": "worker",
+  "version": "1.0.0",
+  "context": "project",
+  "interface": "mobile",
+  "description": "Исполнение работ на строительном объекте",
+  
+  "system_permissions": [
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "projects": [
+      "projects.view_assigned",
+      "projects.update_task_status",
+      "projects.upload_progress_photos"
+    ],
+    "materials": [
+      "materials.view_assigned",
+      "materials.confirm_usage"
+    ],
+    "reports": [
+      "reports.create_work_report",
+      "reports.photo_upload"
+    ]
+  },
+  
+  "interface_access": ["mobile"],
+  
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": ["*"]
+  },
+  
+  "conditions": {
+    "time": {
+      "working_hours": "07:00-19:00",
+      "working_days": [1, 2, 3, 4, 5, 6]
+    },
+    "location": {
+      "require_geolocation": true
+    }
+  }
+}

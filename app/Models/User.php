@@ -6,6 +6,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -16,30 +17,14 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Arr;
 use App\Traits\HasImages;
 
-// Импортируем константы роли
-use App\Models\Role;
+// TODO: Добавить импорты для новой системы авторизации
 
 class User extends Authenticatable implements JWTSubject
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable, SoftDeletes, HasImages;
 
-    /**
-     * Роли, имеющие доступ и полный контроль в Admin Panel.
-     * Эти роли будут иметь неограниченный доступ.
-     */
-    const ADMIN_PANEL_ACCESS_ROLES = [
-        'super_admin',
-        'admin',
-        'content_admin',
-        'support_admin',
-        Role::ROLE_SYSTEM_ADMIN,    // system_admin
-        Role::ROLE_OWNER,           // organization_owner
-        Role::ROLE_ADMIN,           // organization_admin
-        Role::ROLE_WEB_ADMIN,       // web_admin
-        Role::ROLE_ACCOUNTANT,      // accountant
-        // Добавьте сюда другие SLUG ролей, если они должны иметь полный доступ к админ-панели
-    ];
+    // TODO: Константы для новой системы авторизации
 
     /**
      * The attributes that are mass assignable.
@@ -152,153 +137,13 @@ class User extends Authenticatable implements JWTSubject
         return $this->organizations()->where('organization_user.is_active', true);
     }
 
-    /**
-     * Получить роли пользователя.
-     */
-    public function roles(): BelongsToMany
-    {
-        return $this->belongsToMany(Role::class)
-            ->withPivot('organization_id')
-            ->withTimestamps();
-    }
+    // TODO: Связи для новой системы авторизации
 
-    /**
-     * Получить роли пользователя в конкретной организации.
-     *
-     * @param int $organizationId
-     * @return \Illuminate\Database\Eloquent\Relations\BelongsToMany
-     */
-    public function rolesInOrganization(int $organizationId)
-    {
-        return $this->roles()->where('role_user.organization_id', $organizationId);
-    }
 
-    /**
-     * Проверить, имеет ли пользователь указанную роль в организации.
-     *
-     * @param string $roleSlug
-     * @param int|null $organizationId
-     * @return bool
-     */
-    public function hasRole(string $roleSlug, ?int $organizationId = null): bool
-    {
-        try {
-            // Если организация не указана, проверяем в текущей организации
-            $effectiveOrganizationId = $organizationId;
-            if (!$effectiveOrganizationId) {
-                if (!$this->current_organization_id) {
-                    Log::warning('[User::hasRole] Attempted to check role without organization context and no current_organization_id.', [
-                        'user_id' => $this->id,
-                        'role_slug' => $roleSlug
-                    ]);
-                    return false; // Нет контекста организации
-                }
-                $effectiveOrganizationId = $this->current_organization_id;
-            }
-            
-            Log::info('[User::hasRole] Начало проверки роли', [
-                'user_id' => $this->id,
-                'role_slug' => $roleSlug,
-                'organization_id' => $effectiveOrganizationId
-            ]);
-            
-            $roleExists = $this->roles()
-                ->where('slug', $roleSlug)
-                ->where('role_user.organization_id', $effectiveOrganizationId)
-                ->exists();
-            
-            // Log::info('[User::hasRole] Результат проверки.', ['exists' => $roleExists]); // Можно добавить для детальной отладки
-            return $roleExists;
 
-        } catch (\Throwable $e) {
-            Log::error('[User::hasRole] Exception caught during role check. Returning false.', [
-                'user_id' => $this->id,
-                'role_slug' => $roleSlug,
-                'passed_organization_id' => $organizationId,
-                'current_organization_id_on_user' => $this->current_organization_id ?? 'null',
-                'exception_message' => $e->getMessage(),
-                'exception_class' => get_class($e),
-                'exception_file' => $e->getFile() . ':' . $e->getLine()
-            ]);
-            return false; // В случае любой ошибки считаем, что роли нет
-        }
-    }
 
-    /**
-     * Проверить, имеет ли пользователь разрешение в конкретной организации.
-     *
-     * @param string $permissionSlug
-     * @param int|null $organizationId
-     * @return bool
-     */
-    public function hasPermission(string $permissionSlug, ?int $organizationId = null): bool
-    {
-        $organizationId = $organizationId ?? $this->current_organization_id;
 
-        if (!$organizationId) {
-            return false;
-        }
 
-        $roles = $this->rolesInOrganization($organizationId)->get();
-        
-        foreach ($roles as $role) {
-            if ($role->hasPermission($permissionSlug)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Является ли пользователь системным администратором.
-     *
-     * @return bool
-     */
-    public function isSystemAdmin(): bool
-    {
-        // Считаем системным админом, если user_type = system_admin
-        // или назначена системная роль super_admin (slug)
-        if ($this->user_type === 'system_admin') {
-            return true;
-        }
-
-        // Проверяем наличие роли super_admin без привязки к организации
-        return $this->roles()->where('slug', Role::ROLE_SUPER_ADMIN)->exists();
-    }
-
-    /**
-     * Является ли пользователь администратором организации.
-     *
-     * @param int|null $organizationId
-     * @return bool
-     */
-    public function isOrganizationAdmin(?int $organizationId = null): bool
-    {
-        if ($this->isSystemAdmin()) {
-            return true;
-        }
-
-        $organizationId = $organizationId ?? $this->current_organization_id;
-
-        if (!$organizationId) {
-            return false;
-        }
-
-        // Проверяем наличие роли админа ИЛИ роли владельца
-        return $this->hasRole(Role::ROLE_ADMIN, $organizationId) || $this->hasRole(Role::ROLE_OWNER, $organizationId);
-    }
-
-    /**
-     * Является ли пользователь владельцем указанной организации.
-     *
-     * @param int $organizationId
-     * @return bool
-     */
-    public function isOwnerOfOrganization(int $organizationId): bool
-    {
-        return $this->ownedOrganizations()->where('organization_id', $organizationId)->exists();
-    }
 
     /**
      * Проверяет, принадлежит ли пользователь указанной организации (активное членство)
@@ -321,56 +166,232 @@ class User extends Authenticatable implements JWTSubject
             ->withTimestamps();
     }
 
+
     /**
-     * Проверяет, имеет ли пользователь роль, дающую полный доступ к админ-панели.
-     *
-     * @param int|null $organizationId Если null, используется текущая организация пользователя.
-     * @return bool
+     * === НОВАЯ СИСТЕМА АВТОРИЗАЦИИ ===
      */
-    public function isAdminPanelUser(?int $organizationId = null): bool
+
+    /**
+     * Связь с назначениями ролей
+     */
+    public function roleAssignments(): HasMany
     {
-        // Системный администратор имеет доступ всегда, вне зависимости от организации
+        return $this->hasMany(\App\Domain\Authorization\Models\UserRoleAssignment::class);
+    }
+
+    /**
+     * Проверить, есть ли у пользователя право (переопределяем родительский метод)
+     */
+    public function can($abilities, $arguments = []): bool
+    {
+        // Если передан один аргумент как строка - используем новую систему
+        if (is_string($abilities) && empty($arguments)) {
+            return app(\App\Domain\Authorization\Services\AuthorizationService::class)
+                ->can($this, $abilities, null);
+        }
+        
+        // Если передан контекст - используем новую систему
+        if (is_string($abilities) && is_array($arguments)) {
+            return app(\App\Domain\Authorization\Services\AuthorizationService::class)
+                ->can($this, $abilities, $arguments);
+        }
+
+        // Иначе вызываем родительский метод для совместимости
+        return parent::can($abilities, $arguments);
+    }
+
+    /**
+     * Проверить право в новой системе авторизации  
+     */
+    public function hasPermission(string $permission, ?array $context = null): bool
+    {
+        return app(\App\Domain\Authorization\Services\AuthorizationService::class)
+            ->can($this, $permission, $context);
+    }
+
+    /**
+     * Проверить, есть ли у пользователя роль
+     */
+    public function hasRole(string $roleSlug, ?int $contextId = null): bool
+    {
+        return app(\App\Domain\Authorization\Services\AuthorizationService::class)
+            ->hasRole($this, $roleSlug, $contextId);
+    }
+
+    /**
+     * Проверить, есть ли доступ к интерфейсу
+     */
+    public function canAccessInterface(string $interface, ?\App\Domain\Authorization\Models\AuthorizationContext $context = null): bool
+    {
+        return app(\App\Domain\Authorization\Services\AuthorizationService::class)
+            ->canAccessInterface($this, $interface, $context);
+    }
+
+    /**
+     * Получить все роли пользователя в контексте
+     */
+    public function getRoles(?\App\Domain\Authorization\Models\AuthorizationContext $context = null): Collection
+    {
+        return app(\App\Domain\Authorization\Services\AuthorizationService::class)
+            ->getUserRoles($this, $context);
+    }
+
+    /**
+     * Получить все права пользователя
+     */
+    public function getPermissions(?\App\Domain\Authorization\Models\AuthorizationContext $context = null): array
+    {
+        return app(\App\Domain\Authorization\Services\AuthorizationService::class)
+            ->getUserPermissions($this, $context);
+    }
+
+    /**
+     * Получить контексты, в которых у пользователя есть роли
+     */
+    public function getContexts(): Collection
+    {
+        return app(\App\Domain\Authorization\Services\AuthorizationService::class)
+            ->getUserContexts($this);
+    }
+
+    /**
+     * Является ли пользователь системным администратором
+     */
+    public function isSystemAdmin(): bool
+    {
+        $systemContext = \App\Domain\Authorization\Models\AuthorizationContext::getSystemContext();
+        
+        return $this->hasRole('super_admin', $systemContext->id) || 
+               $this->hasRole('system_admin', $systemContext->id) ||
+               $this->user_type === 'system_admin';
+    }
+
+    /**
+     * Является ли пользователь владельцем организации
+     */
+    public function isOrganizationOwner(?int $organizationId = null): bool
+    {
         if ($this->isSystemAdmin()) {
             return true;
         }
 
-        $organizationId = $organizationId ?? $this->current_organization_id;
-
-        if (!$organizationId) {
-            // Если нет контекста организации (кроме системного администратора),
-            // то считаем, что доступа к админ-панели организации нет.
+        $orgId = $organizationId ?? $this->current_organization_id;
+        if (!$orgId) {
             return false;
         }
 
-        // Получаем все слаги ролей пользователя в указанной организации
-        $userRoleSlugs = $this->rolesInOrganization($organizationId)->pluck('slug')->toArray();
-
-        // Проверяем, есть ли пересечение между ролями пользователя и разрешенными ролями для админ-панели
-        foreach (self::ADMIN_PANEL_ACCESS_ROLES as $adminRoleSlug) {
-            if (in_array($adminRoleSlug, $userRoleSlugs)) {
-                return true;
-            }
-        }
-
-        return false;
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($orgId);
+        return $this->hasRole('organization_owner', $context->id);
     }
 
     /**
-     * Вернуть список слагов ролей пользователя для указанной организации.
-     * Если организация не указана и нет current_organization_id, вернётся пустой массив.
+     * Является ли пользователь администратором организации
+     */
+    public function isOrganizationAdmin(?int $organizationId = null): bool
+    {
+        if ($this->isSystemAdmin() || $this->isOrganizationOwner($organizationId)) {
+            return true;
+        }
+
+        $orgId = $organizationId ?? $this->current_organization_id;
+        if (!$orgId) {
+            return false;
+        }
+
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($orgId);
+        return $this->hasRole('organization_admin', $context->id);
+    }
+
+    /**
+     * Может ли пользователь управлять другим пользователем
+     */
+    public function canManageUser(User $targetUser, ?\App\Domain\Authorization\Models\AuthorizationContext $context = null): bool
+    {
+        return app(\App\Domain\Authorization\Services\AuthorizationService::class)
+            ->canManageUser($this, $targetUser, $context ?? $this->getCurrentOrganizationContext());
+    }
+
+    /**
+     * Получить текущий контекст организации пользователя
+     */
+    public function getCurrentOrganizationContext(): ?\App\Domain\Authorization\Models\AuthorizationContext
+    {
+        if (!$this->current_organization_id) {
+            return null;
+        }
+
+        return \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($this->current_organization_id);
+    }
+
+    /**
+     * Получить роли пользователя в текущей организации
+     */
+    public function getCurrentOrganizationRoles(): Collection
+    {
+        $context = $this->getCurrentOrganizationContext();
+        return $context ? $this->getRoles($context) : collect();
+    }
+
+    /**
+     * Получить слаги ролей пользователя для указанной организации
      */
     public function getRoleSlugs(?int $organizationId = null): array
     {
-        // Системному админу отдаём универсальную роль, чтобы проходили фильтры по ролям
         if ($this->isSystemAdmin()) {
-            return [Role::ROLE_SUPER_ADMIN];
+            return ['super_admin']; // Системный админ имеет все права
         }
 
         $orgId = $organizationId ?? $this->current_organization_id;
         if (!$orgId) {
             return [];
         }
-        return $this->rolesInOrganization($orgId)->pluck('slug')->all();
+
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($orgId);
+        return $this->getRoles($context)->pluck('role_slug')->toArray();
+    }
+
+    /**
+     * Проверить, имеет ли пользователь доступ к админ-панели
+     */
+    public function isAdminPanelUser(?int $organizationId = null): bool
+    {
+        // Системный админ всегда имеет доступ
+        if ($this->isSystemAdmin()) {
+            return true;
+        }
+
+        // Проверяем доступ к админ интерфейсу
+        $orgContext = null;
+        if ($organizationId || $this->current_organization_id) {
+            $orgId = $organizationId ?? $this->current_organization_id;
+            $orgContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($orgId);
+        }
+
+        return $this->canAccessInterface('admin', $orgContext);
+    }
+
+    /**
+     * === СОВМЕСТИМОСТЬ СО СТАРЫМ API ===
+     * Эти методы сохранены для обратной совместимости
+     */
+
+    /**
+     * @deprecated Используйте hasPermission() из новой системы авторизации
+     */
+    public function hasPermissionDeprecated(string $permissionSlug, ?int $organizationId = null): bool
+    {
+        $orgId = $organizationId ?? $this->current_organization_id;
+        $context = $orgId ? ['organization_id' => $orgId] : null;
+        
+        return $this->hasPermission($permissionSlug, $context);
+    }
+
+    /**
+     * @deprecated Используйте isOrganizationOwner()
+     */
+    public function isOwnerOfOrganization(int $organizationId): bool
+    {
+        return $this->isOrganizationOwner($organizationId);
     }
 
     /**

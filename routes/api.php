@@ -102,7 +102,7 @@ Route::prefix('landing')->name('landing.')->group(function () {
     require __DIR__ . '/api/v1/landing/organization.php';
     
     // Маршруты для управления пользователями админ-панели (accountant, web_admin)
-    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'role:organization_owner|organization_admin'])
+    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'authorize:users.manage_admin'])
         ->prefix('adminPanelUsers')
         ->name('adminPanelUsers.')
         ->group(function () {
@@ -115,7 +115,7 @@ Route::prefix('landing')->name('landing.')->group(function () {
 
     // Подключение маршрутов биллинга для лендинга/ЛК
     // Эти маршруты должны быть доступны аутентифицированному владельцу организации
-    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'role:organization_owner'])
+    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'authorize:billing.manage'])
         ->prefix('billing')
         ->name('billing.')
         ->group(function () {
@@ -123,7 +123,7 @@ Route::prefix('landing')->name('landing.')->group(function () {
         });
 
                 // Подключение маршрутов управления пользователями для лендинга/ЛК
-            Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'role:organization_owner|organization_admin'])
+            Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'authorize:users.manage'])
                 ->prefix('user-management')
                 ->name('userManagement.')
                 ->group(function () {
@@ -152,6 +152,12 @@ Route::prefix('landing')->name('landing.')->group(function () {
                         require __DIR__ . '/api/v1/landing/contractor_invitations.php';
                     }
                 });
+
+            // Подключение маршрутов новой системы авторизации
+            Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
+                ->group(function () {
+                    require __DIR__ . '/api/v1/landing/authorization.php';
+                });
 });
 
 // --- Admin Panel API ---
@@ -159,8 +165,8 @@ Route::prefix('admin')->name('admin.')->group(function () {
     // Публичные маршруты аутентификации админки
     require __DIR__ . '/api/v1/admin/auth.php';
 
-    // Защищенные маршруты Admin Panel
-    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'can:access-admin-panel'])->group(function() {
+    // Защищенные маршруты Admin Panel  
+    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])->group(function() {
         // Подключаем существующие файлы маршрутов для админки
         if (file_exists(__DIR__ . '/api/v1/admin/projects.php')) {
             require __DIR__ . '/api/v1/admin/projects.php';
@@ -309,7 +315,7 @@ Route::prefix('superadmin')->name('superadmin.')->group(function () {
             Route::get('{slug}/organization/{organizationId}', [HoldingApiController::class, 'getOrganizationData'])->name('organizationData');
             
             // Добавление дочерней организации (только владельцы)
-            Route::middleware(['role:organization_owner'])->group(function () {
+            Route::middleware(['authorize:multi_organization.manage'])->group(function () {
                 Route::post('{slug}/add-child', [MultiOrganizationController::class, 'addChildOrganization'])->name('addChild');
             });
         });

@@ -39,7 +39,7 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
             ->name('getRoleTemplates');
 
         // Только для владельцев организации
-        Route::middleware(['role:organization_owner'])
+        Route::middleware(['authorize:multi_organization.manage'])
             ->group(function () {
                 
                 // Создание холдинга

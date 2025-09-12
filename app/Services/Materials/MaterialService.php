@@ -50,10 +50,8 @@ class MaterialService
                     ];
                 }
 
-                // Проверяем права доступа к материалам организации
-                if (!$user->isSystemAdmin() && 
-                    !$user->isOrganizationAdmin($organizationId) && 
-                    !$user->hasPermission('view_materials', $organizationId)) {
+                // Проверяем права доступа к материалам организации (новая система авторизации)
+                if (!$user->hasPermission('materials.view', ['organization_id' => $organizationId])) {
                     
                     LogService::authLog('materials_access_denied', [
                         'user_id' => $user->id,
@@ -116,10 +114,8 @@ class MaterialService
                     ];
                 }
 
-                // Проверяем права доступа к материалам организации
-                if (!$user->isSystemAdmin() && 
-                    !$user->isOrganizationAdmin($organizationId) && 
-                    !$user->hasPermission('view_materials', $organizationId)) {
+                // Проверяем права доступа к материалам организации (новая система авторизации)
+                if (!$user->hasPermission('materials.view', ['organization_id' => $organizationId])) {
                     
                     LogService::authLog('materials_access_denied', [
                         'user_id' => $user->id,
@@ -194,10 +190,8 @@ class MaterialService
                     ];
                 }
 
-                // Проверяем доступ пользователя к материалу
-                $hasAccess = $user->isSystemAdmin() ||
-                    $user->isOrganizationAdmin($material->organization_id) ||
-                    $user->hasPermission('view_materials', $material->organization_id);
+                // Проверяем доступ пользователя к материалу (новая система авторизации)
+                $hasAccess = $user->hasPermission('materials.view', ['organization_id' => $material->organization_id]);
 
                 if (!$hasAccess) {
                     LogService::authLog('material_access_denied', [
@@ -257,10 +251,8 @@ class MaterialService
 
                 $organizationId = $data['organization_id'] ?? null;
 
-                // Проверяем, имеет ли пользователь право создавать материалы
-                if (!$user->isSystemAdmin() && 
-                    !$user->isOrganizationAdmin($organizationId) && 
-                    !$user->hasPermission('create_materials', $organizationId)) {
+                // Проверяем, имеет ли пользователь право создавать материалы (новая система авторизации)
+                if (!$user->hasPermission('materials.create', ['organization_id' => $organizationId])) {
                     
                     LogService::authLog('material_creation_denied', [
                         'user_id' => $user->id,
@@ -358,10 +350,8 @@ class MaterialService
                     ];
                 }
 
-                // Проверяем, имеет ли пользователь право редактировать материал
-                $hasAccess = $user->isSystemAdmin() ||
-                    $user->isOrganizationAdmin($material->organization_id) ||
-                    $user->hasPermission('edit_materials', $material->organization_id);
+                // Проверяем, имеет ли пользователь право редактировать материал (новая система авторизации)
+                $hasAccess = $user->hasPermission('materials.edit', ['organization_id' => $material->organization_id]);
 
                 if (!$hasAccess) {
                     LogService::authLog('material_update_denied', [

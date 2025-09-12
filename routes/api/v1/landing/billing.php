@@ -14,7 +14,7 @@ use App\Http\Controllers\Api\V1\Landing\Billing\SubscriptionLimitsController;
 // Middleware для аутентификации и проверки роли/прав (например, 'auth:api_landing', 'can:manage_billing')
 // должны быть применены в основном файле routes/api.php при подключении этого файла.
 
-Route::middleware(['auth:api_landing', 'role:organization_owner']) // Применяем гард и проверку роли
+Route::middleware(['auth:api_landing', 'authorize:billing.manage', 'interface:lk']) // Новая система авторизации
     ->name('billing.') // Префикс для имен маршрутов
     ->group(function () {
         // Маршруты для тарифных планов

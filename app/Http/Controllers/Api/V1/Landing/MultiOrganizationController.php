@@ -490,10 +490,8 @@ class MultiOrganizationController extends Controller
                 throw new \Exception('Организация не является дочерней для данного холдинга');
             }
 
-            $roles = \App\Models\OrganizationRole::forOrganization($childOrgId)
-                ->withCount('users')
-                ->ordered()
-                ->get();
+            // TODO: После интеграции новой системы авторизации - заменить на новые модели
+            $roles = collect(); // Временная заглушка
 
             return response()->json([
                 'success' => true,

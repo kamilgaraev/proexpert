@@ -19,6 +19,14 @@ class SyncChildWorksPermissionJob implements ShouldQueue
 
     public function handle(): void
     {
+        // TODO: Переписать для новой системы авторизации
+        // В новой системе права определяются в JSON файлах ролей
+        // Данный Job больше не нужен, так как синхронизация происходит автоматически
+        
+        Log::info('[SyncChildWorksPermissionJob] Skipped - new authorization system in use');
+        return;
+        
+        /* Старая логика закомментирована для совместимости
         Log::info('[SyncChildWorksPermissionJob] started', ['force' => $this->force]);
 
         $permission = Permission::firstOrCreate(
@@ -41,5 +49,6 @@ class SyncChildWorksPermissionJob implements ShouldQueue
         }
 
         Log::info('[SyncChildWorksPermissionJob] finished');
+        */
     }
 } 

@@ -1,0 +1,47 @@
+{
+  "name": "Администратор организации",
+  "slug": "organization_admin",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "lk",
+  "description": "Управление организацией без доступа к биллингу",
+  
+  "system_permissions": [
+    "organization.view",
+    "organization.edit",
+    "users.invite",
+    "users.manage",
+    "users.assign_roles",
+    "roles.view_custom",
+    "profile.view",
+    "profile.edit",
+    "admin.access"
+  ],
+  
+  "module_permissions": {
+    "projects": ["projects.*"],
+    "materials": ["materials.view", "materials.edit", "materials.create"],
+    "reports": ["reports.view", "reports.create"],
+    "finance": ["finance.view"],
+    "contracts": ["contracts.view", "contracts.edit"],
+    "personnel": ["personnel.*"]
+  },
+  
+  "interface_access": ["lk", "admin"],
+  
+  "hierarchy": {
+    "can_manage_roles": [
+      "viewer",
+      "project_manager", 
+      "foreman",
+      "worker"
+    ],
+    "cannot_manage": [
+      "organization_owner",
+      "organization_admin", 
+      "accountant",
+      "system_admin",
+      "super_admin"
+    ]
+  }
+}
