@@ -145,6 +145,88 @@ class OrganizationSubscriptionService
         return $this->performPlanChange($currentSubscription, $newPlan, $organizationId);
     }
 
+    public function previewPlanChange($organizationId, $newPlanSlug): array
+    {
+        $currentSubscription = $this->repo->getByOrganizationId($organizationId);
+        
+        if (!$currentSubscription || $currentSubscription->status !== 'active') {
+            return [
+                'success' => false,
+                'message' => 'Активная подписка не найдена',
+                'status_code' => 404
+            ];
+        }
+
+        $newPlan = SubscriptionPlan::where('slug', $newPlanSlug)->where('is_active', true)->first();
+        if (!$newPlan) {
+            return [
+                'success' => false,
+                'message' => 'Тарифный план не найден',
+                'status_code' => 404
+            ];
+        }
+
+        $currentPlan = $currentSubscription->plan;
+        if ($currentPlan->id === $newPlan->id) {
+            return [
+                'success' => false,
+                'message' => 'Вы уже используете этот тарифный план',
+                'status_code' => 400
+            ];
+        }
+
+        $organization = Organization::findOrFail($organizationId);
+        $now = Carbon::now();
+        
+        // Рассчитываем перерасчет БЕЗ выполнения операции
+        $billingCalculation = $this->calculatePlanChange($currentSubscription, $newPlan, $now);
+        
+        // Проверяем баланс для доплаты
+        $currentBalance = $organization->balance ? $organization->balance->amount : 0;
+        $hasEnoughBalance = $billingCalculation['amount_to_charge'] <= $currentBalance;
+        
+        // Предварительные данные новой подписки
+        $previewSubscription = [
+            'plan_name' => $newPlan->name,
+            'plan_description' => $newPlan->description,
+            'price' => $newPlan->price,
+            'currency' => $newPlan->currency,
+            'duration_in_days' => $newPlan->duration_in_days,
+            'starts_at' => $now->format('Y-m-d H:i:s'),
+            'ends_at' => $now->copy()->addDays($newPlan->duration_in_days)->format('Y-m-d H:i:s'),
+            'limits' => [
+                'max_foremen' => $newPlan->max_foremen,
+                'max_projects' => $newPlan->max_projects,
+                'max_users' => $newPlan->max_users,
+                'max_storage_gb' => $newPlan->max_storage_gb,
+            ]
+        ];
+
+        return [
+            'success' => true,
+            'preview' => [
+                'current_subscription' => [
+                    'plan_name' => $currentPlan->name,
+                    'ends_at' => $currentSubscription->ends_at->format('Y-m-d H:i:s'),
+                    'price' => $currentPlan->price
+                ],
+                'new_subscription' => $previewSubscription,
+                'billing_calculation' => $billingCalculation,
+                'balance_check' => [
+                    'current_balance' => $currentBalance / 100, // в рублях
+                    'required_amount' => $billingCalculation['amount_to_charge'] / 100,
+                    'has_enough_balance' => $hasEnoughBalance,
+                    'balance_after_change' => ($currentBalance + 
+                        ($billingCalculation['amount_to_refund'] - $billingCalculation['amount_to_charge'])) / 100
+                ],
+                'can_proceed' => $hasEnoughBalance
+            ],
+            'message' => $hasEnoughBalance 
+                ? $this->getChangeMessage($billingCalculation, $currentPlan->name, $newPlan->name)
+                : 'Недостаточно средств на балансе. Требуется доплата: ' . ($billingCalculation['amount_to_charge'] / 100) . ' руб.'
+        ];
+    }
+
     private function performPlanChange($currentSubscription, $newPlan, $organizationId): array
     {
         $organization = Organization::findOrFail($organizationId);

@@ -120,6 +120,36 @@ class OrganizationSubscriptionController extends Controller
         ]);
     }
 
+    public function changePlanPreview(Request $request)
+    {
+        $request->validate([
+            'plan_slug' => 'required|string|exists:subscription_plans,slug',
+        ]);
+        
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId || $organizationId != $user->current_organization_id) {
+            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+        }
+        
+        $service = new OrganizationSubscriptionService();
+        $result = $service->previewPlanChange($organizationId, $request->input('plan_slug'));
+        
+        if (!$result['success']) {
+            return response()->json([
+                'success' => false,
+                'message' => $result['message']
+            ], $result['status_code'] ?? 400);
+        }
+        
+        return response()->json([
+            'success' => true,
+            'data' => $result['preview'],
+            'message' => $result['message']
+        ]);
+    }
+
     public function changePlan(Request $request)
     {
         $request->validate([
