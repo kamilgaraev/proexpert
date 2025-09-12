@@ -23,7 +23,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'organization.context' => SetOrganizationContext::class,
             'organization_context' => SetOrganizationContext::class,
             'subscription.limit' => \App\Http\Middleware\CheckSubscriptionLimitsMiddleware::class,
-            'module.access' => \App\Http\Middleware\CheckModuleAccessMiddleware::class,
+            'module.access' => \App\Modules\Middleware\ModuleAccessMiddleware::class,
+            'module.permission' => \App\Modules\Middleware\ModulePermissionMiddleware::class,
             'holding.subdomain' => \App\Http\Middleware\DetectHoldingSubdomain::class,
         ]);
 

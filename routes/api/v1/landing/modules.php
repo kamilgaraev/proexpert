@@ -1,40 +1,59 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\V1\Landing\OrganizationModuleController;
+use App\Http\Controllers\Api\V1\Landing\ModuleController;
 
 Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
     ->prefix('modules')
     ->name('modules.')
     ->group(function () {
-        Route::get('/', [OrganizationModuleController::class, 'index'])
+        
+        // Общедоступные методы (просмотр модулей)
+        Route::get('/', [ModuleController::class, 'index'])
             ->name('index');
         
-        Route::get('/available', [OrganizationModuleController::class, 'available'])
-            ->name('available');
+        Route::get('/active', [ModuleController::class, 'active'])
+            ->name('active');
         
-        Route::get('/expiring', [OrganizationModuleController::class, 'expiring'])
+        Route::get('/expiring', [ModuleController::class, 'expiring'])
             ->name('expiring');
         
-        Route::post('/check-access', [OrganizationModuleController::class, 'checkAccess'])
+        Route::get('/{moduleSlug}/preview', [ModuleController::class, 'activationPreview'])
+            ->name('activation-preview');
+        
+        Route::post('/check-access', [ModuleController::class, 'checkAccess'])
             ->name('check-access');
-            
+        
+        Route::get('/permissions', [ModuleController::class, 'permissions'])
+            ->name('permissions');
+        
+        // Методы для владельцев организации
         Route::middleware(['role:organization_owner'])
             ->group(function () {
-                Route::post('/activate', [OrganizationModuleController::class, 'activate'])
+                
+                Route::post('/activate', [ModuleController::class, 'activate'])
                     ->name('activate');
                 
-                Route::delete('/{moduleId}', [OrganizationModuleController::class, 'deactivate'])
+                Route::delete('/{moduleSlug}', [ModuleController::class, 'deactivate'])
                     ->name('deactivate');
                 
-                Route::patch('/{moduleId}/renew', [OrganizationModuleController::class, 'renew'])
+                Route::patch('/{moduleSlug}/renew', [ModuleController::class, 'renew'])
                     ->name('renew');
                 
-                // Отмена модулей с возвратом средств
-                Route::get('/{moduleSlug}/cancel-preview', [OrganizationModuleController::class, 'cancelPreview'])
-                    ->name('cancel-preview');
-                
-                Route::post('/{moduleSlug}/cancel', [OrganizationModuleController::class, 'cancel'])
-                    ->name('cancel');
+                Route::post('/bulk-activate', [ModuleController::class, 'bulkActivate'])
+                    ->name('bulk-activate');
             });
-    }); 
+        
+        // Биллинг информация (доступна владельцам и бухгалтерам)
+        Route::middleware(['role:organization_owner,organization_accountant'])
+            ->prefix('billing')
+            ->name('billing.')
+            ->group(function () {
+                
+                Route::get('/', [ModuleController::class, 'billing'])
+                    ->name('stats');
+                
+                Route::get('/history', [ModuleController::class, 'billingHistory'])
+                    ->name('history');
+            });
+    });

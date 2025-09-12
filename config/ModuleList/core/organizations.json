@@ -1,0 +1,46 @@
+{
+  "name": "Управление организациями",
+  "slug": "organizations",
+  "version": "1.0.0",
+  "type": "core",
+  "billing_model": "free",
+  "category": "core",
+  "description": "Базовая функциональность для управления организациями",
+  
+  "class_name": "App\\BusinessModules\\Core\\Organizations\\OrganizationsModule",
+  "service_provider": "App\\BusinessModules\\Core\\Organizations\\OrganizationsServiceProvider",
+  
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plan": true,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "organizations.view",
+    "organizations.create", 
+    "organizations.edit",
+    "organizations.delete",
+    "organizations.settings"
+  ],
+  
+  "features": [
+    "Создание организаций",
+    "Управление настройками", 
+    "Базовая конфигурация"
+  ],
+  
+  "dependencies": [],
+  "conflicts": [],
+  
+  "limits": {},
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": true,
+  "is_system_module": true,
+  "icon": "building",
+  "display_order": 1
+}

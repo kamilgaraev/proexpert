@@ -1,0 +1,56 @@
+{
+  "name": "Управление проектами",
+  "slug": "projects",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "management",
+  "description": "Система управления строительными проектами",
+  
+  "class_name": "App\\BusinessModules\\Features\\Projects\\ProjectsModule",
+  "service_provider": "App\\BusinessModules\\Features\\Projects\\ProjectsServiceProvider",
+  
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plan": true,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "projects.view",
+    "projects.create", 
+    "projects.edit",
+    "projects.delete",
+    "projects.archive",
+    "projects.reports"
+  ],
+  
+  "features": [
+    "Создание проектов",
+    "Управление командой", 
+    "Отчеты по проектам",
+    "Календарное планирование",
+    "Контроль бюджета"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_projects": null,
+    "max_team_members": 50
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "icon": "folder-open",
+  "display_order": 10
+}

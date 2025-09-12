@@ -1,0 +1,58 @@
+{
+  "name": "Интеграции",
+  "slug": "integrations",
+  "version": "1.0.0",
+  "type": "addon",
+  "billing_model": "subscription",
+  "category": "integrations",
+  "description": "Доступ к интеграциям с внешними сервисами",
+  
+  "class_name": "App\\BusinessModules\\Addons\\Integrations\\IntegrationsModule",
+  "service_provider": "App\\BusinessModules\\Addons\\Integrations\\IntegrationsServiceProvider",
+  
+  "pricing": {
+    "base_price": 2900,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "integrations.1c",
+    "integrations.crm", 
+    "integrations.webhooks",
+    "integrations.api",
+    "integrations.export",
+    "integrations.import"
+  ],
+  
+  "features": [
+    "Интеграция с 1С",
+    "Интеграция с CRM", 
+    "Webhooks",
+    "API доступ",
+    "Автоматический экспорт данных",
+    "Импорт из внешних систем"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "api_requests_per_month": 10000,
+    "webhook_endpoints": 5,
+    "integrations_count": 10
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "icon": "link",
+  "display_order": 100
+}

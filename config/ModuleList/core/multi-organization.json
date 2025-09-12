@@ -1,0 +1,63 @@
+{
+  "name": "Мультиорганизация",
+  "slug": "multi-organization", 
+  "version": "1.0.0",
+  "type": "core",
+  "billing_model": "subscription",
+  "category": "core",
+  "description": "Система управления холдингами и дочерними организациями",
+  
+  "class_name": "App\\BusinessModules\\Core\\MultiOrganization\\MultiOrganizationModule",
+  "service_provider": "App\\BusinessModules\\Core\\MultiOrganization\\MultiOrganizationServiceProvider",
+  
+  "pricing": {
+    "base_price": 5900,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "multi_organization.view",
+    "multi_organization.create_holding",
+    "multi_organization.manage_children",
+    "multi_organization.add_child_organization",
+    "multi_organization.edit_child_organization", 
+    "multi_organization.delete_child_organization",
+    "multi_organization.manage_child_users",
+    "multi_organization.view_hierarchy",
+    "multi_organization.dashboard",
+    "multi_organization.settings"
+  ],
+  
+  "features": [
+    "Создание холдингов",
+    "Управление дочерними организациями",
+    "Иерархия доступа",
+    "Дашборд холдинга",
+    "Управление пользователями дочерних организаций",
+    "Права доступа между организациями",
+    "Консолидированная отчетность"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_child_organizations": 50,
+    "max_hierarchy_levels": 3,
+    "max_users_per_child": 100
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "icon": "sitemap",
+  "display_order": 5
+}

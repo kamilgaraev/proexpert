@@ -1,0 +1,48 @@
+{
+  "name": "Управление пользователями",
+  "slug": "users",
+  "version": "1.0.0",
+  "type": "core",
+  "billing_model": "free",
+  "category": "core",
+  "description": "Система управления пользователями и ролями",
+  
+  "class_name": "App\\BusinessModules\\Core\\Users\\UsersModule",
+  "service_provider": "App\\BusinessModules\\Core\\Users\\UsersServiceProvider",
+  
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plan": true,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "users.view",
+    "users.create", 
+    "users.edit",
+    "users.delete",
+    "users.roles",
+    "users.permissions"
+  ],
+  
+  "features": [
+    "Создание пользователей",
+    "Управление ролями", 
+    "Система разрешений",
+    "Авторизация и аутентификация"
+  ],
+  
+  "dependencies": ["organizations"],
+  "conflicts": [],
+  
+  "limits": {},
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": true,
+  "is_system_module": true,
+  "icon": "users",
+  "display_order": 2
+}
