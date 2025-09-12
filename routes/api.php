@@ -172,6 +172,7 @@ Route::prefix('landing')->name('landing.')->group(function () {
         Route::prefix('lk')->name('lk.')->group(function () {
             // Подключение маршрутов для проверки прав пользователя (ЛК)
             Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
+                ->prefix('v1')
                 ->group(function () {
                     if (file_exists(__DIR__ . '/api/v1/permissions.php')) {
                         require __DIR__ . '/api/v1/permissions.php';
