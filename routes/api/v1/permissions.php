@@ -14,7 +14,7 @@ use App\Http\Controllers\Api\V1\UserPermissionsController;
 */
 
 // Для всех интерфейсов (будет работать с любым guard)
-Route::group(function () {
+Route::group([], function () {
     // Получить все права и роли текущего пользователя
     Route::get('/permissions', [UserPermissionsController::class, 'index'])->name('permissions.index');
     
