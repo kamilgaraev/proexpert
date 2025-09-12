@@ -73,19 +73,6 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Регистрируем CORS middleware
-        $router = $this->app->make(Router::class);
-        
-        // Добавляем middleware в группы
-        $router->pushMiddlewareToGroup("web", CorsMiddleware::class);
-        $router->pushMiddlewareToGroup("api", CorsMiddleware::class);
-        
-        // Добавляем его первым в группе api
-        if (method_exists($router, "prependToGroup")) {
-            $router->prependToGroup("api", CorsMiddleware::class);
-        } else {
-            $router->prependMiddlewareToGroup("api", CorsMiddleware::class);
-        }
         
         // Регистрируем observers для автоматической синхронизации данных
         MaterialUsageLog::observe(MaterialUsageLogObserver::class);

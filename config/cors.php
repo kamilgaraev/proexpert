@@ -35,12 +35,14 @@ return [
         'https://89.111.153.146',
         'https://prohelper.pro',
         'http://prohelper.pro',
+        'https://lk.prohelper.pro',
+        'https://api.prohelper.pro',
+        'https://admin.prohelper.pro',
         // '*'  // Убираем, чтобы избежать конфликта с supports_credentials = true
     ],
 
     'allowed_origins_patterns' => [
-        '/^https?:\/\/.*\.prohelper\.pro$/',
-        '/^https?:\/\/(?!www|api|admin|mail|ftp)[a-z0-9-]+\.prohelper\.pro$/',
+        '/^https?:\/\/[a-z0-9-]+\.prohelper\.pro$/',
     ],
 
     'allowed_methods' => [

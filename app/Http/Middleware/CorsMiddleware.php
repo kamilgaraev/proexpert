@@ -39,18 +39,18 @@ class CorsMiddleware
         $allowAnyOriginInDev = Config::get('cors.allow_any_origin_in_dev', false);
         
         // Определяем, доступен ли запрошенный origin
-        $allowedOrigin = '*';
+        $allowedOrigin = null;
         $allowCredentials = 'false';
+        $originMatched = false;
         
         // Если мы в режиме разработки и настройка разрешает любой origin
         if (app()->environment('local') && $allowAnyOriginInDev) {
             $allowedOrigin = $origin ?: '*';
             $allowCredentials = ($allowedOrigin === '*') ? 'false' : 'true';
+            $originMatched = true;
         } 
         // Иначе проверяем по списку разрешенных
         else if ($origin) {
-            $originMatched = false;
-            
             if (in_array($origin, $allowedOrigins)) {
                 $allowedOrigin = $origin;
                 $allowCredentials = 'true';
@@ -74,14 +74,22 @@ class CorsMiddleware
                     ]);
                     $allowedOrigin = $origin;
                     $allowCredentials = 'true';
+                    $originMatched = true;
                 } else {
                     Log::warning('CORS: Отклонен запрос с недопустимого origin', [
                         'origin' => $origin,
                         'allowed_origins' => $allowedOrigins,
                         'allowed_patterns' => $allowedOriginsPatterns
                     ]);
+                    $allowedOrigin = 'null';
+                    $allowCredentials = 'false';
                 }
             }
+        } else {
+            // Если origin не указан, используем wildcard (только для запросов без credentials)
+            $allowedOrigin = '*';
+            $allowCredentials = 'false';
+            $originMatched = true;
         }
         
         // Устанавливаем заголовки CORS для ответа
