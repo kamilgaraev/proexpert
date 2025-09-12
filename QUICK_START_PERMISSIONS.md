@@ -200,7 +200,10 @@
 
 ### **Запрос:**
 ```javascript
-// Для ЛК/Landing
+// Для ЛК (Personal Cabinet)
+GET /api/lk/v1/permissions
+
+// Альтернативный путь для ЛК
 GET /api/landing/v1/permissions
 
 // Для Admin Panel  
@@ -255,7 +258,7 @@ class PermissionsManager {
   // Загрузить права с сервера
   async load() {
     try {
-      const response = await fetch('/api/landing/v1/permissions', {
+      const response = await fetch('/api/lk/v1/permissions', {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`,
           'Content-Type': 'application/json'
