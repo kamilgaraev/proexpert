@@ -181,8 +181,9 @@ class OrganizationSubscriptionService
         // Рассчитываем перерасчет БЕЗ выполнения операции
         $billingCalculation = $this->calculatePlanChange($currentSubscription, $newPlan, $now);
         
-        // Проверяем баланс для доплаты
-        $currentBalance = $organization->balance ? $organization->balance->amount : 0;
+        // Проверяем баланс для доплаты через BalanceService
+        $organizationBalance = $this->balanceService->getOrCreateOrganizationBalance($organization);
+        $currentBalance = $organizationBalance->balance;
         $hasEnoughBalance = $billingCalculation['amount_to_charge'] <= $currentBalance;
         
         // Предварительные данные новой подписки
@@ -223,7 +224,7 @@ class OrganizationSubscriptionService
             ],
             'message' => $hasEnoughBalance 
                 ? $this->getChangeMessage($billingCalculation, $currentPlan->name, $newPlan->name)
-                : 'Недостаточно средств на балансе. Требуется доплата: ' . ($billingCalculation['amount_to_charge'] / 100) . ' руб.'
+                : 'Недостаточно средств на балансе. Требуется доплата: ' . abs($billingCalculation['difference']) . ' руб.'
         ];
     }
 
@@ -287,7 +288,7 @@ class OrganizationSubscriptionService
         
         // Рассчитываем оставшиеся дни текущей подписки
         $remainingDays = $now->diffInDays($currentSubscription->ends_at, false);
-        $remainingDays = max(0, $remainingDays); // Не может быть отрицательным
+        $remainingDays = max(0, round($remainingDays, 1)); // Не может быть отрицательным, округляем до 1 знака
         
         // Стоимость оставшихся дней текущего плана
         $dailyCostCurrent = $currentPlan->price / $currentPlan->duration_in_days;
@@ -314,9 +315,9 @@ class OrganizationSubscriptionService
     private function getChangeMessage($billingInfo, $currentPlanName, $newPlanName): string
     {
         if ($billingInfo['amount_to_charge'] > 0) {
-            return "Тарифный план изменен с '{$currentPlanName}' на '{$newPlanName}'. Списано с баланса: {$billingInfo['difference']} руб.";
+            return "Тарифный план изменен с '{$currentPlanName}' на '{$newPlanName}'. Списано с баланса: " . abs($billingInfo['difference']) . " руб.";
         } elseif ($billingInfo['amount_to_refund'] > 0) {
-            return "Тарифный план изменен с '{$currentPlanName}' на '{$newPlanName}'. Возвращено на баланс: {$billingInfo['difference']} руб.";
+            return "Тарифный план изменен с '{$currentPlanName}' на '{$newPlanName}'. Возвращено на баланс: " . abs($billingInfo['difference']) . " руб.";
         } else {
             return "Тарифный план изменен с '{$currentPlanName}' на '{$newPlanName}'. Стоимость не изменилась.";
         }
