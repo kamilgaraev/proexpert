@@ -73,19 +73,37 @@ trait HasImages
 
         try {
             $existingPath = $this->{$attributeName};
+            
+            \Illuminate\Support\Facades\Log::info('[HasImages] uploadImage starting', [
+                'directory' => $directory,
+                'existing_path' => $existingPath,
+                'visibility' => $visibility,
+                'model' => get_class($this),
+                'organization_id' => $organization?->id,
+            ]);
+            
             $newPath = $service->upload($file, $directory, $existingPath, $visibility, $organization);
 
             if ($newPath) {
                 $this->{$attributeName} = $newPath;
+                \Illuminate\Support\Facades\Log::info('[HasImages] uploadImage success', [
+                    'new_path' => $newPath,
+                    'model' => get_class($this),
+                ]);
                 return true; // Путь установлен, но модель НЕ сохранена
             }
 
+            \Illuminate\Support\Facades\Log::error('[HasImages] uploadImage failed - no path returned', [
+                'directory' => $directory,
+                'model' => get_class($this),
+            ]);
             return false;
         } catch (\Throwable $e) {
             // При ошибках S3 логируем, но не ломаем процесс загрузки
-            \Illuminate\Support\Facades\Log::error('[HasImages] uploadImage failed', [
+            \Illuminate\Support\Facades\Log::error('[HasImages] uploadImage exception', [
                 'directory' => $directory,
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
                 'model' => get_class($this),
             ]);
             return false;

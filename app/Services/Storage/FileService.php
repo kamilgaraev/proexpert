@@ -37,9 +37,10 @@ class FileService
         // Получаем организацию для формирования пути
         $org = $this->getOrganization($organization);
 
-        // Для Яндекс S3 используем private доступ по умолчанию
+        // Для Яндекс S3 с организациями используем private доступ (временные URL)
+        $useVisibility = $visibility;
         if ($organization) {
-            $visibility = null;
+            $useVisibility = null; // private по умолчанию
         }
 
         // Пытаемся удалить старый файл если он существует
@@ -61,26 +62,40 @@ class FileService
         $fullPath = $orgPrefix . '/' . $directory . '/' . $filename;
 
         try {
+            Log::info('[FileService] upload(): starting upload', [
+                'org_prefix' => $orgPrefix,
+                'directory' => $directory, 
+                'filename' => $filename,
+                'full_path' => $fullPath,
+                'org_id' => $org?->id,
+                'visibility' => $visibility,
+            ]);
+
             // Используем полный путь для загрузки
-            if ($visibility) {
-                $result = $disk->put($fullPath, file_get_contents($file), $visibility);
+            if ($useVisibility) {
+                $result = $disk->put($fullPath, $file->getContent(), $useVisibility);
             } else {
-                $result = $disk->put($fullPath, file_get_contents($file));
+                $result = $disk->put($fullPath, $file->getContent());
             }
             
             if ($result) {
-                Log::info('[FileService] upload(): file uploaded', [
+                Log::info('[FileService] upload(): file uploaded successfully', [
                     'path' => $fullPath,
                     'org_id' => $org?->id,
-                    'visibility' => $visibility,
+                    'visibility' => $useVisibility,
                 ]);
                 return $fullPath;
             }
+            
+            Log::error('[FileService] upload(): put returned false', [
+                'path' => $fullPath,
+            ]);
             return false;
         } catch (\Throwable $e) {
             Log::error('[FileService] upload(): failed', [
                 'path' => $fullPath,
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
             return false;
         }
