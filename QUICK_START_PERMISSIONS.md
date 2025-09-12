@@ -144,6 +144,11 @@
 
 ### **🔧 Системные права:**
 ```javascript
+// URL endpoints для разных интерфейсов:
+// ЛК:      /api/lk/v1/permissions
+// Админка: /api/admin/v1/permissions  
+// Мобилка: /api/mobile/v1/permissions
+
 'billing.manage'           // Управление подписками и платежами
 'billing.view'            // Просмотр биллинга
 'users.manage'            // Управление обычными пользователями  
@@ -449,7 +454,7 @@ elementsToCheck.forEach(({ selector, options }) => {
 // Проверить право через API (медленно, но актуально)
 async function checkPermission(permission, context = null) {
   try {
-    const response = await fetch('/api/landing/v1/permissions/check', {
+    const response = await fetch('/api/lk/v1/permissions/check', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${localStorage.getItem('token')}`,

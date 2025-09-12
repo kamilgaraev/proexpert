@@ -3,9 +3,9 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\Billing\SubscriptionPlanController;
 use App\Http\Controllers\Api\Billing\BalanceController;
-use App\Http\Controllers\Api\Landing\OrganizationSubscriptionAddonController;
+// use App\Http\Controllers\Api\Landing\OrganizationSubscriptionAddonController; // Временно отключен
 use App\Http\Controllers\Api\Landing\OrganizationSubscriptionController;
-use App\Http\Controllers\Api\Landing\OrganizationOneTimePurchaseController;
+// use App\Http\Controllers\Api\Landing\OrganizationOneTimePurchaseController; // Контроллер пустой, временно отключен
 use App\Http\Controllers\Api\V1\Landing\OrganizationDashboardController;
 use App\Http\Controllers\Api\V1\Landing\Billing\SubscriptionLimitsController;
 
@@ -46,16 +46,18 @@ Route::middleware(['auth:api_landing', 'authorize:billing.manage', 'interface:lk
         Route::post('balance/top-up', [BalanceController::class, 'topUp'])->name('balance.top-up');
 
         // --- Дополнительные возможности подписки ---
+        // TODO: Создать OrganizationSubscriptionAddonController
         // Получить список add-on'ов
-        Route::get('addons', [OrganizationSubscriptionAddonController::class, 'index'])->name('addons.index');
+        // Route::get('addons', [OrganizationSubscriptionAddonController::class, 'index'])->name('addons.index');
         // Подключить add-on
-        Route::post('addon', [OrganizationSubscriptionAddonController::class, 'attach'])->name('addon.attach');
+        // Route::post('addon', [OrganizationSubscriptionAddonController::class, 'attach'])->name('addon.attach');
         // Отключить add-on
-        Route::delete('addon/{id}', [OrganizationSubscriptionAddonController::class, 'detach'])->name('addon.detach');
+        // Route::delete('addon/{id}', [OrganizationSubscriptionAddonController::class, 'detach'])->name('addon.detach');
+        // TODO: Реализовать OrganizationOneTimePurchaseController
         // Совершить одноразовую покупку
-        Route::post('one-time-purchase', [OrganizationOneTimePurchaseController::class, 'store'])->name('one_time_purchase.store');
+        // Route::post('one-time-purchase', [OrganizationOneTimePurchaseController::class, 'store'])->name('one_time_purchase.store');
         // Получить историю одноразовых покупок
-        Route::get('one-time-purchases', [OrganizationOneTimePurchaseController::class, 'index'])->name('one_time_purchase.index');
+        // Route::get('one-time-purchases', [OrganizationOneTimePurchaseController::class, 'index'])->name('one_time_purchase.index');
 
         // --- Дашборд ---
         Route::get('dashboard', [OrganizationDashboardController::class, 'index'])->name('dashboard.index');

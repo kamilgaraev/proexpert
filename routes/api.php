@@ -166,19 +166,19 @@ Route::prefix('landing')->name('landing.')->group(function () {
                     if (file_exists(__DIR__ . '/api/v1/permissions.php')) {
                         require __DIR__ . '/api/v1/permissions.php';
                     }
-                });
         });
 
-// --- LK API (алиас для Landing) ---
-Route::prefix('lk')->name('lk.')->group(function () {
-    // Подключение маршрутов для проверки прав пользователя (ЛК)
-    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
-        ->prefix('v1')
-        ->group(function () {
-            if (file_exists(__DIR__ . '/api/v1/permissions.php')) {
-                require __DIR__ . '/api/v1/permissions.php';
-            }
+        // --- LK API (алиас для Landing) ---
+        Route::prefix('lk')->name('lk.')->group(function () {
+            // Подключение маршрутов для проверки прав пользователя (ЛК)
+            Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
+                ->group(function () {
+                    if (file_exists(__DIR__ . '/api/v1/permissions.php')) {
+                        require __DIR__ . '/api/v1/permissions.php';
+                    }
+                });
         });
+    });
 });
 
 // --- Admin Panel API ---
@@ -356,4 +356,4 @@ Route::prefix('superadmin')->name('superadmin.')->group(function () {
         });
 });
 
-}); // Закрываем группу v1
+// Закрываем группу v1 - убираем лишнюю скобку
