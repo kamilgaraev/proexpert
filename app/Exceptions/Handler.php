@@ -49,6 +49,19 @@ class Handler extends ExceptionHandler
     ];
 
     /**
+     * Determine if the exception should be reported.
+     */
+    public function shouldReport(Throwable $e)
+    {
+        // Не логируем InsufficientBalanceException вообще
+        if ($e instanceof InsufficientBalanceException) {
+            return false;
+        }
+
+        return parent::shouldReport($e);
+    }
+
+    /**
      * Register the exception handling callbacks for the application.
      *
      * @return void
@@ -63,41 +76,44 @@ class Handler extends ExceptionHandler
         $this->renderable(function (Throwable $e, $request) {
             if ($request->expectsJson() || $request->is('api/*')) {
                 
+                // Получаем CORS заголовки из CorsMiddleware если есть
+                $corsHeaders = $request->attributes->get('cors_headers', []);
+                
                 if ($e instanceof ValidationException) {
                     return response()->json([
                         'message' => $e->getMessage() ?: 'Данные не прошли валидацию.',
                         'errors' => $e->errors(),
-                    ], $e->status);
+                    ], $e->status, $corsHeaders);
                 }
 
                 if ($e instanceof AuthorizationException) {
                     return response()->json([
                         'message' => $e->getMessage() ?: 'Доступ запрещён.',
-                    ], 403);
+                    ], 403, $corsHeaders);
                 }
 
                 if ($e instanceof AuthenticationException) {
                     return response()->json([
                         'message' => $e->getMessage() ?: 'Не аутентифицировано.',
-                    ], 401);
+                    ], 401, $corsHeaders);
                 }
 
                 if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
                     return response()->json([
                         'message' => 'Ресурс не найден.'
-                    ], 404);
+                    ], 404, $corsHeaders);
                 }
 
                 if ($e instanceof RouteNotFoundException) {
                     return response()->json([
                         'message' => 'Маршрут не найден или доступ запрещён.'
-                    ], 401);
+                    ], 401, $corsHeaders);
                 }
 
                 if ($e instanceof InsufficientBalanceException) {
                     return response()->json([
                         'message' => $e->getMessage() ?: 'Недостаточно средств на балансе.'
-                    ], 402); // 402 Payment Required
+                    ], 402, $corsHeaders); // 402 Payment Required
                 }
 
                 $statusCode = $e instanceof HttpExceptionInterface ? $e->getStatusCode() : 500;
@@ -117,7 +133,7 @@ class Handler extends ExceptionHandler
                     // $response['trace'] = $e->getTraceAsString(); // Трассировка может быть очень большой
                 }
 
-                return response()->json($response, $statusCode);
+                return response()->json($response, $statusCode, $corsHeaders);
             }
         });
     }
