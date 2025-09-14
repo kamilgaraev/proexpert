@@ -9,6 +9,10 @@ use Illuminate\Support\Str;
 use App\Models\Organization;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * Сервис для работы с организационными папками в основном S3 бакете.
+ * Теперь используется единый бакет с папками для каждой организации: org-{id}/
+ */
 class OrgBucketService
 {
     protected S3Client $client;
@@ -30,68 +34,35 @@ class OrgBucketService
     }
 
     /**
-     * Создаёт отдельный бакет для организации, если он ещё не создан.
-     * Возвращает имя бакета.
+     * Создаёт папку для организации в основном бакете.
+     * Возвращает имя основного бакета.
      */
     public function createBucket(Organization $organization): string
     {
-        if ($organization->s3_bucket) {
-            return $organization->s3_bucket;
+        // Используем основной бакет для всех организаций
+        $mainBucket = config('filesystems.disks.s3.bucket', 'prohelper-storage');
+        
+        // Если у организации уже указан бакет, обновляем на основной
+        if ($organization->s3_bucket !== $mainBucket) {
+            $organization->forceFill([
+                's3_bucket' => $mainBucket,
+                'bucket_region' => 'ru-central1',
+            ])->save();
         }
 
-        $bucket = 'org-' . $organization->id . '-' . Str::lower(Str::random(6));
+        // Папка создается автоматически при первой загрузке файла
 
-        try {
-            // Создание бакета
-            $this->client->createBucket(['Bucket' => $bucket]);
-            // Ждём, пока бакет появится
-            $this->client->waitUntil('BucketExists', ['Bucket' => $bucket]);
-        } catch (\Throwable $e) {
-            // Логируем и пробрасываем — для Yandex OS повторов не делаем
-            Log::error('[OrgBucketService] createBucket failed', [
-                'bucket' => $bucket,
-                'err' => $e->getMessage(),
-            ]);
-            throw $e;
-        }
-
-        // Включаем versioning
-        $this->client->putBucketVersioning([
-            'Bucket' => $bucket,
-            'VersioningConfiguration' => [
-                'Status' => 'Enabled',
-            ],
-        ]);
-
-        // Включаем шифрование SSE-S3 (AES256)
-        $this->client->putBucketEncryption([
-            'Bucket' => $bucket,
-            'ServerSideEncryptionConfiguration' => [
-                'Rules' => [[
-                    'ApplyServerSideEncryptionByDefault' => [
-                        'SSEAlgorithm' => 'AES256',
-                    ],
-                ]],
-            ],
-        ]);
-
-        $organization->forceFill([
-            's3_bucket' => $bucket,
-            'bucket_region' => 'ru-central1',
-        ])->save();
-
-        return $bucket;
+        return $mainBucket;
     }
 
     /**
-     * Возвращает Laravel-диск S3, настроенный на бакет организации.
+     * Возвращает Laravel-диск S3, настроенный на основной бакет.
+     * Файлы организации автоматически размещаются в папке org-{id}/
      */
     public function getDisk(Organization $organization)
     {
-        $bucket = $organization->s3_bucket;
-
-        // Гарантируем существование бакета
-        $this->ensureBucketExists($bucket);
+        // Используем основной бакет для всех организаций
+        $bucket = config('filesystems.disks.s3.bucket', 'prohelper-storage');
 
         Log::debug('[OrgBucketService] getDisk(): start', [
             'org_id' => $organization->id,
@@ -158,16 +129,29 @@ class OrgBucketService
     }
 
     /**
-     * Подсчитывает размер бакета в мегабайтах.
+     * Подсчитывает размер папки организации в основном бакете в мегабайтах.
      */
     public function calculateBucketSizeMb(string $bucket): float
     {
-        // Гарантируем существование бакета
-        $this->ensureBucketExists($bucket);
+        return $this->calculateOrganizationSizeMb($bucket, null);
+    }
+
+    /**
+     * Подсчитывает размер папки конкретной организации в мегабайтах.
+     */
+    public function calculateOrganizationSizeMb(string $bucket, ?Organization $organization = null): float
+    {
         $bytes = 0;
         $token = null;
+        
+        // Если передана организация, считаем только её папку
+        $prefix = $organization ? "org-{$organization->id}/" : '';
+        
         do {
             $args = ['Bucket' => $bucket];
+            if ($prefix) {
+                $args['Prefix'] = $prefix;
+            }
             if ($token) {
                 $args['ContinuationToken'] = $token;
             }
@@ -181,26 +165,4 @@ class OrgBucketService
         return round($bytes / 1_048_576, 2); // в МБ
     }
 
-    /**
-     * Гарантирует наличие бакета: пытается создать, а если уже существует – игнорирует ошибку.
-     */
-    private function ensureBucketExists(string $bucket): void
-    {
-        try {
-            $this->client->createBucket(['Bucket' => $bucket]);
-            $this->client->waitUntil('BucketExists', ['Bucket' => $bucket]);
-        } catch (\Aws\S3\Exception\S3Exception $e) {
-            $code = $e->getAwsErrorCode();
-            if (in_array($code, ['BucketAlreadyOwnedByYou', 'BucketAlreadyExists'])) {
-                return; // бакет уже есть – это нормально
-            }
-            if (in_array($code, ['NotFound', 'NoSuchBucket'])) {
-                // Параллельный запрос мог удалить бакет – повторяем один раз
-                $this->client->createBucket(['Bucket' => $bucket]);
-                $this->client->waitUntil('BucketExists', ['Bucket' => $bucket]);
-                return;
-            }
-            throw $e;
-        }
-    }
 } 

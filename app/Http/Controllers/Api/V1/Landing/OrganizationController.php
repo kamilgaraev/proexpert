@@ -65,7 +65,7 @@ class OrganizationController extends Controller
             'owner_id' => $user->id,
         ]);
 
-        // Создаём S3-бакет для организации
+        // Настраиваем S3 для организации (папка создается автоматически при загрузке файлов)
         app(\App\Services\Storage\OrgBucketService::class)->createBucket($organization);
 
         // Привязываем пользователя к созданной организации (если не сделано через observer/event)
