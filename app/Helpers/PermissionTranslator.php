@@ -71,6 +71,13 @@ class PermissionTranslator
         
         if (isset($data['module_permissions'])) {
             $result['module_permissions'] = self::translateModulePermissions($data['module_permissions']);
+
+            // Добавляем переводы заголовков групп модулей
+            $result['module_groups'] = [];
+            foreach (array_keys($data['module_permissions']) as $module) {
+                $normalized = str_replace('-', '_', $module);
+                $result['module_groups'][$module] = __("permissions.groups.{$normalized}", [], 'ru');
+            }
         }
         
         if (isset($data['interface_access'])) {
