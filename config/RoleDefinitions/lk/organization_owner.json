@@ -33,7 +33,7 @@
     "finance": ["finance.*"],
     "contracts": ["contracts.*"],
     "personnel": ["personnel.*"],
-    "multi-organization": ["multi_organization.*"]
+    "multi-organization": ["multi-organization.*"]
   },
   
   "interface_access": ["lk", "admin"],

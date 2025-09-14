@@ -87,16 +87,16 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
     public function getPermissions(): array
     {
         return [
-            'multi_organization.view',
-            'multi_organization.create_holding',
-            'multi_organization.manage_children',
-            'multi_organization.add_child_organization',
-            'multi_organization.edit_child_organization', 
-            'multi_organization.delete_child_organization',
-            'multi_organization.manage_child_users',
-            'multi_organization.view_hierarchy',
-            'multi_organization.dashboard',
-            'multi_organization.settings'
+            'multi-organization.view',
+            'multi-organization.create_holding',
+            'multi-organization.manage_children',
+            'multi-organization.add_child_organization',
+            'multi-organization.edit_child_organization', 
+            'multi-organization.delete_child_organization',
+            'multi-organization.manage_child_users',
+            'multi-organization.view_hierarchy',
+            'multi-organization.dashboard',
+            'multi-organization.settings'
         ];
     }
 

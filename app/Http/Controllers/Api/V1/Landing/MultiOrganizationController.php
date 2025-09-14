@@ -37,14 +37,14 @@ class MultiOrganizationController extends Controller
         $user = Auth::user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
-        $hasModule = $this->moduleService->hasModuleAccess($organizationId, 'multi_organization');
+        $hasModule = $this->moduleService->hasModuleAccess($organizationId, 'multi-organization');
         
         if (!$hasModule) {
             return response()->json([
                 'success' => false,
                 'available' => false,
                 'message' => 'Модуль "Мультиорганизация" не активирован',
-                'required_module' => 'multi_organization'
+                'required_module' => 'multi-organization'
             ], 403);
         }
 

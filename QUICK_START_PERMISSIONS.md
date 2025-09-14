@@ -158,7 +158,7 @@
 'organization.view'       // Просмотр организации
 'modules.manage'          // Включение/отключение модулей
 'modules.billing'         // Просмотр статистики модулей
-'multi_organization.manage' // Управление дочерними организациями
+'multi-organization.manage' // Управление дочерними организациями
 'roles.create_custom'     // Создание кастомных ролей
 'roles.manage_custom'     // Управление кастомными ролями
 'admin.access'           // Доступ к админ панели

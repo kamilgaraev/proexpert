@@ -3,14 +3,14 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\MultiOrganizationController;
 
-Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'module.access:multi_organization'])
+Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'module.access:multi-organization'])
     ->prefix('multi-organization')
     ->name('multiOrganization.')
     ->group(function () {
         
         // Проверка доступности модуля
         Route::get('/check-availability', [MultiOrganizationController::class, 'checkAvailability'])
-            ->withoutMiddleware(['module.access:multi_organization'])
+            ->withoutMiddleware(['module.access:multi-organization'])
             ->name('checkAvailability');
         
         // Получение иерархии организаций
@@ -39,7 +39,7 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
             ->name('getRoleTemplates');
 
         // Только для владельцев организации
-        Route::middleware(['authorize:multi_organization.manage'])
+        Route::middleware(['authorize:multi-organization.manage'])
             ->group(function () {
                 
                 // Создание холдинга

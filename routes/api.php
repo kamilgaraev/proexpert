@@ -352,7 +352,7 @@ Route::prefix('superadmin')->name('superadmin.')->group(function () {
             Route::get('{slug}/organization/{organizationId}', [HoldingApiController::class, 'getOrganizationData'])->name('organizationData');
             
             // Добавление дочерней организации (только владельцы)
-            Route::middleware(['authorize:multi_organization.manage'])->group(function () {
+            Route::middleware(['authorize:multi-organization.manage'])->group(function () {
                 Route::post('{slug}/add-child', [MultiOrganizationController::class, 'addChildOrganization'])->name('addChild');
             });
         });

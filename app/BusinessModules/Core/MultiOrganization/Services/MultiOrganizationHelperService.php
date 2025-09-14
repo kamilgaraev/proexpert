@@ -86,7 +86,7 @@ class MultiOrganizationHelperService
             return false;
         }
 
-        return hasModulePermission('multi_organization.manage_children', $user);
+        return hasModulePermission('multi-organization.manage_children', $user);
     }
 
     public function canAddChildOrganization(User $user): bool
@@ -95,7 +95,7 @@ class MultiOrganizationHelperService
             return false;
         }
 
-        return hasModulePermission('multi_organization.add_child_organization', $user);
+        return hasModulePermission('multi-organization.add_child_organization', $user);
     }
 
     public function canManageChildUsers(User $user): bool
@@ -104,7 +104,7 @@ class MultiOrganizationHelperService
             return false;
         }
 
-        return hasModulePermission('multi_organization.manage_child_users', $user);
+        return hasModulePermission('multi-organization.manage_child_users', $user);
     }
 
     public function getModuleSettings(int $organizationId): array
