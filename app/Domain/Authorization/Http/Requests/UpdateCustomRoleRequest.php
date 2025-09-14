@@ -35,9 +35,9 @@ class UpdateCustomRoleRequest extends FormRequest
                     ->ignore($role->id)
             ],
             'description' => 'sometimes|nullable|string|max:1000',
-            'system_permissions' => 'sometimes|required|array',
+            'system_permissions' => 'sometimes|array',
             'system_permissions.*' => 'string|max:100',
-            'module_permissions' => 'sometimes|required|array',
+            'module_permissions' => 'sometimes|array',
             'module_permissions.*' => 'array',
             'module_permissions.*.*' => 'string|max:100',
             'interface_access' => 'sometimes|required|array|min:1',
@@ -63,8 +63,7 @@ class UpdateCustomRoleRequest extends FormRequest
     {
         return [
             'name.unique' => 'Роль с таким названием уже существует в организации',
-            'system_permissions.required' => 'Необходимо указать хотя бы одно системное право',
-            'module_permissions.required' => 'Необходимо указать модульные права',
+            // Права не обязательны, убираем сообщения о required
             'interface_access.required' => 'Необходимо указать доступ к интерфейсам',
             'interface_access.min' => 'Необходимо выбрать хотя бы один интерфейс',
             'interface_access.*.in' => 'Недопустимый тип интерфейса',

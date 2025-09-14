@@ -221,12 +221,15 @@ class CustomRoleService
      */
     public function getAvailableModulePermissions(int $organizationId): array
     {
+        // Берем активные модули из AccessController (учитывает системные модули)
         $activeModules = $this->moduleChecker->getActiveModules($organizationId);
         $availablePermissions = [];
         
         foreach ($activeModules as $moduleSlug) {
+            // Нормализуем слаг, если он приходит с дефисами
+            $normalized = str_replace('-', '_', $moduleSlug);
             $permissions = $this->moduleChecker->getModulePermissions($moduleSlug);
-            $availablePermissions[$moduleSlug] = $permissions;
+            $availablePermissions[$normalized] = $permissions;
         }
         
         return $availablePermissions;
@@ -237,31 +240,35 @@ class CustomRoleService
      */
     protected function validatePermissions(int $organizationId, array $systemPermissions, array $modulePermissions): void
     {
-        // Валидируем системные права
-        $availableSystemPermissions = array_keys($this->getAvailableSystemPermissions($organizationId));
-        foreach ($systemPermissions as $permission) {
-            if ($permission !== '*' && !in_array($permission, $availableSystemPermissions)) {
-                throw ValidationException::withMessages([
-                    'system_permissions' => "Недопустимое системное право: $permission"
-                ]);
+        // Валидируем системные права (если переданы)
+        if (!empty($systemPermissions)) {
+            $availableSystemPermissions = array_keys($this->getAvailableSystemPermissions($organizationId));
+            foreach ($systemPermissions as $permission) {
+                if ($permission !== '*' && !in_array($permission, $availableSystemPermissions)) {
+                    throw ValidationException::withMessages([
+                        'system_permissions' => "Недопустимое системное право: $permission"
+                    ]);
+                }
             }
         }
 
-        // Валидируем модульные права
-        $availableModulePermissions = $this->getAvailableModulePermissions($organizationId);
-        foreach ($modulePermissions as $module => $permissions) {
-            if (!isset($availableModulePermissions[$module])) {
-                throw ValidationException::withMessages([
-                    'module_permissions' => "Модуль '$module' не активирован для организации"
-                ]);
-            }
-            
-            $moduleAvailablePermissions = $availableModulePermissions[$module];
-            foreach ($permissions as $permission) {
-                if ($permission !== '*' && !in_array($permission, $moduleAvailablePermissions)) {
+        // Валидируем модульные права (если переданы)
+        if (!empty($modulePermissions)) {
+            $availableModulePermissions = $this->getAvailableModulePermissions($organizationId);
+            foreach ($modulePermissions as $module => $permissions) {
+                if (!isset($availableModulePermissions[$module])) {
                     throw ValidationException::withMessages([
-                        'module_permissions' => "Недопустимое право '$permission' для модуля '$module'"
+                        'module_permissions' => "Модуль '$module' не активирован для организации"
                     ]);
+                }
+                
+                $moduleAvailablePermissions = $availableModulePermissions[$module];
+                foreach ($permissions as $permission) {
+                    if ($permission !== '*' && !in_array($permission, $moduleAvailablePermissions)) {
+                        throw ValidationException::withMessages([
+                            'module_permissions' => "Недопустимое право '$permission' для модуля '$module'"
+                        ]);
+                    }
                 }
             }
         }

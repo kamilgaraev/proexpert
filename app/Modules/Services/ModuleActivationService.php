@@ -48,7 +48,13 @@ class ModuleActivationService
         // Проверяем доступность и зависимости
         $checks = $this->accessController->checkDependencies($organizationId, $module);
         $organization = Organization::findOrFail($organizationId);
-        $canAfford = app(\App\Modules\Core\BillingEngine::class)->canAfford($organization, $module);
+        
+        // Для бесплатных модулей не проверяем баланс
+        $canAfford = $module->isFree() ? true : app(\App\Modules\Core\BillingEngine::class)->canAfford($organization, $module);
+        
+        // Добавляем информацию о том, что модуль бесплатный
+        $moduleData['is_free'] = $module->isFree();
+        $moduleData['requires_payment'] = !$module->isFree();
         
         return [
             'success' => true,

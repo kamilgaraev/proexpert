@@ -23,6 +23,11 @@ class AccessController
                 return false;
             }
             
+            // Системные модули (can_deactivate: false) всегда доступны
+            if (!$module->can_deactivate) {
+                return true;
+            }
+            
             // Проверяем активацию модуля для организации
             $activation = OrganizationModuleActivation::where('organization_id', $organizationId)
                 ->where('module_id', $module->id)
@@ -42,6 +47,16 @@ class AccessController
         $cacheKey = "org_module_permission_{$organizationId}_{$permission}";
         
         return Cache::remember($cacheKey, 300, function () use ($organizationId, $permission) {
+            // Проверяем системные модули (can_deactivate: false) - их права всегда доступны
+            $systemModulePermission = Module::where('is_active', true)
+                ->where('can_deactivate', false)
+                ->whereJsonContains('permissions', $permission)
+                ->exists();
+                
+            if ($systemModulePermission) {
+                return true;
+            }
+            
             // Ищем модули с такими правами среди активированных
             $hasPermission = Module::where('is_active', true)
                 ->whereJsonContains('permissions', $permission)
@@ -86,7 +101,8 @@ class AccessController
         $cacheKey = "org_active_modules_{$organizationId}";
         
         return Cache::remember($cacheKey, 300, function () use ($organizationId) {
-            return OrganizationModuleActivation::with('module')
+            // Получаем активированные модули
+            $activatedModules = OrganizationModuleActivation::with('module')
                 ->where('organization_id', $organizationId)
                 ->where('status', 'active')
                 ->whereHas('module', function ($query) {
@@ -98,6 +114,13 @@ class AccessController
                 })
                 ->get()
                 ->pluck('module');
+                
+            // Добавляем системные модули (can_deactivate: false)
+            $systemModules = Module::where('is_active', true)
+                ->where('can_deactivate', false)
+                ->get();
+                
+            return $activatedModules->merge($systemModules)->unique('id');
         });
     }
     

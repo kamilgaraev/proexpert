@@ -86,8 +86,8 @@ class ModuleManager
         
         $organization = Organization::findOrFail($organizationId);
         
-        // Проверяем баланс
-        if (!$this->billingEngine->canAfford($organization, $module)) {
+        // Проверяем баланс только для платных модулей
+        if (!$module->isFree() && !$this->billingEngine->canAfford($organization, $module)) {
             return [
                 'success' => false,
                 'message' => 'Недостаточно средств на балансе',
@@ -97,8 +97,8 @@ class ModuleManager
         
         try {
             DB::transaction(function () use ($organizationId, $module, $organization, $options) {
-                // Списываем деньги
-                if (!$this->billingEngine->chargeForModule($organization, $module)) {
+                // Списываем деньги только для платных модулей
+                if (!$module->isFree() && !$this->billingEngine->chargeForModule($organization, $module)) {
                     throw new \Exception('Ошибка списания средств');
                 }
                 
@@ -113,11 +113,15 @@ class ModuleManager
                     ],
                     [
                         'activated_at' => now(),
-                        'expires_at' => $module->billing_model === 'subscription' 
-                            ? now()->addDays($durationDays) 
-                            : null,
+                        'expires_at' => $module->isFree() 
+                            ? null  // Бесплатные модули не имеют срока истечения
+                            : ($module->billing_model === 'subscription' 
+                                ? now()->addDays($durationDays) 
+                                : null),
                         'status' => 'active',
-                        'paid_amount' => $this->billingEngine->calculateChargeAmount($module),
+                        'paid_amount' => $module->isFree() 
+                            ? 0 
+                            : $this->billingEngine->calculateChargeAmount($module),
                         'module_settings' => $options['settings'] ?? [],
                         'usage_stats' => []
                     ]

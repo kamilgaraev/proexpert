@@ -33,9 +33,9 @@ class CreateCustomRoleRequest extends FormRequest
                     ->where('is_active', true)
             ],
             'description' => 'nullable|string|max:1000',
-            'system_permissions' => 'required|array',
+            'system_permissions' => 'sometimes|array',
             'system_permissions.*' => 'string|max:100',
-            'module_permissions' => 'required|array',
+            'module_permissions' => 'sometimes|array',
             'module_permissions.*' => 'array',
             'module_permissions.*.*' => 'string|max:100',
             'interface_access' => 'required|array|min:1',
@@ -61,8 +61,7 @@ class CreateCustomRoleRequest extends FormRequest
         return [
             'name.required' => 'Название роли обязательно',
             'name.unique' => 'Роль с таким названием уже существует в организации',
-            'system_permissions.required' => 'Необходимо указать хотя бы одно системное право',
-            'module_permissions.required' => 'Необходимо указать модульные права',
+            // Права не обязательны, оставляем только типовые сообщения
             'interface_access.required' => 'Необходимо указать доступ к интерфейсам',
             'interface_access.min' => 'Необходимо выбрать хотя бы один интерфейс',
             'interface_access.*.in' => 'Недопустимый тип интерфейса',

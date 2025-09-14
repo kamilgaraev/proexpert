@@ -50,7 +50,8 @@ class ModuleController extends Controller
         $activeModuleSlugs = $activeModules->pluck('slug')->toArray();
 
         $modulesWithStatus = $allModules->map(function ($module) use ($activeModuleSlugs, $organizationId) {
-            $isActive = in_array($module->slug, $activeModuleSlugs);
+            // Системные модули (can_deactivate: false) всегда активны
+            $isActive = !$module->can_deactivate || in_array($module->slug, $activeModuleSlugs);
             $activation = $isActive ? $module->getActivationForOrganization($organizationId) : null;
             
             return [
