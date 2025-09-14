@@ -229,10 +229,43 @@ class UserPermissionsController extends Controller
         // Модульные права
         if (isset($permissions['modules'])) {
             foreach ($permissions['modules'] as $module => $modulePermissions) {
-                $flat = array_merge($flat, $modulePermissions);
+                foreach ($modulePermissions as $permission) {
+                    if ($permission === '*') {
+                        // Разворачиваем wildcard в конкретные права модуля
+                        $moduleSpecificPermissions = $this->getModulePermissions($module);
+                        $flat = array_merge($flat, $moduleSpecificPermissions);
+                    } else {
+                        $flat[] = $permission;
+                    }
+                }
             }
         }
         
         return array_unique($flat);
+    }
+
+    /**
+     * Получить список прав модуля из конфигурации
+     */
+    protected function getModulePermissions(string $moduleSlug): array
+    {
+        try {
+            $configPaths = [
+                base_path("config/ModuleList/core/{$moduleSlug}.json"),
+                base_path("config/ModuleList/premium/{$moduleSlug}.json"),
+                base_path("config/ModuleList/enterprise/{$moduleSlug}.json"),
+            ];
+
+            foreach ($configPaths as $path) {
+                if (file_exists($path)) {
+                    $config = json_decode(file_get_contents($path), true);
+                    return $config['permissions'] ?? [];
+                }
+            }
+        } catch (\Exception $e) {
+            Log::warning("Не удалось загрузить права модуля {$moduleSlug}: " . $e->getMessage());
+        }
+
+        return [];
     }
 }
