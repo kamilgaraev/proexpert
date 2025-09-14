@@ -10,7 +10,13 @@ class PermissionTranslator
         
         foreach ($permissions as $permission => $description) {
             $key = is_numeric($permission) ? $description : $permission;
-            $translations[$key] = __("permissions.system.{$key}", [], 'ru');
+            $parts = explode('.', $key);
+            if (count($parts) === 2) {
+                [$group, $action] = $parts;
+                $translations[$key] = __("permissions.system.{$group}.{$action}", [], 'ru');
+            } else {
+                $translations[$key] = __("permissions.system.{$key}", [], 'ru');
+            }
         }
         
         return $translations;
@@ -26,7 +32,10 @@ class PermissionTranslator
             $normalizedModule = str_replace('-', '_', $module);
             
             foreach ($permissions as $permission) {
-                $translationKey = "permissions.modules.{$normalizedModule}.{$permission}";
+                $permParts = explode('.', $permission);
+                // ожидаем формат: {module}.{action}
+                $action = end($permParts);
+                $translationKey = "permissions.modules.{$normalizedModule}.{$action}";
                 $translation = __($translationKey, [], 'ru');
                 
                 if ($translation === $translationKey) {
@@ -78,13 +87,14 @@ class PermissionTranslator
         if (count($parts) === 2) {
             [$group, $action] = $parts;
             
-            $systemTranslation = __("permissions.system.{$permission}", [], 'ru');
-            if ($systemTranslation !== "permissions.system.{$permission}") {
+            $systemTranslation = __("permissions.system.{$group}.{$action}", [], 'ru');
+            if ($systemTranslation !== "permissions.system.{$group}.{$action}") {
                 return $systemTranslation;
             }
             
-            $moduleTranslation = __("permissions.modules.{$group}.{$permission}", [], 'ru');
-            if ($moduleTranslation !== "permissions.modules.{$group}.{$permission}") {
+            $normalizedGroup = str_replace('-', '_', $group);
+            $moduleTranslation = __("permissions.modules.{$normalizedGroup}.{$action}", [], 'ru');
+            if ($moduleTranslation !== "permissions.modules.{$normalizedGroup}.{$action}") {
                 return $moduleTranslation;
             }
         }
