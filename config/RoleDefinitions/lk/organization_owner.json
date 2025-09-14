@@ -27,13 +27,13 @@
   ],
   
   "module_permissions": {
-    "projects": ["projects.*"],
-    "materials": ["materials.*"],
-    "reports": ["reports.*"],
-    "finance": ["finance.*"],
-    "contracts": ["contracts.*"],
-    "personnel": ["personnel.*"],
-    "multi-organization": ["multi-organization.*"]
+    "projects": ["*"],
+    "materials": ["*"],
+    "reports": ["*"],
+    "finance": ["*"],
+    "contracts": ["*"],
+    "personnel": ["*"],
+    "multi-organization": ["*"]
   },
   
   "interface_access": ["lk", "admin"],

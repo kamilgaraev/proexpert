@@ -143,18 +143,19 @@ class RoleUpdater
     {
         switch ($roleSlug) {
             case 'organization_owner':
-                return array_map(function($permission) {
-                    return str_replace('.manage', '.*', $permission);
-                }, $permissions);
+                // Владелец получает все права модуля (wildcard)
+                return ['*'];
                 
             case 'organization_admin':
                 return array_filter($permissions, function($permission) {
-                    return !str_contains($permission, '.delete') && !str_contains($permission, '.billing');
+                    $action = explode('.', $permission)[1] ?? '';
+                    return !str_contains($action, 'delete') && !str_contains($action, 'billing');
                 });
                 
             case 'viewer':
                 return array_filter($permissions, function($permission) {
-                    return str_contains($permission, '.view') || str_contains($permission, '.dashboard');
+                    $action = explode('.', $permission)[1] ?? '';
+                    return str_contains($action, 'view') || str_contains($action, 'dashboard');
                 });
                 
             default:
