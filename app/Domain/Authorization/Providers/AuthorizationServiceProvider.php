@@ -9,6 +9,12 @@ use App\Domain\Authorization\Services\RoleScanner;
 use App\Domain\Authorization\Services\PermissionResolver;
 use App\Domain\Authorization\Services\ModulePermissionChecker;
 use App\Domain\Authorization\Services\CustomRoleService;
+use App\Domain\Authorization\Services\RoleUpdater;
+use App\Domain\Authorization\Listeners\UpdateRolesOnModuleActivation;
+use App\Domain\Authorization\Listeners\UpdateRolesOnModuleDeactivation;
+use App\Modules\Events\ModuleActivated;
+use App\Modules\Events\ModuleDeactivated;
+use Illuminate\Support\Facades\Event;
 
 /**
  * Service Provider для новой системы авторизации
@@ -52,6 +58,12 @@ class AuthorizationServiceProvider extends ServiceProvider
                 $app->make(AuthorizationService::class)
             );
         });
+
+        $this->app->singleton(RoleUpdater::class, function ($app) {
+            return new RoleUpdater(
+                $app->make(RoleScanner::class)
+            );
+        });
     }
 
     /**
@@ -61,6 +73,7 @@ class AuthorizationServiceProvider extends ServiceProvider
     {
         $this->registerGates();
         $this->registerPolicies();
+        $this->registerEventListeners();
         
         // Регистрируем команды, если они есть
         if ($this->app->runningInConsole()) {
@@ -112,6 +125,15 @@ class AuthorizationServiceProvider extends ServiceProvider
     {
         // Можно добавить политики для моделей авторизации
         // Gate::policy(OrganizationCustomRole::class, CustomRolePolicy::class);
+    }
+
+    /**
+     * Регистрируем слушатели событий
+     */
+    protected function registerEventListeners(): void
+    {
+        Event::listen(ModuleActivated::class, UpdateRolesOnModuleActivation::class);
+        Event::listen(ModuleDeactivated::class, UpdateRolesOnModuleDeactivation::class);
     }
 
     /**

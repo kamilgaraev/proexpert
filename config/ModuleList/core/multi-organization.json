@@ -19,6 +19,7 @@
   
   "permissions": [
     "multi_organization.view",
+    "multi_organization.manage",
     "multi_organization.create_holding",
     "multi_organization.manage_children",
     "multi_organization.add_child_organization",
