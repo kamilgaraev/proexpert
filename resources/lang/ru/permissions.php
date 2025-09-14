@@ -1,0 +1,106 @@
+<?php
+
+return [
+    'system' => [
+        'profile.view' => 'Просмотр профиля',
+        'profile.edit' => 'Редактирование профиля',
+        'organization.view' => 'Просмотр организации',
+        'organization.edit' => 'Редактирование организации',
+        'users.view' => 'Просмотр пользователей',
+        'users.invite' => 'Приглашение пользователей',
+        'users.manage' => 'Управление пользователями',
+        'users.manage_admin' => 'Управление администраторами',
+        'users.assign_roles' => 'Назначение ролей пользователям',
+        'roles.view_custom' => 'Просмотр кастомных ролей',
+        'roles.create_custom' => 'Создание кастомных ролей',
+        'roles.manage_custom' => 'Управление кастомными ролями',
+        'modules.manage' => 'Управление модулями',
+        'admin.access' => 'Доступ к административной панели',
+    ],
+
+    'modules' => [
+        'basic-reports' => [
+            'basic_reports.view' => 'Просмотр базовых отчетов',
+            'basic_reports.material_usage' => 'Отчет по использованию материалов',
+            'basic_reports.work_completion' => 'Отчет по выполнению работ',
+            'basic_reports.project_summary' => 'Сводный отчет по проекту',
+            'basic_reports.export_excel' => 'Экспорт в Excel',
+            'basic_reports.export_pdf' => 'Экспорт в PDF',
+        ],
+        'users' => [
+            'users.view' => 'Просмотр пользователей',
+            'users.create' => 'Создание пользователей',
+            'users.edit' => 'Редактирование пользователей',
+            'users.delete' => 'Удаление пользователей',
+            'users.roles' => 'Управление ролями пользователей',
+            'users.permissions' => 'Управление правами пользователей',
+        ],
+        'organizations' => [
+            'organizations.view' => 'Просмотр организаций',
+            'organizations.create' => 'Создание организаций',
+            'organizations.edit' => 'Редактирование организаций',
+            'organizations.delete' => 'Удаление организаций',
+            'organizations.settings' => 'Настройки организаций',
+        ],
+        'projects' => [
+            'projects.*' => 'Полный доступ к проектам',
+            'projects.view' => 'Просмотр проектов',
+            'projects.create' => 'Создание проектов',
+            'projects.edit' => 'Редактирование проектов',
+            'projects.delete' => 'Удаление проектов',
+        ],
+        'materials' => [
+            'materials.view' => 'Просмотр материалов',
+            'materials.edit' => 'Редактирование материалов',
+            'materials.create' => 'Создание материалов',
+            'materials.delete' => 'Удаление материалов',
+        ],
+        'reports' => [
+            'reports.view' => 'Просмотр отчетов',
+            'reports.create' => 'Создание отчетов',
+            'reports.edit' => 'Редактирование отчетов',
+            'reports.delete' => 'Удаление отчетов',
+        ],
+        'finance' => [
+            'finance.view' => 'Просмотр финансов',
+            'finance.edit' => 'Редактирование финансов',
+            'finance.create' => 'Создание финансовых записей',
+            'finance.delete' => 'Удаление финансовых записей',
+        ],
+        'contracts' => [
+            'contracts.view' => 'Просмотр договоров',
+            'contracts.edit' => 'Редактирование договоров',
+            'contracts.create' => 'Создание договоров',
+            'contracts.delete' => 'Удаление договоров',
+        ],
+        'personnel' => [
+            'personnel.*' => 'Полный доступ к персоналу',
+            'personnel.view' => 'Просмотр персонала',
+            'personnel.create' => 'Добавление персонала',
+            'personnel.edit' => 'Редактирование персонала',
+            'personnel.delete' => 'Удаление персонала',
+        ],
+    ],
+
+    'interfaces' => [
+        'lk' => 'Личный кабинет',
+        'mobile' => 'Мобильное приложение',
+        'admin' => 'Административная панель',
+    ],
+
+    'groups' => [
+        'profile' => 'Профиль',
+        'organization' => 'Организация',
+        'users' => 'Пользователи',
+        'roles' => 'Роли',
+        'modules' => 'Модули',
+        'basic_reports' => 'Базовые отчеты',
+        'projects' => 'Проекты',
+        'materials' => 'Материалы',
+        'reports' => 'Отчеты',
+        'finance' => 'Финансы',
+        'contracts' => 'Договоры',
+        'personnel' => 'Персонал',
+        'admin' => 'Администрирование',
+    ],
+];

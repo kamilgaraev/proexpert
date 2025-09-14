@@ -497,29 +497,18 @@ class JwtAuthService
             ]);
             
             if (!empty($orgName)) {
-                // Формируем данные для создания организации
-                $orgData = [
-                    'name' => $orgName,
-                    'owner_id' => $user->id
-                ];
+                // Получаем данные организации из DTO
+                $orgData = $registerDTO->getOrganizationData();
                 
-                // Добавляем дополнительные поля из DTO, если они есть
-                $orgFields = [
-                    'legal_name', 'tax_number', 'registration_number', 
-                    'phone', 'email', 'address', 'city', 
-                    'postal_code', 'country'
-                ];
-                
-                foreach ($orgFields as $field) {
-                    $dtoField = 'organization' . ucfirst($field);
-                    if (isset($registerDTO->$dtoField)) {
-                        $orgData[$field] = $registerDTO->$dtoField;
-                    }
-                }
+                // Добавляем owner_id
+                $orgData['owner_id'] = $user->id;
                 
                 Log::info('[JwtAuthService] Organization data prepared', [
                     'org_name' => $orgData['name'],
-                    'owner_id' => $orgData['owner_id']
+                    'owner_id' => $orgData['owner_id'],
+                    'legal_name' => $orgData['legal_name'] ?? 'не указано',
+                    'tax_number' => $orgData['tax_number'] ?? 'не указано',
+                    'address' => $orgData['address'] ?? 'не указано'
                 ]);
                 
                 try {
