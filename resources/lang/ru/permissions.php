@@ -103,6 +103,7 @@ return [
     'groups' => [
         'profile' => 'Профиль',
         'organization' => 'Организация',
+        'organizations' => 'Организации',
         'users' => 'Пользователи',
         'roles' => 'Роли',
         'modules' => 'Модули',
