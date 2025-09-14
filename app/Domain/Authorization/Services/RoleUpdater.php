@@ -6,6 +6,7 @@ use App\Domain\Authorization\Services\RoleScanner;
 use App\Models\Module;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Cache;
 
 class RoleUpdater
 {
@@ -47,6 +48,8 @@ class RoleUpdater
 
         if ($rolesUpdated) {
             $this->roleScanner->clearCache();
+            // Очищаем кеш авторизации для всех пользователей
+            Cache::flush();
         }
 
         return true;
@@ -66,6 +69,8 @@ class RoleUpdater
 
         if ($rolesUpdated) {
             $this->roleScanner->clearCache();
+            // Очищаем кеш авторизации для всех пользователей
+            Cache::flush();
         }
 
         return true;

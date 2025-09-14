@@ -69,7 +69,7 @@ class AuthorizationService
     }
 
     /**
-     * Получить все права пользователя
+     * Получить все права пользователя (плоский список)
      */
     public function getUserPermissions(User $user, ?AuthorizationContext $context = null): array
     {
@@ -82,6 +82,42 @@ class AuthorizationService
         }
         
         return array_unique($permissions);
+    }
+
+    /**
+     * Получить структурированные права пользователя (system + modules)
+     */
+    public function getUserPermissionsStructured(User $user, ?AuthorizationContext $context = null): array
+    {
+        $roles = $this->getUserRoles($user, $context);
+        $systemPermissions = [];
+        $modulePermissions = [];
+        
+        foreach ($roles as $assignment) {
+            // Получаем системные права
+            $systemPerms = $this->permissionResolver->getSystemPermissions($assignment);
+            $systemPermissions = array_merge($systemPermissions, $systemPerms);
+            
+            // Получаем модульные права
+            $modulePerms = $this->permissionResolver->getModulePermissions($assignment);
+            foreach ($modulePerms as $module => $perms) {
+                if (!isset($modulePermissions[$module])) {
+                    $modulePermissions[$module] = [];
+                }
+                $modulePermissions[$module] = array_merge($modulePermissions[$module], $perms);
+            }
+        }
+        
+        // Убираем дубликаты
+        $systemPermissions = array_unique($systemPermissions);
+        foreach ($modulePermissions as $module => $perms) {
+            $modulePermissions[$module] = array_unique($perms);
+        }
+        
+        return [
+            'system' => $systemPermissions,
+            'modules' => $modulePermissions
+        ];
     }
 
     /**

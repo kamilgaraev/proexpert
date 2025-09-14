@@ -46,7 +46,7 @@ class UserPermissionsController extends Controller
         $rolesSlugs = $this->authService->getUserRoleSlugs($user, $context);
         
         // Получаем все права
-        $permissions = $this->authService->getUserPermissions($user, $authContext);
+        $permissions = $this->authService->getUserPermissionsStructured($user, $authContext);
         
         // Получаем доступные интерфейсы
         $availableInterfaces = $this->getAvailableInterfaces($user, $authContext);
