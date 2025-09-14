@@ -21,14 +21,19 @@ class PermissionTranslator
         $translations = [];
         
         foreach ($modulePermissions as $module => $permissions) {
-            $translations[$module] = [
-                'module_name' => __("permissions.groups.{$module}", [], 'ru'),
-                'permissions' => []
-            ];
+            $translations[$module] = [];
+            
+            $normalizedModule = str_replace('-', '_', $module);
             
             foreach ($permissions as $permission) {
-                $translations[$module]['permissions'][$permission] = 
-                    __("permissions.modules.{$module}.{$permission}", [], 'ru');
+                $translationKey = "permissions.modules.{$normalizedModule}.{$permission}";
+                $translation = __($translationKey, [], 'ru');
+                
+                if ($translation === $translationKey) {
+                    $translation = self::getPermissionTranslation($permission);
+                }
+                
+                $translations[$module][$permission] = $translation;
             }
         }
         

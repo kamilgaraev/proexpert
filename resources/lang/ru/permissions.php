@@ -19,7 +19,7 @@ return [
     ],
 
     'modules' => [
-        'basic-reports' => [
+        'basic_reports' => [
             'basic_reports.view' => 'Просмотр базовых отчетов',
             'basic_reports.material_usage' => 'Отчет по использованию материалов',
             'basic_reports.work_completion' => 'Отчет по выполнению работ',
