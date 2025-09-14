@@ -8,6 +8,7 @@ use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Http\Requests\CreateCustomRoleRequest;
 use App\Domain\Authorization\Http\Requests\UpdateCustomRoleRequest;
 use App\Domain\Authorization\Http\Resources\CustomRoleResource;
+use App\Services\PermissionTranslationService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -148,15 +149,21 @@ class CustomRoleController extends Controller
         $systemPermissions = $this->roleService->getAvailableSystemPermissions($organizationId);
         $modulePermissions = $this->roleService->getAvailableModulePermissions($organizationId);
         
-        return response()->json([
-            'data' => [
-                'system_permissions' => $systemPermissions,
-                'module_permissions' => $modulePermissions,
-                'interface_access' => [
-                    'lk' => 'Личный кабинет',
-                    'mobile' => 'Мобильное приложение'
-                ]
+        $permissionsData = [
+            'system_permissions' => $systemPermissions,
+            'module_permissions' => $modulePermissions,
+            'interface_access' => [
+                'lk' => 'Личный кабинет',
+                'mobile' => 'Мобильное приложение',
+                'admin' => 'Административная панель'
             ]
+        ];
+        
+        $translatedData = app(PermissionTranslationService::class)
+            ->processPermissionsForFrontend($permissionsData);
+        
+        return response()->json([
+            'data' => $translatedData
         ]);
     }
 
