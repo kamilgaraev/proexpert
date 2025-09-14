@@ -12,6 +12,9 @@
     "system.manage_organizations",
     "system.view_logs",
     "system.manage_modules",
+    "roles.view_custom",
+    "roles.create_custom", 
+    "roles.manage_custom",
     "profile.view",
     "profile.edit",
     "admin.access"

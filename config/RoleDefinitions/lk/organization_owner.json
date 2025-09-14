@@ -19,6 +19,7 @@
     "users.manage",
     "users.manage_admin",
     "users.assign_roles",
+    "roles.view_custom",
     "roles.create_custom",
     "roles.manage_custom",
     "profile.view",
