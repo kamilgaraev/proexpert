@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Log;
 
 class HoldingReportsController extends Controller
 {
@@ -48,10 +49,18 @@ class HoldingReportsController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            Log::error('Holding dashboard error', [
+                'holding_id' => $holdingId,
+                'error' => $e->getMessage(),
+                'db_code' => $e->getCode(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
-            ], $e->getCode() ?: 500);
+                'message' => 'Ошибка получения данных дашборда'
+            ], 500);
         }
     }
 
@@ -75,10 +84,16 @@ class HoldingReportsController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            Log::error('Holding comparison error', [
+                'holding_id' => $holdingId,
+                'error' => $e->getMessage(),
+                'db_code' => $e->getCode()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
-            ], $e->getCode() ?: 500);
+                'message' => 'Ошибка получения сравнения организаций'
+            ], 500);
         }
     }
 
@@ -120,10 +135,16 @@ class HoldingReportsController extends Controller
                 'errors' => $e->errors()
             ], 422);
         } catch (\Exception $e) {
+            Log::error('Holding financial report error', [
+                'holding_id' => $holdingId,
+                'error' => $e->getMessage(),
+                'db_code' => $e->getCode()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
-            ], $e->getCode() ?: 500);
+                'message' => 'Ошибка получения финансового отчета'
+            ], 500);
         }
     }
 
@@ -157,10 +178,16 @@ class HoldingReportsController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            Log::error('Holding KPI error', [
+                'holding_id' => $holdingId,
+                'error' => $e->getMessage(),
+                'db_code' => $e->getCode()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
-            ], $e->getCode() ?: 500);
+                'message' => 'Ошибка получения KPI метрик'
+            ], 500);
         }
     }
 
@@ -204,10 +231,16 @@ class HoldingReportsController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            Log::error('Holding quick metrics error', [
+                'holding_id' => $holdingId,
+                'error' => $e->getMessage(),
+                'db_code' => $e->getCode()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
-            ], $e->getCode() ?: 500);
+                'message' => 'Ошибка получения быстрых метрик'
+            ], 500);
         }
     }
 
@@ -251,10 +284,16 @@ class HoldingReportsController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            Log::error('Holding cache clear error', [
+                'holding_id' => $holdingId,
+                'error' => $e->getMessage(),
+                'db_code' => $e->getCode()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage()
-            ], $e->getCode() ?: 500);
+                'message' => 'Ошибка очистки кэша'
+            ], 500);
         }
     }
 
@@ -266,7 +305,7 @@ class HoldingReportsController extends Controller
         $group = OrganizationGroup::find($holdingId);
         
         if (!$group) {
-            throw new \Exception('Холдинг не найден', 404);
+            throw new \Exception('Холдинг не найден');
         }
 
         // Проверяем, что пользователь имеет доступ к холдингу
@@ -278,7 +317,7 @@ class HoldingReportsController extends Controller
                      \App\Models\Organization::find($userOrgId)?->parent_organization_id === $parentOrgId;
 
         if (!$hasAccess) {
-            throw new \Exception('Нет доступа к данному холдингу', 403);
+            throw new \Exception('Нет доступа к данному холдингу');
         }
     }
 }
