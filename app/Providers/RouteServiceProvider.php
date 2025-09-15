@@ -60,6 +60,7 @@ class RouteServiceProvider extends ServiceProvider
                      require base_path('routes/api/v1/landing/landing_admins.php');
                      require base_path('routes/api/v1/landing_admin_blog.php');
                      require base_path('routes/api/v1/landing/holding_reports.php');
+                     require base_path('routes/api/v1/landing/holding_sites.php');
                  });
 
             // Holding API Routes
