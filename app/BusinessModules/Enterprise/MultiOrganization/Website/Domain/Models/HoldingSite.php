@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use App\Models\OrganizationGroup;
 use App\Models\User;
 use Carbon\Carbon;
@@ -159,7 +160,24 @@ class HoldingSite extends Model
     public function clearCache(): void
     {
         Cache::forget("holding_site_data:{$this->id}:{$this->updated_at->timestamp}");
-        Cache::tags(['holding_sites', "site_{$this->id}"])->flush();
+        
+        // Проверяем поддержку тегов кэша
+        try {
+            if (method_exists(Cache::getStore(), 'tags')) {
+                Cache::tags(['holding_sites', "site_{$this->id}"])->flush();
+            } else {
+                // Для драйверов без поддержки тегов очищаем специфичные ключи
+                Cache::forget("holding_site_data:{$this->id}");
+                Cache::forget("site_data_{$this->id}");
+                Cache::forget("site_blocks_{$this->id}");
+            }
+        } catch (\Exception $e) {
+            // Логируем, но не ломаем функциональность
+            Log::warning('Cache clearing failed for site', [
+                'site_id' => $this->id,
+                'error' => $e->getMessage()
+            ]);
+        }
     }
 
     /**

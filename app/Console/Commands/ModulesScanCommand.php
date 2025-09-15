@@ -69,8 +69,22 @@ class ModulesScanCommand extends Command
             }
             
             // Очищаем кэш прав доступа
-            Cache::tags(['permissions', 'modules'])->flush();
-            $this->info('✓ Permissions cache cleared');
+            try {
+                // Проверяем поддержку тегов
+                if (method_exists(Cache::getStore(), 'tags')) {
+                    Cache::tags(['permissions', 'modules'])->flush();
+                    $this->info('✓ Tagged permissions cache cleared');
+                } else {
+                    // Очищаем ключи по отдельности для драйверов без поддержки тегов
+                    Cache::forget('module_registry');
+                    Cache::forget('module_permissions');
+                    Cache::forget('user_permissions_cache');
+                    Cache::forget('role_permissions_cache');
+                    $this->info('✓ Permissions cache keys cleared');
+                }
+            } catch (\Exception $e) {
+                $this->warn("Cache clearing failed: {$e->getMessage()}");
+            }
             
             return 0;
             
