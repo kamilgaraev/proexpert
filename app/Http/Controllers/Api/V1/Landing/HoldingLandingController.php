@@ -51,11 +51,7 @@ class HoldingLandingController extends Controller
             
             if (!$site) {
                 // Автоматически создаем лендинг для холдинга
-                $site = $this->siteService->createSite($organizationGroup, [
-                    'title' => $organizationGroup->name,
-                    'domain' => $organizationGroup->slug . '.prohelper.pro',
-                    'description' => "Официальный сайт {$organizationGroup->name}"
-                ], $user);
+                $site = $this->siteService->getOrCreateHoldingLanding($organizationGroup, $user);
             }
 
             $landingData = [

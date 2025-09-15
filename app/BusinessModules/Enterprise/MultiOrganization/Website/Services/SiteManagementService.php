@@ -42,6 +42,14 @@ class SiteManagementService
     }
 
     /**
+     * Метод для обратной совместимости (алиас createHoldingLanding)
+     */
+    public function createSite(OrganizationGroup $organizationGroup, array $data, User $creator): HoldingSite
+    {
+        return $this->createHoldingLanding($organizationGroup, $data, $creator);
+    }
+
+    /**
      * Создать лендинг для холдинга
      */
     public function createHoldingLanding(OrganizationGroup $organizationGroup, array $data, User $creator): HoldingSite
@@ -50,6 +58,7 @@ class SiteManagementService
             // Создаем лендинг
             $site = HoldingSite::create([
                 'organization_group_id' => $organizationGroup->id,
+                'domain' => $data['domain'] ?? ($organizationGroup->slug . '.prohelper.pro'),
                 'title' => $data['title'] ?? $organizationGroup->name,
                 'description' => $data['description'] ?? "Официальный сайт {$organizationGroup->name}",
                 'theme_config' => $data['theme_config'] ?? $this->getDefaultThemeConfig(),

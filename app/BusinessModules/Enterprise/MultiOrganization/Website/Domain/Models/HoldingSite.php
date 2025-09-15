@@ -20,6 +20,7 @@ class HoldingSite extends Model
 
     protected $fillable = [
         'organization_group_id',
+        'domain',
         'title',
         'description',
         'logo_url',
@@ -193,11 +194,11 @@ class HoldingSite extends Model
     }
 
     /**
-     * Получить домен сайта на основе slug холдинга
+     * Получить домен сайта
      */
     public function getDomain(): string
     {
-        return $this->organizationGroup->slug . '.prohelper.pro';
+        return $this->domain ?? ($this->organizationGroup->slug . '.prohelper.pro');
     }
 
     /**
