@@ -210,7 +210,7 @@ class ReportEngine
             $recentContracts = $org->contracts()
                 ->latest()
                 ->limit(2)
-                ->get(['id', 'name', 'total_amount', 'created_at']);
+                ->get(['id', 'number', 'subject', 'total_amount', 'created_at']);
 
             foreach ($recentContracts as $contract) {
                 $importance = $contract->total_amount > 1000000 ? 'high' : 'medium';
@@ -219,7 +219,7 @@ class ReportEngine
                     'type' => 'contract_signed',
                     'organization_id' => $org->id,
                     'organization_name' => $org->name,
-                    'title' => "Подписан контракт: {$contract->name}",
+                    'title' => "Подписан контракт: {$contract->number}" . ($contract->subject ? " ({$contract->subject})" : ""),
                     'amount' => $contract->total_amount,
                     'date' => $contract->created_at,
                     'importance' => $importance,
