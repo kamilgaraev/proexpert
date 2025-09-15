@@ -104,7 +104,16 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
             'multi-organization.reports.kpi',
             'multi-organization.reports.comparison',
             'multi-organization.reports.export',
-            'multi-organization.cache.clear'
+            'multi-organization.cache.clear',
+            'multi-organization.website.view',
+            'multi-organization.website.manage',
+            'multi-organization.website.create',
+            'multi-organization.website.edit',
+            'multi-organization.website.publish',
+            'multi-organization.website.delete',
+            'multi-organization.website.assets.upload',
+            'multi-organization.website.assets.manage',
+            'multi-organization.website.templates.access'
         ];
     }
 
