@@ -61,6 +61,14 @@ class RouteServiceProvider extends ServiceProvider
                      require base_path('routes/api/v1/landing_admin_blog.php');
                  });
 
+            // Holding API Routes
+            Route::middleware('api')
+                ->prefix('api/v1/holding-api')
+                ->as('api.v1.holdingApi.')
+                ->group(function() {
+                     require base_path('routes/api/v1/holding.php');
+                 });
+
             // Admin API Routes
             Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.context'])
                 ->prefix('api/v1/admin')
