@@ -10,6 +10,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use App\Models\OrganizationBalance;
+use App\Models\OrganizationAccessPermission;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use App\Domain\Authorization\Models\UserRoleAssignment;
 
 class Organization extends Model
 {
@@ -97,11 +101,35 @@ class Organization extends Model
     }
 
     /**
-     * Получить роли, принадлежащие этой организации.
+     * Получить кастомные роли организации.
      */
-    public function roles(): HasMany
+    public function customRoles(): HasMany
     {
-        return $this->hasMany(Role::class);
+        return $this->hasMany(OrganizationCustomRole::class);
+    }
+
+    /**
+     * Получить контекст авторизации для организации.
+     */
+    public function authorizationContext(): HasOne
+    {
+        return $this->hasOne(AuthorizationContext::class, 'resource_id')
+            ->where('type', AuthorizationContext::TYPE_ORGANIZATION);
+    }
+
+    /**
+     * Получить назначения ролей пользователям в контексте этой организации.
+     */
+    public function roleAssignments(): HasMany
+    {
+        return $this->hasManyThrough(
+            UserRoleAssignment::class,
+            AuthorizationContext::class,
+            'resource_id',
+            'context_id',
+            'id',
+            'id'
+        )->where('authorization_contexts.type', AuthorizationContext::TYPE_ORGANIZATION);
     }
 
     /**
