@@ -88,6 +88,7 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
     {
         return [
             'multi-organization.view',
+            'multi-organization.manage',
             'multi-organization.create_holding',
             'multi-organization.manage_children',
             'multi-organization.add_child_organization',
@@ -96,7 +97,14 @@ class MultiOrganizationModule implements ModuleInterface, BillableInterface, Con
             'multi-organization.manage_child_users',
             'multi-organization.view_hierarchy',
             'multi-organization.dashboard',
-            'multi-organization.settings'
+            'multi-organization.settings',
+            'multi-organization.reports.view',
+            'multi-organization.reports.dashboard',
+            'multi-organization.reports.financial',
+            'multi-organization.reports.kpi',
+            'multi-organization.reports.comparison',
+            'multi-organization.reports.export',
+            'multi-organization.cache.clear'
         ];
     }
 

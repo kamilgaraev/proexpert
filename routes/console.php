@@ -65,5 +65,15 @@ Schedule::command('contractors:sync-invited')
     })
     ->appendOutputTo(storage_path('logs/schedule-contractors-sync-invited.log'));
 
+// Сканирование модулей каждые 15 минут для обновления прав
+Schedule::command('modules:scan')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping(10)
+    ->runInBackground()
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled modules:scan command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-modules-scan.log'));
+
 // Если команда billing:process-renewals также должна быть здесь, ее можно добавить аналогично:
 // Schedule::command('billing:process-renewals')->dailyAt('02:00');

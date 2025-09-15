@@ -17,7 +17,11 @@
     "materials": ["materials.view"],
     "reports": ["reports.view"],
     "finance": ["finance.view_summary"],
-    "contracts": ["contracts.view"]
+    "contracts": ["contracts.view"],
+    "multi-organization": [
+      "multi-organization.view",
+      "multi-organization.reports.view"
+    ]
   },
   
   "interface_access": ["lk"],

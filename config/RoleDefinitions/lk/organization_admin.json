@@ -28,7 +28,15 @@
     "reports": ["reports.view", "reports.create"],
     "finance": ["finance.view"],
     "contracts": ["contracts.view", "contracts.edit"],
-    "personnel": ["personnel.*"]
+    "personnel": ["personnel.*"],
+    "multi-organization": [
+      "multi-organization.view",
+      "multi-organization.dashboard",
+      "multi-organization.reports.view",
+      "multi-organization.reports.dashboard",
+      "multi-organization.reports.kpi",
+      "multi-organization.reports.comparison"
+    ]
   },
   
   "interface_access": ["lk", "admin"],

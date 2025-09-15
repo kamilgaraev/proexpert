@@ -18,7 +18,15 @@
     "materials": ["materials.view", "materials.view_costs"],
     "reports": ["reports.*"],
     "finance": ["finance.*"],
-    "contracts": ["contracts.view", "contracts.view_financial"]
+    "contracts": ["contracts.view", "contracts.view_financial"],
+    "multi-organization": [
+      "multi-organization.view",
+      "multi-organization.dashboard",
+      "multi-organization.reports.view",
+      "multi-organization.reports.dashboard",
+      "multi-organization.reports.financial",
+      "multi-organization.reports.kpi"
+    ]
   },
   
   "interface_access": ["lk"],
