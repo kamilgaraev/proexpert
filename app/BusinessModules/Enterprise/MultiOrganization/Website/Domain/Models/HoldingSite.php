@@ -20,12 +20,10 @@ class HoldingSite extends Model
 
     protected $fillable = [
         'organization_group_id',
-        'domain',
         'title',
         'description',
         'logo_url',
         'favicon_url',
-        'template_id',
         'theme_config',
         'seo_meta',
         'analytics_config',
@@ -105,12 +103,11 @@ class HoldingSite extends Model
             return [
                 'site' => [
                     'id' => $this->id,
-                    'domain' => $this->domain,
+                    'domain' => $this->getDomain(),
                     'title' => $this->title,
                     'description' => $this->description,
                     'logo_url' => $this->logo_url,
                     'favicon_url' => $this->favicon_url,
-                    'template_id' => $this->template_id,
                     'theme_config' => $this->theme_config,
                     'seo_meta' => $this->seo_meta,
                     'analytics_config' => $this->analytics_config,
@@ -196,11 +193,19 @@ class HoldingSite extends Model
     }
 
     /**
+     * Получить домен сайта на основе slug холдинга
+     */
+    public function getDomain(): string
+    {
+        return $this->organizationGroup->slug . '.prohelper.pro';
+    }
+
+    /**
      * Получить URL сайта
      */
     public function getUrl(): string
     {
-        return "https://{$this->domain}";
+        return "https://{$this->getDomain()}";
     }
 
     /**

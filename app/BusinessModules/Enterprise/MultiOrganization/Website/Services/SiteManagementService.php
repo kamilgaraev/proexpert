@@ -26,30 +26,41 @@ class SiteManagementService
     }
 
     /**
-     * Создать новый сайт для холдинга
+     * Получить или создать единственный лендинг холдинга
      */
-    public function createSite(OrganizationGroup $organizationGroup, array $data, User $creator): HoldingSite
+    public function getOrCreateHoldingLanding(OrganizationGroup $organizationGroup, User $creator): HoldingSite
+    {
+        // Ищем существующий лендинг
+        $existingSite = HoldingSite::where('organization_group_id', $organizationGroup->id)->first();
+        
+        if ($existingSite) {
+            return $existingSite;
+        }
+
+        // Создаем новый лендинг
+        return $this->createHoldingLanding($organizationGroup, [], $creator);
+    }
+
+    /**
+     * Создать лендинг для холдинга
+     */
+    public function createHoldingLanding(OrganizationGroup $organizationGroup, array $data, User $creator): HoldingSite
     {
         return DB::transaction(function () use ($organizationGroup, $data, $creator) {
-            // Генерируем домен на основе slug холдинга
-            $domain = $data['domain'] ?? $organizationGroup->slug . '.prohelper.pro';
-            
-            // Создаем основной сайт
+            // Создаем лендинг
             $site = HoldingSite::create([
                 'organization_group_id' => $organizationGroup->id,
-                'domain' => $domain,
                 'title' => $data['title'] ?? $organizationGroup->name,
                 'description' => $data['description'] ?? "Официальный сайт {$organizationGroup->name}",
-                'template_id' => $data['template_id'] ?? 'default',
-                'theme_config' => $data['theme_config'] ?? [],
+                'theme_config' => $data['theme_config'] ?? $this->getDefaultThemeConfig(),
                 'seo_meta' => $data['seo_meta'] ?? $this->getDefaultSeoMeta($organizationGroup),
                 'status' => 'draft',
                 'is_active' => true,
                 'created_by_user_id' => $creator->id,
             ]);
 
-            // Применяем шаблон
-            $this->applyTemplate($site, $data['template_id'] ?? 'default', $creator);
+            // Создаем базовые блоки по умолчанию
+            $this->createDefaultBlocks($site, $creator);
 
             // Создаем базовые ассеты (если предоставлены)
             if (!empty($data['logo'])) {
@@ -62,37 +73,39 @@ class SiteManagementService
     }
 
     /**
-     * Применить шаблон к сайту
+     * Создать базовые блоки по умолчанию
      */
-    public function applyTemplate(HoldingSite $site, string $templateId, User $user): bool
+    private function createDefaultBlocks(HoldingSite $site, User $creator): void
     {
-        $template = SiteTemplate::where('template_key', $templateId)
-            ->where('is_active', true)
-            ->first();
+        // Создаем базовый Hero блок
+        $this->contentService->createBlock($site, [
+            'block_type' => 'hero',
+            'title' => 'Главный баннер',
+            'content' => [
+                'title' => $site->organizationGroup->name,
+                'subtitle' => 'Добро пожаловать на наш сайт',
+                'description' => $site->description,
+                'button_text' => 'Связаться с нами',
+                'button_url' => '#contacts',
+            ],
+            'sort_order' => 1,
+            'is_active' => true,
+        ], $creator);
 
-        if (!$template) {
-            throw new \Exception("Шаблон {$templateId} не найден");
-        }
-
-        // Удаляем существующие блоки (если есть)
-        $site->contentBlocks()->delete();
-
-        // Создаем блоки из шаблона
-        $template->createSiteFromTemplate($site, $user);
-
-        // Обновляем настройки темы
-        $site->update([
-            'template_id' => $templateId,
-            'theme_config' => array_merge(
-                $template->getAvailableThemeOptions(),
-                $site->theme_config ?? []
-            ),
-            'updated_by_user_id' => $user->id,
-        ]);
-
-        $site->clearCache();
-
-        return true;
+        // Создаем блок контактов
+        $this->contentService->createBlock($site, [
+            'block_type' => 'contacts',
+            'title' => 'Контакты',
+            'content' => [
+                'title' => 'Свяжитесь с нами',
+                'phone' => '',
+                'email' => '',
+                'address' => '',
+                'working_hours' => 'Пн-Пт: 9:00-18:00',
+            ],
+            'sort_order' => 2,
+            'is_active' => true,
+        ], $creator);
     }
 
     /**
@@ -138,14 +151,19 @@ class SiteManagementService
     }
 
     /**
-     * Получить сайт по домену
+     * Получить сайт по домену (через slug холдинга)
      */
     public function getSiteByDomain(string $domain): ?HoldingSite
     {
         $cacheKey = "site_by_domain:{$domain}";
         
         return Cache::remember($cacheKey, 300, function () use ($domain) {
-            return HoldingSite::where('domain', $domain)
+            // Извлекаем slug из домена (например, neostroi из neostroi.prohelper.pro)
+            $slug = str_replace('.prohelper.pro', '', $domain);
+            
+            return HoldingSite::whereHas('organizationGroup', function ($query) use ($slug) {
+                $query->where('slug', $slug);
+            })
                 ->where('is_active', true)
                 ->with(['organizationGroup.parentOrganization'])
                 ->first();
@@ -153,30 +171,48 @@ class SiteManagementService
     }
 
     /**
-     * Получить все сайты холдинга
+     * Получить лендинг холдинга
      */
-    public function getHoldingSites(OrganizationGroup $organizationGroup): array
+    public function getHoldingLanding(OrganizationGroup $organizationGroup): ?HoldingSite
     {
-        $sites = HoldingSite::where('organization_group_id', $organizationGroup->id)
+        return HoldingSite::where('organization_group_id', $organizationGroup->id)
             ->where('is_active', true)
-            ->orderBy('created_at', 'desc')
-            ->get();
+            ->first();
+    }
 
-        return $sites->map(function ($site) {
-            return [
-                'id' => $site->id,
-                'domain' => $site->domain,
-                'title' => $site->title,
-                'status' => $site->status,
-                'template_id' => $site->template_id,
-                'url' => $site->getUrl(),
-                'preview_url' => $site->getPreviewUrl(),
-                'is_published' => $site->isPublished(),
-                'last_updated' => $site->updated_at,
-                'blocks_count' => $site->contentBlocks()->count(),
-                'assets_count' => $site->assets()->count(),
-            ];
-        })->toArray();
+    /**
+     * Получить данные лендинга холдинга для API
+     */
+    public function getHoldingLandingData(OrganizationGroup $organizationGroup): ?array
+    {
+        $site = $this->getHoldingLanding($organizationGroup);
+        
+        if (!$site) {
+            return null;
+        }
+
+        return [
+            'id' => $site->id,
+            'organization_group_id' => $site->organization_group_id,
+            'domain' => $site->getDomain(),
+            'title' => $site->title,
+            'description' => $site->description,
+            'logo_url' => $site->logo_url,
+            'favicon_url' => $site->favicon_url,
+            'theme_config' => $site->theme_config,
+            'seo_meta' => $site->seo_meta,
+            'analytics_config' => $site->analytics_config,
+            'status' => $site->status,
+            'url' => $site->getUrl(),
+            'preview_url' => $site->getPreviewUrl(),
+            'is_active' => $site->is_active,
+            'is_published' => $site->isPublished(),
+            'published_at' => $site->published_at,
+            'created_at' => $site->created_at,
+            'updated_at' => $site->updated_at,
+            'blocks_count' => $site->contentBlocks()->count(),
+            'assets_count' => $site->assets()->count(),
+        ];
     }
 
     /**
@@ -228,6 +264,24 @@ class SiteManagementService
         }
 
         return $errors;
+    }
+
+    /**
+     * Получить настройки темы по умолчанию
+     */
+    private function getDefaultThemeConfig(): array
+    {
+        return [
+            'primary_color' => '#2563eb',
+            'secondary_color' => '#64748b',
+            'accent_color' => '#f59e0b',
+            'background_color' => '#ffffff',
+            'text_color' => '#1f2937',
+            'font_family' => 'Inter, sans-serif',
+            'font_size_base' => '16px',
+            'border_radius' => '8px',
+            'shadow_style' => 'modern',
+        ];
     }
 
     /**
