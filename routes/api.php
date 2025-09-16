@@ -97,21 +97,9 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
 Route::prefix('landing')->name('landing.')->group(function () {
     // Явно включаем маршруты для Landing API
     require __DIR__ . '/api/v1/landing/auth.php';
-    // require __DIR__ . '/api/v1/landing/users.php'; // Закомментировал, т.к. ниже есть более специфичное подключение для adminPanelUsers
+    require __DIR__ . '/api/v1/landing/users.php';
     
     require __DIR__ . '/api/v1/landing/organization.php';
-    
-    // Маршруты для управления пользователями админ-панели (accountant, web_admin)
-    Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'authorize:users.manage_admin'])
-        ->prefix('adminPanelUsers')
-        ->name('adminPanelUsers.')
-        ->group(function () {
-            Route::get('/', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'index']);
-            Route::post('/', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'store']);
-            Route::get('/{user}', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'show']);
-            Route::put('/{user}', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'update']);
-            Route::delete('/{user}', [\App\Http\Controllers\Api\V1\Landing\AdminPanelUserController::class, 'destroy']);
-        });
 
     // Подключение маршрутов биллинга для лендинга/ЛК
     // Эти маршруты должны быть доступны аутентифицированному владельцу организации

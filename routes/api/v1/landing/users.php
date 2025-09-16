@@ -19,7 +19,7 @@ Route::middleware(['auth:api_landing', 'authorize:users.manage', 'interface:lk']
 // но явное определение дает больше контроля над именами и методами.
 
 // --- Маршруты для управления Пользователями Админ-Панели (web_admin, accountant, etc.) ---
-Route::middleware(['auth:api_landing', 'authorize:users.manage_admin', 'interface:lk'])
+Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context', 'authorize:users.manage_admin', 'interface:lk'])
     ->prefix('adminPanelUsers') // Новый префикс
     ->name('adminPanelUsers.')  // Новый неймспейс имен
     ->group(function () {
