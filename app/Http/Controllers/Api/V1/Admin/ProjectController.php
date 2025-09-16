@@ -25,7 +25,7 @@ class ProjectController extends Controller
     public function __construct(ProjectService $projectService)
     {
         $this->projectService = $projectService;
-        $this->middleware('can:access-admin-panel');
+        // Авторизация настроена на уровне роутов через middleware стек
         $this->middleware('subscription.limit:max_projects')->only('store');
     }
 

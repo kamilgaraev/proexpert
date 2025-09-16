@@ -5,14 +5,34 @@ use App\Http\Controllers\Api\V1\Admin\ProjectOrganizationController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\ProjectChildWorksController;
  
-Route::apiResource('projects', ProjectController::class)->where(['project' => '[0-9]+']);
+// Projects CRUD с детальными правами
+Route::get('projects', [ProjectController::class, 'index'])
+    ->middleware('authorize:admin.projects.view')
+    ->name('projects.index');
+Route::post('projects', [ProjectController::class, 'store'])
+    ->middleware('authorize:admin.projects.edit')
+    ->name('projects.store');
+Route::get('projects/{project}', [ProjectController::class, 'show'])
+    ->middleware('authorize:admin.projects.view')
+    ->name('projects.show');
+Route::put('projects/{project}', [ProjectController::class, 'update'])
+    ->middleware('authorize:admin.projects.edit')
+    ->name('projects.update');
+Route::patch('projects/{project}', [ProjectController::class, 'update'])
+    ->middleware('authorize:admin.projects.edit')
+    ->name('projects.patch');
+Route::delete('projects/{project}', [ProjectController::class, 'destroy'])
+    ->middleware('authorize:admin.projects.edit')
+    ->name('projects.destroy');
 
 // Дополнительные маршруты для проекта
 Route::post('/projects/{projectId}/foremen/{userId}', [ProjectController::class, 'assignForeman'])->name('projects.foremen.assign');
 Route::delete('/projects/{projectId}/foremen/{userId}', [ProjectController::class, 'detachForeman'])->name('projects.foremen.detach');
 
 // Получить статистику по проекту
-Route::get('/projects/{id}/statistics', [ProjectController::class, 'statistics'])->name('projects.statistics');
+Route::get('/projects/{id}/statistics', [ProjectController::class, 'statistics'])
+    ->middleware('authorize:admin.projects.analytics')
+    ->name('projects.statistics');
 
 // Получить материалы проекта
 Route::get('/projects/{id}/materials', [ProjectController::class, 'getProjectMaterials'])->name('projects.materials');

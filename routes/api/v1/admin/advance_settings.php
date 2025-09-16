@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\AdvanceAccountSettingController;
 
-Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'can:access-admin-panel']) // Общая защита для группы
+Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin']) // Общая защита для группы
     ->prefix('advance-settings')
     ->name('advance-settings.')
     ->group(function () {

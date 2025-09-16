@@ -19,8 +19,8 @@ class UpdateSiteRequestRequest extends FormRequest
         $siteRequest = $this->route('site_request');
         
         // Админ может обновлять любые заявки в своей организации
+        // Авторизация проверяется на уровне middleware
         return Auth::check() && 
-               Auth::user()->can('access-admin-panel') &&
                $siteRequest->organization_id === Auth::user()->current_organization_id;
     }
 
@@ -85,26 +85,18 @@ class UpdateSiteRequestRequest extends FormRequest
         $siteRequest = $this->route('site_request');
         
         return new SiteRequestDTO(
-            organizationId: $siteRequest->organization_id,
-            projectId: $siteRequest->project_id,
-            userId: $siteRequest->user_id,
-            title: $validated['title'] ?? $siteRequest->title,
-            description: $validated['description'] ?? $siteRequest->description,
-            requestType: $validated['request_type'] ?? $siteRequest->request_type,
-            status: $validated['status'] ?? $siteRequest->status,
-            priority: $validated['priority'] ?? $siteRequest->priority,
-            requiredDate: $validated['required_date'] ?? $siteRequest->required_date,
-            notes: $validated['notes'] ?? $siteRequest->notes,
-            files: [], // Файлы обновляются отдельно
-            personnelType: $validated['personnel_type'] ?? $siteRequest->personnel_type,
-            personnelCount: $validated['personnel_count'] ?? $siteRequest->personnel_count,
-            personnelRequirements: $validated['personnel_requirements'] ?? $siteRequest->personnel_requirements,
-            hourlyRate: $validated['hourly_rate'] ?? $siteRequest->hourly_rate,
-            workHoursPerDay: $validated['work_hours_per_day'] ?? $siteRequest->work_hours_per_day,
-            workStartDate: $validated['work_start_date'] ?? $siteRequest->work_start_date,
-            workEndDate: $validated['work_end_date'] ?? $siteRequest->work_end_date,
-            workLocation: $validated['work_location'] ?? $siteRequest->work_location,
-            additionalConditions: $validated['additional_conditions'] ?? $siteRequest->additional_conditions
+            null, // id - не нужен при обновлении
+            $siteRequest->organization_id,
+            $siteRequest->project_id,
+            $siteRequest->user_id,
+            $validated['title'] ?? $siteRequest->title,
+            $validated['description'] ?? $siteRequest->description,
+            $validated['status'] ?? $siteRequest->status,
+            $validated['priority'] ?? $siteRequest->priority,
+            $validated['request_type'] ?? $siteRequest->request_type,
+            $validated['required_date'] ?? $siteRequest->required_date,
+            $validated['notes'] ?? $siteRequest->notes,
+            null // Файлы обновляются отдельно
         );
     }
 }

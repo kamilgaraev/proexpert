@@ -29,7 +29,7 @@ class ActReportsController extends Controller
         $this->excelExporter = $excelExporter;
         $this->middleware('auth:api_admin');
         $this->middleware('organization.context');
-        $this->middleware('can:access-admin-panel');
+        // Авторизация настроена на уровне роутов через middleware стек
     }
 
     /**
@@ -448,7 +448,13 @@ class ActReportsController extends Controller
                 return response()->json(['error' => 'Файл не найден в хранилище'], 404);
             }
 
-            return Storage::disk($file->disk)->download($file->path, $file->original_name);
+            $contents = Storage::disk($file->disk)->get($file->path);
+            
+            return response($contents, 200, [
+                'Content-Type' => $file->mime_type,
+                'Content-Disposition' => 'attachment; filename="' . $file->original_name . '"',
+                'Content-Length' => strlen($contents)
+            ]);
 
         } catch (Exception $e) {
             Log::error('Ошибка скачивания PDF акта', [

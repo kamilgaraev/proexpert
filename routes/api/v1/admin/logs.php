@@ -12,7 +12,7 @@ use App\Http\Controllers\Api\V1\Admin\LogViewController;
 |
 */
 
-// Группа уже защищена middleware ('auth:api_admin', 'organization_context', 'can:access-admin-panel')
+// Группа уже защищена middleware стеком авторизации админки
 // в RouteServiceProvider. Дополнительно контроллер проверяет 'can:view-operation-logs'.
 
 Route::prefix('logs')->name('logs.')->group(function () {

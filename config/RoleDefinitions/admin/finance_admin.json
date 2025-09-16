@@ -1,0 +1,46 @@
+{
+  "name": "Финансовый администратор",
+  "slug": "finance_admin",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "admin",
+  "description": "Администратор с фокусом на финансовые операции и отчетность",
+  
+  "system_permissions": [
+    "admin.access",
+    "admin.dashboard.view",
+    "admin.contracts.view",
+    "admin.contracts.edit",
+    "admin.reports.view",
+    "admin.reports.export",
+    "admin.materials.view",
+    "admin.advance_accounts.view",
+    "admin.advance_accounts.manage",
+    "admin.time_tracking.view",
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "contracts": ["contracts.view", "contracts.edit"],
+    "reports": ["reports.view", "reports.export"],
+    "finance": ["finance.view", "finance.manage"],
+    "materials": ["materials.view"],
+    "advance-accounts": ["advance-accounts.view", "advance-accounts.manage"],
+    "time-tracking": ["time-tracking.view"]
+  },
+  
+  "interface_access": ["admin"],
+  
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": ["*"]
+  },
+  
+  "conditions": {
+    "time": {
+      "working_hours": "09:00-18:00",
+      "working_days": ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    }
+  }
+}

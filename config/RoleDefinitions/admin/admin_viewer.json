@@ -1,0 +1,45 @@
+{
+  "name": "Наблюдатель админки",
+  "slug": "admin_viewer",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "admin",
+  "description": "Только просмотр данных в админ-панели без права редактирования",
+  
+  "system_permissions": [
+    "admin.access",
+    "admin.dashboard.view",
+    "admin.users.view",
+    "admin.projects.view",
+    "admin.materials.view",
+    "admin.contracts.view",
+    "admin.reports.view",
+    "admin.site_requests.view",
+    "admin.time_tracking.view",
+    "profile.view"
+  ],
+  
+  "module_permissions": {
+    "projects": ["projects.view"],
+    "materials": ["materials.view"],
+    "contracts": ["contracts.view"],
+    "reports": ["reports.view"],
+    "personnel": ["personnel.view"],
+    "time-tracking": ["time-tracking.view"],
+    "site-requests": ["site-requests.view"]
+  },
+  
+  "interface_access": ["admin"],
+  
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": ["*"]
+  },
+  
+  "conditions": {
+    "time": {
+      "working_hours": null,
+      "working_days": null
+    }
+  }
+}

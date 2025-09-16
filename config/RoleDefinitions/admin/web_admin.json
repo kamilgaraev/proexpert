@@ -1,20 +1,17 @@
 {
-  "name": "Системный администратор",
-  "slug": "system_admin",
+  "name": "Веб-администратор",
+  "slug": "web_admin",
   "version": "1.0.0",
-  "context": "system",
+  "context": "organization",
   "interface": "admin",
-  "description": "Администрирование системы без доступа к биллингу",
+  "description": "Администратор веб-панели с полными правами в рамках организации",
   
   "system_permissions": [
     "admin.access",
     "admin.dashboard.view",
     "admin.users.view",
-    "admin.users.create",
     "admin.users.edit",
     "admin.users.block",
-    "admin.organizations.view",
-    "admin.organizations.edit",
     "admin.projects.view",
     "admin.projects.edit",
     "admin.projects.analytics",
@@ -25,35 +22,36 @@
     "admin.contracts.edit",
     "admin.reports.view",
     "admin.reports.export",
-    "admin.logs.view",
-    "admin.system.monitoring",
     "admin.catalogs.manage",
+    "admin.site_requests.view",
+    "admin.site_requests.edit",
+    "admin.time_tracking.view",
+    "admin.time_tracking.manage",
     "profile.view",
     "profile.edit"
   ],
   
   "module_permissions": {
-    "users": ["users.view", "users.edit", "users.block"],
-    "organizations": ["organizations.view", "organizations.edit"],
     "projects": ["projects.view", "projects.edit", "projects.analytics"],
     "materials": ["materials.view", "materials.edit", "materials.import"],
     "contracts": ["contracts.view", "contracts.edit"],
     "reports": ["reports.view", "reports.export"],
-    "finance": ["finance.view"],
-    "time-tracking": ["time-tracking.view", "time-tracking.manage"]
+    "personnel": ["personnel.view", "personnel.manage"],
+    "time-tracking": ["time-tracking.view", "time-tracking.manage"],
+    "site-requests": ["site-requests.view", "site-requests.edit"]
   },
   
   "interface_access": ["admin"],
   
   "hierarchy": {
-    "can_manage_roles": [
-      "organization_owner", 
-      "organization_admin", 
-      "accountant",
-      "project_manager",
-      "foreman",
-      "worker"
-    ],
-    "cannot_manage": ["super_admin", "system_admin"]
+    "can_manage_roles": [],
+    "cannot_manage": ["*"]
+  },
+  
+  "conditions": {
+    "time": {
+      "working_hours": "09:00-18:00",
+      "working_days": ["monday", "tuesday", "wednesday", "thursday", "friday"]
+    }
   }
 }

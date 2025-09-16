@@ -64,9 +64,12 @@ class AuthController extends Controller
                     
                     Log::info('[AuthController] Auth successful, checking Admin Panel access via Gate...');
 
-                    // Используем Gate для проверки прав
-                    // Явно указываем пользователя для Gate
-                    if (Gate::forUser($user)->denies('access-admin-panel', [$organizationId])) {
+                    // Используем новую систему авторизации
+                    $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+                    $canAccess = $authService->can($user, 'admin.access', ['context_type' => 'system']) ||
+                                $authService->can($user, 'admin.access', ['context_type' => 'organization', 'context_id' => $organizationId]);
+                    
+                    if (!$canAccess) {
                         LogService::authLog('admin_login_forbidden', [
                             'user_id' => $user->id,
                             'email' => $user->email,
@@ -74,11 +77,11 @@ class AuthController extends Controller
                             'ip' => request()->ip(),
                             'reason' => 'insufficient_permissions'
                         ]);
-                        Log::warning('[AuthController] Gate \'access-admin-panel\' denied access.', ['user_id' => $user->id, 'org_id' => $organizationId]);
+                        Log::warning('[AuthController] Новая система авторизации denied access.', ['user_id' => $user->id, 'org_id' => $organizationId]);
                         return LoginResponse::forbidden('У вас нет доступа к панели администратора');
                     }
 
-                    Log::info('[AuthController] Gate \'access-admin-panel\' allowed access.');
+                    Log::info('[AuthController] Новая система авторизации allowed access.');
                     LogService::authLog('admin_login_success', [
                         'user_id' => $user->id,
                         'email' => $user->email,

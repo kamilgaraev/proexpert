@@ -24,7 +24,7 @@ class DashboardController extends Controller
     {
         $this->dashboardService = $dashboardService;
         $this->siteRequestService = $siteRequestService;
-        $this->middleware('can:access-admin-panel');
+        // Авторизация настроена на уровне роутов через middleware стек
     }
 
     /**

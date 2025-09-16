@@ -16,7 +16,7 @@ class MaterialAnalyticsController extends Controller
     public function __construct(MaterialRepository $materialRepository)
     {
         $this->materialRepository = $materialRepository;
-        $this->middleware('can:access-admin-panel');
+        // Авторизация настроена на уровне роутов через middleware стек
     }
 
     private function getOrganizationId(Request $request): int

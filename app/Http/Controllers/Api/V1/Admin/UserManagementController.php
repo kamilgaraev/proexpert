@@ -21,7 +21,7 @@ class UserManagementController extends Controller
     {
         $this->userService = $userService;
         // Применяем middleware для проверки доступа к админ-панели ко всем методам контроллера
-        $this->middleware('can:access-admin-panel');
+        // Авторизация настроена на уровне роутов через middleware стек
         $this->middleware('subscription.limit:max_users')->only('store');
         // Убираем middleware для проверки прав на управление прорабами отсюда
     }
@@ -53,13 +53,7 @@ class UserManagementController extends Controller
     public function store(StoreForemanRequest $request): ForemanUserResource | JsonResponse
     {
         try {
-            // Проверяем лимит по подписке на количество пользователей
-            if (!$this->userService->checkUserLimit('max_users', 1)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Достигнут лимит количества пользователей по вашей подписке.',
-                ], 403);
-            }
+            // Лимиты проверяются через middleware subscription.limit:max_users
 
             // Сначала создаем пользователя через сервис
             // $request->validated() уже будет содержать phone и position, если они были переданы

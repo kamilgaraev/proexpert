@@ -24,7 +24,7 @@ class SiteRequestController extends Controller
     public function __construct(SiteRequestService $siteRequestService)
     {
         $this->siteRequestService = $siteRequestService;
-        $this->middleware('can:access-admin-panel');
+        // Авторизация настроена на уровне роутов через middleware стек
     }
 
     /**

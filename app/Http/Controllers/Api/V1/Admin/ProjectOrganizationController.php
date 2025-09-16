@@ -19,7 +19,7 @@ class ProjectOrganizationController extends Controller
     {
         $this->projectService = $projectService;
         $this->multiOrgService = $multiOrganizationService;
-        $this->middleware('can:access-admin-panel');
+        // Авторизация настроена на уровне роутов через middleware стек
     }
 
     public function index(int $projectId): JsonResponse

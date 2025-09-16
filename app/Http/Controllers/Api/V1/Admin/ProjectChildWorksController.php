@@ -14,7 +14,7 @@ class ProjectChildWorksController extends Controller
 {
     public function __construct(private readonly CrossOrgWorkReadService $service)
     {
-        $this->middleware('can:access-admin-panel');
+        // Авторизация настроена на уровне роутов через middleware стек
     }
 
     /**

@@ -24,7 +24,8 @@ class StoreOrUpdateAdvanceSettingRequest extends FormRequest
         // Пример: предполагаем, что у User есть метод canManageOrganizationSettings
         // return Auth::user()->canManageOrganizationSettings($organizationId);
         // Пока что просто разрешаем, если есть доступ к админ-панели и текущая организация.
-        return Auth::user()->can('access-admin-panel'); 
+        // Авторизация проверяется на уровне middleware
+        return Auth::check(); 
     }
 
     /**

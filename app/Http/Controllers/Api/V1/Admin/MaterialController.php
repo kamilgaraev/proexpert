@@ -26,7 +26,7 @@ class MaterialController extends Controller
     public function __construct(MaterialService $materialService)
     {
         $this->materialService = $materialService;
-        $this->middleware('can:access-admin-panel')->except('getMeasurementUnits');
+        // Авторизация настроена на уровне роутов через middleware стек
     }
 
     private function getOrganizationId(Request $request): ?int

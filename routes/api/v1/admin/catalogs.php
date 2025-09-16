@@ -28,7 +28,9 @@ use App\Http\Controllers\Api\V1\Admin\MeasurementUnitController;
 Route::get('/materials/{id}/balances', [MaterialController::class, 'getMaterialBalances'])->name('materials.balances');
 
 // Маршрут для импорта материалов
-Route::post('/materials/import', [MaterialController::class, 'importMaterials'])->name('materials.import');
+Route::post('/materials/import', [MaterialController::class, 'importMaterials'])
+    ->middleware('authorize:admin.materials.import')
+    ->name('materials.import');
 
 // Новые маршруты для работы с нормами списания материалов
 Route::get('/materials/{id}/consumption-rates', [MaterialController::class, 'getConsumptionRates'])

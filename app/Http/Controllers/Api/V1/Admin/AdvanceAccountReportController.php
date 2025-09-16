@@ -20,7 +20,7 @@ class AdvanceAccountReportController extends Controller
     public function __construct(AdvanceAccountReportService $reportService)
     {
         $this->reportService = $reportService;
-        $this->middleware('can:access-admin-panel');
+        // Авторизация настроена на уровне роутов через middleware стек
     }
 
     /**

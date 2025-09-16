@@ -18,7 +18,7 @@ class DashboardSettingsController extends Controller
         private DashboardWidgetsRegistry $registry,
         private UserDashboardSettingsService $service
     ) {
-        $this->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'can:access-admin-panel']);
+        // Авторизация настроена на уровне роутов через middleware стек
     }
 
     public function widgets(Request $request): JsonResponse

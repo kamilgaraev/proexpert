@@ -14,7 +14,8 @@ class StoreSiteRequestRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return Auth::check() && Auth::user()->can('access-admin-panel');
+        // Авторизация проверяется на уровне middleware
+        return Auth::check();
     }
 
     public function rules(): array
@@ -96,26 +97,18 @@ class StoreSiteRequestRequest extends FormRequest
         $validated = $this->validated();
         
         return new SiteRequestDTO(
-            organizationId: $validated['organization_id'],
-            projectId: $validated['project_id'],
-            userId: $validated['user_id'] ?? Auth::id(),
-            title: $validated['title'],
-            description: $validated['description'],
-            requestType: $validated['request_type'],
-            status: $validated['status'] ?? SiteRequestStatusEnum::PENDING->value,
-            priority: $validated['priority'],
-            requiredDate: $validated['required_date'],
-            notes: $validated['notes'] ?? null,
-            files: $validated['files'] ?? [],
-            personnelType: $validated['personnel_type'] ?? null,
-            personnelCount: $validated['personnel_count'] ?? null,
-            personnelRequirements: $validated['personnel_requirements'] ?? null,
-            hourlyRate: $validated['hourly_rate'] ?? null,
-            workHoursPerDay: $validated['work_hours_per_day'] ?? null,
-            workStartDate: $validated['work_start_date'] ?? null,
-            workEndDate: $validated['work_end_date'] ?? null,
-            workLocation: $validated['work_location'] ?? null,
-            additionalConditions: $validated['additional_conditions'] ?? null
+            null, // id - не нужен при создании
+            $validated['organization_id'],
+            $validated['project_id'],
+            $validated['user_id'] ?? Auth::id(),
+            $validated['title'],
+            $validated['description'],
+            $validated['status'] ?? SiteRequestStatusEnum::PENDING->value,
+            $validated['priority'],
+            $validated['request_type'],
+            $validated['required_date'],
+            $validated['notes'] ?? null,
+            $validated['files'] ?? []
         );
     }
 }

@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\ProfileController;
 
-Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'can:access-admin-panel'])
+Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])
     ->prefix('profile')
     ->name('profile.')
     ->group(function () {
@@ -13,7 +13,7 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'can:access-admin-pan
     });
 
 // Альтернативный роут для совместимости с фронтендом
-Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'can:access-admin-panel'])
+Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])
     ->prefix('profile-settings')
     ->name('profile-settings.')
     ->group(function () {

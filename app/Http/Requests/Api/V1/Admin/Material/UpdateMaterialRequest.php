@@ -16,7 +16,7 @@ class UpdateMaterialRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        // Доступ к контроллеру уже проверен middleware 'can:access-admin-panel'
+        // Доступ к контроллеру уже проверен middleware стеком авторизации админки
         return Auth::check(); 
     }
 
