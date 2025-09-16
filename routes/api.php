@@ -184,7 +184,7 @@ Route::prefix('lk')->name('lk.')->group(function () {
 });
 
 // --- Admin Panel API ---
-Route::prefix('admin')->name('admin.')->group(function () {
+Route::prefix('v1/admin')->name('admin.')->group(function () {
     // Публичные маршруты аутентификации админки
     require __DIR__ . '/api/v1/admin/auth.php';
 
@@ -192,94 +192,41 @@ Route::prefix('admin')->name('admin.')->group(function () {
     Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])->group(function() {
         
         // Маршруты для проверки прав пользователя (Admin Panel)
-        Route::prefix('v1')->group(function () {
-            if (file_exists(__DIR__ . '/api/v1/permissions.php')) {
-                require __DIR__ . '/api/v1/permissions.php';
-            }
-        });
+        if (file_exists(__DIR__ . '/api/v1/permissions.php')) {
+            require __DIR__ . '/api/v1/permissions.php';
+        }
         // Подключаем существующие файлы маршрутов для админки
-        if (file_exists(__DIR__ . '/api/v1/admin/projects.php')) {
-            require __DIR__ . '/api/v1/admin/projects.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/catalogs.php')) {
-            require __DIR__ . '/api/v1/admin/catalogs.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/users.php')) {
-            require __DIR__ . '/api/v1/admin/users.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/logs.php')) {
-            require __DIR__ . '/api/v1/admin/logs.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/reports.php')) {
-            require __DIR__ . '/api/v1/admin/reports.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/report_templates.php')) {
-            require __DIR__ . '/api/v1/admin/report_templates.php';
-        }
+        require __DIR__ . '/api/v1/admin/projects.php';
+        require __DIR__ . '/api/v1/admin/catalogs.php';
+        require __DIR__ . '/api/v1/admin/users.php';
+        require __DIR__ . '/api/v1/admin/logs.php';
+        require __DIR__ . '/api/v1/admin/reports.php';
+        require __DIR__ . '/api/v1/admin/report_templates.php';
         // Подключаем маршруты для подотчетных средств
-        if (file_exists(__DIR__ . '/api/v1/admin/advance_transactions.php')) {
-            require __DIR__ . '/api/v1/admin/advance_transactions.php';
-        }
+        require __DIR__ . '/api/v1/admin/advance_transactions.php';
         // Подключаем маршруты для коэффициентов норм расхода
-        if (file_exists(__DIR__ . '/api/v1/admin/rate_coefficients.php')) {
-            require __DIR__ . '/api/v1/admin/rate_coefficients.php';
-        }
+        require __DIR__ . '/api/v1/admin/rate_coefficients.php';
         // Подключаем маршруты для выполненных работ
-        if (file_exists(__DIR__ . '/api/v1/admin/completed_works.php')) {
-            require __DIR__ . '/api/v1/admin/completed_works.php';
-        }
+        require __DIR__ . '/api/v1/admin/completed_works.php';
         // Сюда можно будет добавлять require для новых файлов маршрутов админки
-        if (file_exists(__DIR__ . '/api/v1/admin/dashboard.php')) {
-            require __DIR__ . '/api/v1/admin/dashboard.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/profile.php')) {
-            require __DIR__ . '/api/v1/admin/profile.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/material_analytics.php')) {
-            require __DIR__ . '/api/v1/admin/material_analytics.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/contracts.php')) {
-            require __DIR__ . '/api/v1/admin/contracts.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/agreements.php')) {
-            require __DIR__ . '/api/v1/admin/agreements.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/specifications.php')) {
-            require __DIR__ . '/api/v1/admin/specifications.php';
-        }
+        require __DIR__ . '/api/v1/admin/dashboard.php';
+        require __DIR__ . '/api/v1/admin/profile.php';
+        require __DIR__ . '/api/v1/admin/material_analytics.php';
+        require __DIR__ . '/api/v1/admin/contracts.php';
+        require __DIR__ . '/api/v1/admin/agreements.php';
+        require __DIR__ . '/api/v1/admin/specifications.php';
 
-        if (file_exists(__DIR__ . '/api/v1/admin/filters.php')) {
-            require __DIR__ . '/api/v1/admin/filters.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/personal_files.php')) {
-            require __DIR__ . '/api/v1/admin/personal_files.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/report_files.php')) {
-            require __DIR__ . '/api/v1/admin/report_files.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/act_reports.php')) {
-            require __DIR__ . '/api/v1/admin/act_reports.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/advance_settings.php')) {
-            require __DIR__ . '/api/v1/admin/advance_settings.php';
-        }
+        require __DIR__ . '/api/v1/admin/filters.php';
+        require __DIR__ . '/api/v1/admin/personal_files.php';
+        require __DIR__ . '/api/v1/admin/report_files.php';
+        require __DIR__ . '/api/v1/admin/act_reports.php';
+        require __DIR__ . '/api/v1/admin/advance_settings.php';
         // Подключаем маршруты для учета времени
-        if (file_exists(__DIR__ . '/api/v1/admin/time_tracking.php')) {
-            require __DIR__ . '/api/v1/admin/time_tracking.php';
-        }
-
-        if (file_exists(__DIR__ . '/api/v1/admin/contractors.php')) {
-            require __DIR__ . '/api/v1/admin/contractors.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/contractor_invitations.php')) {
-            require __DIR__ . '/api/v1/admin/contractor_invitations.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/admin/site_requests.php')) {
-            require __DIR__ . '/api/v1/admin/site_requests.php';
-        }
-        if (file_exists(__DIR__ . '/api/v1/schedule.php')) {
-            require __DIR__ . '/api/v1/schedule.php';
-        }
+        require __DIR__ . '/api/v1/admin/time_tracking.php';
+        require __DIR__ . '/api/v1/admin/contractors.php';
+        require __DIR__ . '/api/v1/admin/contractor_invitations.php';
+        require __DIR__ . '/api/v1/admin/site_requests.php';
+        require __DIR__ . '/api/v1/schedule.php';
     });
 });
 
