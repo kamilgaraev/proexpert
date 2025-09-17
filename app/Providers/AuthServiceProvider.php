@@ -56,6 +56,21 @@ class AuthServiceProvider extends ServiceProvider
                 }
             }
             
+            // Для admin.* прав проверяем сначала в организационном, потом в системном контексте
+            if (str_starts_with($ability, 'admin.')) {
+                $organizationAccess = false;
+                if ($user->current_organization_id) {
+                    $organizationAccess = $authorizationService->can($user, $ability, [
+                        'context_type' => 'organization', 
+                        'organization_id' => $user->current_organization_id
+                    ]);
+                }
+                
+                $systemAccess = $authorizationService->can($user, $ability, ['context_type' => 'system']);
+                
+                return $organizationAccess || $systemAccess;
+            }
+            
             // Проверяем как системное разрешение
             return $authorizationService->can($user, $ability, ['context_type' => 'system']);
         });
