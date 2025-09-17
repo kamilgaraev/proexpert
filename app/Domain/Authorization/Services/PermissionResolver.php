@@ -295,8 +295,9 @@ class PermissionResolver
             return $permission === $pattern;
         }
         
-        // Используем простую логику: заменяем * на любые символы
-        $regexPattern = '/^' . str_replace('*', '.*', preg_quote($pattern, '/')) . '$/';
+        // ИСПРАВЛЕНО: сначала заменяем *, потом экранируем остальное
+        $regexPattern = str_replace('*', '.*', $pattern);  // admin.* → admin..*
+        $regexPattern = '/^' . str_replace('.', '\.', $regexPattern) . '$/';  // admin..* → /^admin\..*$/
         
         $result = preg_match($regexPattern, $permission) === 1;
         
