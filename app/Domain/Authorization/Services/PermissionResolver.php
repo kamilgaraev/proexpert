@@ -295,11 +295,19 @@ class PermissionResolver
             return $permission === $pattern;
         }
         
-        // Преобразуем wildcard в регулярное выражение
-        // admin.* -> /^admin\..+$/
-        // users.* -> /^users\..+$/
-        $regexPattern = '/^' . str_replace(['*', '.'], ['.+', '\.'], $pattern) . '$/';
+        // Используем простую логику: заменяем * на любые символы
+        $regexPattern = '/^' . str_replace('*', '.*', preg_quote($pattern, '/')) . '$/';
         
-        return preg_match($regexPattern, $permission) === 1;
+        $result = preg_match($regexPattern, $permission) === 1;
+        
+        // DEBUG логирование
+        \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: Wildcard match', [
+            'permission' => $permission,
+            'pattern' => $pattern,
+            'regex' => $regexPattern,
+            'result' => $result
+        ]);
+        
+        return $result;
     }
 }
