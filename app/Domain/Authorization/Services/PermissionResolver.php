@@ -211,20 +211,6 @@ class PermissionResolver
         return array_unique($allPermissions);
     }
 
-    /**
-     * Проверить соответствие wildcard паттерну
-     */
-    protected function matchesWildcard(string $permission, string $pattern): bool
-    {
-        if (!str_contains($pattern, '*')) {
-            return false;
-        }
-
-        // Заменяем * на регулярное выражение
-        $regex = '/^' . str_replace('*', '.*', preg_quote($pattern, '/')) . '$/';
-        
-        return preg_match($regex, $permission) === 1;
-    }
 
     /**
      * Проверить модульное право
@@ -293,5 +279,27 @@ class PermissionResolver
         return Cache::remember("custom_role_$roleSlug", 300, function () use ($roleSlug) {
             return OrganizationCustomRole::where('slug', $roleSlug)->first();
         });
+    }
+
+    /**
+     * Проверить соответствие wildcard шаблону
+     * 
+     * @param string $permission Проверяемое право (например: admin.access)
+     * @param string $pattern Wildcard шаблон (например: admin.*)
+     * @return bool
+     */
+    protected function matchesWildcard(string $permission, string $pattern): bool
+    {
+        // Если нет wildcard, то точное сравнение
+        if (strpos($pattern, '*') === false) {
+            return $permission === $pattern;
+        }
+        
+        // Преобразуем wildcard в регулярное выражение
+        // admin.* -> /^admin\..+$/
+        // users.* -> /^users\..+$/
+        $regexPattern = '/^' . str_replace(['*', '.'], ['.+', '\.'], $pattern) . '$/';
+        
+        return preg_match($regexPattern, $permission) === 1;
     }
 }
