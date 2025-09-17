@@ -99,7 +99,7 @@ class AuthController extends Controller
                     }
                     
                     $systemAccess = $authService->can($user, 'admin.access', ['context_type' => 'system']);
-                    $orgAccess = $authService->can($user, 'admin.access', ['context_type' => 'organization', 'context_id' => $organizationId]);
+                    $orgAccess = $authService->can($user, 'admin.access', ['context_type' => 'organization', 'organization_id' => $organizationId]);
                     
                     Log::info('[AuthController] DEBUG: Access check results', [
                         'system_access' => $systemAccess,

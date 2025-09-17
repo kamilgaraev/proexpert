@@ -209,11 +209,28 @@ class AuthorizationService
      */
     protected function checkPermission(User $user, string $permission, ?array $context = null): bool
     {
+        \Illuminate\Support\Facades\Log::info('[AuthorizationService] DEBUG: checkPermission called', [
+            'user_id' => $user->id,
+            'permission' => $permission,
+            'context' => $context
+        ]);
+
         // Определяем контекст авторизации
         $authContext = $this->resolveAuthContext($context);
         
+        \Illuminate\Support\Facades\Log::info('[AuthorizationService] DEBUG: Context resolved', [
+            'auth_context_id' => $authContext ? $authContext->id : null,
+            'auth_context_type' => $authContext ? $authContext->type : null,
+            'auth_context_resource_id' => $authContext ? $authContext->resource_id : null
+        ]);
+        
         // Получаем роли пользователя
         $roles = $this->getUserRoles($user, $authContext);
+        
+        \Illuminate\Support\Facades\Log::info('[AuthorizationService] DEBUG: User roles in context', [
+            'roles_count' => $roles->count(),
+            'role_slugs' => $roles->pluck('role_slug')->toArray()
+        ]);
         
         if ($roles->isEmpty()) {
             return false;
