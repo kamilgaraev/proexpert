@@ -223,7 +223,15 @@ class UserPermissionsController extends Controller
         
         // Системные права
         if (isset($permissions['system'])) {
-            $flat = array_merge($flat, $permissions['system']);
+            foreach ($permissions['system'] as $permission) {
+                if ($this->isWildcardPermission($permission)) {
+                    // Разворачиваем wildcard в конкретные права
+                    $expandedPermissions = $this->expandWildcardPermission($permission);
+                    $flat = array_merge($flat, $expandedPermissions);
+                } else {
+                    $flat[] = $permission;
+                }
+            }
         }
         
         // Модульные права
@@ -267,5 +275,82 @@ class UserPermissionsController extends Controller
         }
 
         return [];
+    }
+
+    /**
+     * Проверить является ли право wildcard
+     */
+    protected function isWildcardPermission(string $permission): bool
+    {
+        return str_contains($permission, '*');
+    }
+
+    /**
+     * Развернуть wildcard право в список конкретных прав
+     */
+    protected function expandWildcardPermission(string $wildcardPermission): array
+    {
+        // Если это admin.*, собираем все admin права из всех ролей
+        if ($wildcardPermission === 'admin.*') {
+            return $this->getAllAdminPermissions();
+        }
+
+        // Для других wildcards можно добавить логику позже
+        return [$wildcardPermission];
+    }
+
+    /**
+     * Получить все admin права из всех ролей в системе
+     */
+    protected function getAllAdminPermissions(): array
+    {
+        static $adminPermissions = null;
+        
+        if ($adminPermissions !== null) {
+            return $adminPermissions;
+        }
+        
+        $permissions = [];
+        
+        try {
+            // Сканируем все роли и собираем admin права
+            $roleDirectories = [
+                base_path('config/RoleDefinitions/admin'),
+                base_path('config/RoleDefinitions/system'),
+                base_path('config/RoleDefinitions/lk'),
+            ];
+
+            foreach ($roleDirectories as $directory) {
+                if (!is_dir($directory)) {
+                    continue;
+                }
+
+                $files = glob($directory . '/*.json');
+                foreach ($files as $file) {
+                    $roleData = json_decode(file_get_contents($file), true);
+                    if (!$roleData || !isset($roleData['system_permissions'])) {
+                        continue;
+                    }
+
+                    foreach ($roleData['system_permissions'] as $permission) {
+                        if (str_starts_with($permission, 'admin.') && !str_contains($permission, '*')) {
+                            $permissions[] = $permission;
+                        }
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            Log::warning('Ошибка при сборе admin permissions: ' . $e->getMessage());
+        }
+
+        $adminPermissions = array_unique($permissions);
+        sort($adminPermissions);
+        
+        Log::info('Собранные admin permissions для wildcard разворота', [
+            'count' => count($adminPermissions),
+            'permissions' => $adminPermissions
+        ]);
+        
+        return $adminPermissions;
     }
 }
