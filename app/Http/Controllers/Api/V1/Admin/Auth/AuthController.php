@@ -66,8 +66,37 @@ class AuthController extends Controller
 
                     // Используем новую систему авторизации
                     $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
-                    $canAccess = $authService->can($user, 'admin.access', ['context_type' => 'system']) ||
-                                $authService->can($user, 'admin.access', ['context_type' => 'organization', 'context_id' => $organizationId]);
+                    
+                    // Добавляем детальное логирование для диагностики
+                    Log::info('[AuthController] DEBUG: Checking admin access', [
+                        'user_id' => $user->id,
+                        'email' => $user->email,
+                        'organization_id' => $organizationId
+                    ]);
+                    
+                    // Проверяем роли пользователя
+                    try {
+                        $userRoles = $authService->getUserRoles($user);
+                        Log::info('[AuthController] DEBUG: User roles', [
+                            'roles_count' => $userRoles->count(),
+                            'roles' => $userRoles->pluck('role_slug')->toArray()
+                        ]);
+                    } catch (\Exception $e) {
+                        Log::error('[AuthController] DEBUG: Error getting user roles', [
+                            'error' => $e->getMessage(),
+                            'trace' => $e->getTraceAsString()
+                        ]);
+                    }
+                    
+                    $systemAccess = $authService->can($user, 'admin.access', ['context_type' => 'system']);
+                    $orgAccess = $authService->can($user, 'admin.access', ['context_type' => 'organization', 'context_id' => $organizationId]);
+                    
+                    Log::info('[AuthController] DEBUG: Access check results', [
+                        'system_access' => $systemAccess,
+                        'organization_access' => $orgAccess
+                    ]);
+                    
+                    $canAccess = $systemAccess || $orgAccess;
                     
                     if (!$canAccess) {
                         LogService::authLog('admin_login_forbidden', [
