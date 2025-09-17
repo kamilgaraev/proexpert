@@ -23,7 +23,7 @@
     "roles.manage_custom",
     "profile.view",
     "profile.edit",
-    "admin.access"
+    "admin.*"
   ],
   
   "module_permissions": {
