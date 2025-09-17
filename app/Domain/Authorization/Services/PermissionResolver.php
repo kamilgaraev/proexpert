@@ -285,7 +285,7 @@ class PermissionResolver
      * Проверить соответствие wildcard шаблону
      * 
      * @param string $permission Проверяемое право (например: admin.access)
-     * @param string $pattern Wildcard шаблон (например: admin.*)
+     * @param string $pattern Wildcard шаблон (например: admin.*, *.view, admin.*.edit)
      * @return bool
      */
     protected function matchesWildcard(string $permission, string $pattern): bool
@@ -295,9 +295,19 @@ class PermissionResolver
             return $permission === $pattern;
         }
         
-        // ИСПРАВЛЕНО: сначала заменяем *, потом экранируем остальное
-        $regexPattern = str_replace('*', '.*', $pattern);  // admin.* → admin..*
-        $regexPattern = '/^' . str_replace('.', '\.', $regexPattern) . '$/';  // admin..* → /^admin\..*$/
+        // Полный wildcard
+        if ($pattern === '*') {
+            return true;
+        }
+        
+        // Преобразуем wildcard паттерн в regex
+        // Экранируем спецсимволы кроме *
+        $escaped = str_replace(['.', '+', '?', '^', '$', '(', ')', '[', ']', '{', '}', '|', '\\'], 
+                              ['\.', '\+', '\?', '\^', '\$', '\(', '\)', '\[', '\]', '\{', '\}', '\|', '\\\\'], 
+                              $pattern);
+        
+        // Заменяем * на .*
+        $regexPattern = '/^' . str_replace('*', '.*', $escaped) . '$/';
         
         $result = preg_match($regexPattern, $permission) === 1;
         
