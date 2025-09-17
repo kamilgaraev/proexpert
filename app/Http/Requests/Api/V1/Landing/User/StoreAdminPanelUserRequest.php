@@ -4,6 +4,7 @@ namespace App\Http\Requests\Api\V1\Landing\User;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class StoreAdminPanelUserRequest extends FormRequest
@@ -34,10 +35,21 @@ class StoreAdminPanelUserRequest extends FormRequest
         }
 
         // Проверяем права через новую систему авторизации
-        $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
-        return $authService->can($user, 'organization.manage', ['context_type' => 'organization', 'context_id' => $organizationId]) ||
-               $authService->hasRole($user, 'organization_owner', $organizationId) ||
-               $authService->hasRole($user, 'organization_admin', $organizationId);
+        try {
+            $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+            return $authService->can($user, 'organization.manage', ['context_type' => 'organization', 'context_id' => $organizationId]) ||
+                   $authService->hasRole($user, 'organization_owner', $organizationId) ||
+                   $authService->hasRole($user, 'organization_admin', $organizationId);
+        } catch (\Exception $e) {
+            Log::error('Ошибка системы авторизации в StoreAdminPanelUserRequest::authorize()', [
+                'user_id' => $user->id,
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile() . ':' . $e->getLine()
+            ]);
+            // Если система авторизации сломана, запрещаем доступ
+            return false;
+        }
     }
 
     /**
@@ -57,11 +69,21 @@ class StoreAdminPanelUserRequest extends FormRequest
                 Rule::in($this->allowedRoles), // Роль должна быть из списка разрешенных
                 // Проверяем, что такая роль существует в новой системе авторизации
                 function ($attribute, $value, $fail) {
-                    $roleScanner = app(\App\Domain\Authorization\Services\RoleScanner::class);
-                    $allRoles = $roleScanner->getAllRoles();
-                    
-                    if (!isset($allRoles[$value])) {
-                        $fail("Роль '{$value}' не найдена в системе авторизации.");
+                    try {
+                        $roleScanner = app(\App\Domain\Authorization\Services\RoleScanner::class);
+                        $allRoles = $roleScanner->getAllRoles();
+                        
+                        if (!isset($allRoles[$value])) {
+                            $fail("Роль '{$value}' не найдена в системе авторизации.");
+                        }
+                    } catch (\Exception $e) {
+                        Log::error('Ошибка загрузки ролей в валидации StoreAdminPanelUserRequest', [
+                            'error' => $e->getMessage(),
+                            'file' => $e->getFile() . ':' . $e->getLine(),
+                            'role_slug' => $value,
+                            'trace' => $e->getTraceAsString()
+                        ]);
+                        $fail("Временная ошибка системы авторизации. Попробуйте позже или обратитесь к администратору.");
                     }
                 },
             ],
