@@ -12,6 +12,7 @@ use Throwable;
 use Symfony\Component\Routing\Exception\RouteNotFoundException;
 use App\Services\Monitoring\PrometheusService;
 use App\Exceptions\Billing\InsufficientBalanceException;
+use App\Exceptions\BusinessLogicException;
 
 class Handler extends ExceptionHandler
 {
@@ -84,6 +85,16 @@ class Handler extends ExceptionHandler
                         'message' => $e->getMessage() ?: 'Данные не прошли валидацию.',
                         'errors' => $e->errors(),
                     ], $e->status, $corsHeaders);
+                }
+
+                if ($e instanceof BusinessLogicException) {
+                    $status = $e->getCode();
+                    if (!is_int($status) || $status < 400 || $status >= 600) {
+                        $status = 400;
+                    }
+                    return response()->json([
+                        'message' => $e->getMessage() ?: 'Ошибка бизнес-логики.',
+                    ], $status, $corsHeaders);
                 }
 
                 if ($e instanceof AuthorizationException) {

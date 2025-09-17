@@ -18,6 +18,7 @@ use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
+use App\Exceptions\BusinessLogicException;
 
 class AdminPanelUserController extends Controller
 {
@@ -43,7 +44,7 @@ class AdminPanelUserController extends Controller
             try {
                 $users->load('roleAssignments');
             } catch (\Exception $e) {
-                \Log::warning('[AdminPanelUserController] Cannot load roleAssignments - new auth tables not ready');
+                Log::warning('[AdminPanelUserController] Cannot load roleAssignments - new auth tables not ready');
             }
             Log::info('[AdminPanelUserController@index] Users received from service.', ['count' => $users->count()]);
             
@@ -100,6 +101,15 @@ class AdminPanelUserController extends Controller
              ]);
              report($e);
              return new ErrorResponse('Validation failed', Response::HTTP_UNPROCESSABLE_ENTITY, $e->errors());
+        } catch (BusinessLogicException $e) {
+            // Возвращаем бизнес-ошибки с корректным HTTP-статусом (по коду исключения)
+            $code = $e->getCode();
+            $status = ($code >= 400 && $code < 600) ? $code : Response::HTTP_BAD_REQUEST;
+            Log::warning('[AdminPanelUserController] Business logic error при создании пользователя админ-панели', [
+                'message' => $e->getMessage(),
+                'code' => $code,
+            ]);
+            return new ErrorResponse($e->getMessage(), $status);
         } catch (\Throwable $e) {
              Log::error('[AdminPanelUserController] Ошибка создания пользователя админ-панели', [
                  'error' => $e->getMessage(),

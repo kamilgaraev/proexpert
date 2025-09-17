@@ -96,7 +96,7 @@ class UserService
         $allRoles = $roleScanner->getAllRoles();
         
         if (!isset($allRoles[$roleSlug])) {
-            throw new BusinessLogicException("Роль '{$roleSlug}' не найдена в системе.", 500);
+            throw new BusinessLogicException("Роль '{$roleSlug}' не найдена в системе.", 422);
         }
     }
 
@@ -116,7 +116,7 @@ class UserService
         $organizationId = $request->attributes->get('current_organization_id');
 
         if(!$organizationId) {
-            throw new BusinessLogicException('Контекст организации не определен.', 500);
+            throw new BusinessLogicException('Контекст организации не определен.', 400);
         }
 
         $intOrganizationId = (int) $organizationId;
@@ -147,7 +147,7 @@ class UserService
         $this->ensureUserIsAdmin($request);
         $organizationId = $request->attributes->get('current_organization_id');
         if(!$organizationId) {
-            throw new BusinessLogicException('Контекст организации не определен.', 500);
+            throw new BusinessLogicException('Контекст организации не определен.', 400);
         }
         $intOrganizationId = (int) $organizationId; // Приводим к int
         $adminRoleSlug = 'organization_admin';
@@ -195,7 +195,7 @@ class UserService
         $this->ensureUserIsAdmin($request);
         $organizationId = $request->attributes->get('current_organization_id');
         if(!$organizationId) {
-            throw new BusinessLogicException('Контекст организации не определен.', 500);
+            throw new BusinessLogicException('Контекст организации не определен.', 400);
         }
         $intOrganizationId = (int) $organizationId;
 
@@ -239,7 +239,7 @@ class UserService
         $this->ensureUserIsAdmin($request);
         $organizationId = $request->attributes->get('current_organization_id');
         if(!$organizationId) {
-            throw new BusinessLogicException('Контекст организации не определен.', 500);
+            throw new BusinessLogicException('Контекст организации не определен.', 400);
         }
         $intOrganizationId = (int) $organizationId;
         $requestingUser = $request->user();
@@ -305,7 +305,7 @@ class UserService
         $this->ensureUserIsAdmin($request);
         $organizationId = $request->attributes->get('current_organization_id');
         if(!$organizationId) {
-            throw new BusinessLogicException('Контекст организации не определен.', 500);
+            throw new BusinessLogicException('Контекст организации не определен.', 400);
         }
         $intOrganizationId = (int) $organizationId;
         $requestingUser = $request->user();
