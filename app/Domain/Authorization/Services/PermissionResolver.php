@@ -29,13 +29,34 @@ class PermissionResolver
      */
     public function hasPermission(UserRoleAssignment $assignment, string $permission, ?array $context = null): bool
     {
+        \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: Checking permission', [
+            'role_slug' => $assignment->role_slug,
+            'role_type' => $assignment->role_type,
+            'permission' => $permission,
+            'context' => $context
+        ]);
+
         // Сначала проверяем системные права
-        if ($this->hasSystemPermission($assignment, $permission)) {
+        $hasSystemPerm = $this->hasSystemPermission($assignment, $permission);
+        \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: System permission check', [
+            'role_slug' => $assignment->role_slug,
+            'permission' => $permission,
+            'has_system_permission' => $hasSystemPerm
+        ]);
+        
+        if ($hasSystemPerm) {
             return true;
         }
 
         // Затем модульные права (если есть контекст организации)
-        if ($this->hasModulePermission($assignment, $permission, $context)) {
+        $hasModulePerm = $this->hasModulePermission($assignment, $permission, $context);
+        \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: Module permission check', [
+            'role_slug' => $assignment->role_slug,
+            'permission' => $permission,
+            'has_module_permission' => $hasModulePerm
+        ]);
+        
+        if ($hasModulePerm) {
             return true;
         }
 
@@ -106,10 +127,23 @@ class PermissionResolver
     public function getSystemPermissions(UserRoleAssignment $assignment): array
     {
         if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
-            return $this->roleScanner->getSystemPermissions($assignment->role_slug);
+            $permissions = $this->roleScanner->getSystemPermissions($assignment->role_slug);
+            \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: System role permissions from RoleScanner', [
+                'role_slug' => $assignment->role_slug,
+                'permissions_count' => count($permissions),
+                'permissions' => $permissions
+            ]);
+            return $permissions;
         } else {
             $customRole = $this->getCustomRole($assignment->role_slug);
-            return $customRole ? $customRole->system_permissions : [];
+            $permissions = $customRole ? $customRole->system_permissions : [];
+            \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: Custom role permissions', [
+                'role_slug' => $assignment->role_slug,
+                'custom_role_found' => $customRole !== null,
+                'permissions_count' => count($permissions),
+                'permissions' => $permissions
+            ]);
+            return $permissions;
         }
     }
 

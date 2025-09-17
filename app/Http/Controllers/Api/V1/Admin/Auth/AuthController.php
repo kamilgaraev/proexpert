@@ -77,9 +77,19 @@ class AuthController extends Controller
                     // Проверяем роли пользователя
                     try {
                         $userRoles = $authService->getUserRoles($user);
+                        $roleDetails = $userRoles->map(function ($assignment) {
+                            return [
+                                'role_slug' => $assignment->role_slug,
+                                'role_type' => $assignment->role_type,
+                                'context_id' => $assignment->context_id,
+                                'is_active' => $assignment->is_active
+                            ];
+                        });
+                        
                         Log::info('[AuthController] DEBUG: User roles', [
                             'roles_count' => $userRoles->count(),
-                            'roles' => $userRoles->pluck('role_slug')->toArray()
+                            'roles' => $userRoles->pluck('role_slug')->toArray(),
+                            'role_details' => $roleDetails->toArray()
                         ]);
                     } catch (\Exception $e) {
                         Log::error('[AuthController] DEBUG: Error getting user roles', [
