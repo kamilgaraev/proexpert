@@ -19,7 +19,7 @@ class SupplierController extends Controller
     public function __construct(SupplierService $supplierService)
     {
         $this->supplierService = $supplierService;
-        $this->middleware('can:manage-catalogs');
+        $this->middleware('can:admin.catalogs.manage');
     }
 
     public function index(Request $request): AnonymousResourceCollection

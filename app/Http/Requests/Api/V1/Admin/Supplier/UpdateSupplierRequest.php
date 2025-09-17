@@ -15,7 +15,7 @@ class UpdateSupplierRequest extends FormRequest
         $supplier = $this->route('supplier');
         
         // Проверяем права и принадлежность
-        return $supplier && Gate::allows('manage-catalogs') && $supplier->organization_id === (int)$this->get('current_organization_id');
+        return $supplier && Gate::allows('admin.catalogs.manage') && $supplier->organization_id === (int)$this->get('current_organization_id');
     }
 
     public function rules(): array

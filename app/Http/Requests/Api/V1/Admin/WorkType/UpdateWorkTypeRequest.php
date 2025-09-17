@@ -16,7 +16,7 @@ class UpdateWorkTypeRequest extends FormRequest
         $workType = WorkType::find($workTypeId);
         
         // Проверяем права и принадлежность объекта к организации текущего пользователя
-        return $workType && Gate::allows('manage-catalogs') && $workType->organization_id === (int)$this->get('current_organization_id');
+        return $workType && Gate::allows('admin.catalogs.manage') && $workType->organization_id === (int)$this->get('current_organization_id');
     }
 
     public function rules(): array

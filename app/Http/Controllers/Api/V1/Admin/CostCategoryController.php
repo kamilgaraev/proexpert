@@ -20,7 +20,7 @@ class CostCategoryController extends Controller
     public function __construct(CostCategoryService $costCategoryService)
     {
         $this->costCategoryService = $costCategoryService;
-        $this->middleware('can:manage-catalogs');
+        $this->middleware('can:admin.catalogs.manage');
     }
 
     /**

@@ -12,7 +12,7 @@ class StoreSupplierRequest extends FormRequest
     public function authorize(): bool
     {
         // Используем тот же Gate, что и для других справочников
-        return Gate::allows('manage-catalogs');
+        return Gate::allows('admin.catalogs.manage');
     }
 
     public function rules(): array
