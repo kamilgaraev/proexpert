@@ -284,7 +284,17 @@ class PermissionSet
             return false;
         }
 
-        $regex = '/^' . str_replace('*', '.*', preg_quote($pattern, '/')) . '$/';
+        // ИСПРАВЛЕНО: используем тот же алгоритм что и в PermissionResolver
+        // 1. Заменяем * на уникальный плейсхолдер
+        $placeholder = '___WILDCARD_PLACEHOLDER___';
+        $withPlaceholder = str_replace('*', $placeholder, $pattern);
+        
+        // 2. Экранируем все regex спецсимволы 
+        $escaped = preg_quote($withPlaceholder, '/');
+        
+        // 3. Заменяем плейсхолдер на .*
+        $regex = '/^' . str_replace($placeholder, '.*', $escaped) . '$/';
+        
         return preg_match($regex, $permission) === 1;
     }
 }

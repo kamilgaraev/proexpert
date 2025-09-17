@@ -300,22 +300,26 @@ class PermissionResolver
             return true;
         }
         
-        // Преобразуем wildcard паттерн в regex
-        // Экранируем спецсимволы кроме *
-        $escaped = str_replace(['.', '+', '?', '^', '$', '(', ')', '[', ']', '{', '}', '|', '\\'], 
-                              ['\.', '\+', '\?', '\^', '\$', '\(', '\)', '\[', '\]', '\{', '\}', '\|', '\\\\'], 
-                              $pattern);
+        // ПРАВИЛЬНЫЙ АЛГОРИТМ: сначала * → плейсхолдер, потом экранируем, потом плейсхолдер → .*
+        // 1. Заменяем * на уникальный плейсхолдер
+        $placeholder = '___WILDCARD_PLACEHOLDER___';
+        $withPlaceholder = str_replace('*', $placeholder, $pattern);
         
-        // Заменяем * на .*
-        $regexPattern = '/^' . str_replace('*', '.*', $escaped) . '$/';
+        // 2. Экранируем все regex спецсимволы 
+        $escaped = preg_quote($withPlaceholder, '/');
+        
+        // 3. Заменяем плейсхолдер на .*
+        $regexPattern = '/^' . str_replace($placeholder, '.*', $escaped) . '$/';
         
         $result = preg_match($regexPattern, $permission) === 1;
         
-        // DEBUG логирование
-        \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: Wildcard match', [
+        // DEBUG логирование с полными деталями
+        \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: Wildcard match DETAILED', [
             'permission' => $permission,
             'pattern' => $pattern,
-            'regex' => $regexPattern,
+            'step1_placeholder' => $withPlaceholder,
+            'step2_escaped' => $escaped,
+            'step3_final_regex' => $regexPattern,
             'result' => $result
         ]);
         
