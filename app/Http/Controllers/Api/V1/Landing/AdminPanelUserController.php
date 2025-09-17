@@ -72,6 +72,12 @@ class AdminPanelUserController extends Controller
      */
     public function store(StoreAdminPanelUserRequest $request): Responsable
     {
+        Log::info('[AdminPanelUserController] store() method called - ENTRY POINT', [
+            'user_id' => Auth::id(),
+            'organization_id' => $request->attributes->get('current_organization_id'),
+            'ip' => $request->ip()
+        ]);
+
         try {
             Log::info('[AdminPanelUserController] Начало создания пользователя админ-панели', [
                 'data' => $request->validated(),
