@@ -154,7 +154,7 @@ class UserService
         $this->validateRoleExists($adminRoleSlug);
 
         $data['password'] = Hash::make($data['password']);
-        $data['user_type'] = 'organization_admin'; // Or a more specific type if needed
+        // $data['user_type'] = 'organization_admin'; // Удалена в новой системе авторизации
 
         // Check if user already exists
         $existingUser = $this->userRepository->findByEmail($data['email']);
@@ -439,7 +439,7 @@ class UserService
         $this->validateRoleExists($foremanRoleSlug);
 
         $data['password'] = Hash::make($data['password']);
-        $data['user_type'] = 'foreman'; // Set user type
+        // user_type колонка удалена в новой системе авторизации - роли управляются через UserRoleAssignment
 
         // Check if user already exists
         $existingUser = $this->userRepository->findByEmail($data['email']);
@@ -618,8 +618,7 @@ class UserService
 
 
         $userData['password'] = Hash::make($userData['password']);
-        // Устанавливаем user_type в соответствии с назначенной ролью
-        $userData['user_type'] = $roleSlug;
+        // user_type колонка удалена в новой системе авторизации - роли управляются через UserRoleAssignment
 
         // Проверяем, существует ли пользователь с таким email
         $existingUser = $this->userRepository->findByEmail($userData['email']);

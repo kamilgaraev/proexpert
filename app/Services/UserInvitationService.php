@@ -225,7 +225,7 @@ class UserInvitationService
             'email' => $invitation->email,
             'password' => Hash::make($password),
             'email_verified_at' => now(),
-            'user_type' => 'organization_user',
+            // 'user_type' => 'organization_user', // Удалена в новой системе авторизации
         ]);
 
         $user->organizations()->attach($invitation->organization_id);

@@ -65,7 +65,7 @@ class CustomUserManagementController extends Controller
         try {
             // Создаем пользователя
             $data['password'] = Hash::make($data['password']);
-            $data['user_type'] = 'custom_role_user';
+            // $data['user_type'] = 'custom_role_user'; // Удалена в новой системе авторизации
             $data['current_organization_id'] = $organizationId;
             
             $user = $this->userRepository->create($data);

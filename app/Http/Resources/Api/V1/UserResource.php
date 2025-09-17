@@ -22,7 +22,7 @@ class UserResource extends JsonResource
             'position' => $this->position,
             'avatar_url' => $this->avatar_url, // Это поле добавляется аксессором и $appends
             'is_active' => $this->is_active,
-            'user_type' => $this->user_type,
+            // 'user_type' => $this->user_type, // Удалена в новой системе авторизации
             'current_organization_id' => $this->current_organization_id,
             'last_login_at' => $this->last_login_at?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),

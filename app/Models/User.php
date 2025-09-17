@@ -40,7 +40,7 @@ class User extends Authenticatable implements JWTSubject
         'avatar_path',
         'is_active',
         'current_organization_id',
-        'user_type',
+        // 'user_type', // Удалена в новой системе авторизации - роли через UserRoleAssignment
         'settings',
         'last_login_at',
         'last_login_ip',
@@ -262,8 +262,8 @@ class User extends Authenticatable implements JWTSubject
         $systemContext = \App\Domain\Authorization\Models\AuthorizationContext::getSystemContext();
         
         return $this->hasRole('super_admin', $systemContext->id) || 
-               $this->hasRole('system_admin', $systemContext->id) ||
-               $this->user_type === 'system_admin';
+               $this->hasRole('system_admin', $systemContext->id);
+               // Убрали проверку user_type так как колонка удалена в новой системе авторизации
     }
 
     /**
