@@ -1,0 +1,71 @@
+{
+  "name": "Аналитика материалов",
+  "slug": "material-analytics",
+  "version": "1.0.0",
+  "type": "addon",
+  "billing_model": "subscription",
+  "category": "analytics",
+  "description": "Расширенная аналитика и отчеты по материалам",
+  
+  "class_name": "App\\BusinessModules\\Addons\\MaterialAnalytics\\MaterialAnalyticsModule",
+  "service_provider": "App\\BusinessModules\\Addons\\MaterialAnalytics\\MaterialAnalyticsServiceProvider",
+  
+  "pricing": {
+    "base_price": 2990,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "materials.analytics.summary",
+    "materials.analytics.usage_by_projects",
+    "materials.analytics.usage_by_suppliers",
+    "materials.analytics.low_stock",
+    "materials.analytics.most_used",
+    "materials.analytics.cost_history",
+    "materials.analytics.movement_report",
+    "materials.analytics.inventory_report",
+    "materials.analytics.cost_dynamics_report"
+  ],
+  
+  "features": [
+    "Сводная аналитика по материалам",
+    "Анализ использования по проектам",
+    "Анализ использования по поставщикам",
+    "Отчет по материалам с низким остатком",
+    "Топ наиболее используемых материалов",
+    "История изменения стоимости материалов",
+    "Отчет по движению материалов",
+    "Инвентарные отчеты",
+    "Отчет по динамике стоимости",
+    "Прогнозирование потребностей",
+    "Визуализация данных в графиках",
+    "Экспорт аналитических данных"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "catalog-management",
+    "project-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_reports_per_month": 200,
+    "max_materials_analyzed": 5000,
+    "data_retention_months": 24,
+    "concurrent_analytics": 5
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "bar-chart",
+  "display_order": 23
+}

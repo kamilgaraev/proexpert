@@ -53,6 +53,24 @@
       "site_requests.view", "site_requests.create", "site_requests.edit",
       "site_requests.statistics", "completed_works.view", "completed_works.create",
       "completed_works.edit", "completed_works.materials.sync"
+    ],
+    "advance-accounting": [
+      "advance_transactions.view", "advance_transactions.create", "advance_transactions.report",
+      "users.advance_balance.view", "users.advance_transactions.view", "users.funds.issue",
+      "reports.advance_accounts.view"
+    ],
+    "act-reporting": [
+      "act_reports.view", "act_reports.create", "act_reports.edit",
+      "act_reports.contracts.view", "act_reports.works.view", "act_reports.works.update",
+      "act_reports.export.pdf", "act_reports.export.excel"
+    ],
+    "time-tracking": [
+      "time_tracking.view", "time_tracking.create", "time_tracking.edit",
+      "time_tracking.approve", "time_tracking.statistics", "time_tracking.reports"
+    ],
+    "material-analytics": [
+      "materials.analytics.summary", "materials.analytics.usage_by_projects",
+      "materials.analytics.low_stock", "materials.analytics.most_used"
     ]
   },
   

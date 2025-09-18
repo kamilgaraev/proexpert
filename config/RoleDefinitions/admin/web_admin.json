@@ -67,6 +67,25 @@
       "site_requests.files.upload", "site_requests.files.delete", "site_requests.statistics",
       "completed_works.view", "completed_works.create", "completed_works.edit", "completed_works.delete",
       "completed_works.materials.sync", "completed_works.work_type_defaults.view"
+    ],
+    "advance-accounting": [
+      "advance_transactions.view", "advance_transactions.create", "advance_transactions.edit", "advance_transactions.approve",
+      "advance_settings.view", "advance_settings.edit", "users.advance_balance.view", "users.advance_transactions.view",
+      "users.funds.issue", "users.funds.return", "reports.advance_accounts.view", "reports.advance_accounts.export"
+    ],
+    "act-reporting": [
+      "act_reports.view", "act_reports.create", "act_reports.edit", "act_reports.delete",
+      "act_reports.contracts.view", "act_reports.works.view", "act_reports.works.update",
+      "act_reports.export.pdf", "act_reports.export.excel", "act_reports.bulk_export.excel"
+    ],
+    "time-tracking": [
+      "time_tracking.view", "time_tracking.create", "time_tracking.edit", "time_tracking.delete",
+      "time_tracking.approve", "time_tracking.reject", "time_tracking.statistics", "time_tracking.reports"
+    ],
+    "material-analytics": [
+      "materials.analytics.summary", "materials.analytics.usage_by_projects", "materials.analytics.usage_by_suppliers",
+      "materials.analytics.low_stock", "materials.analytics.most_used", "materials.analytics.cost_history",
+      "materials.analytics.movement_report", "materials.analytics.inventory_report"
     ]
   },
   

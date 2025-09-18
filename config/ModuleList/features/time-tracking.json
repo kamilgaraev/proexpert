@@ -1,0 +1,69 @@
+{
+  "name": "Учет рабочего времени",
+  "slug": "time-tracking",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "hr",
+  "description": "Система учета рабочего времени и трудозатрат",
+  
+  "class_name": "App\\BusinessModules\\Features\\TimeTracking\\TimeTrackingModule",
+  "service_provider": "App\\BusinessModules\\Features\\TimeTracking\\TimeTrackingServiceProvider",
+  
+  "pricing": {
+    "base_price": 1490,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "time_tracking.view",
+    "time_tracking.create",
+    "time_tracking.edit",
+    "time_tracking.delete",
+    "time_tracking.approve",
+    "time_tracking.reject",
+    "time_tracking.submit",
+    "time_tracking.statistics",
+    "time_tracking.calendar",
+    "time_tracking.reports"
+  ],
+  
+  "features": [
+    "Учет рабочего времени сотрудников",
+    "Создание и редактирование записей времени",
+    "Система одобрения временных отчетов",
+    "Отклонение некорректных записей",
+    "Подача отчетов на утверждение",
+    "Статистика по рабочему времени",
+    "Календарное представление записей",
+    "Генерация отчетов по времени",
+    "Интеграция с проектами",
+    "Контроль переработок"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_entries_per_month": 2000,
+    "max_hours_per_day": 24,
+    "max_projects_tracked": 50,
+    "report_retention_days": 365
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "clock",
+  "display_order": 22
+}

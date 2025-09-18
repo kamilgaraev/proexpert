@@ -1,0 +1,77 @@
+{
+  "name": "Подотчетные средства",
+  "slug": "advance-accounting",
+  "version": "1.0.0",
+  "type": "addon",
+  "billing_model": "subscription",
+  "category": "finance",
+  "description": "Система управления подотчетными средствами и авансовыми отчетами",
+  
+  "class_name": "App\\BusinessModules\\Addons\\AdvanceAccounting\\AdvanceAccountingModule",
+  "service_provider": "App\\BusinessModules\\Addons\\AdvanceAccounting\\AdvanceAccountingServiceProvider",
+  
+  "pricing": {
+    "base_price": 2490,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "advance_transactions.view",
+    "advance_transactions.create",
+    "advance_transactions.edit",
+    "advance_transactions.delete",
+    "advance_transactions.report",
+    "advance_transactions.approve",
+    "advance_transactions.files.manage",
+    "advance_settings.view",
+    "advance_settings.edit",
+    "users.advance_balance.view",
+    "users.advance_transactions.view",
+    "users.funds.issue",
+    "users.funds.return",
+    "reports.advance_accounts.view",
+    "reports.advance_accounts.export",
+    "accounting.integration.manage"
+  ],
+  
+  "features": [
+    "Управление подотчетными средствами",
+    "Авансовые отчеты сотрудников",
+    "Одобрение и учет транзакций",
+    "Прикрепление документов к операциям",
+    "Настройки подотчетных счетов",
+    "Контроль балансов пользователей",
+    "Выдача и возврат средств",
+    "Отчетность по подотчетным средствам",
+    "Экспорт в Excel и PDF",
+    "Интеграция с бухгалтерскими системами",
+    "Отчеты по просроченным средствам",
+    "Импорт пользователей и проектов"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_transactions_per_month": 1000,
+    "max_users_with_advance": 100,
+    "max_file_size_mb": 25,
+    "max_files_per_transaction": 5
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "credit-card",
+  "display_order": 20
+}

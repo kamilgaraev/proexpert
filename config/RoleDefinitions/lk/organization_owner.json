@@ -37,7 +37,11 @@
     "project-management": ["*"],
     "contract-management": ["*"],
     "catalog-management": ["*"],
-    "workflow-management": ["*"]
+    "workflow-management": ["*"],
+    "advance-accounting": ["*"],
+    "act-reporting": ["*"],
+    "time-tracking": ["*"],
+    "material-analytics": ["*"]
   },
   
   "interface_access": ["lk", "admin"],

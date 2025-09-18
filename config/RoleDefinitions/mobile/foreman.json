@@ -45,6 +45,19 @@
     "workflow-management": [
       "site_requests.view", "site_requests.create", "site_requests.files.upload",
       "completed_works.view", "completed_works.create", "completed_works.materials.sync"
+    ],
+    "advance-accounting": [
+      "advance_transactions.view", "advance_transactions.create", "advance_transactions.report",
+      "users.advance_balance.view"
+    ],
+    "act-reporting": [
+      "act_reports.view", "act_reports.works.view"
+    ],
+    "time-tracking": [
+      "time_tracking.view", "time_tracking.create", "time_tracking.edit", "time_tracking.submit"
+    ],
+    "material-analytics": [
+      "materials.analytics.low_stock", "materials.analytics.most_used"
     ]
   },
   

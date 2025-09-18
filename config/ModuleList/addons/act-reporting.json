@@ -1,0 +1,71 @@
+{
+  "name": "Управление актами",
+  "slug": "act-reporting",
+  "version": "1.0.0",
+  "type": "addon",
+  "billing_model": "subscription",
+  "category": "documents",
+  "description": "Система управления актами выполненных работ и отчетностью",
+  
+  "class_name": "App\\BusinessModules\\Addons\\ActReporting\\ActReportingModule",
+  "service_provider": "App\\BusinessModules\\Addons\\ActReporting\\ActReportingServiceProvider",
+  
+  "pricing": {
+    "base_price": 1990,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "act_reports.view",
+    "act_reports.create",
+    "act_reports.edit",
+    "act_reports.delete",
+    "act_reports.contracts.view",
+    "act_reports.works.view",
+    "act_reports.works.update",
+    "act_reports.export.pdf",
+    "act_reports.export.excel",
+    "act_reports.bulk_export.excel",
+    "act_reports.download_pdf"
+  ],
+  
+  "features": [
+    "Создание актов выполненных работ",
+    "Привязка актов к контрактам",
+    "Управление составом работ в акте",
+    "Просмотр доступных работ для актов",
+    "Экспорт актов в PDF и Excel",
+    "Массовый экспорт актов",
+    "Сохранение и скачивание PDF актов",
+    "Фильтрация актов по различным критериям",
+    "Интеграция с системой контрактов",
+    "Автоматическое формирование отчетности"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users", 
+    "contract-management",
+    "workflow-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_acts_per_month": 500,
+    "max_works_per_act": 100,
+    "max_export_size_mb": 100,
+    "concurrent_exports": 3
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "file-check",
+  "display_order": 21
+}

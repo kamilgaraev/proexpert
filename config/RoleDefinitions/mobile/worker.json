@@ -36,7 +36,17 @@
     ],
     "workflow-management": [
       "site_requests.view", "completed_works.view"
-    ]
+    ],
+    "advance-accounting": [
+      "advance_transactions.view", "users.advance_balance.view"
+    ],
+    "act-reporting": [
+      "act_reports.view"
+    ],
+    "time-tracking": [
+      "time_tracking.view", "time_tracking.create", "time_tracking.edit"
+    ],
+    "material-analytics": []
   },
   
   "interface_access": ["mobile"],
