@@ -12,6 +12,10 @@ Route::get('projects', [ProjectController::class, 'index'])
 Route::post('projects', [ProjectController::class, 'store'])
     ->middleware('authorize:admin.projects.edit')
     ->name('projects.store');
+
+// Получить доступные категории затрат для проектов (должно быть ПЕРЕД projects/{project})
+Route::get('/projects/available-cost-categories', [ProjectController::class, 'getAvailableCostCategories'])->name('projects.cost-categories');
+
 Route::get('projects/{project}', [ProjectController::class, 'show'])
     ->middleware('authorize:admin.projects.view')
     ->name('projects.show');
@@ -39,9 +43,6 @@ Route::get('/projects/{id}/materials', [ProjectController::class, 'getProjectMat
 
 // Получить типы работ проекта
 Route::get('/projects/{id}/work-types', [ProjectController::class, 'getProjectWorkTypes'])->name('projects.workTypes');
-
-// Получить доступные категории затрат для проектов
-Route::get('/projects/available-cost-categories', [ProjectController::class, 'getAvailableCostCategories'])->name('projects.cost-categories');
 
 // Получить организации проекта
 Route::get('/projects/{id}/organizations', [ProjectOrganizationController::class, 'index'])->name('projects.organizations.index');
