@@ -57,6 +57,30 @@
     ],
     "material-analytics": [
       "materials.analytics.usage_by_projects", "materials.analytics.low_stock"
+    ],
+    "contractor-portal": [
+      "contractor_invitations.view", "contractor_invitations.create", "organizations.search"
+    ],
+    "file-management": [
+      "personal_files.view", "personal_files.create_folder", "personal_files.upload"
+    ],
+    "system-logs": [
+      "logs.material_usage.view", "logs.work_completion.view"
+    ],
+    "rate-management": [
+      "rate_coefficients.view", "rate_coefficients.apply"
+    ],
+    "report-templates": [
+      "report_templates.view", "report_templates.create"
+    ],
+    "data-filters": [
+      "filters.contracts.view", "filters.completed_works.view", "filters.custom.create"
+    ],
+    "dashboard-widgets": [
+      "dashboard.view", "dashboard.recent_activity.view"
+    ],
+    "schedule-management": [
+      "schedule.view", "schedule.create", "schedule.edit"
     ]
   },
   

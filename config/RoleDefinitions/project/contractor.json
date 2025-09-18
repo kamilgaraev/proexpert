@@ -32,7 +32,15 @@
     ],
     "contracts": [
       "contracts.view_own"
-    ]
+    ],
+    "contractor-portal": ["contractor_invitations.view"],
+    "file-management": ["personal_files.view", "personal_files.upload"],
+    "system-logs": [],
+    "rate-management": ["rate_coefficients.view"],
+    "report-templates": ["report_templates.view"],
+    "data-filters": ["filters.completed_works.view", "filters.quick_stats.view"],
+    "dashboard-widgets": ["dashboard.view"],
+    "schedule-management": ["schedule.view"]
   },
   
   "interface_access": ["lk", "mobile"],

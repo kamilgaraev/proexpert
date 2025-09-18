@@ -27,7 +27,15 @@
     "finance": ["finance.view", "finance.manage"],
     "materials": ["materials.view"],
     "advance-accounts": ["advance-accounts.view", "advance-accounts.manage"],
-    "time-tracking": ["time-tracking.view"]
+    "time-tracking": ["time-tracking.view"],
+    "contractor-portal": ["contractor_invitations.view", "contractor_invitations.stats"],
+    "file-management": ["personal_files.view", "report_files.view"],
+    "system-logs": ["logs.material_usage.view", "logs.export"],
+    "rate-management": ["rate_coefficients.view", "rate_coefficients.create", "rate_coefficients.edit", "rate_coefficients.export"],
+    "report-templates": ["report_templates.view", "report_templates.create", "report_templates.export"],
+    "data-filters": ["filters.contracts.view", "filters.export"],
+    "dashboard-widgets": ["dashboard.view", "dashboard.contracts.statistics", "dashboard.limits.view"],
+    "schedule-management": ["schedule.view", "schedule.export"]
   },
   
   "interface_access": ["admin"],

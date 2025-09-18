@@ -48,6 +48,28 @@
     ],
     "material-analytics": [
       "materials.analytics.summary"
+    ],
+    "contractor-portal": [
+      "contractor_invitations.view"
+    ],
+    "file-management": [
+      "personal_files.view"
+    ],
+    "system-logs": [],
+    "rate-management": [
+      "rate_coefficients.view"
+    ],
+    "report-templates": [
+      "report_templates.view"
+    ],
+    "data-filters": [
+      "filters.contracts.view", "filters.completed_works.view", "filters.quick_stats.view"
+    ],
+    "dashboard-widgets": [
+      "dashboard.view"
+    ],
+    "schedule-management": [
+      "schedule.view"
     ]
   },
   

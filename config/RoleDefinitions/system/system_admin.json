@@ -40,7 +40,15 @@
     "contracts": ["contracts.view", "contracts.edit"],
     "reports": ["reports.view", "reports.export"],
     "finance": ["finance.view"],
-    "time-tracking": ["time-tracking.view", "time-tracking.manage"]
+    "time-tracking": ["time-tracking.view", "time-tracking.manage"],
+    "contractor-portal": ["contractor_invitations.*", "organizations.*"],
+    "file-management": ["personal_files.*", "report_files.*"],
+    "system-logs": ["logs.*"],
+    "rate-management": ["rate_coefficients.*"],
+    "report-templates": ["report_templates.*"],
+    "data-filters": ["filters.*"],
+    "dashboard-widgets": ["dashboard.*"],
+    "schedule-management": ["schedule.*"]
   },
   
   "interface_access": ["admin"],

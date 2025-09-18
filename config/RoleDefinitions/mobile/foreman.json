@@ -58,6 +58,30 @@
     ],
     "material-analytics": [
       "materials.analytics.low_stock", "materials.analytics.most_used"
+    ],
+    "contractor-portal": [
+      "contractor_invitations.view"
+    ],
+    "file-management": [
+      "personal_files.view", "personal_files.upload"
+    ],
+    "system-logs": [
+      "logs.work_completion.view"
+    ],
+    "rate-management": [
+      "rate_coefficients.view"
+    ],
+    "report-templates": [
+      "report_templates.view"
+    ],
+    "data-filters": [
+      "filters.completed_works.view", "filters.quick_stats.view"
+    ],
+    "dashboard-widgets": [
+      "dashboard.view", "dashboard.recent_activity.view"
+    ],
+    "schedule-management": [
+      "schedule.view", "schedule.notifications"
     ]
   },
   

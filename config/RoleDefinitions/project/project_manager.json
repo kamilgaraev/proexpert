@@ -71,6 +71,35 @@
     "material-analytics": [
       "materials.analytics.summary", "materials.analytics.usage_by_projects",
       "materials.analytics.low_stock", "materials.analytics.most_used"
+    ],
+    "contractor-portal": [
+      "contractor_invitations.view", "contractor_invitations.create", "contractor_invitations.edit",
+      "contractor_invitations.stats", "organizations.search", "organizations.suggestions"
+    ],
+    "file-management": [
+      "personal_files.view", "personal_files.create_folder", "personal_files.upload", 
+      "personal_files.delete", "report_files.view"
+    ],
+    "system-logs": [
+      "logs.material_usage.view", "logs.work_completion.view", "logs.filter", "logs.search"
+    ],
+    "rate-management": [
+      "rate_coefficients.view", "rate_coefficients.apply", "rate_coefficients.export"
+    ],
+    "report-templates": [
+      "report_templates.view", "report_templates.create", "report_templates.edit"
+    ],
+    "data-filters": [
+      "filters.contracts.view", "filters.completed_works.view", "filters.quick_stats.view",
+      "filters.custom.create", "filters.custom.save", "filters.export"
+    ],
+    "dashboard-widgets": [
+      "dashboard.view", "dashboard.timeseries.view", "dashboard.contracts.statistics",
+      "dashboard.recent_activity.view", "dashboard.widgets.customize"
+    ],
+    "schedule-management": [
+      "schedule.view", "schedule.create", "schedule.edit", "schedule.assign",
+      "schedule.approve", "schedule.notifications"
     ]
   },
   
