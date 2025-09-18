@@ -1,0 +1,65 @@
+{
+  "name": "Системные логи",
+  "slug": "system-logs",
+  "version": "1.0.0",
+  "type": "addon",
+  "billing_model": "subscription",
+  "category": "monitoring",
+  "description": "Система просмотра и анализа логов операций",
+  
+  "class_name": "App\\BusinessModules\\Addons\\SystemLogs\\SystemLogsModule",
+  "service_provider": "App\\BusinessModules\\Addons\\SystemLogs\\SystemLogsServiceProvider",
+  
+  "pricing": {
+    "base_price": 1990,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "logs.material_usage.view",
+    "logs.work_completion.view",
+    "logs.system.view",
+    "logs.export",
+    "logs.filter",
+    "logs.search"
+  ],
+  
+  "features": [
+    "Просмотр логов использования материалов",
+    "Просмотр логов выполнения работ",
+    "Системные логи операций",
+    "Фильтрация логов по критериям",
+    "Поиск по логам",
+    "Экспорт логов в различные форматы",
+    "Автоматическая архивация",
+    "Уведомления о критических событиях",
+    "Статистика по активности",
+    "Интеграция с мониторингом"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "catalog-management",
+    "workflow-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_log_entries_per_day": 50000,
+    "retention_days": 90,
+    "max_export_rows": 10000
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "list-alt",
+  "display_order": 32
+}

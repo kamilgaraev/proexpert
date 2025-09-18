@@ -1,0 +1,65 @@
+{
+  "name": "Управление файлами",
+  "slug": "file-management",
+  "version": "1.0.0",
+  "type": "addon",
+  "billing_model": "subscription",
+  "category": "storage",
+  "description": "Система управления персональными файлами и отчетами",
+  
+  "class_name": "App\\BusinessModules\\Addons\\FileManagement\\FileManagementModule",
+  "service_provider": "App\\BusinessModules\\Addons\\FileManagement\\FileManagementServiceProvider",
+  
+  "pricing": {
+    "base_price": 990,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "personal_files.view",
+    "personal_files.create_folder",
+    "personal_files.upload",
+    "personal_files.delete",
+    "report_files.view",
+    "report_files.delete",
+    "report_files.update"
+  ],
+  
+  "features": [
+    "Персональное файловое хранилище",
+    "Создание папок и структуры",
+    "Загрузка файлов различных форматов",
+    "Удаление и управление файлами",
+    "Управление файлами отчетов",
+    "Просмотр метаданных файлов",
+    "Контроль версий файлов",
+    "Совместный доступ к файлам",
+    "Резервное копирование",
+    "Интеграция с облачными хранилищами"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_storage_gb": 50,
+    "max_file_size_mb": 100,
+    "max_files_per_user": 1000,
+    "retention_days": 365
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "folder",
+  "display_order": 31
+}

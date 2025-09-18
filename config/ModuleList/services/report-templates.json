@@ -1,0 +1,65 @@
+{
+  "name": "Шаблоны отчетов",
+  "slug": "report-templates",
+  "version": "1.0.0",
+  "type": "service",
+  "billing_model": "one_time",
+  "category": "reports",
+  "description": "Система управления шаблонами отчетов",
+  
+  "class_name": "App\\BusinessModules\\Services\\ReportTemplates\\ReportTemplatesModule",
+  "service_provider": "App\\BusinessModules\\Services\\ReportTemplates\\ReportTemplatesServiceProvider",
+  
+  "pricing": {
+    "base_price": 5900,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 0
+  },
+  
+  "permissions": [
+    "report_templates.view",
+    "report_templates.create",
+    "report_templates.edit",
+    "report_templates.delete",
+    "report_templates.set_default",
+    "report_templates.export",
+    "report_templates.import"
+  ],
+  
+  "features": [
+    "Создание кастомных шаблонов отчетов",
+    "Редактирование существующих шаблонов",
+    "Установка шаблонов по умолчанию",
+    "Библиотека готовых шаблонов",
+    "Экспорт шаблонов между организациями",
+    "Импорт шаблонов из внешних источников",
+    "Предварительный просмотр отчетов",
+    "Версионирование шаблонов",
+    "Совместное редактирование",
+    "Интеграция со всеми модулями отчетности"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "basic-reports"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_templates": 100,
+    "max_template_size_mb": 10,
+    "version_history_count": 10
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "file-alt",
+  "display_order": 40
+}

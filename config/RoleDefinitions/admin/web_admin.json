@@ -86,6 +86,38 @@
       "materials.analytics.summary", "materials.analytics.usage_by_projects", "materials.analytics.usage_by_suppliers",
       "materials.analytics.low_stock", "materials.analytics.most_used", "materials.analytics.cost_history",
       "materials.analytics.movement_report", "materials.analytics.inventory_report"
+    ],
+    "contractor-portal": [
+      "contractor_invitations.view", "contractor_invitations.create", "contractor_invitations.edit", "contractor_invitations.delete",
+      "contractor_invitations.stats", "contractor_invitations.cancel", "organizations.search", "organizations.suggestions"
+    ],
+    "file-management": [
+      "personal_files.view", "personal_files.create_folder", "personal_files.upload", "personal_files.delete",
+      "report_files.view", "report_files.delete", "report_files.update"
+    ],
+    "system-logs": [
+      "logs.material_usage.view", "logs.work_completion.view", "logs.system.view", "logs.export", "logs.filter", "logs.search"
+    ],
+    "rate-management": [
+      "rate_coefficients.view", "rate_coefficients.create", "rate_coefficients.edit", "rate_coefficients.delete",
+      "rate_coefficients.apply", "rate_coefficients.export", "rate_coefficients.import"
+    ],
+    "report-templates": [
+      "report_templates.view", "report_templates.create", "report_templates.edit", "report_templates.delete",
+      "report_templates.set_default", "report_templates.export", "report_templates.import"
+    ],
+    "data-filters": [
+      "filters.contracts.view", "filters.completed_works.view", "filters.quick_stats.view", 
+      "filters.custom.create", "filters.custom.save", "filters.export"
+    ],
+    "dashboard-widgets": [
+      "dashboard.view", "dashboard.timeseries.view", "dashboard.top_entities.view", "dashboard.history.view",
+      "dashboard.limits.view", "dashboard.contracts.statistics", "dashboard.recent_activity.view",
+      "dashboard.site_requests.statistics", "dashboard.widgets.customize", "dashboard.settings.manage"
+    ],
+    "schedule-management": [
+      "schedule.view", "schedule.create", "schedule.edit", "schedule.delete", "schedule.assign",
+      "schedule.approve", "schedule.export", "schedule.notifications"
     ]
   },
   

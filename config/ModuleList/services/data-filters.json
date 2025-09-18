@@ -1,0 +1,62 @@
+{
+  "name": "Система фильтрации",
+  "slug": "data-filters",
+  "version": "1.0.0",
+  "type": "service",
+  "billing_model": "free",
+  "category": "tools",
+  "description": "Расширенная система фильтрации данных",
+  
+  "class_name": "App\\BusinessModules\\Services\\DataFilters\\DataFiltersModule",
+  "service_provider": "App\\BusinessModules\\Services\\DataFilters\\DataFiltersServiceProvider",
+  
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plan": true,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "filters.contracts.view",
+    "filters.completed_works.view",
+    "filters.quick_stats.view",
+    "filters.custom.create",
+    "filters.custom.save",
+    "filters.export"
+  ],
+  
+  "features": [
+    "Фильтрация контрактов по различным критериям",
+    "Фильтрация выполненных работ",
+    "Быстрая статистика по фильтрам",
+    "Создание пользовательских фильтров",
+    "Сохранение часто используемых фильтров",
+    "Экспорт отфильтрованных данных",
+    "Комбинированные фильтры",
+    "Автоматическое применение фильтров",
+    "Уведомления по условиям фильтров",
+    "Интеграция со всеми модулями"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_saved_filters": 50,
+    "max_filter_conditions": 20
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": true,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "filter",
+  "display_order": 41
+}

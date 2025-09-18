@@ -41,7 +41,15 @@
     "advance-accounting": ["*"],
     "act-reporting": ["*"],
     "time-tracking": ["*"],
-    "material-analytics": ["*"]
+    "material-analytics": ["*"],
+    "contractor-portal": ["*"],
+    "file-management": ["*"],
+    "system-logs": ["*"],
+    "rate-management": ["*"],
+    "report-templates": ["*"],
+    "data-filters": ["*"],
+    "dashboard-widgets": ["*"],
+    "schedule-management": ["*"]
   },
   
   "interface_access": ["lk", "admin"],

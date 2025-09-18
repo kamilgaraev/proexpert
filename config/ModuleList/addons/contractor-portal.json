@@ -1,0 +1,68 @@
+{
+  "name": "Портал подрядчиков",
+  "slug": "contractor-portal",
+  "version": "1.0.0",
+  "type": "addon",
+  "billing_model": "subscription",
+  "category": "collaboration",
+  "description": "Система работы с внешними подрядчиками и приглашений",
+  
+  "class_name": "App\\BusinessModules\\Addons\\ContractorPortal\\ContractorPortalModule",
+  "service_provider": "App\\BusinessModules\\Addons\\ContractorPortal\\ContractorPortalServiceProvider",
+  
+  "pricing": {
+    "base_price": 3490,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "contractor_invitations.view",
+    "contractor_invitations.create",
+    "contractor_invitations.edit",
+    "contractor_invitations.delete",
+    "contractor_invitations.stats",
+    "contractor_invitations.cancel",
+    "organizations.search",
+    "organizations.suggestions",
+    "organizations.recommendations",
+    "organizations.availability.check"
+  ],
+  
+  "features": [
+    "Управление приглашениями подрядчиков",
+    "Просмотр статистики приглашений",
+    "Отмена приглашений",
+    "Поиск организаций в базе",
+    "Получение рекомендаций подрядчиков",
+    "Проверка доступности организаций",
+    "Интеграция с внешними реестрами",
+    "Рейтинговая система подрядчиков",
+    "История сотрудничества",
+    "Автоматические уведомления"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "catalog-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_invitations_per_month": 200,
+    "max_search_requests_per_day": 500,
+    "max_concurrent_invitations": 50
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "users-cog",
+  "display_order": 30
+}

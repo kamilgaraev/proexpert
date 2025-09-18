@@ -1,0 +1,68 @@
+{
+  "name": "Виджеты дашборда",
+  "slug": "dashboard-widgets",
+  "version": "1.0.0",
+  "type": "service",
+  "billing_model": "free",
+  "category": "dashboard",
+  "description": "Система управления виджетами главного дашборда",
+  
+  "class_name": "App\\BusinessModules\\Services\\DashboardWidgets\\DashboardWidgetsModule",
+  "service_provider": "App\\BusinessModules\\Services\\DashboardWidgets\\DashboardWidgetsServiceProvider",
+  
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plan": true,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "dashboard.view",
+    "dashboard.timeseries.view",
+    "dashboard.top_entities.view",
+    "dashboard.history.view",
+    "dashboard.limits.view",
+    "dashboard.contracts.statistics",
+    "dashboard.recent_activity.view",
+    "dashboard.site_requests.statistics",
+    "dashboard.widgets.customize",
+    "dashboard.settings.manage"
+  ],
+  
+  "features": [
+    "Основной дашборд с метриками",
+    "Временные ряды данных",
+    "Топ сущностей по различным критериям",
+    "История активности",
+    "Контроль лимитов и ограничений",
+    "Статистика контрактов",
+    "Последняя активность пользователей",
+    "Статистика заявок с объектов",
+    "Настройка виджетов пользователем",
+    "Управление настройками дашборда",
+    "Реестр доступных виджетов",
+    "Экспорт данных дашборда"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_widgets_per_dashboard": 20,
+    "max_custom_dashboards": 5
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": true,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "tachometer-alt",
+  "display_order": 42
+}

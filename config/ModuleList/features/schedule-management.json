@@ -1,0 +1,66 @@
+{
+  "name": "Управление расписанием",
+  "slug": "schedule-management",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "planning",
+  "description": "Система планирования и управления расписанием работ",
+  
+  "class_name": "App\\BusinessModules\\Features\\ScheduleManagement\\ScheduleManagementModule",
+  "service_provider": "App\\BusinessModules\\Features\\ScheduleManagement\\ScheduleManagementServiceProvider",
+  
+  "pricing": {
+    "base_price": 1990,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "schedule.view",
+    "schedule.create",
+    "schedule.edit",
+    "schedule.delete",
+    "schedule.assign",
+    "schedule.approve",
+    "schedule.export",
+    "schedule.notifications"
+  ],
+  
+  "features": [
+    "Планирование рабочего расписания",
+    "Назначение задач на временные слоты",
+    "Управление сменами и графиками",
+    "Отслеживание выполнения расписания",
+    "Уведомления о изменениях",
+    "Экспорт расписания в различные форматы",
+    "Интеграция с календарными системами",
+    "Автоматическое планирование ресурсов",
+    "Контроль конфликтов в расписании",
+    "Статистика по выполнению планов"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_schedule_entries_per_month": 2000,
+    "max_concurrent_assignments": 100,
+    "planning_horizon_days": 365
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "calendar-alt",
+  "display_order": 25
+}

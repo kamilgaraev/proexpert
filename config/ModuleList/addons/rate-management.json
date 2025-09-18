@@ -1,0 +1,66 @@
+{
+  "name": "Управление расценками",
+  "slug": "rate-management",
+  "version": "1.0.0",
+  "type": "addon",
+  "billing_model": "subscription",
+  "category": "finance",
+  "description": "Система управления расценками и коэффициентами",
+  
+  "class_name": "App\\BusinessModules\\Addons\\RateManagement\\RateManagementModule",
+  "service_provider": "App\\BusinessModules\\Addons\\RateManagement\\RateManagementServiceProvider",
+  
+  "pricing": {
+    "base_price": 2490,
+    "currency": "RUB",
+    "included_in_plan": false,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "rate_coefficients.view",
+    "rate_coefficients.create",
+    "rate_coefficients.edit",
+    "rate_coefficients.delete",
+    "rate_coefficients.apply",
+    "rate_coefficients.export",
+    "rate_coefficients.import"
+  ],
+  
+  "features": [
+    "Управление коэффициентами расценок",
+    "Создание новых расценок",
+    "Редактирование существующих расценок",
+    "Применение коэффициентов к проектам",
+    "Массовое применение расценок",
+    "Экспорт расценок в Excel",
+    "Импорт расценок из внешних источников",
+    "История изменения расценок",
+    "Автоматический пересчет стоимости",
+    "Интеграция с системой контрактов"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "catalog-management",
+    "contract-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_rate_coefficients": 1000,
+    "max_bulk_apply_items": 500,
+    "history_retention_months": 24
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "percentage",
+  "display_order": 33
+}
