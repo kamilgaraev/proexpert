@@ -1,0 +1,91 @@
+{
+  "name": "Управление справочниками",
+  "slug": "catalog-management",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "free",
+  "category": "management",
+  "description": "Система управления справочниками - материалы, подрядчики, единицы измерения",
+  
+  "class_name": "App\\BusinessModules\\Features\\CatalogManagement\\CatalogManagementModule",
+  "service_provider": "App\\BusinessModules\\Features\\CatalogManagement\\CatalogManagementServiceProvider",
+  
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plan": true,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "materials.view",
+    "materials.create",
+    "materials.edit",
+    "materials.delete",
+    "materials.import",
+    "materials.export",
+    "materials.balances.view",
+    "materials.consumption_rates.view",
+    "materials.consumption_rates.edit",
+    "suppliers.view",
+    "suppliers.create", 
+    "suppliers.edit",
+    "suppliers.delete",
+    "contractors.view",
+    "contractors.create",
+    "contractors.edit", 
+    "contractors.delete",
+    "work_types.view",
+    "work_types.create",
+    "work_types.edit",
+    "work_types.delete",
+    "work_types.materials.manage",
+    "measurement_units.view",
+    "measurement_units.create",
+    "measurement_units.edit",
+    "measurement_units.delete",
+    "cost_categories.view",
+    "cost_categories.create",
+    "cost_categories.edit",
+    "cost_categories.delete",
+    "cost_categories.import"
+  ],
+  
+  "features": [
+    "Управление материалами",
+    "Импорт/экспорт материалов",
+    "Балансы материалов",
+    "Нормы списания материалов",
+    "Управление поставщиками",
+    "Управление подрядчиками", 
+    "Управление видами работ",
+    "Связь материалов с видами работ",
+    "Единицы измерения",
+    "Категории затрат",
+    "Поиск по справочникам",
+    "Валидация для бухгалтерских систем"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_materials": null,
+    "max_suppliers": null,
+    "max_contractors": null,
+    "max_work_types": null
+  },
+  
+  "routes": "routes.php", 
+  "migrations": "migrations/",
+  
+  "auto_activate": true,
+  "is_system_module": true,
+  "can_deactivate": false,
+  "icon": "database",
+  "display_order": 12
+}

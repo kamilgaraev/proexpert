@@ -1,0 +1,80 @@
+{
+  "name": "Управление контрактами",
+  "slug": "contract-management",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "free",
+  "category": "management",
+  "description": "Система управления контрактами, соглашениями и спецификациями",
+  
+  "class_name": "App\\BusinessModules\\Features\\ContractManagement\\ContractManagementModule",
+  "service_provider": "App\\BusinessModules\\Features\\ContractManagement\\ContractManagementServiceProvider",
+  
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plan": true,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "contracts.view",
+    "contracts.create",
+    "contracts.edit", 
+    "contracts.delete",
+    "contracts.analytics",
+    "contracts.completed_works.view",
+    "contracts.performance_acts.view",
+    "contracts.performance_acts.create",
+    "contracts.performance_acts.edit",
+    "contracts.performance_acts.delete",
+    "contracts.performance_acts.export",
+    "contracts.payments.view",
+    "contracts.payments.create",
+    "contracts.payments.edit",
+    "contracts.payments.delete",
+    "agreements.view",
+    "agreements.create",
+    "agreements.edit",
+    "agreements.delete",
+    "specifications.view",
+    "specifications.create",
+    "specifications.edit",
+    "specifications.delete"
+  ],
+  
+  "features": [
+    "Создание и управление контрактами",
+    "Детальная аналитика контрактов",
+    "Просмотр выполненных работ",
+    "Управление актами выполненных работ",
+    "Экспорт актов в PDF и Excel",
+    "Управление платежами по контрактам",
+    "Дополнительные соглашения",
+    "Спецификации к контрактам",
+    "Полная детализация контрактов"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_contracts": null,
+    "max_agreements_per_contract": 20,
+    "max_specifications_per_contract": 50
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": true,
+  "is_system_module": true,
+  "can_deactivate": false,
+  "icon": "file-text",
+  "display_order": 11
+}

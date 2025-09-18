@@ -1,0 +1,68 @@
+{
+  "name": "Управление проектами",
+  "slug": "project-management",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "free",
+  "category": "management",
+  "description": "Основная система управления строительными проектами",
+  
+  "class_name": "App\\BusinessModules\\Features\\ProjectManagement\\ProjectManagementModule",
+  "service_provider": "App\\BusinessModules\\Features\\ProjectManagement\\ProjectManagementServiceProvider",
+  
+  "pricing": {
+    "base_price": 0,
+    "currency": "RUB",
+    "included_in_plan": true,
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "projects.view",
+    "projects.create", 
+    "projects.edit",
+    "projects.delete",
+    "projects.archive",
+    "projects.analytics",
+    "projects.foremen.assign",
+    "projects.foremen.detach",
+    "projects.materials.view",
+    "projects.work_types.view",
+    "projects.organizations.manage",
+    "projects.child_works.view",
+    "projects.statistics"
+  ],
+  
+  "features": [
+    "Создание и управление проектами",
+    "Назначение прорабов на проекты", 
+    "Управление материалами проекта",
+    "Управление типами работ",
+    "Связь с организациями",
+    "Аналитика по проектам",
+    "Детализация работ дочерних организаций",
+    "Статистика и отчетность"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_projects": null,
+    "max_foremen_per_project": 10,
+    "max_organizations_per_project": 5
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": true,
+  "is_system_module": true,
+  "can_deactivate": false,
+  "icon": "folder-open",
+  "display_order": 10
+}
