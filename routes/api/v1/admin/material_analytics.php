@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\MaterialAnalyticsController;
 
-Route::prefix('materials/analytics')->name('materials.analytics.')->group(function () {
+Route::prefix('materials')->name('materials.')->group(function () {
     Route::get('summary', [MaterialAnalyticsController::class, 'summary'])->name('summary');
     Route::get('usage-by-projects', [MaterialAnalyticsController::class, 'usageByProjects'])->name('usage_by_projects');
     Route::get('usage-by-suppliers', [MaterialAnalyticsController::class, 'usageBySuppliers'])->name('usage_by_suppliers');

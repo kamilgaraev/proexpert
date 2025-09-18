@@ -55,4 +55,4 @@ Route::prefix('schedules')->group(function () {
         ->name('schedules.recent');
     Route::get('resource-conflicts', [ProjectScheduleController::class, 'allResourceConflicts'])
         ->name('schedules.all-resource-conflicts');
-}); 
+});
