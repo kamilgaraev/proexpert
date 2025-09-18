@@ -63,6 +63,11 @@ jobs:
             php artisan modules:scan --force
             echo "✅ Modules scan completed successfully"
             
+            # КРИТИЧНО: Принудительная очистка кэша модулей
+            echo "🔄 Clearing module access cache..."
+            php artisan cache:clear
+            echo "✅ Module cache cleared successfully"
+            
             php artisan route:clear || true
             php artisan config:clear || true
             php artisan view:clear || true
