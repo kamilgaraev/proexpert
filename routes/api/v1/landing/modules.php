@@ -21,6 +21,9 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
         Route::get('/{moduleSlug}/preview', [ModuleController::class, 'activationPreview'])
             ->name('activation-preview');
         
+        Route::get('/{moduleSlug}/deactivation-preview', [ModuleController::class, 'deactivationPreview'])
+            ->name('deactivation-preview');
+        
         Route::post('/check-access', [ModuleController::class, 'checkAccess'])
             ->name('check-access');
         

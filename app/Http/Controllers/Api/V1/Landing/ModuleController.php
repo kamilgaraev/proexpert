@@ -152,6 +152,27 @@ class ModuleController extends Controller
     }
 
     /**
+     * Превью деактивации модуля - показать что потеряет пользователь
+     */
+    public function deactivationPreview(Request $request, string $moduleSlug): JsonResponse
+    {
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        }
+
+        $result = $this->moduleManager->deactivationPreview($organizationId, $moduleSlug);
+
+        if (!$result['success']) {
+            return (new ErrorResponse($result['message'], $result['code'] === 'MODULE_NOT_FOUND' ? 404 : 400))->toResponse($request);
+        }
+
+        return (new SuccessResponse($result))->toResponse($request);
+    }
+
+    /**
      * Деактивировать модуль
      */
     public function deactivate(Request $request, string $moduleSlug): JsonResponse

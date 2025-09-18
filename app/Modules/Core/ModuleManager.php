@@ -154,6 +154,100 @@ class ModuleManager
         }
     }
     
+    public function deactivationPreview(int $organizationId, string $moduleSlug): array
+    {
+        $module = $this->registry->getModule($moduleSlug);
+        
+        if (!$module) {
+            return [
+                'success' => false,
+                'message' => 'Модуль не найден',
+                'code' => 'MODULE_NOT_FOUND'
+            ];
+        }
+        
+        if (!$module->can_deactivate) {
+            return [
+                'success' => false,
+                'message' => 'Данный модуль нельзя деактивировать, так как он является системным',
+                'code' => 'MODULE_CANNOT_BE_DEACTIVATED'
+            ];
+        }
+        
+        $activation = OrganizationModuleActivation::where('organization_id', $organizationId)
+            ->where('module_id', $module->id)
+            ->where('status', 'active')
+            ->first();
+            
+        if (!$activation) {
+            return [
+                'success' => false,
+                'message' => 'Модуль не активирован',
+                'code' => 'MODULE_NOT_ACTIVE'
+            ];
+        }
+
+        // Рассчитываем возможный возврат
+        $refundAmount = 0;
+        if ($activation->expires_at) {
+            $refundAmount = $this->billingEngine->calculateRefundAmount(
+                $module, 
+                $activation->activated_at, 
+                $activation->expires_at
+            );
+        }
+
+        // Проверяем зависимые модули
+        $dependentModules = $this->findDependentModules($organizationId, $moduleSlug);
+        $canDeactivate = empty($dependentModules);
+
+        // Собираем информацию о потерях
+        $lossesInfo = [
+            'features' => $module->features ?? [],
+            'permissions' => $module->permissions ?? [],
+            'functionality' => $this->getModuleFunctionality($module),
+        ];
+
+        $organization = Organization::findOrFail($organizationId);
+        $currentBalance = $this->billingEngine->getBalance($organization);
+
+        return [
+            'success' => true,
+            'preview' => [
+                'module' => [
+                    'name' => $module->name,
+                    'slug' => $module->slug,
+                    'description' => $module->description,
+                    'type' => $module->type,
+                    'billing_model' => $module->billing_model,
+                    'icon' => $module->icon
+                ],
+                'activation' => [
+                    'activated_at' => $activation->activated_at,
+                    'expires_at' => $activation->expires_at,
+                    'status' => $activation->status,
+                    'days_used' => $activation->activated_at->diffInDays(now()),
+                    'days_remaining' => $activation->expires_at ? max(0, now()->diffInDays($activation->expires_at, false)) : 0
+                ],
+                'financial_impact' => [
+                    'refund_amount' => $refundAmount,
+                    'currency' => $module->getCurrency(),
+                    'current_balance' => $currentBalance,
+                    'balance_after_refund' => $currentBalance + $refundAmount
+                ],
+                'what_you_lose' => $lossesInfo,
+                'dependent_modules' => $dependentModules,
+                'warnings' => $this->getDeactivationWarnings($module, $dependentModules),
+                'can_proceed' => $canDeactivate
+            ],
+            'message' => $canDeactivate 
+                ? ($refundAmount > 0 
+                    ? "При отмене модуля '{$module->name}' вам будет возвращено {$refundAmount} руб." 
+                    : "Модуль '{$module->name}' можно отменить без возврата средств.")
+                : "Модуль '{$module->name}' нельзя отменить, так как от него зависят другие активные модули."
+        ];
+    }
+
     public function deactivateModule(int $organizationId, string $moduleSlug, bool $withRefund = false): array
     {
         $module = $this->registry->getModule($moduleSlug);
@@ -260,5 +354,125 @@ class ModuleManager
     public function getModulesByType(string $type): Collection
     {
         return $this->registry->getModulesByType($type);
+    }
+    
+    protected function findDependentModules(int $organizationId, string $moduleSlug): array
+    {
+        $dependentModules = [];
+        $activeModules = $this->getOrganizationModules($organizationId);
+        
+        foreach ($activeModules as $activeModule) {
+            if ($activeModule->dependencies && in_array($moduleSlug, $activeModule->dependencies)) {
+                $dependentModules[] = [
+                    'name' => $activeModule->name,
+                    'slug' => $activeModule->slug,
+                    'type' => $activeModule->type,
+                    'description' => $activeModule->description
+                ];
+            }
+        }
+        
+        return $dependentModules;
+    }
+    
+    protected function getModuleFunctionality(Module $module): array
+    {
+        $functionality = [];
+        
+        // Определяем ключевую функциональность по типу модуля
+        switch ($module->slug) {
+            case 'project-management':
+                $functionality = [
+                    'Создание и управление проектами',
+                    'Назначение прорабов на объекты',
+                    'Аналитика по проектам',
+                    'Управление материалами проектов'
+                ];
+                break;
+                
+            case 'contract-management':
+                $functionality = [
+                    'Управление контрактами и договорами',
+                    'Создание актов выполненных работ',
+                    'Управление платежами',
+                    'Экспорт документов в PDF/Excel'
+                ];
+                break;
+                
+            case 'workflow-management':
+                $functionality = [
+                    'Система заявок с объектов',
+                    'Управление выполненными работами',
+                    'Уведомления по заявкам',
+                    'Статистика рабочих процессов'
+                ];
+                break;
+                
+            case 'multi-organization':
+                $functionality = [
+                    'Управление дочерними организациями',
+                    'Иерархическая структура доступа',
+                    'Консолидированная отчетность',
+                    'Создание корпоративных сайтов'
+                ];
+                break;
+                
+            default:
+                // Используем features из модуля или общее описание
+                $functionality = $module->features ?? ['Базовая функциональность модуля'];
+        }
+        
+        return $functionality;
+    }
+    
+    protected function getDeactivationWarnings(Module $module, array $dependentModules): array
+    {
+        $warnings = [];
+        
+        if (!empty($dependentModules)) {
+            $moduleNames = array_column($dependentModules, 'name');
+            $warnings[] = [
+                'type' => 'dependencies',
+                'severity' => 'error',
+                'message' => 'Невозможно отключить модуль, так как от него зависят: ' . implode(', ', $moduleNames)
+            ];
+        }
+        
+        if ($module->billing_model === 'subscription' && $module->getPrice() > 0) {
+            $warnings[] = [
+                'type' => 'billing',
+                'severity' => 'info',
+                'message' => 'При отмене подписки на модуль будет произведен пропорциональный возврат средств'
+            ];
+        }
+        
+        if ($module->type === 'core') {
+            $warnings[] = [
+                'type' => 'system',
+                'severity' => 'warning', 
+                'message' => 'Отключение системного модуля может повлиять на работу других компонентов'
+            ];
+        }
+        
+        // Специальные предупреждения для конкретных модулей
+        switch ($module->slug) {
+            case 'project-management':
+                $warnings[] = [
+                    'type' => 'data_loss',
+                    'severity' => 'warning',
+                    'message' => 'Доступ к данным проектов и назначениям прорабов будет ограничен'
+                ];
+                break;
+                
+            case 'multi-organization':
+                $warnings[] = [
+                    'type' => 'access_loss',
+                    'severity' => 'warning',
+                    'message' => 'Потеряете доступ к управлению дочерними организациями и консолидированной отчетности'
+                ];
+                break;
+        }
+        
+        return $warnings;
     }
 }
