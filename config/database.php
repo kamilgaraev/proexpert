@@ -143,7 +143,7 @@ return [
 
     'redis' => [
 
-        'client' => env('REDIS_CLIENT', 'phpredis'),
+        'client' => env('REDIS_CLIENT', 'predis'),
 
         'options' => [
             'cluster' => env('REDIS_CLUSTER', 'redis'),
@@ -152,18 +152,18 @@ return [
 
         'default' => [
             'url' => env('REDIS_URL'),
-            'host' => env('REDIS_HOST', '127.0.0.1'),
-            'username' => env('REDIS_USERNAME'),
-            'password' => env('REDIS_PASSWORD'),
+            'host' => env('REDIS_HOST', '217.198.12.204'),
+            'username' => env('REDIS_USERNAME', 'default'),
+            'password' => env('REDIS_PASSWORD', '=@GZ{<cuCfJWv2'),
             'port' => env('REDIS_PORT', '6379'),
             'database' => env('REDIS_DB', '0'),
         ],
 
         'cache' => [
             'url' => env('REDIS_URL'),
-            'host' => env('REDIS_HOST', '127.0.0.1'),
-            'username' => env('REDIS_USERNAME'),
-            'password' => env('REDIS_PASSWORD'),
+            'host' => env('REDIS_HOST', '217.198.12.204'),
+            'username' => env('REDIS_USERNAME', 'default'),
+            'password' => env('REDIS_PASSWORD', '=@GZ{<cuCfJWv2'),
             'port' => env('REDIS_PORT', '6379'),
             'database' => env('REDIS_CACHE_DB', '1'),
         ],
