@@ -21,6 +21,21 @@
     "multi-organization": [
       "multi-organization.view",
       "multi-organization.reports.view"
+    ],
+    "project-management": [
+      "projects.view", "projects.materials.view", "projects.work_types.view", "projects.statistics"
+    ],
+    "contract-management": [
+      "contracts.view", "contracts.completed_works.view",
+      "contracts.performance_acts.view", "contracts.payments.view",
+      "agreements.view", "specifications.view"
+    ],
+    "catalog-management": [
+      "materials.view", "materials.balances.view", "suppliers.view", 
+      "contractors.view", "work_types.view", "cost_categories.view"
+    ],
+    "workflow-management": [
+      "site_requests.view", "completed_works.view"
     ]
   },
   

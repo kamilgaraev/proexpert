@@ -32,6 +32,19 @@
       "personnel.view_assigned",
       "personnel.assign_tasks",
       "personnel.track_attendance"
+    ],
+    "project-management": [
+      "projects.view", "projects.materials.view", "projects.work_types.view"
+    ],
+    "contract-management": [
+      "contracts.view", "contracts.completed_works.view"
+    ],
+    "catalog-management": [
+      "materials.view", "work_types.view"
+    ],
+    "workflow-management": [
+      "site_requests.view", "site_requests.create", "site_requests.files.upload",
+      "completed_works.view", "completed_works.create", "completed_works.materials.sync"
     ]
   },
   

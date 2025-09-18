@@ -26,6 +26,23 @@
       "multi-organization.reports.dashboard",
       "multi-organization.reports.financial",
       "multi-organization.reports.kpi"
+    ],
+    "project-management": [
+      "projects.view", "projects.statistics"
+    ],
+    "contract-management": [
+      "contracts.view", "contracts.analytics", "contracts.completed_works.view",
+      "contracts.performance_acts.view", "contracts.performance_acts.export",
+      "contracts.payments.view", "contracts.payments.create", "contracts.payments.edit",
+      "agreements.view", "specifications.view"
+    ],
+    "catalog-management": [
+      "materials.view", "materials.balances.view", "suppliers.view", 
+      "contractors.view", "work_types.view", "cost_categories.view"
+    ],
+    "workflow-management": [
+      "site_requests.view", "site_requests.statistics",
+      "completed_works.view"
     ]
   },
   

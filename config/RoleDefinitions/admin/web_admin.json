@@ -38,7 +38,36 @@
     "reports": ["reports.view", "reports.export"],
     "personnel": ["personnel.view", "personnel.manage"],
     "time-tracking": ["time-tracking.view", "time-tracking.manage"],
-    "site-requests": ["site-requests.view", "site-requests.edit"]
+    "site-requests": ["site-requests.view", "site-requests.edit"],
+    "project-management": [
+      "projects.view", "projects.create", "projects.edit", "projects.delete", 
+      "projects.analytics", "projects.foremen.assign", "projects.foremen.detach",
+      "projects.materials.view", "projects.work_types.view", 
+      "projects.organizations.manage", "projects.statistics"
+    ],
+    "contract-management": [
+      "contracts.view", "contracts.create", "contracts.edit", "contracts.delete",
+      "contracts.analytics", "contracts.completed_works.view", 
+      "contracts.performance_acts.view", "contracts.performance_acts.create",
+      "contracts.performance_acts.edit", "contracts.performance_acts.export",
+      "contracts.payments.view", "contracts.payments.create", "contracts.payments.edit",
+      "agreements.view", "agreements.create", "agreements.edit", "agreements.delete",
+      "specifications.view", "specifications.create", "specifications.edit", "specifications.delete"
+    ],
+    "catalog-management": [
+      "materials.view", "materials.create", "materials.edit", "materials.delete",
+      "materials.import", "materials.export", "materials.balances.view",
+      "suppliers.view", "suppliers.create", "suppliers.edit", "suppliers.delete",
+      "contractors.view", "contractors.create", "contractors.edit", "contractors.delete",
+      "work_types.view", "work_types.create", "work_types.edit", "work_types.delete",
+      "work_types.materials.manage", "measurement_units.view", "cost_categories.view"
+    ],
+    "workflow-management": [
+      "site_requests.view", "site_requests.create", "site_requests.edit", "site_requests.delete",
+      "site_requests.files.upload", "site_requests.files.delete", "site_requests.statistics",
+      "completed_works.view", "completed_works.create", "completed_works.edit", "completed_works.delete",
+      "completed_works.materials.sync", "completed_works.work_type_defaults.view"
+    ]
   },
   
   "interface_access": ["admin"],

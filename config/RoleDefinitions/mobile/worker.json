@@ -24,6 +24,18 @@
     "reports": [
       "reports.create_work_report",
       "reports.photo_upload"
+    ],
+    "project-management": [
+      "projects.view"
+    ],
+    "contract-management": [
+      "contracts.view"
+    ],
+    "catalog-management": [
+      "materials.view"
+    ],
+    "workflow-management": [
+      "site_requests.view", "completed_works.view"
     ]
   },
   

@@ -33,7 +33,11 @@
     "finance": ["*"],
     "contracts": ["*"],
     "personnel": ["*"],
-    "multi-organization": ["*"]
+    "multi-organization": ["*"],
+    "project-management": ["*"],
+    "contract-management": ["*"],
+    "catalog-management": ["*"],
+    "workflow-management": ["*"]
   },
   
   "interface_access": ["lk", "admin"],

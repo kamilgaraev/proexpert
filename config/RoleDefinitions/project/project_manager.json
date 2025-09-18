@@ -32,6 +32,27 @@
       "personnel.view",
       "personnel.assign",
       "personnel.manage_team"
+    ],
+    "project-management": [
+      "projects.view", "projects.edit", "projects.analytics",
+      "projects.foremen.assign", "projects.foremen.detach",
+      "projects.materials.view", "projects.work_types.view",
+      "projects.statistics"
+    ],
+    "contract-management": [
+      "contracts.view", "contracts.edit", "contracts.analytics",
+      "contracts.completed_works.view", "contracts.performance_acts.view",
+      "contracts.performance_acts.create", "contracts.performance_acts.edit",
+      "contracts.payments.view", "agreements.view", "specifications.view"
+    ],
+    "catalog-management": [
+      "materials.view", "materials.edit", "suppliers.view", "contractors.view",
+      "work_types.view", "measurement_units.view"
+    ],
+    "workflow-management": [
+      "site_requests.view", "site_requests.create", "site_requests.edit",
+      "site_requests.statistics", "completed_works.view", "completed_works.create",
+      "completed_works.edit", "completed_works.materials.sync"
     ]
   },
   
