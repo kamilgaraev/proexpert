@@ -307,5 +307,5 @@
   $ref: './agreements.yaml#/~1contracts~1{contractId}~1agreements'
 /specifications:
   $ref: './specifications.yaml#/~1specifications'
-/specifications/{specificationId}:
-  $ref: './specifications.yaml#/~1specifications~1{specificationId}'
+/specifications/{id}:
+  $ref: './specifications.yaml#/~1specifications~1{id}'

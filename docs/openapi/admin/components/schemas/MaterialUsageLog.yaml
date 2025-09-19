@@ -1,2 +1,134 @@
-allOf:
-  - $ref: './MaterialUsageLogEntry.yaml' 
+type: object
+description: Лог использования материалов с полной информацией о операции.
+properties:
+  id:
+    type: integer
+    description: Уникальный идентификатор лога
+    example: 245
+  organization_id:
+    type: integer
+    description: ID организации
+    example: 10
+  project_id:
+    type: integer
+    description: ID проекта
+    example: 25
+  project_name:
+    type: string
+    nullable: true
+    description: Название проекта (если загружено)
+    example: "Жилой комплекс Солнечный"
+  material_id:
+    type: integer
+    description: ID материала
+    example: 45
+  material_name:
+    type: string
+    nullable: true
+    description: Название материала (если загружено)
+    example: "Кирпич керамический рядовой"
+  user_id:
+    type: integer
+    description: ID пользователя (прораба), создавшего лог
+    example: 15
+  user_name:
+    type: string
+    nullable: true
+    description: Имя пользователя (если загружено)
+    example: "Иванов Иван Иванович"
+  operation_type:
+    type: string
+    enum: [receipt, write_off]
+    description: Тип операции (приемка или списание)
+    example: "write_off"
+  operation_type_readable:
+    type: string
+    description: Человекочитаемый тип операции
+    example: "Списание"
+  quantity:
+    type: number
+    format: decimal
+    description: Количество материала
+    example: 150.500
+  unit_symbol:
+    type: string
+    nullable: true
+    description: Символ единицы измерения (если загружено)
+    example: "шт"
+  unit_price:
+    type: number
+    format: decimal
+    nullable: true
+    description: Цена за единицу
+    example: 25.50
+  total_price:
+    type: number
+    format: decimal
+    nullable: true
+    description: Общая стоимость
+    example: 3837.75
+  supplier_id:
+    type: integer
+    nullable: true
+    description: ID поставщика (для операций приемки)
+    example: 12
+  supplier_name:
+    type: string
+    nullable: true
+    description: Название поставщика (если загружено)
+    example: "ООО Стройматериалы"
+  document_number:
+    type: string
+    nullable: true
+    description: Номер документа (накладной, акта списания)
+    example: "НАК-2024-0125"
+  invoice_date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата накладной/документа
+    example: "2024-12-15"
+  work_type_id:
+    type: integer
+    nullable: true
+    description: ID вида работ (для операций списания)
+    example: 28
+  work_type_name:
+    type: string
+    nullable: true
+    description: Название вида работ (если загружено)
+    example: "Кирпичная кладка стен"
+  usage_date:
+    type: string
+    format: date
+    description: Дата операции (списания/приемки)
+    example: "2024-12-20"
+  notes:
+    type: string
+    nullable: true
+    description: Дополнительные заметки
+    example: "Материал использован для кладки несущих стен 1-го этажа"
+  photo_url:
+    type: string
+    nullable: true
+    description: URL фотографии операции
+    example: "https://example.com/storage/material_logs/245/photo.jpg"
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания записи лога
+    example: "2024-12-20T14:30:00Z"
+  updated_at:
+    type: string
+    format: date-time
+    description: Дата последнего обновления записи
+    example: "2024-12-20T14:30:00Z"
+required:
+  - id
+  - organization_id
+  - project_id
+  - material_id
+  - user_id
+  - operation_type
+  - quantity
+  - usage_date

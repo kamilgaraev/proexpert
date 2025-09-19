@@ -1,136 +1,285 @@
 /logs/material-usage:
   get:
-    tags: [OperationLogs]
+    tags: [Logs]
     summary: Получить логи использования материалов
+    description: |
+      Возвращает пагинированный список логов операций с материалами
+      (приемка и списание) для текущей организации администратора.
+      Поддерживает фильтрацию по проектам, материалам, пользователям,
+      датам и типам операций.
     parameters:
       - in: query
         name: project_id
         schema:
           type: integer
+        description: Фильтр по проекту
+        example: 25
       - in: query
         name: material_id
         schema:
           type: integer
+        description: Фильтр по материалу
+        example: 45
       - in: query
         name: user_id
         schema:
           type: integer
-      - in: query
-        name: supplier_id
-        schema:
-          type: integer
+        description: Фильтр по пользователю (прорабу)
+        example: 15
       - in: query
         name: operation_type
         schema:
           type: string
           enum: [receipt, write_off]
+        description: Фильтр по типу операции
+        example: "write_off"
       - in: query
         name: date_from
         schema:
           type: string
           format: date
+        description: Фильтр по дате начала периода
+        example: "2024-12-01"
       - in: query
         name: date_to
         schema:
           type: string
           format: date
+        description: Фильтр по дате окончания периода
+        example: "2024-12-31"
       - in: query
         name: per_page
         schema:
           type: integer
           default: 15
-      - in: query
-        name: page
-        schema:
-          type: integer
-          default: 1
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 15
       - in: query
         name: sort_by
         schema:
           type: string
-          enum: [id, usage_date, created_at, quantity]
-          default: usage_date
+          default: "created_at"
+        description: Поле для сортировки
+        example: "usage_date"
       - in: query
         name: sort_direction
         schema:
           type: string
           enum: [asc, desc]
-          default: desc
+          default: "desc"
+        description: Направление сортировки
+        example: "desc"
     responses:
       "200":
-        description: Список логов
+        description: Логи материалов успешно получены
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/MaterialUsageLogEntry.yaml'
+              $ref: '../components/schemas/MaterialUsageLogCollection.yaml'
+            example:
+              data:
+                - id: 245
+                  organization_id: 10
+                  project_id: 25
+                  project_name: "Жилой комплекс Солнечный"
+                  material_id: 45
+                  material_name: "Кирпич керамический рядовой"
+                  user_id: 15
+                  user_name: "Иванов Иван Иванович"
+                  operation_type: "write_off"
+                  operation_type_readable: "Списание"
+                  quantity: 150.500
+                  unit_symbol: "шт"
+                  unit_price: 25.50
+                  total_price: 3837.75
+                  work_type_id: 28
+                  work_type_name: "Кирпичная кладка стен"
+                  usage_date: "2024-12-20"
+                  notes: "Материал использован для кладки несущих стен"
+                  photo_url: "https://example.com/storage/material_logs/245/photo.jpg"
+                  created_at: "2024-12-20T14:30:00Z"
+              links:
+                first: "http://example.com/api/v1/admin/logs/material-usage?page=1"
+                last: "http://example.com/api/v1/admin/logs/material-usage?page=8"
+                prev: null
+                next: "http://example.com/api/v1/admin/logs/material-usage?page=2"
+              meta:
+                current_page: 1
+                per_page: 15
+                total: 112
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен для просмотра логов."
+      "403":
+        description: Недостаточно прав для просмотра логов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "This action is unauthorized."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка сервера при запросе логов материалов."
 
 /logs/work-completion:
   get:
-    tags: [OperationLogs]
+    tags: [Logs]
     summary: Получить логи выполнения работ
+    description: |
+      Возвращает пагинированный список логов выполненных работ
+      для текущей организации администратора.
+      Поддерживает фильтрацию по проектам, видам работ, пользователям
+      и датам выполнения.
     parameters:
       - in: query
         name: project_id
         schema:
           type: integer
+        description: Фильтр по проекту
+        example: 25
       - in: query
         name: work_type_id
         schema:
           type: integer
+        description: Фильтр по виду работ
+        example: 28
       - in: query
         name: user_id
         schema:
           type: integer
+        description: Фильтр по пользователю (прорабу)
+        example: 15
       - in: query
         name: date_from
         schema:
           type: string
           format: date
+        description: Фильтр по дате начала периода выполнения
+        example: "2024-12-01"
       - in: query
         name: date_to
         schema:
           type: string
           format: date
+        description: Фильтр по дате окончания периода выполнения
+        example: "2024-12-31"
       - in: query
         name: per_page
         schema:
           type: integer
           default: 15
-      - in: query
-        name: page
-        schema:
-          type: integer
-          default: 1
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 15
       - in: query
         name: sort_by
         schema:
           type: string
-          enum: [id, completion_date, created_at, quantity]
-          default: completion_date
+          default: "created_at"
+        description: Поле для сортировки
+        example: "completion_date"
       - in: query
         name: sort_direction
         schema:
           type: string
           enum: [asc, desc]
-          default: desc
+          default: "desc"
+        description: Направление сортировки
+        example: "desc"
     responses:
       "200":
-        description: Список логов
+        description: Логи работ успешно получены
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/WorkCompletionLogEntry.yaml' 
+              $ref: '../components/schemas/WorkCompletionLogCollection.yaml'
+            example:
+              data:
+                - id: 185
+                  organization_id: 10
+                  project_id: 25
+                  project_name: "Жилой комплекс Солнечный"
+                  work_type_id: 28
+                  work_type_name: "Кирпичная кладка стен"
+                  user_id: 15
+                  user_name: "Иванов Иван Иванович"
+                  quantity: 45.250
+                  unit_symbol: "м²"
+                  unit_price: 850.00
+                  total_price: 38462.50
+                  completion_date: "2024-12-20"
+                  performers_description: "Бригада каменщиков: Петров П.П., Сидоров С.С."
+                  notes: "Кладка выполнена согласно проекту"
+                  photo_url: "https://example.com/storage/work_logs/185/photo.jpg"
+                  created_at: "2024-12-20T16:45:00Z"
+              links:
+                first: "http://example.com/api/v1/admin/logs/work-completion?page=1"
+                last: "http://example.com/api/v1/admin/logs/work-completion?page=6"
+                prev: null
+                next: "http://example.com/api/v1/admin/logs/work-completion?page=2"
+              meta:
+                current_page: 1
+                per_page: 15
+                total: 89
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен для просмотра логов."
+      "403":
+        description: Недостаточно прав для просмотра логов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "This action is unauthorized."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка сервера при запросе логов работ."

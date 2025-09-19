@@ -1,2 +1,98 @@
-allOf:
-  - $ref: './WorkCompletionLogEntry.yaml' 
+type: object
+description: Лог выполнения работ с полной информацией об операции.
+properties:
+  id:
+    type: integer
+    description: Уникальный идентификатор лога
+    example: 185
+  organization_id:
+    type: integer
+    description: ID организации
+    example: 10
+  project_id:
+    type: integer
+    description: ID проекта
+    example: 25
+  project_name:
+    type: string
+    nullable: true
+    description: Название проекта (если загружено)
+    example: "Жилой комплекс Солнечный"
+  work_type_id:
+    type: integer
+    description: ID вида работ
+    example: 28
+  work_type_name:
+    type: string
+    nullable: true
+    description: Название вида работ (если загружено)
+    example: "Кирпичная кладка стен"
+  user_id:
+    type: integer
+    description: ID пользователя (прораба), создавшего лог
+    example: 15
+  user_name:
+    type: string
+    nullable: true
+    description: Имя пользователя (если загружено)
+    example: "Иванов Иван Иванович"
+  quantity:
+    type: number
+    format: decimal
+    nullable: true
+    description: Количество выполненных работ
+    example: 45.250
+  unit_symbol:
+    type: string
+    nullable: true
+    description: Символ единицы измерения (если загружено)
+    example: "м²"
+  unit_price:
+    type: number
+    format: decimal
+    nullable: true
+    description: Цена за единицу работы
+    example: 850.00
+  total_price:
+    type: number
+    format: decimal
+    nullable: true
+    description: Общая стоимость выполненных работ
+    example: 38462.50
+  completion_date:
+    type: string
+    format: date
+    description: Дата выполнения работ
+    example: "2024-12-20"
+  performers_description:
+    type: string
+    nullable: true
+    description: Описание исполнителей работ
+    example: "Бригада каменщиков: Петров П.П., Сидоров С.С., Кузнецов К.К."
+  notes:
+    type: string
+    nullable: true
+    description: Дополнительные заметки о выполненных работах
+    example: "Кладка выполнена согласно проекту, соблюдена технология"
+  photo_url:
+    type: string
+    nullable: true
+    description: URL фотографии выполненных работ
+    example: "https://example.com/storage/work_logs/185/photo.jpg"
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания записи лога
+    example: "2024-12-20T16:45:00Z"
+  updated_at:
+    type: string
+    format: date-time
+    description: Дата последнего обновления записи
+    example: "2024-12-20T16:45:00Z"
+required:
+  - id
+  - organization_id
+  - project_id
+  - work_type_id
+  - user_id
+  - completion_date

@@ -1,0 +1,55 @@
+type: object
+description: Пагинированная коллекция логов использования материалов.
+properties:
+  data:
+    type: array
+    description: Массив логов использования материалов
+    items:
+      $ref: './MaterialUsageLog.yaml'
+  links:
+    type: object
+    description: Ссылки для навигации по страницам
+    properties:
+      first:
+        type: string
+        nullable: true
+        example: "http://example.com/api/v1/admin/logs/material-usage?page=1"
+      last:
+        type: string
+        nullable: true
+        example: "http://example.com/api/v1/admin/logs/material-usage?page=8"
+      prev:
+        type: string
+        nullable: true
+        example: null
+      next:
+        type: string
+        nullable: true
+        example: "http://example.com/api/v1/admin/logs/material-usage?page=2"
+  meta:
+    type: object
+    description: Метаданные пагинации
+    properties:
+      current_page:
+        type: integer
+        example: 1
+      from:
+        type: integer
+        nullable: true
+        example: 1
+      last_page:
+        type: integer
+        example: 8
+      path:
+        type: string
+        example: "http://example.com/api/v1/admin/logs/material-usage"
+      per_page:
+        type: integer
+        example: 15
+      to:
+        type: integer
+        nullable: true
+        example: 15
+      total:
+        type: integer
+        example: 112
