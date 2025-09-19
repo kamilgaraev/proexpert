@@ -78,18 +78,30 @@
   $ref: './billing.yaml#/~1billing~1dashboard'
 /modules:
   $ref: './modules.yaml#/~1modules'
-/modules/available:
-  $ref: './modules.yaml#/~1modules~1available'
+/modules/active:
+  $ref: './modules.yaml#/~1modules~1active'
 /modules/expiring:
   $ref: './modules.yaml#/~1modules~1expiring'
+/modules/{moduleSlug}/preview:
+  $ref: './modules.yaml#/~1modules~1{moduleSlug}~1preview'
+/modules/{moduleSlug}/deactivation-preview:
+  $ref: './modules.yaml#/~1modules~1{moduleSlug}~1deactivation-preview'
 /modules/check-access:
   $ref: './modules.yaml#/~1modules~1check-access'
+/modules/permissions:
+  $ref: './modules.yaml#/~1modules~1permissions'
 /modules/activate:
   $ref: './modules.yaml#/~1modules~1activate'
-/modules/{moduleId}:
-  $ref: './modules.yaml#/~1modules~1{moduleId}'
-/modules/{moduleId}/renew:
-  $ref: './modules.yaml#/~1modules~1{moduleId}~1renew'
+/modules/bulk-activate:
+  $ref: './modules.yaml#/~1modules~1bulk-activate'
+/modules/{moduleSlug}:
+  $ref: './modules.yaml#/~1modules~1{moduleSlug}'
+/modules/{moduleSlug}/renew:
+  $ref: './modules.yaml#/~1modules~1{moduleSlug}~1renew'
+/modules/billing:
+  $ref: './modules.yaml#/~1modules~1billing'
+/modules/billing/history:
+  $ref: './modules.yaml#/~1modules~1billing~1history'
 /multi-organization/check-availability:
   $ref: './multi_organization.yaml#/~1multi-organization~1check-availability'
 /multi-organization/hierarchy:
