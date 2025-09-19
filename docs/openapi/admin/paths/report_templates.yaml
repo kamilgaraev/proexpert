@@ -1,86 +1,434 @@
 /report-templates:
   get:
-    tags: [ReportTemplates]
+    tags: [Report Templates]
     summary: Получить список шаблонов отчетов
+    description: |
+      Возвращает пагинированный список шаблонов отчетов для текущей организации.
+      Поддерживает пагинацию с настраиваемым размером страницы.
+    parameters:
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 15
+        description: Количество элементов на странице
+        example: 15
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+        description: Номер страницы
+        example: 1
     responses:
       "200":
-        description: Список шаблонов
+        description: Список шаблонов отчетов успешно получен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
+              $ref: '../components/schemas/ReportTemplateCollection.yaml'
+            example:
+              data:
+                - id: 15
+                  name: "Детальный отчет по материалам"
+                  report_type: "material_usage"
+                  organization_id: 10
+                  user_id: 25
+                  columns_config:
+                    - header: "Название материала"
+                      data_key: "material.name"
+                      order: 1
+                      format_options: null
+                    - header: "Количество"
+                      data_key: "quantity"
+                      order: 2
+                      format_options: {"number_format": "decimal"}
+                  is_default: true
+                  created_at: "2024-01-15T09:00:00Z"
+                  updated_at: "2024-12-20T16:45:00Z"
+                - id: 16
+                  name: "Стандартный отчет по работам"
+                  report_type: "work_completion"
+                  organization_id: 10
+                  user_id: 25
+                  columns_config:
+                    - header: "Тип работы"
+                      data_key: "work_type.name"
+                      order: 1
+                      format_options: null
+                  is_default: false
+                  created_at: "2024-02-10T10:00:00Z"
+                  updated_at: "2024-02-10T10:00:00Z"
+              links:
+                first: "http://localhost/api/v1/admin/report-templates?page=1"
+                last: "http://localhost/api/v1/admin/report-templates?page=2"
+                prev: null
+                next: "http://localhost/api/v1/admin/report-templates?page=2"
+              meta:
+                current_page: 1
+                from: 1
+                last_page: 2
+                path: "http://localhost/api/v1/admin/report-templates"
+                per_page: 15
+                to: 15
+                total: 18
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
                   properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/ReportTemplate.yaml'
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен."
   post:
-    tags: [ReportTemplates]
-    summary: Создать шаблон отчета
+    tags: [Report Templates]
+    summary: Создать новый шаблон отчета
+    description: |
+      Создает новый шаблон отчета для текущей организации.
+      Автоматически устанавливает organization_id и user_id из контекста.
+      При установке is_default=true автоматически сбрасывает флаг у других шаблонов этого типа.
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/ReportTemplateCreateRequest.yaml'
+          examples:
+            material_usage_template:
+              summary: "Шаблон отчета по материалам"
+              value:
+                name: "Детальный отчет по расходу материалов"
+                report_type: "material_usage"
+                columns_config:
+                  - header: "Название материала"
+                    data_key: "material.name"
+                    order: 1
+                    format_options: null
+                  - header: "Количество"
+                    data_key: "quantity"
+                    order: 2
+                    format_options: {"number_format": "decimal"}
+                  - header: "Единица измерения"
+                    data_key: "material.unit"
+                    order: 3
+                    format_options: null
+                  - header: "Стоимость"
+                    data_key: "total_cost"
+                    order: 4
+                    format_options: {"number_format": "currency", "currency": "RUB"}
+                is_default: true
+            work_completion_template:
+              summary: "Шаблон отчета по работам"
+              value:
+                name: "Стандартный отчет по выполненным работам"
+                report_type: "work_completion"
+                columns_config:
+                  - header: "Тип работы"
+                    data_key: "work_type.name"
+                    order: 1
+                    format_options: null
+                  - header: "Проект"
+                    data_key: "project.name"
+                    order: 2
+                    format_options: null
+                  - header: "Объем работ"
+                    data_key: "quantity"
+                    order: 3
+                    format_options: {"number_format": "decimal"}
+                is_default: false
     responses:
       "201":
-        description: Шаблон создан
+        description: Шаблон отчета успешно создан
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ReportTemplateResponse.yaml'
+              $ref: '../components/schemas/ReportTemplate.yaml'
+            example:
+              id: 20
+              name: "Детальный отчет по расходу материалов"
+              report_type: "material_usage"
+              organization_id: 10
+              user_id: 25
+              columns_config:
+                - header: "Название материала"
+                  data_key: "material.name"
+                  order: 1
+                  format_options: null
+                - header: "Количество"
+                  data_key: "quantity"
+                  order: 2
+                  format_options: {"number_format": "decimal"}
+              is_default: true
+              created_at: "2024-12-20T17:30:00Z"
+              updated_at: "2024-12-20T17:30:00Z"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
+            examples:
+              validation_error:
+                summary: "Ошибки валидации"
+                value:
+                  success: false
+                  message: "The given data was invalid."
+                  errors:
+                    name: ["Название шаблона обязательно"]
+                    report_type: ["Выбранный тип отчета недопустим"]
+                    columns_config: ["Конфигурация колонок должна содержать хотя бы одну колонку"]
+                    "columns_config.0.header": ["Заголовок колонки обязателен"]
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+            examples:
+              business_logic_error:
+                summary: "Ошибка валидации конфигурации"
+                value:
+                  success: false
+                  message: "Каждая колонка должна содержать header, data_key и order."
+              organization_context_error:
+                summary: "Ошибка контекста организации"
+                value:
+                  success: false
+                  message: "Контекст организации не определен."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Не удалось создать шаблон отчета."
 
 /report-templates/{template_id}:
   get:
-    tags: [ReportTemplates]
-    summary: Получить шаблон отчета
+    tags: [Report Templates]
+    summary: Получить шаблон отчета по ID
+    description: |
+      Возвращает подробную информацию о конкретном шаблоне отчета.
+      Доступны только шаблоны текущей организации.
     parameters:
-      - in: path
-        name: template_id
+      - name: template_id
+        in: path
         required: true
         schema:
           type: integer
+        description: ID шаблона отчета
+        example: 15
     responses:
       "200":
-        description: Шаблон отчета
+        description: Шаблон отчета успешно найден
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ReportTemplateResponse.yaml'
+              $ref: '../components/schemas/ReportTemplate.yaml'
+            example:
+              id: 15
+              name: "Детальный отчет по материалам"
+              report_type: "material_usage"
+              organization_id: 10
+              user_id: 25
+              columns_config:
+                - header: "Название материала"
+                  data_key: "material.name"
+                  order: 1
+                  format_options: null
+                - header: "Количество"
+                  data_key: "quantity"
+                  order: 2
+                  format_options: {"number_format": "decimal"}
+              is_default: true
+              created_at: "2024-01-15T09:00:00Z"
+              updated_at: "2024-12-20T16:45:00Z"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Шаблон отчета не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Шаблон отчета не найден."
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен."
   put:
-    tags: [ReportTemplates]
-    summary: Обновить шаблон отчета
+    tags: [Report Templates]
+    summary: Обновить шаблон отчета (PUT)
+    description: |
+      Полностью обновляет шаблон отчета. Доступны только шаблоны текущей организации.
+      При установке is_default=true автоматически сбрасывает флаг у других шаблонов этого типа.
     parameters:
-      - in: path
-        name: template_id
+      - name: template_id
+        in: path
         required: true
         schema:
           type: integer
+        description: ID шаблона отчета
+        example: 15
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/ReportTemplateUpdateRequest.yaml'
+          examples:
+            update_template:
+              summary: "Обновление шаблона"
+              value:
+                name: "Обновленный детальный отчет по материалам"
+                columns_config:
+                  - header: "Название материала"
+                    data_key: "material.name"
+                    order: 1
+                    format_options: null
+                  - header: "Код материала"
+                    data_key: "material.code"
+                    order: 2
+                    format_options: null
+                  - header: "Количество"
+                    data_key: "quantity"
+                    order: 3
+                    format_options: {"number_format": "decimal"}
+                is_default: true
     responses:
       "200":
-        description: Шаблон обновлен
+        description: Шаблон отчета успешно обновлен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ReportTemplateResponse.yaml'
+              $ref: '../components/schemas/ReportTemplate.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Шаблон отчета не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Шаблон отчета не найден."
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Каждая колонка должна содержать header, data_key и order."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Не удалось обновить шаблон отчета."
   patch:
-    tags: [ReportTemplates]
-    summary: Частичное обновление шаблона отчета
+    tags: [Report Templates]
+    summary: Частично обновить шаблон отчета (PATCH)
+    description: |
+      Частично обновляет шаблон отчета. Доступны только шаблоны текущей организации.
+      Функционал идентичен PUT методу. При установке is_default=true автоматически 
+      сбрасывает флаг у других шаблонов этого типа.
     parameters:
-      - in: path
-        name: template_id
+      - name: template_id
+        in: path
         required: true
         schema:
           type: integer
+        description: ID шаблона отчета
+        example: 15
     requestBody:
       required: true
       content:
@@ -89,38 +437,187 @@
             $ref: '../components/schemas/ReportTemplateUpdateRequest.yaml'
     responses:
       "200":
-        description: Шаблон обновлен
+        description: Шаблон отчета успешно обновлен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ReportTemplateResponse.yaml'
+              $ref: '../components/schemas/ReportTemplate.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Шаблон отчета не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Шаблон отчета не найден."
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Не удалось обновить шаблон отчета."
   delete:
-    tags: [ReportTemplates]
+    tags: [Report Templates]
     summary: Удалить шаблон отчета
+    description: |
+      Удаляет шаблон отчета (soft delete). Доступны только шаблоны текущей организации.
+      Удаленный шаблон перестает отображаться в списках, но данные сохраняются в БД.
     parameters:
-      - in: path
-        name: template_id
+      - name: template_id
+        in: path
         required: true
         schema:
           type: integer
+        description: ID шаблона отчета
+        example: 15
     responses:
-      "204":
-        description: Успешно удалено
+      "200":
+        description: Шаблон отчета успешно удален
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ReportTemplateGenericResponse.yaml'
+            example:
+              success: true
+              message: "Шаблон отчета успешно удален."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Шаблон отчета не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Шаблон отчета не найден."
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен."
 
 /report-templates/{template_id}/set-default:
   post:
-    tags: [ReportTemplates]
-    summary: Сделать шаблон отчетом по умолчанию
+    tags: [Report Templates]
+    summary: Установить шаблон как шаблон по умолчанию
+    description: |
+      Устанавливает указанный шаблон как шаблон по умолчанию для его типа отчета.
+      Автоматически сбрасывает флаг is_default у других шаблонов того же типа в организации.
+      Доступны только шаблоны текущей организации.
     parameters:
-      - in: path
-        name: template_id
+      - name: template_id
+        in: path
         required: true
         schema:
           type: integer
+        description: ID шаблона отчета
+        example: 15
     responses:
       "200":
-        description: Шаблон установлен по умолчанию
+        description: Шаблон успешно установлен как шаблон по умолчанию
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ReportTemplateResponse.yaml' 
+              $ref: '../components/schemas/ReportTemplate.yaml'
+            example:
+              id: 15
+              name: "Детальный отчет по материалам"
+              report_type: "material_usage"
+              organization_id: 10
+              user_id: 25
+              columns_config:
+                - header: "Название материала"
+                  data_key: "material.name"
+                  order: 1
+                  format_options: null
+              is_default: true
+              created_at: "2024-01-15T09:00:00Z"
+              updated_at: "2024-12-20T17:45:00Z"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Шаблон отчета не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Шаблон отчета не найден."
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен."

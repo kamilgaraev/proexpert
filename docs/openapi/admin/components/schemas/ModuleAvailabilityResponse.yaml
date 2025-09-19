@@ -1,0 +1,21 @@
+type: object
+description: Ответ о доступности модуля отчетов для организации.
+properties:
+  success:
+    type: boolean
+    description: Статус проверки доступности
+    example: true
+  has_access:
+    type: boolean
+    description: Имеет ли организация доступ к модулю
+    example: true
+  module:
+    type: string
+    description: Название проверяемого модуля
+    example: "basic_reports"
+  features:
+    type: array
+    items:
+      type: string
+    description: Список доступных функций модуля (пустой массив если нет доступа)
+    example: ["Отчет по материалам", "Отчет по работам", "Сводный отчет", "Экспорт в PDF"]

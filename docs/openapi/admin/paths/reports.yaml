@@ -1,268 +1,854 @@
+/reports/check-basic-availability:
+  get:
+    tags: [Reports]
+    summary: Проверить доступность базовых отчетов
+    description: |
+      Проверяет, имеет ли текущая организация доступ к модулю базовых отчетов.
+      Базовые отчеты обычно включены в стандартную подписку.
+    responses:
+      "200":
+        description: Информация о доступности модуля базовых отчетов
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ModuleAvailabilityResponse.yaml'
+            example:
+              success: true
+              has_access: true
+              module: "basic_reports"
+              features: ["Отчет по материалам", "Отчет по работам", "Сводный отчет", "Экспорт в PDF"]
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+
+/reports/check-advanced-availability:
+  get:
+    tags: [Reports]
+    summary: Проверить доступность продвинутых отчетов
+    description: |
+      Проверяет, имеет ли текущая организация доступ к модулю продвинутых отчетов.
+      Продвинутые отчеты обычно доступны в премиум подписках.
+    responses:
+      "200":
+        description: Информация о доступности модуля продвинутых отчетов
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ModuleAvailabilityResponse.yaml'
+            example:
+              success: true
+              has_access: false
+              module: "advanced_reports"
+              features: []
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+
 /reports/material-usage:
   get:
     tags: [Reports]
-    summary: Отчет по расходу материалов
+    summary: Отчет по расходу материалов (базовый модуль)
+    description: |
+      Генерирует отчет по расходу материалов на объектах с возможностью фильтрации
+      по проекту, материалу, пользователю и периоду. Поддерживает экспорт в CSV/XLSX
+      и использование пользовательских шаблонов для настройки колонок.
+      
+      **Требования:** Доступ к модулю "basic_reports"
     parameters:
-      - in: query
-        name: project_id
+      - name: project_id
+        in: query
+        required: false
         schema:
           type: integer
-      - in: query
-        name: material_id
+        description: ID проекта для фильтрации
+        example: 25
+      - name: material_id
+        in: query
+        required: false
         schema:
           type: integer
-      - in: query
-        name: user_id
+        description: ID материала для фильтрации
+        example: 150
+      - name: user_id
+        in: query
+        required: false
         schema:
           type: integer
-      - in: query
-        name: date_from
+        description: ID прораба для фильтрации
+        example: 35
+      - name: date_from
+        in: query
+        required: false
         schema:
           type: string
           format: date
-      - in: query
-        name: date_to
+        description: Дата начала периода
+        example: "2024-01-01"
+      - name: date_to
+        in: query
+        required: false
         schema:
           type: string
           format: date
+        description: Дата окончания периода
+        example: "2024-12-31"
+      - name: template_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: ID шаблона отчета для кастомизации колонок
+        example: 15
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["json", "csv", "xlsx"]
+          default: "json"
+        description: Формат вывода отчета
+        example: "json"
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 15
+        description: Количество элементов на странице (только для JSON)
+      - name: sort_by
+        in: query
+        required: false
+        schema:
+          type: string
+          default: "usage_date"
+        description: Поле для сортировки
+      - name: sort_direction
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["asc", "desc"]
+          default: "desc"
+        description: Направление сортировки
     responses:
       "200":
-        description: Данные отчета
+        description: Отчет по расходу материалов успешно сгенерирован
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ReportResponse.yaml'
+            example:
+              title: "Отчет по расходу материалов"
+              filters:
+                project_id: 25
+                date_from: "2024-01-01T00:00:00.000000Z"
+                date_to: "2024-12-31T23:59:59.000000Z"
+              data:
+                - material_name: "Цемент М400"
+                  total_quantity: 125.5
+                  total_amount: 15687.50
+                  operations_count: 8
+                  unit_name: "тонна"
+                - material_name: "Песок строительный"
+                  total_quantity: 450.0
+                  total_amount: 22500.00
+                  operations_count: 12
+                  unit_name: "кубометр"
+              pagination:
+                total: 156
+                per_page: 15
+                current_page: 1
+                last_page: 11
+              generated_at: "2024-12-20T18:30:00Z"
+          text/csv:
+            schema:
+              type: string
+              format: binary
+            description: CSV файл с отчетом (при format=csv)
+          application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+            schema:
+              type: string
+              format: binary
+            description: Excel файл с отчетом (при format=xlsx)
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю базовых отчетов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю basic_reports запрещен."
+      "422":
+        description: Ошибка валидации параметров
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
+            example:
+              success: false
+              message: "The given data was invalid."
+              errors:
+                date_to: ["Дата окончания должна быть больше или равна дате начала"]
+                material_id: ["Выбранный материал не найден в вашей организации"]
+      "500":
+        description: Ошибка контекста организации или генерации отчета
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен для отчетов."
 
 /reports/work-completion:
   get:
     tags: [Reports]
-    summary: Отчет по выполненным работам
+    summary: Отчет по выполненным работам (базовый модуль)
+    description: |
+      Генерирует отчет по выполненным работам с возможностью фильтрации
+      по проекту, виду работ, пользователю и периоду. Поддерживает экспорт 
+      в CSV/XLSX и использование пользовательских шаблонов.
+      
+      **Требования:** Доступ к модулю "basic_reports"
     parameters:
-      - in: query
-        name: project_id
+      - name: project_id
+        in: query
+        required: false
         schema:
           type: integer
-      - in: query
-        name: work_type_id
+        description: ID проекта для фильтрации
+      - name: work_type_id
+        in: query
+        required: false
         schema:
           type: integer
-      - in: query
-        name: user_id
+        description: ID вида работ для фильтрации
+      - name: user_id
+        in: query
+        required: false
         schema:
           type: integer
-      - in: query
-        name: date_from
+        description: ID прораба для фильтрации
+      - name: date_from
+        in: query
+        required: false
         schema:
           type: string
           format: date
-      - in: query
-        name: date_to
+        description: Дата начала периода
+      - name: date_to
+        in: query
+        required: false
         schema:
           type: string
           format: date
+        description: Дата окончания периода
+      - name: template_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: ID шаблона отчета
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["json", "csv", "xlsx"]
+          default: "json"
+        description: Формат вывода отчета
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 15
+        description: Количество элементов на странице
     responses:
       "200":
-        description: Данные отчета
+        description: Отчет по выполненным работам успешно сгенерирован
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ReportResponse.yaml'
-
-/reports/foreman-activity:
-  get:
-    tags: [Reports]
-    summary: Отчет по активности прорабов
-    parameters:
-      - in: query
-        name: project_id
-        schema:
-          type: integer
-      - in: query
-        name: user_id
-        schema:
-          type: integer
-      - in: query
-        name: date_from
-        schema:
-          type: string
-          format: date
-      - in: query
-        name: date_to
-        schema:
-          type: string
-          format: date
-    responses:
-      "200":
-        description: Данные отчета
+          text/csv:
+            schema:
+              type: string
+              format: binary
+          application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+            schema:
+              type: string
+              format: binary
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю базовых отчетов
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ReportResponse.yaml'
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю basic_reports запрещен."
+      "422":
+        description: Ошибка валидации параметров
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
 
 /reports/project-status-summary:
   get:
     tags: [Reports]
-    summary: Сводный отчет по статусам проектов
+    summary: Сводный отчет по статусам проектов (базовый модуль)
+    description: |
+      Генерирует сводный отчет по статусам проектов организации с возможностью
+      фильтрации по статусу и архивности. Показывает общую статистику по проектам.
+      
+      **Требования:** Доступ к модулю "basic_reports"
     parameters:
-      - in: query
-        name: status
+      - name: status
+        in: query
+        required: false
         schema:
           type: string
-          enum: [active, completed, planned, on_hold]
-      - in: query
-        name: is_archived
+          enum: ["active", "completed", "planned", "on_hold"]
+        description: Фильтр по статусу проектов
+      - name: is_archived
+        in: query
+        required: false
         schema:
           type: boolean
+        description: Включать ли архивные проекты
+      - name: template_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: ID шаблона отчета
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["json", "csv", "xlsx"]
+          default: "json"
+        description: Формат вывода отчета
     responses:
       "200":
-        description: Данные отчета
+        description: Сводный отчет по проектам успешно сгенерирован
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ReportResponse.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю базовых отчетов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю basic_reports запрещен."
+
+/reports/foreman-activity:
+  get:
+    tags: [Reports]
+    summary: Отчет по активности прорабов (продвинутый модуль)
+    description: |
+      Генерирует детальный отчет по активности прорабов с анализом выполненных
+      работ, времени работы и эффективности. Включает метрики производительности.
+      
+      **Требования:** Доступ к модулю "advanced_reports"
+    parameters:
+      - name: project_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: ID проекта для фильтрации
+      - name: user_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: ID конкретного пользователя
+      - name: date_from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: Дата начала периода
+      - name: date_to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: Дата окончания периода
+      - name: template_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: ID шаблона отчета
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["json", "csv", "xlsx"]
+          default: "json"
+        description: Формат вывода отчета
+    responses:
+      "200":
+        description: Отчет по активности прорабов успешно сгенерирован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ReportResponse.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю продвинутых отчетов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
 
 /reports/official-material-usage:
   get:
     tags: [Reports]
-    summary: Официальный отчет об использовании материалов, переданных Заказчиком
-    security:
-      - bearerAuth: []
+    summary: Официальный отчет об использовании материалов (продвинутый модуль)
+    description: |
+      Генерирует официальный отчет об использовании материалов, переданных заказчиком,
+      с детальной отчетностью по документообороту и фотофиксации. Подходит для
+      предоставления заказчикам и контролирующим органам.
+      
+      **Требования:** Доступ к модулю "advanced_reports"
     parameters:
-      - in: query
-        name: project_id
-        schema:
-          type: integer
+      - name: project_id
+        in: query
         required: true
-      - in: query
-        name: date_from
         schema:
-          type: string
-          format: date
+          type: integer
+        description: ID проекта (обязательный параметр)
+      - name: date_from
+        in: query
         required: true
-      - in: query
-        name: date_to
         schema:
           type: string
           format: date
+        description: Дата начала периода (обязательный параметр)
+      - name: date_to
+        in: query
         required: true
-      - in: query
-        name: report_number
-        schema:
-          type: integer
-      - in: query
-        name: material_id
-        schema:
-          type: integer
-      - in: query
-        name: material_name
-        schema:
-          type: string
-      - in: query
-        name: operation_type
-        schema:
-          type: string
-          enum: [receipt, write_off]
-      - in: query
-        name: supplier_id
-        schema:
-          type: integer
-      - in: query
-        name: document_number
-        schema:
-          type: string
-      - in: query
-        name: work_type_id
-        schema:
-          type: integer
-      - in: query
-        name: work_description
-        schema:
-          type: string
-      - in: query
-        name: user_id
-        schema:
-          type: integer
-      - in: query
-        name: foreman_id
-        schema:
-          type: integer
-      - in: query
-        name: invoice_date_from
         schema:
           type: string
           format: date
-      - in: query
-        name: invoice_date_to
+        description: Дата окончания периода (обязательный параметр)
+      - name: report_number
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+        description: Номер отчета
+      - name: material_id
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: ID материала для фильтрации
+      - name: material_name
+        in: query
+        required: false
         schema:
           type: string
-          format: date
-      - in: query
-        name: min_quantity
+        description: Название материала для поиска
+      - name: operation_type
+        in: query
+        required: false
         schema:
-          type: number
-          format: float
-      - in: query
-        name: max_quantity
+          type: string
+          enum: ["receipt", "write_off"]
+        description: Тип операции с материалом
+      - name: supplier_id
+        in: query
+        required: false
         schema:
-          type: number
-          format: float
-      - in: query
-        name: min_price
+          type: integer
+        description: ID поставщика
+      - name: work_type_id
+        in: query
+        required: false
         schema:
-          type: number
-          format: float
-      - in: query
-        name: max_price
+          type: integer
+        description: ID вида работ
+      - name: user_id
+        in: query
+        required: false
         schema:
-          type: number
-          format: float
-      - in: query
-        name: has_photo
+          type: integer
+        description: ID пользователя
+      - name: has_photo
+        in: query
+        required: false
         schema:
           type: boolean
-      - in: query
-        name: format
+        description: Фильтр по наличию фотодокументации
+      - name: min_quantity
+        in: query
+        required: false
+        schema:
+          type: number
+          minimum: 0
+        description: Минимальное количество
+      - name: max_quantity
+        in: query
+        required: false
+        schema:
+          type: number
+          minimum: 0
+        description: Максимальное количество
+      - name: format
+        in: query
+        required: false
         schema:
           type: string
-          enum: [json, xlsx, csv]
-        description: "Укажите xlsx, чтобы получить ссылку на скачивание Excel-файла."
-    x-codeSamples:
-      - lang: CURL
-        label: Excel download
-        source: |
-          curl -H "Authorization: Bearer <TOKEN>" \
-               "https://api.prohelper.pro/api/v1/admin/reports/official-material-usage?project_id=1&date_from=2024-01-01&date_to=2024-01-31&format=xlsx" | jq
+          enum: ["json", "xlsx", "csv"]
+          default: "json"
+        description: Формат вывода отчета
     responses:
       "200":
-        description: Данные отчета либо ссылка на файл
+        description: Официальный отчет успешно сгенерирован
         content:
           application/json:
             schema:
-              oneOf:
-                - $ref: '../components/schemas/ReportResponse.yaml'
-                - type: object
-                  properties:
-                    download_url:
-                      type: string
-                      format: uri
-                    expires_at:
-                      type: string
-                      format: date-time
-            examples:
-              ExcelLink:
-                summary: Ссылка на скачивание Excel
-                value:
-                  download_url: "https://official-reports.website.regru.cloud/official-material-usage/2025/07/official_material_report_1_20250709.xlsx?X-Amz-Signature=abc123..."
-                  expires_at: "2025-07-09T14:42:00+03:00"
-              JsonData:
-                summary: Агрегированные данные (формат=json)
-                value:
-                  title: "Официальный отчет об использовании материалов"
-                  filters:
-                    project_id: 1
-                    date_from: "2024-01-01"
-                    date_to: "2024-01-31"
-                  data:
-                    materials_count: 12
-                    total_economy: -54.2
-                  generated_at: "2025-07-09T12:40:12+03:00" 
+              $ref: '../components/schemas/ReportResponse.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю продвинутых отчетов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "422":
+        description: Ошибка валидации обязательных параметров
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
+            example:
+              success: false
+              message: "The given data was invalid."
+              errors:
+                project_id: ["Поле \"Проект\" обязательно для заполнения"]
+                date_from: ["Поле \"Дата с\" обязательно для заполнения"]
+                date_to: ["Поле \"Дата по\" обязательно для заполнения"]
+
+/reports/contractor-summary:
+  get:
+    tags: [Reports]
+    summary: Сводный отчет по подрядчикам (продвинутый модуль)
+    description: |
+      Генерирует сводный отчет по итогам работы подрядчиков за выбранный проект
+      с анализом выполненных работ, платежей и материалов.
+      
+      **Требования:** Доступ к модулю "advanced_reports"
+    parameters:
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: integer
+        description: ID проекта (обязательный параметр)
+      - name: date_from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: Дата начала периода
+      - name: date_to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: Дата окончания периода
+      - name: contractor_ids
+        in: query
+        required: false
+        schema:
+          type: array
+          items:
+            type: integer
+        style: form
+        explode: true
+        description: Массив ID подрядчиков для фильтрации
+      - name: contract_status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["active", "completed", "cancelled", "draft"]
+        description: Статус контрактов
+      - name: include_completed_works
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+        description: Включать данные о выполненных работах
+      - name: include_payments
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+        description: Включать данные о платежах
+      - name: include_materials
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+        description: Включать данные о материалах
+      - name: group_by
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["contractor", "contract", "work_type"]
+          default: "contractor"
+        description: Группировка данных
+      - name: export_format
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["json", "csv", "excel", "xlsx"]
+          default: "json"
+        description: Формат экспорта
+      - name: sort_by
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["contractor_name", "total_amount", "completed_amount", "payment_amount"]
+          default: "total_amount"
+        description: Поле для сортировки
+      - name: sort_direction
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["asc", "desc"]
+          default: "desc"
+        description: Направление сортировки
+    responses:
+      "200":
+        description: Сводный отчет по подрядчикам успешно сгенерирован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ReportResponse.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю продвинутых отчетов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "422":
+        description: Ошибка валидации параметров
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
+
+/reports/contractor-detail/{contractorId}:
+  get:
+    tags: [Reports]
+    summary: Детальный отчет по подрядчику (продвинутый модуль)
+    description: |
+      Генерирует детальный отчет по конкретному подрядчику в рамках проекта
+      с подробной разбивкой по работам, контрактам и платежам.
+      
+      **Требования:** Доступ к модулю "advanced_reports"
+    parameters:
+      - name: contractorId
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID подрядчика
+        example: 15
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: integer
+        description: ID проекта (обязательный параметр)
+      - name: date_from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: Дата начала периода
+      - name: date_to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: Дата окончания периода
+      - name: include_completed_works
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+        description: Включать данные о выполненных работах
+      - name: include_payments
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: true
+        description: Включать данные о платежах
+      - name: include_materials
+        in: query
+        required: false
+        schema:
+          type: boolean
+          default: false
+        description: Включать данные о материалах
+      - name: export_format
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["json", "csv", "excel", "xlsx"]
+          default: "json"
+        description: Формат экспорта
+    responses:
+      "200":
+        description: Детальный отчет по подрядчику успешно сгенерирован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ReportResponse.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю продвинутых отчетов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        description: Подрядчик не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Подрядчик не найден."

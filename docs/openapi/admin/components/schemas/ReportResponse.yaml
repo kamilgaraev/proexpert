@@ -1,31 +1,56 @@
 type: object
-allOf:
-  - $ref: './ApiResponse.yaml'
-  - type: object
+description: Стандартный ответ для отчетов в JSON формате.
+properties:
+  title:
+    type: string
+    description: Название отчета
+    example: "Отчет по расходу материалов"
+  filters:
+    type: object
+    description: Примененные фильтры отчета
+    additionalProperties: true
+    example:
+      project_id: 25
+      date_from: "2024-01-01T00:00:00.000000Z"
+      date_to: "2024-12-31T23:59:59.000000Z"
+      material_id: 150
+  data:
+    type: array
+    items:
+      type: object
+      additionalProperties: true
+    description: Данные отчета (структура зависит от типа отчета)
+    example:
+      - material_name: "Цемент М400"
+        total_quantity: 125.5
+        total_amount: 15687.50
+        operations_count: 8
+      - material_name: "Песок строительный"
+        total_quantity: 450.0
+        total_amount: 22500.00
+        operations_count: 12
+  pagination:
+    type: object
     properties:
-      data:
-        type: object
-        description: Содержимое отчета (агрегированные данные или массив записей)
-      title:
-        type: string
-        description: Название отчета
-      filters:
-        type: object
-        description: Применённые фильтры
-      pagination:
-        type: object
-        description: Пагинация (если применима)
-        nullable: true
-        properties:
-          total:
-            type: integer
-          per_page:
-            type: integer
-          current_page:
-            type: integer
-          last_page:
-            type: integer
-      generated_at:
-        type: string
-        format: date-time
-        description: Время генерации отчета 
+      total:
+        type: integer
+        description: Общее количество записей
+        example: 156
+      per_page:
+        type: integer
+        description: Количество записей на странице
+        example: 15
+      current_page:
+        type: integer
+        description: Текущая страница
+        example: 1
+      last_page:
+        type: integer
+        description: Последняя страница
+        example: 11
+    description: Информация о пагинации (только для JSON формата)
+  generated_at:
+    type: string
+    format: date-time
+    description: Дата и время генерации отчета
+    example: "2024-12-20T18:30:00Z"

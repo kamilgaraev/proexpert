@@ -1,0 +1,51 @@
+type: object
+description: Запрос для генерации сводного отчета по статусам проектов.
+properties:
+  status:
+    type: string
+    enum: ["active", "completed", "planned", "on_hold"]
+    nullable: true
+    description: |
+      Фильтр по статусу проектов:
+      - active: Активные проекты
+      - completed: Завершенные проекты
+      - planned: Планируемые проекты
+      - on_hold: Приостановленные проекты
+    example: "active"
+  is_archived:
+    type: boolean
+    nullable: true
+    description: Включать ли архивные проекты в отчет
+    example: false
+  template_id:
+    type: integer
+    nullable: true
+    description: ID шаблона отчета для кастомизации колонок
+    example: 18
+  format:
+    type: string
+    enum: ["json", "csv", "xlsx"]
+    nullable: true
+    description: Формат вывода отчета (json для API, csv/xlsx для экспорта файлов)
+    example: "json"
+  per_page:
+    type: integer
+    minimum: 1
+    maximum: 100
+    nullable: true
+    default: 15
+    description: Количество элементов на странице (только для json формата)
+    example: 15
+  sort_by:
+    type: string
+    nullable: true
+    default: "name"
+    description: Поле для сортировки результатов
+    example: "name"
+  sort_direction:
+    type: string
+    enum: ["asc", "desc"]
+    nullable: true
+    default: "asc"
+    description: Направление сортировки
+    example: "asc"

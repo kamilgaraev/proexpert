@@ -1,84 +1,368 @@
 /profile:
   get:
     tags: [Profile]
-    summary: Получить профиль текущего администратора
+    summary: Получить данные профиля текущего пользователя
+    description: |
+      Возвращает полную информацию о профиле текущего
+      аутентифицированного пользователя административной панели.
     responses:
       "200":
-        description: Профиль пользователя
+        description: Данные профиля успешно получены
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/UserProfile.yaml'
+              $ref: '../components/schemas/ProfileResponse.yaml'
+            example:
+              success: true
+              data:
+                id: 15
+                name: "Иванов Иван Иванович"
+                email: "ivanov@example.com"
+                phone: "+7 (999) 123-45-67"
+                position: "Главный прораб"
+                avatar_url: "https://example.com/storage/avatars/15/avatar.jpg"
+                is_active: true
+                current_organization_id: 10
+                last_login_at: "2024-12-20T14:30:00Z"
+                created_at: "2024-01-15T09:00:00Z"
+                updated_at: "2024-12-20T16:45:00Z"
+      "401":
+        description: Не авторизован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Unauthenticated."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка при получении данных профиля."
   patch:
     tags: [Profile]
-    summary: Обновить профиль
+    summary: Обновить профиль текущего пользователя (PATCH)
+    description: |
+      Частично обновляет профиль текущего пользователя.
+      Поддерживает обновление основных данных, смену пароля,
+      загрузку/удаление аватара. При смене email сбрасывается
+      статус верификации.
     requestBody:
       required: true
       content:
         multipart/form-data:
           schema:
-            $ref: '../components/schemas/UpdateProfileRequest.yaml'
-          example:
-            name: "Анна Петрова"
-            phone: "+79991234567"
-            avatar: "(binary)"
-        application/json:
-          schema:
-            $ref: '../components/schemas/UpdateProfileRequest.yaml'
+            $ref: '../components/schemas/ProfileUpdateRequest.yaml'
+          examples:
+            basic_update:
+              summary: "Обновление основных данных"
+              value:
+                name: "Иванов Иван Петрович"
+                phone: "+7 (999) 987-65-43"
+                position: "Старший прораб"
+            email_update:
+              summary: "Смена email"
+              value:
+                email: "ivan.ivanov@newcompany.com"
+            password_change:
+              summary: "Смена пароля"
+              value:
+                password: "newSecurePassword123"
+                password_confirmation: "newSecurePassword123"
+            avatar_upload:
+              summary: "Загрузка нового аватара"
+              value:
+                avatar: "(binary file)"
+            avatar_remove:
+              summary: "Удаление аватара"
+              value:
+                remove_avatar: true
     responses:
       "200":
-        description: Профиль обновлён
+        description: Профиль успешно обновлен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/UserProfile.yaml'
+              $ref: '../components/schemas/ProfileResponse.yaml'
+            example:
+              success: true
+              message: "Профиль успешно обновлен."
+              data:
+                id: 15
+                name: "Иванов Иван Петрович"
+                email: "ivan.ivanov@newcompany.com"
+                phone: "+7 (999) 987-65-43"
+                position: "Старший прораб"
+                avatar_url: "https://example.com/storage/avatars/15/new_avatar.jpg"
+                is_active: true
+                current_organization_id: 10
+                last_login_at: "2024-12-20T14:30:00Z"
+                updated_at: "2024-12-20T17:15:00Z"
+      "401":
+        description: Не авторизован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Unauthenticated."
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
+            examples:
+              validation_error:
+                summary: "Ошибки валидации"
+                value:
+                  success: false
+                  message: "The given data was invalid."
+                  errors:
+                    email: ["Данный email уже используется"]
+                    password: ["Пароль должен содержать минимум 8 символов"]
+                    password_confirmation: ["Подтверждение пароля не совпадает"]
+                    avatar: ["Размер изображения не должен превышать 2MB"]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Произошла ошибка при обновлении профиля."
+  put:
+    tags: [Profile]
+    summary: Обновить профиль текущего пользователя (PUT)
+    description: |
+      Полностью обновляет профиль текущего пользователя.
+      Функционал идентичен PATCH методу, предоставлен для
+      совместимости с различными фронтенд-реализациями.
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/ProfileUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Профиль успешно обновлен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ProfileResponse.yaml'
+      "401":
+        description: Не авторизован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Unauthenticated."
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Произошла ошибка при обновлении профиля."
+
 /profile-settings:
   get:
     tags: [Profile]
-    summary: (Alias) Получить профиль
+    summary: Получить настройки профиля (алиас для /profile)
+    description: |
+      Альтернативный endpoint для получения данных профиля.
+      Предоставлен для совместимости с фронтенд-приложениями.
+      Функционал полностью идентичен GET /profile.
     responses:
       "200":
-        description: Профиль пользователя
+        description: Данные профиля успешно получены
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/UserProfile.yaml'
+              $ref: '../components/schemas/ProfileResponse.yaml'
+      "401":
+        description: Не авторизован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Unauthenticated."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка при получении данных профиля."
   patch:
     tags: [Profile]
-    summary: (Alias) Обновить профиль
+    summary: Обновить настройки профиля (алиас для /profile)
+    description: |
+      Альтернативный endpoint для обновления профиля (PATCH).
+      Предоставлен для совместимости с фронтенд-приложениями.
+      Функционал полностью идентичен PATCH /profile.
     requestBody:
       required: true
       content:
         multipart/form-data:
           schema:
-            $ref: '../components/schemas/UpdateProfileRequest.yaml'
-        application/json:
-          schema:
-            $ref: '../components/schemas/UpdateProfileRequest.yaml'
+            $ref: '../components/schemas/ProfileUpdateRequest.yaml'
     responses:
       "200":
-        description: Профиль обновлён
+        description: Профиль успешно обновлен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/UserProfile.yaml' 
+              $ref: '../components/schemas/ProfileResponse.yaml'
+      "401":
+        description: Не авторизован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Unauthenticated."
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Произошла ошибка при обновлении профиля."
+  put:
+    tags: [Profile]
+    summary: Обновить настройки профиля (алиас для /profile)
+    description: |
+      Альтернативный endpoint для обновления профиля (PUT).
+      Предоставлен для совместимости с фронтенд-приложениями.
+      Функционал полностью идентичен PUT /profile.
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/ProfileUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Профиль успешно обновлен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ProfileResponse.yaml'
+      "401":
+        description: Не авторизован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Unauthenticated."
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Произошла ошибка при обновлении профиля."

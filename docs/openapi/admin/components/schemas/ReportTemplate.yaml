@@ -1,35 +1,89 @@
 type: object
+description: Шаблон отчета с полной информацией.
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор шаблона отчета
+    example: 15
   name:
     type: string
+    description: Название шаблона отчета
+    example: "Детальный отчет по материалам"
   report_type:
     type: string
-    enum: [material_usage, work_completion, foreman_activity, project_status_summary]
+    enum: ["material_usage", "work_completion", "foreman_activity", "project_status_summary"]
+    description: |
+      Тип отчета:
+      - material_usage: Отчет по расходу материалов
+      - work_completion: Отчет по выполненным работам  
+      - foreman_activity: Отчет по активности прорабов
+      - project_status_summary: Сводный отчет по статусам проектов
+    example: "material_usage"
   organization_id:
     type: integer
+    description: ID организации, которой принадлежит шаблон
+    example: 10
   user_id:
     type: integer
+    nullable: true
+    description: ID пользователя, создавшего шаблон (null для системных шаблонов)
+    example: 25
   columns_config:
     type: array
+    description: Конфигурация колонок отчета
     items:
       type: object
       properties:
         header:
           type: string
+          description: Заголовок колонки
+          example: "Название материала"
         data_key:
           type: string
+          description: Ключ данных для извлечения значения
+          example: "material.name"
         order:
           type: integer
+          description: Порядок отображения колонки
+          example: 1
         format_options:
           type: object
           nullable: true
+          description: Параметры форматирования колонки
+          example: {"number_format": "currency", "currency": "RUB"}
+    example:
+      - header: "Название материала"
+        data_key: "material.name"
+        order: 1
+        format_options: null
+      - header: "Количество"
+        data_key: "quantity"
+        order: 2
+        format_options: {"number_format": "decimal"}
+      - header: "Стоимость"
+        data_key: "total_cost"
+        order: 3
+        format_options: {"number_format": "currency", "currency": "RUB"}
   is_default:
     type: boolean
+    description: Является ли шаблон шаблоном по умолчанию для данного типа отчета
+    example: true
   created_at:
     type: string
     format: date-time
+    description: Дата и время создания шаблона
+    example: "2024-01-15T09:00:00Z"
   updated_at:
     type: string
-    format: date-time 
+    format: date-time
+    description: Дата и время последнего обновления шаблона
+    example: "2024-12-20T16:45:00Z"
+required:
+  - id
+  - name
+  - report_type
+  - organization_id
+  - columns_config
+  - is_default
+  - created_at
+  - updated_at

@@ -1,0 +1,11 @@
+type: object
+description: Общий ответ для операций с шаблонами отчетов.
+properties:
+  success:
+    type: boolean
+    description: Статус выполнения операции
+    example: true
+  message:
+    type: string
+    description: Сообщение о результате операции
+    example: "Шаблон отчета успешно удален."

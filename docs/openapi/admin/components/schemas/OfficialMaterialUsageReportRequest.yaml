@@ -1,0 +1,131 @@
+type: object
+description: Запрос для генерации официального отчета об использовании материалов (продвинутый модуль).
+properties:
+  project_id:
+    type: integer
+    description: ID проекта для отчета (обязательное поле, должен принадлежать текущей организации)
+    example: 25
+  date_from:
+    type: string
+    format: date
+    description: Дата начала периода для отчета (обязательное поле, формат YYYY-MM-DD)
+    example: "2024-01-01"
+  date_to:
+    type: string
+    format: date
+    description: Дата окончания периода для отчета (обязательное поле, формат YYYY-MM-DD, должна быть >= date_from)
+    example: "2024-12-31"
+  report_number:
+    type: integer
+    minimum: 1
+    nullable: true
+    description: Номер отчета для идентификации
+    example: 1
+  material_id:
+    type: integer
+    nullable: true
+    description: ID конкретного материала для фильтрации
+    example: 150
+  material_name:
+    type: string
+    maxLength: 255
+    nullable: true
+    description: Название материала для поиска
+    example: "Цемент М400"
+  operation_type:
+    type: string
+    enum: ["receipt", "write_off"]
+    nullable: true
+    description: |
+      Тип операции с материалом:
+      - receipt: Поступление материала
+      - write_off: Списание материала
+    example: "write_off"
+  supplier_id:
+    type: integer
+    nullable: true
+    description: ID поставщика для фильтрации
+    example: 45
+  document_number:
+    type: string
+    maxLength: 255
+    nullable: true
+    description: Номер документа для поиска
+    example: "НАК-2024-001"
+  work_type_id:
+    type: integer
+    nullable: true
+    description: ID вида работ для фильтрации
+    example: 85
+  work_description:
+    type: string
+    maxLength: 500
+    nullable: true
+    description: Описание работ для поиска
+    example: "Заливка фундамента"
+  user_id:
+    type: integer
+    nullable: true
+    description: ID пользователя для фильтрации
+    example: 35
+  foreman_id:
+    type: integer
+    nullable: true
+    description: ID прораба для фильтрации
+    example: 35
+  invoice_date_from:
+    type: string
+    format: date
+    nullable: true
+    description: Дата накладной с (формат YYYY-MM-DD)
+    example: "2024-01-01"
+  invoice_date_to:
+    type: string
+    format: date
+    nullable: true
+    description: Дата накладной по (формат YYYY-MM-DD, должна быть >= invoice_date_from)
+    example: "2024-12-31"
+  min_quantity:
+    type: number
+    minimum: 0
+    nullable: true
+    description: Минимальное количество материала
+    example: 10.5
+  max_quantity:
+    type: number
+    minimum: 0
+    nullable: true
+    description: Максимальное количество материала (должно быть >= min_quantity)
+    example: 100.0
+  min_price:
+    type: number
+    minimum: 0
+    nullable: true
+    description: Минимальная цена за единицу
+    example: 50.0
+  max_price:
+    type: number
+    minimum: 0
+    nullable: true
+    description: Максимальная цена за единицу (должна быть >= min_price)
+    example: 500.0
+  has_photo:
+    type: boolean
+    nullable: true
+    description: Фильтр по наличию фотодокументации
+    example: true
+  format:
+    type: string
+    enum: ["json", "xlsx", "csv"]
+    nullable: true
+    description: Формат вывода отчета
+    example: "json"
+  template_id:
+    type: integer
+    nullable: true
+    description: ID шаблона отчета для кастомизации колонок
+    example: 19
+required:
+  - project_id
+  - date_from
+  - date_to

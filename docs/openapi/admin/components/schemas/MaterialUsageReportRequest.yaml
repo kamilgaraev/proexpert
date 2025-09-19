@@ -1,0 +1,62 @@
+type: object
+description: Запрос для генерации отчета по расходу материалов.
+properties:
+  project_id:
+    type: integer
+    nullable: true
+    description: ID проекта для фильтрации (должен принадлежать текущей организации)
+    example: 25
+  material_id:
+    type: integer
+    nullable: true
+    description: ID материала для фильтрации (должен принадлежать текущей организации)
+    example: 150
+  user_id:
+    type: integer
+    nullable: true
+    description: ID прораба для фильтрации (должен быть прорабом в текущей организации)
+    example: 35
+  date_from:
+    type: string
+    format: date
+    nullable: true
+    description: Дата начала периода для отчета (формат YYYY-MM-DD)
+    example: "2024-01-01"
+  date_to:
+    type: string
+    format: date
+    nullable: true
+    description: Дата окончания периода для отчета (формат YYYY-MM-DD, должна быть >= date_from)
+    example: "2024-12-31"
+  template_id:
+    type: integer
+    nullable: true
+    description: ID шаблона отчета для кастомизации колонок
+    example: 15
+  format:
+    type: string
+    enum: ["json", "csv", "xlsx"]
+    nullable: true
+    description: Формат вывода отчета (json для API, csv/xlsx для экспорта файлов)
+    example: "json"
+  per_page:
+    type: integer
+    minimum: 1
+    maximum: 100
+    nullable: true
+    default: 15
+    description: Количество элементов на странице (только для json формата)
+    example: 15
+  sort_by:
+    type: string
+    nullable: true
+    default: "usage_date"
+    description: Поле для сортировки результатов
+    example: "usage_date"
+  sort_direction:
+    type: string
+    enum: ["asc", "desc"]
+    nullable: true
+    default: "desc"
+    description: Направление сортировки
+    example: "desc"

@@ -1,0 +1,13 @@
+type: object
+description: Ответ с данными профиля пользователя.
+properties:
+  success:
+    type: boolean
+    example: true
+  message:
+    type: string
+    nullable: true
+    description: Сообщение об успешной операции (для обновлений)
+    example: "Профиль успешно обновлен."
+  data:
+    $ref: './UserProfile.yaml'

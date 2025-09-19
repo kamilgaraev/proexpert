@@ -1,0 +1,94 @@
+type: object
+description: Запрос для генерации отчетов по подрядчикам (продвинутый модуль).
+properties:
+  project_id:
+    type: integer
+    description: ID проекта для отчета (обязательное поле)
+    example: 25
+  date_from:
+    type: string
+    format: date
+    nullable: true
+    description: Дата начала периода для отчета (формат YYYY-MM-DD)
+    example: "2024-01-01"
+  date_to:
+    type: string
+    format: date
+    nullable: true
+    description: Дата окончания периода для отчета (формат YYYY-MM-DD, должна быть >= date_from)
+    example: "2024-12-31"
+  contractor_ids:
+    type: array
+    items:
+      type: integer
+    nullable: true
+    description: Массив ID подрядчиков для фильтрации
+    example: [10, 15, 23]
+  contract_status:
+    type: string
+    enum: ["active", "completed", "cancelled", "draft"]
+    nullable: true
+    description: |
+      Статус контрактов для фильтрации:
+      - active: Активные контракты
+      - completed: Завершенные контракты
+      - cancelled: Отмененные контракты
+      - draft: Черновики контрактов
+    example: "active"
+  include_completed_works:
+    type: boolean
+    nullable: true
+    default: true
+    description: Включать ли данные о выполненных работах в отчет
+    example: true
+  include_payments:
+    type: boolean
+    nullable: true
+    default: true
+    description: Включать ли данные о платежах в отчет
+    example: true
+  include_materials:
+    type: boolean
+    nullable: true
+    default: false
+    description: Включать ли данные о материалах в отчет
+    example: false
+  group_by:
+    type: string
+    enum: ["contractor", "contract", "work_type"]
+    nullable: true
+    default: "contractor"
+    description: |
+      Группировка данных в отчете:
+      - contractor: По подрядчикам
+      - contract: По контрактам
+      - work_type: По видам работ
+    example: "contractor"
+  export_format:
+    type: string
+    enum: ["json", "csv", "excel", "xlsx"]
+    nullable: true
+    default: "json"
+    description: Формат экспорта отчета
+    example: "json"
+  sort_by:
+    type: string
+    enum: ["contractor_name", "total_amount", "completed_amount", "payment_amount"]
+    nullable: true
+    default: "total_amount"
+    description: |
+      Поле для сортировки:
+      - contractor_name: По названию подрядчика
+      - total_amount: По общей сумме
+      - completed_amount: По сумме выполненных работ
+      - payment_amount: По сумме платежей
+    example: "total_amount"
+  sort_direction:
+    type: string
+    enum: ["asc", "desc"]
+    nullable: true
+    default: "desc"
+    description: Направление сортировки
+    example: "desc"
+required:
+  - project_id

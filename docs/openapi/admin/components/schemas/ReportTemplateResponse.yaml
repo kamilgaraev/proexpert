@@ -1,6 +1,13 @@
-allOf:
-  - $ref: './ApiResponse.yaml'
-  - type: object
-    properties:
-      data:
-        $ref: './ReportTemplate.yaml' 
+type: object
+description: Ответ с данными шаблона отчета.
+properties:
+  success:
+    type: boolean
+    example: true
+  message:
+    type: string
+    nullable: true
+    description: Сообщение об успешной операции
+    example: "Шаблон отчета успешно создан."
+  data:
+    $ref: './ReportTemplate.yaml'

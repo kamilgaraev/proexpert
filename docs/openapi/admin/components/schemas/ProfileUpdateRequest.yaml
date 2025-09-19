@@ -1,0 +1,38 @@
+type: object
+description: Запрос для обновления профиля пользователя (все поля опциональны для частичного обновления).
+properties:
+  name:
+    type: string
+    maxLength: 255
+    description: Полное имя пользователя
+    example: "Иванов Иван Иванович"
+  email:
+    type: string
+    format: email
+    maxLength: 255
+    description: Email адрес (должен быть уникальным, проверяется DNS)
+    example: "ivanov@example.com"
+  phone:
+    type: string
+    maxLength: 20
+    nullable: true
+    description: Номер телефона
+    example: "+7 (999) 123-45-67"
+  avatar:
+    type: string
+    format: binary
+    description: Изображение аватара (JPEG, PNG, JPG, GIF до 2MB)
+    example: "avatar.jpg"
+  remove_avatar:
+    type: boolean
+    description: Флаг для удаления текущего аватара
+    example: false
+  password:
+    type: string
+    minLength: 8
+    description: Новый пароль (минимум 8 символов, требуется подтверждение)
+    example: "newpassword123"
+  password_confirmation:
+    type: string
+    description: Подтверждение нового пароля (должно совпадать с password)
+    example: "newpassword123"

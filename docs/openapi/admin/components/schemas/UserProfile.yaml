@@ -1,37 +1,61 @@
 type: object
+description: Профиль пользователя с полной информацией.
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор пользователя
+    example: 15
   name:
     type: string
+    description: Полное имя пользователя
+    example: "Иванов Иван Иванович"
   email:
     type: string
     format: email
+    description: Email адрес пользователя
+    example: "ivanov@example.com"
   phone:
     type: string
     nullable: true
+    description: Номер телефона
+    example: "+7 (999) 123-45-67"
   position:
     type: string
     nullable: true
+    description: Должность пользователя
+    example: "Главный прораб"
   avatar_url:
     type: string
-    format: uri
     nullable: true
+    description: URL аватара пользователя
+    example: "https://example.com/storage/avatars/15/avatar.jpg"
   is_active:
     type: boolean
-  user_type:
-    type: string
-    description: Тип пользователя
+    description: Активен ли пользователь
+    example: true
   current_organization_id:
     type: integer
     nullable: true
+    description: ID текущей организации пользователя
+    example: 10
   last_login_at:
     type: string
     format: date-time
     nullable: true
+    description: Дата последнего входа в систему
+    example: "2024-12-20T14:30:00Z"
   created_at:
     type: string
     format: date-time
+    description: Дата создания аккаунта
+    example: "2024-01-15T09:00:00Z"
   updated_at:
     type: string
-    format: date-time 
+    format: date-time
+    description: Дата последнего обновления профиля
+    example: "2024-12-20T16:45:00Z"
+required:
+  - id
+  - name
+  - email
+  - is_active
