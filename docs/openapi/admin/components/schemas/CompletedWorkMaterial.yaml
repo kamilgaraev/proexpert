@@ -1,31 +1,50 @@
 type: object
+description: Информация о материале, использованном в выполненной работе.
 properties:
   material_id:
     type: integer
+    description: ID материала.
+    example: 15
   material_name:
     type: string
+    description: Название материала.
+    example: "Цемент М500"
   measurement_unit:
     type: string
     nullable: true
+    description: Единица измерения материала (короткое название).
+    example: "т"
   quantity:
     type: number
     format: float
+    description: Количество использованного материала.
+    example: 25.5
   unit_price:
     type: number
     format: float
     nullable: true
+    description: Цена за единицу материала.
+    example: 150.00
   total_amount:
     type: number
     format: float
     nullable: true
+    description: Общая стоимость материала.
+    example: 3825.00
   notes:
     type: string
     nullable: true
+    description: Примечания по материалу.
+    example: "Высококачественный материал"
   created_at:
     type: string
     format: date-time
     nullable: true
+    description: Дата и время добавления материала к работе.
+    example: "2024-02-15 10:30:00"
   updated_at:
     type: string
     format: date-time
-    nullable: true 
+    nullable: true
+    description: Дата и время последнего обновления материала.
+    example: "2024-02-15 14:45:00"

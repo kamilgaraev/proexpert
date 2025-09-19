@@ -1,66 +1,59 @@
 type: object
-description: Схема для создания новой выполненной работы.
-required:
-  - project_id
-  - work_type_id
-  - user_id
-  - quantity
-  - completion_date
-  - status
+description: Схема для обновления выполненной работы. Все поля опциональны, так как используется частичное обновление.
 properties:
   project_id:
     type: integer
     description: ID проекта, к которому относится работа. Проверяется через ProjectAccessibleRule.
-    example: 1
+    example: 2
   contract_id:
     type: integer
     nullable: true
     description: ID договора для данной работы (опционально, проверяется принадлежность проекту).
-    example: 5
+    example: 6
   contractor_id:
     type: integer
     nullable: true
     description: ID подрядчика, выполнившего работу (опционально).
-    example: 3
+    example: 4
   work_type_id:
     type: integer
     description: ID вида работы из каталога организации.
-    example: 7
+    example: 8
   user_id:
     type: integer
     description: ID пользователя (прораба), зафиксировавшего выполненную работу.
-    example: 12
+    example: 13
   quantity:
     type: number
     format: float
-    description: Количество выполненной работы (обязательно, мин 0.001).
+    description: Количество выполненной работы (мин 0.001).
     minimum: 0.001
-    example: 150.5
+    example: 200.75
   price:
     type: number
     format: float
     nullable: true
-    description: Цена за единицу работы (опционально, автоматически рассчитывается из total_amount).
+    description: Цена за единицу работы (опционально, автоматически рассчитывается).
     minimum: 0
-    example: 500.25
+    example: 475.50
   total_amount:
     type: number
     format: float
     nullable: true
-    description: Общая стоимость работы (опционально, автоматически рассчитывается из price * quantity или материалов).
+    description: Общая стоимость работы (опционально, автоматически рассчитывается).
     minimum: 0
-    example: 75187.50
+    example: 95456.25
   completion_date:
     type: string
     format: date
     description: Дата выполнения работы (формат YYYY-MM-DD).
-    example: "2024-02-15"
+    example: "2024-02-18"
   notes:
     type: string
     nullable: true
     description: Комментарии или примечания к работе (максимум 65535 символов).
     maxLength: 65535
-    example: "Работы выполнены качественно, в срок. Использованы дополнительные материалы."
+    example: "Обновлены комментарии по качеству выполнения работ."
   status:
     type: string
     description: Статус выполненной работы.
@@ -71,13 +64,12 @@ properties:
     nullable: true
     description: Дополнительная информация в формате JSON.
     example:
-      quality_rating: 5
-      weather_conditions: "солнечно"
-      foreman_notes: "отличная работа"
+      quality_rating: 4
+      updated_notes: "скорректированы объемы"
   materials:
     type: array
     nullable: true
-    description: Список материалов, использованных в работе (опционально).
+    description: Список материалов, использованных в работе (при указании заменяет существующий список).
     items:
       type: object
       required:
@@ -87,30 +79,30 @@ properties:
         material_id:
           type: integer
           description: ID материала из каталога организации.
-          example: 15
+          example: 18
         quantity:
           type: number
           format: float
           description: Количество использованного материала (мин 0.0001).
           minimum: 0.0001
-          example: 25.5
+          example: 30.25
         unit_price:
           type: number
           format: float
           nullable: true
           description: Цена за единицу материала (опционально).
           minimum: 0
-          example: 150.00
+          example: 175.00
         total_amount:
           type: number
           format: float
           nullable: true
           description: Общая стоимость материала (опционально).
           minimum: 0
-          example: 3825.00
+          example: 5293.75
         notes:
           type: string
           nullable: true
           description: Примечания по материалу (максимум 1000 символов).
           maxLength: 1000
-          example: "Высококачественный материал"
+          example: "Материал заменен на более качественный"

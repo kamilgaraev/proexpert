@@ -1,8 +1,44 @@
 type: object
+description: Схема для синхронизации материалов выполненной работы.
 required:
   - materials
 properties:
   materials:
     type: array
+    description: Список материалов для синхронизации (заменяет существующий список материалов).
     items:
-      $ref: './CompletedWorkMaterial.yaml' 
+      type: object
+      required:
+        - material_id
+        - quantity
+      properties:
+        material_id:
+          type: integer
+          description: ID материала из каталога организации.
+          example: 22
+        quantity:
+          type: number
+          format: float
+          description: Количество использованного материала (мин 0.0001).
+          minimum: 0.0001
+          example: 45.0
+        unit_price:
+          type: number
+          format: float
+          nullable: true
+          description: Цена за единицу материала (опционально).
+          minimum: 0
+          example: 225.50
+        total_amount:
+          type: number
+          format: float
+          nullable: true
+          description: Общая стоимость материала (опционально).
+          minimum: 0
+          example: 10147.50
+        notes:
+          type: string
+          nullable: true
+          description: Примечания по материалу (максимум 1000 символов).
+          maxLength: 1000
+          example: "Синхронизация материалов после уточнения объемов"

@@ -1,82 +1,80 @@
 type: object
+description: Детальная информация о выполненной работе.
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор выполненной работы.
+    example: 1
   organization_id:
     type: integer
+    description: ID организации, которой принадлежит работа.
+    example: 1
   project:
-    $ref: './Project.yaml'
+    $ref: './ProjectMini.yaml'
   contract:
-    type: object
-    nullable: true
-    properties:
-      id:
-        type: integer
-      number:
-        type: string
-      date:
-        type: string
-        format: date
-      total_amount:
-        type: number
-        format: float
-      status:
-        type: string
-      status_label:
-        type: string
+    $ref: './ContractMini.yaml'
   work_type:
-    type: object
-    properties:
-      id:
-        type: integer
-      name:
-        type: string
-      category:
-        type: string
-        nullable: true
-      isActive:
-        type: boolean
-      measurementUnit:
-        type: object
-        nullable: true
-        properties:
-          id:
-            type: integer
-          name:
-            type: string
-          code:
-            type: string
+    $ref: './WorkType.yaml'
   user:
-    $ref: './UserSimple.yaml'
+    $ref: './User.yaml'
+  contractor:
+    $ref: './ContractorMini.yaml'
+  contractor_id:
+    type: integer
+    nullable: true
+    description: ID подрядчика, выполнившего работу.
+    example: 3
   quantity:
     type: number
     format: float
+    description: Количество выполненной работы.
+    example: 150.5
   price:
     type: number
     format: float
     nullable: true
+    description: Цена за единицу работы.
+    example: 500.25
   total_amount:
     type: number
     format: float
     nullable: true
+    description: Общая стоимость работы (с учетом коэффициентов).
+    example: 75187.50
   completion_date:
     type: string
     format: date
+    description: Дата выполнения работы.
+    example: "2024-02-15"
   notes:
     type: string
     nullable: true
+    description: Комментарии или примечания к работе.
+    example: "Работы выполнены качественно, в срок."
   status:
     type: string
+    description: Статус выполненной работы.
+    enum: [draft, confirmed, cancelled]
+    example: "confirmed"
   additional_info:
     type: object
     nullable: true
+    description: Дополнительная информация в формате JSON.
+    example:
+      quality_rating: 5
+      weather_conditions: "солнечно"
   materials:
     type: array
+    description: Список материалов, использованных в работе.
     items:
       $ref: './CompletedWorkMaterial.yaml'
   created_at:
     type: string
     format: date-time
+    description: Дата и время создания записи.
+    example: "2024-02-15 10:30:00"
   updated_at:
     type: string
-    format: date-time 
+    format: date-time
+    description: Дата и время последнего обновления записи.
+    example: "2024-02-15 14:45:00"

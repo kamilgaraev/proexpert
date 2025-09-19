@@ -1,59 +1,57 @@
 type: object
-description: Схема для создания нового подрядчика.
-required:
-  - name
+description: Схема для обновления подрядчика. Все поля опциональны, так как используется частичное обновление.
 properties:
   name:
     type: string
-    description: Наименование подрядчика (обязательно, максимум 255 символов).
+    description: Наименование подрядчика (максимум 255 символов).
     maxLength: 255
-    example: "ООО Строймонтаж"
+    example: "ООО Строймонтаж Плюс"
   contact_person:
     type: string
     nullable: true
     description: Контактное лицо подрядчика (максимум 255 символов).
     maxLength: 255
-    example: "Иванов Иван Иванович"
+    example: "Петров Петр Петрович"
   phone:
     type: string
     nullable: true
     description: Телефон подрядчика (максимум 50 символов).
     maxLength: 50
-    example: "+7 (495) 123-45-67"
+    example: "+7 (495) 987-65-43"
   email:
     type: string
     nullable: true
     description: Email подрядчика для связи.
     format: email
     maxLength: 255
-    example: "contact@stroymont.ru"
+    example: "info@stroymont.ru"
   legal_address:
     type: string
     nullable: true
     description: Юридический адрес подрядчика (максимум 1000 символов).
     maxLength: 1000
-    example: "127055, г. Москва, ул. Сущевская, д. 21, стр. 1"
+    example: "127055, г. Москва, ул. Сущевская, д. 21, стр. 2"
   inn:
     type: string
     nullable: true
     description: ИНН подрядчика (максимум 12 символов, валидация формата).
     maxLength: 12
     pattern: "^[0-9]{10,12}$"
-    example: "7707083893"
+    example: "7707083894"
   kpp:
     type: string
     nullable: true
     description: КПП подрядчика (максимум 9 символов, валидация формата).
     maxLength: 9
     pattern: "^[0-9]{9}$"
-    example: "770701001"
+    example: "770701002"
   bank_details:
     type: string
     nullable: true
     description: Банковские реквизиты подрядчика.
-    example: "р/с 40702810400000000001 в ПАО Сбербанк, к/с 30101810400000000225, БИК 044525225"
+    example: "р/с 40702810400000000002 в ПАО Сбербанк, к/с 30101810400000000225, БИК 044525225"
   notes:
     type: string
     nullable: true
     description: Дополнительные примечания о подрядчике.
-    example: "Специализация: высотные работы, сертифицирован по промышленной безопасности"
+    example: "Обновлено: расширена специализация на отделочные работы"

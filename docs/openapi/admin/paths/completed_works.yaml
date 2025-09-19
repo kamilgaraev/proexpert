@@ -1,144 +1,560 @@
 /completed-works:
   get:
     tags: [CompletedWorks]
-    summary: Получить список выполненных работ
+    summary: Получить список выполненных работ с расширенной фильтрацией
+    description: |
+      Возвращает пагинированный список выполненных работ организации с возможностью фильтрации по множественным критериям.
+      Включает связанные данные: проект, контракт с подрядчиком, вид работ, пользователя и материалы.
+    parameters:
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+        description: Фильтр по ID проекта
+        example: 5
+      - in: query
+        name: contract_id
+        schema:
+          type: integer
+        description: Фильтр по ID контракта
+        example: 12
+      - in: query
+        name: work_type_id
+        schema:
+          type: integer
+        description: Фильтр по ID вида работ
+        example: 8
+      - in: query
+        name: user_id
+        schema:
+          type: integer
+        description: Фильтр по ID прораба/исполнителя
+        example: 15
+      - in: query
+        name: contractor_id
+        schema:
+          type: integer
+        description: Фильтр по ID подрядчика
+        example: 3
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum: [draft, confirmed, cancelled]
+        description: Фильтр по статусу работы
+        example: "confirmed"
+      - in: query
+        name: completion_date_from
+        schema:
+          type: string
+          format: date
+        description: Дата выполнения от (включительно)
+        example: "2024-01-01"
+      - in: query
+        name: completion_date_to
+        schema:
+          type: string
+          format: date
+        description: Дата выполнения до (включительно)
+        example: "2024-12-31"
+      - in: query
+        name: amount_from
+        schema:
+          type: number
+          format: float
+        description: Минимальная сумма работы
+        example: 1000.00
+      - in: query
+        name: amount_to
+        schema:
+          type: number
+          format: float
+        description: Максимальная сумма работы
+        example: 50000.00
+      - in: query
+        name: quantity_from
+        schema:
+          type: number
+          format: float
+        description: Минимальное количество
+        example: 10.0
+      - in: query
+        name: quantity_to
+        schema:
+          type: number
+          format: float
+        description: Максимальное количество
+        example: 1000.0
+      - in: query
+        name: with_materials
+        schema:
+          type: boolean
+        description: Показать только работы с материалами
+        example: true
+      - in: query
+        name: search
+        schema:
+          type: string
+        description: Поиск по описанию/комментарию
+        example: "бетонные работы"
+      - in: query
+        name: sortBy
+        schema:
+          type: string
+          default: "completion_date"
+        description: Поле для сортировки
+        example: "total_amount"
+      - in: query
+        name: sortDirection
+        schema:
+          type: string
+          enum: [asc, desc]
+          default: "desc"
+        description: Направление сортировки
+        example: "desc"
+      - in: query
+        name: perPage
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 25
     responses:
       "200":
-        description: Список выполненных работ
+        description: Список выполненных работ успешно получен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/CompletedWork.yaml'
+              $ref: '../components/schemas/CompletedWorkCollection.yaml'
+            example:
+              success: true
+              message: "Список выполненных работ получен успешно."
+              data: []
+              meta:
+                current_page: 1
+                total: 45
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
   post:
     tags: [CompletedWorks]
-    summary: Создать запись о выполненной работе
+    summary: Создать новую запись о выполненной работе
+    description: |
+      Создает новую запись о выполненной работе с автоматическим расчетом стоимости и применением коэффициентов.
+      Поддерживает валидацию контрактов, проверку лимитов и синхронизацию материалов.
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/CompletedWorkCreateRequest.yaml'
+          examples:
+            basic_work:
+              summary: "Базовая работа без материалов"
+              value:
+                project_id: 1
+                work_type_id: 5
+                user_id: 12
+                quantity: 150.5
+                price: 500.25
+                completion_date: "2024-02-15"
+                status: "confirmed"
+                notes: "Работы выполнены качественно"
+            work_with_materials:
+              summary: "Работа с материалами"
+              value:
+                project_id: 2
+                contract_id: 8
+                work_type_id: 7
+                user_id: 15
+                contractor_id: 3
+                quantity: 75.0
+                completion_date: "2024-02-20"
+                status: "confirmed"
+                materials:
+                  - material_id: 22
+                    quantity: 25.5
+                    unit_price: 150.00
+                    total_amount: 3825.00
+                    notes: "Высококачественный материал"
     responses:
       "201":
-        description: Создано
+        description: Запись о выполненной работе успешно создана
         content:
           application/json:
             schema:
               $ref: '../components/schemas/CompletedWorkResponse.yaml'
+            example:
+              success: true
+              message: "Запись о выполненной работе успешно создана."
+              data:
+                id: 123
+                quantity: 150.5
+                total_amount: 75187.50
+                status: "confirmed"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Превышен лимит контракта."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    project_id: ["Этот проект недоступен для вашей организации."]
+                    quantity: ["Количество должно быть больше 0.001."]
 
 /completed-works/{id}:
   get:
     tags: [CompletedWorks]
-    summary: Получить выполненную работу
+    summary: Получить детальную информацию о выполненной работе
+    description: |
+      Возвращает полную информацию о выполненной работе включая связанные данные:
+      проект, контракт, вид работ, исполнителя, подрядчика, материалы и прикрепленные файлы.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID выполненной работы
+        example: 123
     responses:
       "200":
-        description: Запись о выполненной работе
+        description: Детальная информация о выполненной работе
         content:
           application/json:
             schema:
               $ref: '../components/schemas/CompletedWorkResponse.yaml'
+            example:
+              success: true
+              message: "Выполненная работа найдена успешно."
+              data:
+                id: 123
+                quantity: 150.5
+                total_amount: 75187.50
+                status: "confirmed"
+                completion_date: "2024-02-15"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Выполненная работа не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Запись о выполненной работе не найдена."
   put:
     tags: [CompletedWorks]
-    summary: Обновить выполненную работу
+    summary: Обновить данные выполненной работы
+    description: |
+      Обновляет выполненную работу с автоматическим пересчетом стоимости и применением коэффициентов.
+      Поддерживает частичное обновление полей и валидацию изменений контрактов.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID выполненной работы для обновления
+        example: 123
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/CompletedWorkCreateRequest.yaml'
+            $ref: '../components/schemas/CompletedWorkUpdateRequest.yaml'
+          examples:
+            partial_update:
+              summary: "Частичное обновление"
+              value:
+                quantity: 200.75
+                total_amount: 95456.25
+                notes: "Обновлены объемы работ"
+            status_change:
+              summary: "Изменение статуса"
+              value:
+                status: "confirmed"
+                completion_date: "2024-02-18"
     responses:
       "200":
-        description: Обновлено
+        description: Выполненная работа успешно обновлена
         content:
           application/json:
             schema:
               $ref: '../components/schemas/CompletedWorkResponse.yaml'
+            example:
+              success: true
+              message: "Запись о выполненной работе успешно обновлена."
+              data:
+                id: 123
+                quantity: 200.75
+                total_amount: 95456.25
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Превышен лимит контракта при увеличении суммы."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Доступ запрещен или работа принадлежит другой организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Это действие не авторизовано."
+      "404":
+        description: Выполненная работа не найдена
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    quantity: ["Количество должно быть больше 0.001."]
   delete:
     tags: [CompletedWorks]
     summary: Удалить выполненную работу
+    description: |
+      Удаляет запись о выполненной работе со всеми связанными материалами.
+      Операция необратима и доступна только владельцу организации.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID выполненной работы для удаления
+        example: 123
     responses:
       "204":
-        description: Успешно удалено
+        description: Выполненная работа успешно удалена
+      "400":
+        description: Ошибка бизнес-логики при удалении
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Не удалось удалить запись о выполненной работе."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Доступ запрещен или работа принадлежит другой организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Это действие не авторизовано."
+      "404":
+        description: Выполненная работа не найдена
 
 /completed-works/{id}/sync-materials:
   post:
     tags: [CompletedWorks]
     summary: Синхронизировать материалы выполненной работы
+    description: |
+      Полностью заменяет список материалов выполненной работы новым списком.
+      Старые связи с материалами удаляются, создаются новые согласно переданному списку.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID выполненной работы
+        example: 123
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/CompletedWorkSyncMaterialsRequest.yaml'
+          example:
+            materials:
+              - material_id: 22
+                quantity: 45.0
+                unit_price: 225.50
+                total_amount: 10147.50
+                notes: "Синхронизация после уточнения объемов"
+              - material_id: 35
+                quantity: 12.5
+                unit_price: 180.00
+                total_amount: 2250.00
     responses:
       "200":
-        description: Материалы синхронизированы
+        description: Материалы выполненной работы успешно синхронизированы
         content:
           application/json:
             schema:
               $ref: '../components/schemas/CompletedWorkResponse.yaml'
+            example:
+              success: true
+              message: "Материалы выполненной работы успешно синхронизированы."
+              data:
+                id: 123
+                materials: []
+      "400":
+        description: Ошибка бизнес-логики при синхронизации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Один из материалов недоступен для организации."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Доступ запрещен или работа принадлежит другой организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Это действие не авторизовано."
+      "404":
+        description: Выполненная работа не найдена
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    "materials.0.material_id": ["Выбранный материал не найден."]
+                    "materials.1.quantity": ["Количество должно быть больше 0.0001."]
 
 /completed-works/work-type-material-defaults:
   get:
     tags: [CompletedWorks]
-    summary: Получить материалы по умолчанию для типа работы
+    summary: Получить материалы по умолчанию для вида работ
+    description: |
+      Возвращает список материалов с нормами расхода, предустановленными для конкретного вида работ.
+      Используется для автозаполнения материалов при создании выполненной работы.
     parameters:
       - in: query
         name: work_type_id
         required: true
         schema:
           type: integer
-        description: ID типа работы
+        description: ID вида работы из каталога организации
+        example: 15
     responses:
       "200":
-        description: Список материалов по умолчанию
+        description: Список материалов по умолчанию для вида работ
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/WorkTypeMaterialDefault.yaml'
+              $ref: '../components/schemas/WorkTypeMaterialDefaults.yaml'
+            example:
+              success: true
+              data:
+                - material_id: 22
+                  material_name: "Цемент М500"
+                  default_price: 350.50
+                  quantity: 0.5
+                  notes: "Норма расхода на 1 кв.м"
+                  measurement_unit: "т"
+                - material_id: 35
+                  material_name: "Песок речной"
+                  default_price: 800.00
+                  quantity: 1.2
+                  measurement_unit: "м³"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Вид работы не найден или недоступен."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
       "422":
-        description: Неверный запрос 
+        description: Ошибка валидации параметров
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    work_type_id: ["Поле work_type_id обязательно для заполнения."] 

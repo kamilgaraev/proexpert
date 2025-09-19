@@ -1,0 +1,166 @@
+type: object
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: object
+    properties:
+      financial:
+        type: object
+        description: Финансовая аналитика контракта.
+        properties:
+          total_amount:
+            type: number
+            format: float
+            description: Общая сумма контракта с учетом всех дополнений.
+            example: 2500000.00
+          base_contract_amount:
+            type: number
+            format: float
+            description: Базовая сумма контракта.
+            example: 2200000.00
+          agreements_delta:
+            type: number
+            format: float
+            description: Изменение суммы по дополнительным соглашениям.
+            example: 150000.00
+          child_contracts_amount:
+            type: number
+            format: float
+            description: Сумма дочерних контрактов.
+            example: 100000.00
+          specifications_amount:
+            type: number
+            format: float
+            description: Сумма спецификаций.
+            example: 50000.00
+          gp_percentage:
+            type: number
+            format: float
+            description: Процент генерального подряда.
+            example: 15.5
+          gp_amount:
+            type: number
+            format: float
+            description: Сумма генерального подряда.
+            example: 387500.00
+          total_amount_with_gp:
+            type: number
+            format: float
+            description: Общая сумма с учетом генподряда.
+            example: 2887500.00
+          completed_works_amount:
+            type: number
+            format: float
+            description: Сумма выполненных работ.
+            example: 1250000.00
+          remaining_amount:
+            type: number
+            format: float
+            description: Остаток суммы контракта.
+            example: 1250000.00
+          completion_percentage:
+            type: number
+            format: float
+            description: Процент выполнения контракта.
+            example: 50.0
+          total_paid_amount:
+            type: number
+            format: float
+            description: Общая сумма платежей.
+            example: 800000.00
+          total_performed_amount:
+            type: number
+            format: float
+            description: Общая сумма по актам.
+            example: 1100000.00
+          planned_advance_amount:
+            type: number
+            format: float
+            description: Планируемая сумма аванса.
+            example: 500000.00
+          actual_advance_amount:
+            type: number
+            format: float
+            description: Фактически выплаченная сумма аванса.
+            example: 250000.00
+          remaining_advance_amount:
+            type: number
+            format: float
+            description: Остаток аванса к доплате.
+            example: 250000.00
+          advance_payment_percentage:
+            type: number
+            format: float
+            description: Процент выплаченного аванса.
+            example: 50.0
+          is_advance_fully_paid:
+            type: boolean
+            description: Полностью ли выплачен планируемый аванс.
+            example: false
+      status:
+        type: object
+        description: Статусная информация контракта.
+        properties:
+          current_status:
+            type: string
+            description: Текущий статус контракта.
+            example: "active"
+          is_nearing_limit:
+            type: boolean
+            description: Приближается ли контракт к лимиту (90%+).
+            example: false
+          can_add_work:
+            type: boolean
+            description: Можно ли добавлять работы к контракту.
+            example: true
+          is_overdue:
+            type: boolean
+            description: Просрочен ли контракт.
+            example: false
+          days_until_deadline:
+            type: integer
+            nullable: true
+            description: Дней до окончания контракта.
+            example: 45
+      counts:
+        type: object
+        description: Количественные показатели.
+        properties:
+          total_works:
+            type: integer
+            description: Общее количество работ по контракту.
+            example: 25
+          confirmed_works:
+            type: integer
+            description: Количество подтвержденных работ.
+            example: 20
+          pending_works:
+            type: integer
+            description: Количество работ на рассмотрении.
+            example: 5
+          performance_acts:
+            type: integer
+            description: Количество актов выполненных работ.
+            example: 8
+          approved_acts:
+            type: integer
+            description: Количество утвержденных актов.
+            example: 6
+          payments_count:
+            type: integer
+            description: Количество платежей.
+            example: 12
+          child_contracts:
+            type: integer
+            description: Количество дочерних контрактов.
+            example: 2
+          agreements_count:
+            type: integer
+            description: Количество дополнительных соглашений.
+            example: 3
+          specifications_count:
+            type: integer
+            description: Количество спецификаций.
+            example: 1

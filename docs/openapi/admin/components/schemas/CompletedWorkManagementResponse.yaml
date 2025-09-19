@@ -5,6 +5,4 @@ properties:
     example: true
   message:
     type: string
-    example: "Подрядчик создан успешно."
-  data:
-    $ref: './Contractor.yaml'
+    example: "Операция выполнена успешно."

@@ -1,3 +1,51 @@
-type: array
-items:
-  $ref: './Contractor.yaml' 
+type: object
+properties:
+  success:
+    type: boolean
+    example: true
+  message:
+    type: string
+    example: "Список подрядчиков получен успешно."
+  data:
+    type: array
+    items:
+      $ref: './Contractor.yaml'
+  meta:
+    type: object
+    properties:
+      current_page:
+        type: integer
+        example: 1
+      from:
+        type: integer
+        example: 1
+      last_page:
+        type: integer
+        example: 5
+      links:
+        type: array
+        items:
+          type: object
+          properties:
+            url:
+              type: string
+              nullable: true
+              example: "http://localhost/api/v1/admin/contractors?page=1"
+            label:
+              type: string
+              example: "&laquo; Previous"
+            active:
+              type: boolean
+              example: false
+      path:
+        type: string
+        example: "http://localhost/api/v1/admin/contractors"
+      per_page:
+        type: integer
+        example: 15
+      to:
+        type: integer
+        example: 15
+      total:
+        type: integer
+        example: 75

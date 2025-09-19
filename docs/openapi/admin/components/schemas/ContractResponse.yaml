@@ -1,6 +1,10 @@
-allOf:
-  - $ref: './ApiResponse.yaml'
-  - type: object
-    properties:
-      data:
-        $ref: './Contract.yaml' 
+type: object
+properties:
+  success:
+    type: boolean
+    example: true
+  message:
+    type: string
+    example: "Контракт создан успешно."
+  data:
+    $ref: './Contract.yaml'

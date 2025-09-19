@@ -1,78 +1,251 @@
 /contracts:
   get:
     tags: [Contracts]
-    summary: Получить список контрактов
+    summary: Получить список контрактов с расширенной фильтрацией
+    description: |
+      Возвращает пагинированный список контрактов организации с возможностью фильтрации по множественным критериям.
+      Включает связанные данные: подрядчика, проект, родительский контракт.
     parameters:
-      - in: query
-        name: page
-        schema:
-          type: integer
-      - in: query
-        name: per_page
-        schema:
-          type: integer
       - in: query
         name: contractor_id
         schema:
           type: integer
+        description: Фильтр по ID подрядчика
+        example: 3
       - in: query
         name: project_id
         schema:
           type: integer
+        description: Фильтр по ID проекта
+        example: 5
       - in: query
         name: status
         schema:
           type: string
-      - in: query
-        name: type
-        schema:
-          type: string
+          enum: [draft, active, completed, terminated, on_hold]
+        description: Фильтр по статусу контракта
+        example: "active"
       - in: query
         name: number
         schema:
           type: string
+        description: Поиск по номеру контракта
+        example: "ДПХ-2024"
       - in: query
         name: date_from
         schema:
           type: string
           format: date
+        description: Дата заключения от (включительно)
+        example: "2024-01-01"
       - in: query
         name: date_to
         schema:
           type: string
           format: date
+        description: Дата заключения до (включительно)
+        example: "2024-12-31"
+      - in: query
+        name: completion_from
+        schema:
+          type: number
+          format: float
+        description: Процент выполнения от
+        example: 50.0
+      - in: query
+        name: completion_to
+        schema:
+          type: number
+          format: float
+        description: Процент выполнения до
+        example: 90.0
+      - in: query
+        name: amount_from
+        schema:
+          type: number
+          format: float
+        description: Сумма контракта от
+        example: 1000000.00
+      - in: query
+        name: amount_to
+        schema:
+          type: number
+          format: float
+        description: Сумма контракта до
+        example: 5000000.00
+      - in: query
+        name: requiring_attention
+        schema:
+          type: boolean
+        description: Контракты, требующие внимания
+        example: true
+      - in: query
+        name: is_nearing_limit
+        schema:
+          type: boolean
+        description: Контракты, приближающиеся к лимиту (90%+)
+        example: true
+      - in: query
+        name: is_overdue
+        schema:
+          type: boolean
+        description: Просроченные контракты
+        example: false
+      - in: query
+        name: search
+        schema:
+          type: string
+        description: Поиск по номеру или названию
+        example: "строительные работы"
+      - in: query
+        name: sort_by
+        schema:
+          type: string
+          default: "created_at"
+        description: Поле для сортировки
+        example: "total_amount"
+      - in: query
+        name: sort_direction
+        schema:
+          type: string
+          enum: [asc, desc]
+          default: "desc"
+        description: Направление сортировки
+        example: "desc"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 25
     responses:
       "200":
-        description: Список контрактов
+        description: Список контрактов успешно получен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/Contract.yaml'
+              $ref: '../components/schemas/ContractCollection.yaml'
+            example:
+              success: true
+              message: "Список контрактов получен успешно."
+              data: []
+              meta:
+                current_page: 1
+                total: 45
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Не определён контекст организации"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
   post:
     tags: [Contracts]
-    summary: Создать контракт
+    summary: Создать новый контракт
+    description: |
+      Создает новый контракт с валидацией подрядчика, проекта и родительского контракта.
+      Автоматически устанавливает контекст организации.
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/ContractCreateRequest.yaml'
+          examples:
+            basic_contract:
+              summary: "Базовый контракт"
+              value:
+                contractor_id: 3
+                number: "ДПХ-2024/001"
+                date: "2024-02-01"
+                total_amount: 2500000.00
+                status: "active"
+                start_date: "2024-02-05"
+                end_date: "2024-08-30"
+            contract_with_gp:
+              summary: "Контракт с генподрядом"
+              value:
+                contractor_id: 4
+                project_id: 5
+                number: "ДГП-2024/002"
+                date: "2024-02-10"
+                subject: "Выполнение строительно-монтажных работ"
+                total_amount: 3000000.00
+                gp_percentage: 15.5
+                planned_advance_amount: 600000.00
+                status: "active"
+                work_type_category: "general_construction"
     responses:
       "201":
-        description: Создано
+        description: Контракт успешно создан
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ContractResponse.yaml'
+            example:
+              success: true
+              message: "Контракт создан успешно."
+              data:
+                id: 15
+                number: "ДПХ-2024/001"
+                total_amount: 2500000.00
+                status: "active"
+      "400":
+        description: Ошибка контекста организации или создания
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Не определён контекст организации"
+                error:
+                  type: string
+                  example: "Failed to create contract"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    contractor_id: ["Выбранный подрядчик не найден."]
+                    parent_contract_id: ["Циклическая ссылка на родительский контракт."]
+                    end_date: ["Дата окончания должна быть после или равна дате начала."]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Failed to create contract"
+                error:
+                  type: string
+                  example: "Database connection error"
 
 /contracts/{id}:
   get:
@@ -131,20 +304,63 @@
 /contracts/{id}/analytics:
   get:
     tags: [Contracts]
-    summary: Получить аналитику по контракту
+    summary: Получить детальную аналитику по контракту
+    description: |
+      Возвращает полную аналитическую информацию по контракту включая:
+      финансовые показатели, статусы, количественные данные, прогресс выполнения.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID контракта для получения аналитики
+        example: 15
     responses:
       "200":
-        description: Аналитика
+        description: Аналитика по контракту успешно получена
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ContractAnalyticsResponse.yaml'
+              $ref: '../components/schemas/ContractAnalytics.yaml'
+            example:
+              success: true
+              data:
+                financial:
+                  total_amount: 2500000.00
+                  completion_percentage: 50.0
+                  remaining_amount: 1250000.00
+                status:
+                  current_status: "active"
+                  is_nearing_limit: false
+                  can_add_work: true
+                counts:
+                  total_works: 25
+                  confirmed_works: 20
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Не определён контекст организации"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Контракт не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Contract not found"
 
 /contracts/{id}/completed-works:
   get:

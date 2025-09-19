@@ -1,16 +1,30 @@
 type: object
+description: Сокращенная информация о контракте (для списков и связей).
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор контракта.
+    example: 1
   number:
     type: string
-  date:
-    type: string
-    format: date
+    description: Номер контракта.
+    example: "ДПХ-2024/001"
   total_amount:
     type: number
     format: float
+    description: Общая сумма контракта.
+    example: 2500000.00
   status:
     type: string
-  status_label:
-    type: string 
+    description: Статус контракта.
+    enum: [draft, active, completed, terminated, on_hold]
+    example: "active"
+  completion_percentage:
+    type: number
+    format: float
+    description: Процент выполнения контракта.
+    example: 50.0
+  contractor_name:
+    type: string
+    description: Название подрядчика.
+    example: "ООО Строймонтаж"

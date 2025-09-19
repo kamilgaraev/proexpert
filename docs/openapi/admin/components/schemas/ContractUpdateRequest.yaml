@@ -1,58 +1,52 @@
 type: object
-description: Схема для создания нового контракта.
-required:
-  - contractor_id
-  - number
-  - date
-  - total_amount
-  - status
+description: Схема для обновления контракта. Все поля опциональны, так как используется частичное обновление.
 properties:
   project_id:
     type: integer
     nullable: true
-    description: ID проекта, к которому привязан контракт (опционально).
-    example: 5
+    description: ID проекта, к которому привязан контракт.
+    example: 7
   contractor_id:
     type: integer
     description: ID подрядчика из каталога организации.
-    example: 3
+    example: 4
   parent_contract_id:
     type: integer
     nullable: true
-    description: ID родительского контракта (для создания иерархии). Проверяется через ParentContractValid.
-    example: 12
+    description: ID родительского контракта. Проверяется через ParentContractValid.
+    example: 15
   number:
     type: string
-    description: Номер контракта (обязательно, максимум 255 символов).
+    description: Номер контракта (максимум 255 символов).
     maxLength: 255
-    example: "ДПХ-2024/001"
+    example: "ДПХ-2024/001-ИЗМ"
   date:
     type: string
     format: date
     description: Дата заключения контракта (формат YYYY-MM-DD).
-    example: "2024-02-01"
+    example: "2024-02-02"
   subject:
     type: string
     nullable: true
     description: Предмет контракта или краткое описание.
-    example: "Выполнение строительно-монтажных работ по объекту"
+    example: "Выполнение строительно-монтажных работ по объекту (обновленные условия)"
   work_type_category:
     type: string
     nullable: true
     description: Категория видов работ по контракту.
     enum: [general_construction, finishing, installation, design, consultation]
-    example: "general_construction"
+    example: "finishing"
   payment_terms:
     type: string
     nullable: true
     description: Условия оплаты по контракту.
-    example: "Оплата в течение 10 банковских дней с момента подписания акта"
+    example: "Оплата в течение 7 банковских дней с момента подписания акта"
   total_amount:
     type: number
     format: float
-    description: Общая сумма контракта (обязательно, минимум 0).
+    description: Общая сумма контракта (минимум 0).
     minimum: 0
-    example: 2500000.00
+    example: 2750000.00
   gp_percentage:
     type: number
     format: float
@@ -60,21 +54,21 @@ properties:
     description: Процент генерального подряда (от 0 до 100).
     minimum: 0
     maximum: 100
-    example: 15.5
+    example: 18.0
   planned_advance_amount:
     type: number
     format: float
     nullable: true
     description: Планируемая сумма аванса (минимум 0).
     minimum: 0
-    example: 500000.00
+    example: 550000.00
   actual_advance_amount:
     type: number
     format: float
     nullable: true
     description: Фактически выплаченная сумма аванса (минимум 0).
     minimum: 0
-    example: 250000.00
+    example: 400000.00
   status:
     type: string
     description: Статус контракта.
@@ -85,15 +79,15 @@ properties:
     format: date
     nullable: true
     description: Дата начала работ по контракту (формат YYYY-MM-DD).
-    example: "2024-02-05"
+    example: "2024-02-10"
   end_date:
     type: string
     format: date
     nullable: true
     description: Дата окончания работ по контракту (должна быть после или равна start_date).
-    example: "2024-08-30"
+    example: "2024-09-15"
   notes:
     type: string
     nullable: true
     description: Дополнительные примечания или комментарии к контракту.
-    example: "Особые условия: работа в зимний период, требуется согласование с управляющей компанией"
+    example: "Изменения: увеличена сумма контракта, продлен срок выполнения"

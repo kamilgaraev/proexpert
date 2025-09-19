@@ -1,64 +1,155 @@
 type: object
+description: Детальная информация о контракте.
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор контракта.
+    example: 1
   organization_id:
     type: integer
-  project_id:
-    type: integer
-    nullable: true
-  contractor_id:
-    type: integer
-  parent_contract_id:
-    type: integer
-    nullable: true
+    description: ID организации, которой принадлежит контракт.
+    example: 1
+  project:
+    $ref: './ProjectMini.yaml'
+  contractor:
+    $ref: './Contractor.yaml'
+  parent_contract:
+    $ref: './ContractMini.yaml'
+  child_contracts:
+    type: array
+    description: Дочерние контракты (при запросе с детализацией).
+    items:
+      $ref: './ContractMini.yaml'
   number:
     type: string
+    description: Номер контракта.
+    example: "ДПХ-2024/001"
   date:
     type: string
     format: date
-  type:
-    type: string
+    description: Дата заключения контракта.
+    example: "2024-02-01"
   subject:
     type: string
     nullable: true
+    description: Предмет контракта.
+    example: "Выполнение строительно-монтажных работ по объекту"
   work_type_category:
     type: string
     nullable: true
+    description: Категория видов работ по контракту.
+    enum: [general_construction, finishing, installation, design, consultation]
+    example: "general_construction"
   payment_terms:
     type: string
     nullable: true
+    description: Условия оплаты по контракту.
+    example: "Оплата в течение 10 банковских дней"
   total_amount:
     type: number
     format: float
+    description: Общая сумма контракта.
+    example: 2500000.00
   gp_percentage:
     type: number
     format: float
     nullable: true
+    description: Процент генерального подряда.
+    example: 15.5
+  gp_amount:
+    type: number
+    format: float
+    description: Сумма генерального подряда (вычисляемое поле).
+    example: 387500.00
+  total_amount_with_gp:
+    type: number
+    format: float
+    description: Общая сумма с учетом генподряда (вычисляемое поле).
+    example: 2887500.00
   planned_advance_amount:
     type: number
     format: float
     nullable: true
+    description: Планируемая сумма аванса.
+    example: 500000.00
   actual_advance_amount:
     type: number
     format: float
     nullable: true
+    description: Фактически выплаченная сумма аванса.
+    example: 250000.00
+  remaining_advance_amount:
+    type: number
+    format: float
+    description: Остаток аванса к доплате (вычисляемое поле).
+    example: 250000.00
+  advance_payment_percentage:
+    type: number
+    format: float
+    description: Процент выплаченного аванса (вычисляемое поле).
+    example: 50.0
+  is_advance_fully_paid:
+    type: boolean
+    description: Полностью ли выплачен планируемый аванс (вычисляемое поле).
+    example: false
   status:
     type: string
+    description: Статус контракта.
+    enum: [draft, active, completed, terminated, on_hold]
+    example: "active"
   start_date:
     type: string
     format: date
     nullable: true
+    description: Дата начала работ по контракту.
+    example: "2024-02-05"
   end_date:
     type: string
     format: date
     nullable: true
+    description: Дата окончания работ по контракту.
+    example: "2024-08-30"
+  is_overdue:
+    type: boolean
+    description: Просрочен ли контракт (вычисляемое поле).
+    example: false
   notes:
     type: string
     nullable: true
+    description: Дополнительные примечания.
+    example: "Особые условия: работа в зимний период"
+  completed_works_amount:
+    type: number
+    format: float
+    description: Сумма выполненных работ (вычисляемое поле).
+    example: 1250000.00
+  remaining_amount:
+    type: number
+    format: float
+    description: Остаток суммы контракта (вычисляемое поле).
+    example: 1250000.00
+  completion_percentage:
+    type: number
+    format: float
+    description: Процент выполнения контракта (вычисляемое поле).
+    example: 50.0
+  total_paid_amount:
+    type: number
+    format: float
+    description: Общая сумма платежей (вычисляемое поле).
+    example: 800000.00
+  total_performed_amount:
+    type: number
+    format: float
+    description: Общая сумма по актам (вычисляемое поле).
+    example: 1100000.00
   created_at:
     type: string
     format: date-time
+    description: Дата и время создания контракта.
+    example: "2024-02-01T10:00:00.000000Z"
   updated_at:
     type: string
-    format: date-time 
+    format: date-time
+    description: Дата и время последнего обновления контракта.
+    example: "2024-02-15T14:30:00.000000Z"

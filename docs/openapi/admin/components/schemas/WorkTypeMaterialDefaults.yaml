@@ -1,0 +1,40 @@
+type: object
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        material_id:
+          type: integer
+          description: ID материала.
+          example: 15
+        material_name:
+          type: string
+          description: Название материала.
+          example: "Цемент М500"
+        default_price:
+          type: number
+          format: float
+          nullable: true
+          description: Цена по умолчанию за единицу материала.
+          example: 350.50
+        quantity:
+          type: number
+          format: float
+          nullable: true
+          description: Количество по умолчанию для данного вида работ.
+          example: 0.5
+        notes:
+          type: string
+          nullable: true
+          description: Примечания по использованию материала.
+          example: "Норма расхода на 1 кв.м"
+        measurement_unit:
+          type: string
+          nullable: true
+          description: Единица измерения материала.
+          example: "т"

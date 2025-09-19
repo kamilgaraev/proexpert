@@ -1,118 +1,354 @@
 /contractors:
   get:
     tags: [Contractors]
-    summary: Получить список подрядчиков
+    summary: Получить список подрядчиков организации
+    description: |
+      Возвращает пагинированный список подрядчиков организации с возможностью фильтрации и сортировки.
+      Включает как созданных вручную, так и приглашенных подрядчиков из других организаций.
     parameters:
-      - in: query
-        name: page
-        schema:
-          type: integer
-      - in: query
-        name: per_page
-        schema:
-          type: integer
       - in: query
         name: name
         schema:
           type: string
-        description: Фильтр по имени
+        description: Фильтр по наименованию подрядчика (частичное совпадение)
+        example: "Строймонтаж"
       - in: query
         name: inn
         schema:
           type: string
-        description: Фильтр по ИНН
+        description: Фильтр по ИНН подрядчика (точное совпадение)
+        example: "7707083893"
       - in: query
         name: sort_by
         schema:
           type: string
+          default: "name"
+        description: Поле для сортировки
+        example: "name"
       - in: query
         name: sort_direction
         schema:
           type: string
           enum: [asc, desc]
+          default: "asc"
+        description: Направление сортировки
+        example: "asc"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 25
     responses:
       "200":
-        description: Список подрядчиков
+        description: Список подрядчиков успешно получен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/Contractor.yaml'
+              $ref: '../components/schemas/ContractorCollection.yaml'
+            example:
+              success: true
+              message: "Список подрядчиков получен успешно."
+              data: []
+              meta:
+                current_page: 1
+                total: 15
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Не определён контекст организации"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
   post:
     tags: [Contractors]
-    summary: Создать подрядчика
+    summary: Создать нового подрядчика
+    description: |
+      Создает нового подрядчика в каталоге организации. Проверяет уникальность ИНН и email в рамках организации.
+      Автоматически устанавливает тип "manual" для ручно созданных подрядчиков.
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/ContractorCreateRequest.yaml'
+          examples:
+            basic_contractor:
+              summary: "Базовый подрядчик"
+              value:
+                name: "ООО Строймонтаж"
+                contact_person: "Иванов Иван Иванович"
+                phone: "+7 (495) 123-45-67"
+                email: "contact@stroymont.ru"
+                inn: "7707083893"
+                kpp: "770701001"
+            full_contractor:
+              summary: "Подрядчик с полными данными"
+              value:
+                name: "ООО Высотстрой"
+                contact_person: "Петров Петр Петрович"
+                phone: "+7 (495) 987-65-43"
+                email: "info@vysotstroy.ru"
+                legal_address: "127055, г. Москва, ул. Сущевская, д. 21"
+                inn: "7707083894"
+                kpp: "770701002"
+                bank_details: "р/с 40702810400000000001 в ПАО Сбербанк"
+                notes: "Специализация: высотные работы"
     responses:
       "201":
-        description: Создано
+        description: Подрядчик успешно создан
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ContractorResponse.yaml'
+            example:
+              success: true
+              message: "Подрядчик создан успешно."
+              data:
+                id: 8
+                name: "ООО Строймонтаж"
+                inn: "7707083893"
+                contractor_type: "manual"
+      "400":
+        description: Ошибка контекста организации или создания
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Не определён контекст организации"
+                error:
+                  type: string
+                  example: "Failed to create contractor"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    name: ["Поле name обязательно для заполнения."]
+                    inn: ["ИНН уже используется другим подрядчиком."]
+                    email: ["Неверный формат email адреса."]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Failed to create contractor"
+                error:
+                  type: string
+                  example: "Database connection error"
 
 /contractors/{id}:
   get:
     tags: [Contractors]
-    summary: Получить подрядчика
+    summary: Получить детальную информацию о подрядчике
+    description: |
+      Возвращает полную информацию о подрядчике включая настройки синхронизации для приглашенных организаций.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID подрядчика
+        example: 8
     responses:
       "200":
-        description: Подрядчик
+        description: Детальная информация о подрядчике
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ContractorResponse.yaml'
+            example:
+              success: true
+              message: "Подрядчик найден успешно."
+              data:
+                id: 8
+                name: "ООО Строймонтаж"
+                contact_person: "Иванов Иван Иванович"
+                inn: "7707083893"
+                contractor_type: "manual"
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Не определён контекст организации"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Подрядчик не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Contractor not found"
   put:
     tags: [Contractors]
-    summary: Обновить подрядчика
+    summary: Обновить данные подрядчика
+    description: |
+      Обновляет информацию о подрядчике с проверкой уникальности ИНН и email.
+      Поддерживает частичное обновление полей.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID подрядчика для обновления
+        example: 8
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/ContractorCreateRequest.yaml'
+            $ref: '../components/schemas/ContractorUpdateRequest.yaml'
+          examples:
+            partial_update:
+              summary: "Частичное обновление"
+              value:
+                phone: "+7 (495) 987-65-43"
+                email: "new-contact@stroymont.ru"
+            full_update:
+              summary: "Полное обновление"
+              value:
+                name: "ООО Строймонтаж Плюс"
+                contact_person: "Петров Петр Петрович"
+                phone: "+7 (495) 987-65-43"
+                email: "info@stroymont.ru"
+                legal_address: "127055, г. Москва, ул. Сущевская, д. 21, стр. 2"
+                notes: "Обновлено: расширена специализация"
     responses:
       "200":
-        description: Обновлено
+        description: Подрядчик успешно обновлен
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ContractorResponse.yaml'
+            example:
+              success: true
+              message: "Подрядчик обновлен успешно."
+              data:
+                id: 8
+                name: "ООО Строймонтаж Плюс"
+                phone: "+7 (495) 987-65-43"
+      "400":
+        description: Ошибка контекста организации или обновления
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Не определён контекст организации"
+                error:
+                  type: string
+                  example: "Failed to update contractor"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Подрядчик не найден
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    inn: ["ИНН уже используется другим подрядчиком."]
+                    email: ["Неверный формат email адреса."]
   delete:
     tags: [Contractors]
     summary: Удалить подрядчика
+    description: |
+      Удаляет подрядчика из каталога организации. Операция необратима.
+      Перед удалением проверяется наличие связанных контрактов.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID подрядчика для удаления
+        example: 8
     responses:
       "204":
-        description: Успешно удалено 
+        description: Подрядчик успешно удален
+      "400":
+        description: Ошибка контекста организации или удаления
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Не определён контекст организации"
+                error:
+                  type: string
+                  example: "Failed to delete contractor"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Подрядчик не найден
+      "409":
+        description: Конфликт - невозможно удалить подрядчика с активными контрактами
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Невозможно удалить подрядчика: существуют связанные контракты"
+                error:
+                  type: string
+                  example: "Constraint violation" 

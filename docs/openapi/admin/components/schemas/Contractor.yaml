@@ -1,38 +1,99 @@
 type: object
+description: Детальная информация о подрядчике.
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор подрядчика.
+    example: 1
   organization_id:
     type: integer
+    description: ID организации, которой принадлежит подрядчик.
+    example: 1
+  source_organization_id:
+    type: integer
+    nullable: true
+    description: ID исходной организации (для приглашенных подрядчиков).
+    example: 25
   name:
     type: string
+    description: Наименование подрядчика.
+    example: "ООО Строймонтаж"
   contact_person:
     type: string
     nullable: true
+    description: Контактное лицо подрядчика.
+    example: "Иванов Иван Иванович"
   phone:
     type: string
     nullable: true
+    description: Телефон подрядчика.
+    example: "+7 (495) 123-45-67"
   email:
     type: string
     nullable: true
+    description: Email подрядчика для связи.
+    example: "contact@stroymont.ru"
   legal_address:
     type: string
     nullable: true
+    description: Юридический адрес подрядчика.
+    example: "127055, г. Москва, ул. Сущевская, д. 21, стр. 1"
   inn:
     type: string
     nullable: true
+    description: ИНН подрядчика.
+    example: "7707083893"
   kpp:
     type: string
     nullable: true
+    description: КПП подрядчика.
+    example: "770701001"
   bank_details:
     type: string
     nullable: true
+    description: Банковские реквизиты подрядчика.
+    example: "р/с 40702810400000000001 в ПАО Сбербанк"
   notes:
     type: string
     nullable: true
+    description: Дополнительные примечания о подрядчике.
+    example: "Специализация: высотные работы"
+  contractor_type:
+    type: string
+    description: Тип подрядчика.
+    enum: [manual, invited_organization]
+    example: "manual"
+  contractor_invitation_id:
+    type: integer
+    nullable: true
+    description: ID приглашения подрядчика (для приглашенных организаций).
+    example: 10
+  connected_at:
+    type: string
+    format: date-time
+    nullable: true
+    description: Дата и время подключения приглашенной организации.
+    example: "2024-01-15T10:00:00.000000Z"
+  sync_settings:
+    type: object
+    nullable: true
+    description: Настройки синхронизации для приглашенных организаций.
+    example:
+      sync_fields: ["name", "phone", "email"]
+      sync_interval_hours: 24
+  last_sync_at:
+    type: string
+    format: date-time
+    nullable: true
+    description: Дата и время последней синхронизации.
+    example: "2024-02-15T08:30:00.000000Z"
   created_at:
     type: string
     format: date-time
+    description: Дата и время создания подрядчика.
+    example: "2024-01-15T10:00:00.000000Z"
   updated_at:
     type: string
-    format: date-time 
+    format: date-time
+    description: Дата и время последнего обновления подрядчика.
+    example: "2024-02-15T14:30:00.000000Z"
