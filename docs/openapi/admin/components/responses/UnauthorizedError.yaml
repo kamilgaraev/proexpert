@@ -1,5 +1,12 @@
-description: Не авторизован
+description: Ошибка авторизации - пользователь не аутентифицирован
 content:
   application/json:
     schema:
-      $ref: '../schemas/ErrorResponse.yaml' 
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Unauthenticated."
+        success:
+          type: boolean
+          example: false

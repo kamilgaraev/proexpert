@@ -1,3 +1,49 @@
-type: array
-items:
-  $ref: './RateCoefficient.yaml' 
+type: object
+properties:
+  data:
+    type: array
+    items:
+      $ref: './RateCoefficient.yaml'
+  links:
+    type: object
+    properties:
+      first:
+        type: string
+        nullable: true
+        example: "http://localhost/api/v1/admin/rate-coefficients?page=1"
+      last:
+        type: string
+        nullable: true
+        example: "http://localhost/api/v1/admin/rate-coefficients?page=5"
+      prev:
+        type: string
+        nullable: true
+        example: null
+      next:
+        type: string
+        nullable: true
+        example: "http://localhost/api/v1/admin/rate-coefficients?page=2"
+  meta:
+    type: object
+    properties:
+      current_page:
+        type: integer
+        example: 1
+      from:
+        type: integer
+        example: 1
+      last_page:
+        type: integer
+        example: 5
+      path:
+        type: string
+        example: "http://localhost/api/v1/admin/rate-coefficients"
+      per_page:
+        type: integer
+        example: 15
+      to:
+        type: integer
+        example: 15
+      total:
+        type: integer
+        example: 67

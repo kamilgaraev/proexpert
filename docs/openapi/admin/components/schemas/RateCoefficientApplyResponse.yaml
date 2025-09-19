@@ -1,0 +1,60 @@
+type: object
+description: Результат расчёта скорректированного значения с детализацией применённых коэффициентов.
+properties:
+  original:
+    type: number
+    format: float
+    description: Исходное значение.
+    example: 120000.0000
+  final:
+    type: number
+    format: float
+    description: Итоговое скорректированное значение.
+    example: 142650.0000
+  applications:
+    type: array
+    description: Детализация применённых коэффициентов.
+    items:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID применённого коэффициента.
+          example: 1
+        name:
+          type: string
+          description: Название коэффициента.
+          example: "Зимний коэффициент"
+        type:
+          type: string
+          description: Тип коэффициента.
+          enum: [percentage, fixed_addition]
+          example: "percentage"
+        value:
+          type: number
+          format: float
+          description: Значение коэффициента.
+          example: 15.50
+        before:
+          type: number
+          format: float
+          description: Значение до применения коэффициента.
+          example: 120000.0000
+        after:
+          type: number
+          format: float
+          description: Значение после применения коэффициента.
+          example: 138600.0000
+    example:
+      - id: 1
+        name: "Зимний коэффициент"
+        type: "percentage"
+        value: 15.50
+        before: 120000.0000
+        after: 138600.0000
+      - id: 3
+        name: "Региональный коэффициент"
+        type: "percentage"
+        value: 2.92
+        before: 138600.0000
+        after: 142650.0000

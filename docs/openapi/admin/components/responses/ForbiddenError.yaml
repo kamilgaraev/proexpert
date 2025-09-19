@@ -1,0 +1,12 @@
+description: Доступ запрещён - недостаточно прав для выполнения операции
+content:
+  application/json:
+    schema:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Это действие не авторизовано."
+        success:
+          type: boolean
+          example: false

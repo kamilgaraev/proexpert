@@ -1,6 +1,10 @@
-allOf:
-  - $ref: './ApiResponse.yaml'
-  - type: object
-    properties:
-      data:
-        $ref: './RateCoefficient.yaml' 
+type: object
+properties:
+  success:
+    type: boolean
+    example: true
+  message:
+    type: string
+    example: "Коэффициент создан успешно."
+  data:
+    $ref: './RateCoefficient.yaml'

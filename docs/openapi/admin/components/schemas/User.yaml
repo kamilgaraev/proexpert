@@ -1,0 +1,31 @@
+type: object
+description: Информация о пользователе (прорабе).
+properties:
+  id:
+    type: integer
+    description: Уникальный идентификатор пользователя.
+    example: 12
+  name:
+    type: string
+    description: Полное имя пользователя.
+    example: "Иванов Иван Иванович"
+  email:
+    type: string
+    format: email
+    description: Email пользователя.
+    example: "ivanov@example.com"
+  phone:
+    type: string
+    nullable: true
+    description: Телефон пользователя.
+    example: "+7 (900) 123-45-67"
+  position:
+    type: string
+    nullable: true
+    description: Должность пользователя.
+    example: "Прораб"
+  avatar_url:
+    type: string
+    nullable: true
+    description: URL аватара пользователя.
+    example: "https://example.com/avatars/user_12.jpg"

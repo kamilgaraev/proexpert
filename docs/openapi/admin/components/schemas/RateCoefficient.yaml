@@ -1,45 +1,75 @@
 type: object
+description: Детальная информация о коэффициенте расценок.
 properties:
   id:
     type: integer
-  organization_id:
-    type: integer
+    description: Уникальный идентификатор коэффициента.
+    example: 1
   name:
     type: string
+    description: Название коэффициента.
+    example: "Зимний коэффициент"
   code:
     type: string
     nullable: true
+    description: Уникальный код коэффициента в рамках организации.
+    example: "WINTER_2024"
   value:
     type: number
     format: float
+    description: Значение коэффициента.
+    example: 15.50
   type:
     type: string
+    description: Тип коэффициента.
     enum: [percentage, fixed_addition]
+    example: "percentage"
   applies_to:
     type: string
+    description: К чему применяется коэффициент.
     enum: [material_norms, work_costs, labor_hours, general]
+    example: "work_costs"
   scope:
     type: string
+    description: Область применения коэффициента.
     enum: [global_org, project, work_type_category, work_type, material_category, material]
+    example: "global_org"
   description:
     type: string
     nullable: true
+    description: Описание коэффициента.
+    example: "Надбавка за выполнение работ в зимний период при температуре ниже -10°C"
   is_active:
     type: boolean
+    description: Активность коэффициента.
+    example: true
   valid_from:
     type: string
     format: date
     nullable: true
+    description: Дата начала действия коэффициента.
+    example: "2024-12-01"
   valid_to:
     type: string
     format: date
     nullable: true
+    description: Дата окончания действия коэффициента.
+    example: "2025-03-31"
   conditions:
     type: object
     nullable: true
+    description: Дополнительные условия применения коэффициента.
+    example:
+      project_ids: [1, 3, 5]
+      work_type_ids: [12, 15]
+      min_temperature: -10
   created_at:
     type: string
     format: date-time
+    description: Дата и время создания коэффициента.
+    example: "2024-11-15T10:00:00.000000Z"
   updated_at:
     type: string
-    format: date-time 
+    format: date-time
+    description: Дата и время последнего обновления коэффициента.
+    example: "2024-12-01T14:30:00.000000Z"

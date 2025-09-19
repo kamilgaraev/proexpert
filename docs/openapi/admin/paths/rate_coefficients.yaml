@@ -1,139 +1,442 @@
 /rate-coefficients:
   get:
     tags: [RateCoefficients]
-    summary: Получить список коэффициентов
+    summary: Получить список коэффициентов расценок организации
+    description: |
+      Возвращает пагинированный список коэффициентов расценок с возможностью детальной фильтрации.
+      Коэффициенты используются для автоматического расчёта стоимости работ, материалов и трудозатрат.
     parameters:
-      - in: query
-        name: page
-        schema:
-          type: integer
-        description: Номер страницы
-      - in: query
-        name: per_page
-        schema:
-          type: integer
-        description: Количество элементов на страницу
       - in: query
         name: name
         schema:
           type: string
-        description: Фильтр по названию
+        description: Фильтр по названию коэффициента (частичное совпадение)
+        example: "Зимний"
       - in: query
         name: code
         schema:
           type: string
-        description: Фильтр по коду
+        description: Фильтр по коду коэффициента (частичное совпадение)
+        example: "WINTER"
       - in: query
         name: type
         schema:
           type: string
           enum: [percentage, fixed_addition]
+        description: Фильтр по типу коэффициента
+        example: "percentage"
       - in: query
         name: applies_to
         schema:
           type: string
           enum: [material_norms, work_costs, labor_hours, general]
+        description: Фильтр по назначению коэффициента
+        example: "work_costs"
       - in: query
         name: scope
         schema:
           type: string
           enum: [global_org, project, work_type_category, work_type, material_category, material]
+        description: Фильтр по области применения коэффициента
+        example: "global_org"
       - in: query
         name: is_active
         schema:
           type: boolean
+        description: Фильтр по активности коэффициента
+        example: true
       - in: query
         name: sort_by
         schema:
           type: string
+          default: "created_at"
+        description: Поле для сортировки (name, code, value, type, applies_to, scope, is_active, valid_from, valid_to, created_at, updated_at)
+        example: "name"
       - in: query
         name: sort_direction
         schema:
           type: string
           enum: [asc, desc]
+          default: "desc"
+        description: Направление сортировки
+        example: "asc"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 25
     responses:
       "200":
-        description: Список коэффициентов
+        description: Список коэффициентов успешно получен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/RateCoefficient.yaml'
+              $ref: '../components/schemas/RateCoefficientCollection.yaml'
+            example:
+              data: []
+              meta:
+                current_page: 1
+                total: 12
+      "500":
+        description: Ошибка определения контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен."
   post:
     tags: [RateCoefficients]
-    summary: Создать коэффициент
+    summary: Создать новый коэффициент расценок
+    description: |
+      Создает новый коэффициент расценок для организации с валидацией уникальности кода.
+      Коэффициент может быть процентным или фиксированной надбавкой.
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/RateCoefficientCreateRequest.yaml'
+          examples:
+            winter_coefficient:
+              summary: "Зимний коэффициент"
+              value:
+                name: "Зимний коэффициент"
+                code: "WINTER_2024"
+                value: 15.50
+                type: "percentage"
+                applies_to: "work_costs"
+                scope: "global_org"
+                description: "Надбавка за работы в зимний период"
+                valid_from: "2024-12-01"
+                valid_to: "2025-03-31"
+            fixed_transport:
+              summary: "Транспортный коэффициент"
+              value:
+                name: "Транспортные расходы"
+                value: 5000.00
+                type: "fixed_addition"
+                applies_to: "material_norms"
+                scope: "project"
+                conditions:
+                  project_ids: [1, 3, 5]
     responses:
       "201":
-        description: Создано
+        description: Коэффициент успешно создан
         content:
           application/json:
             schema:
               $ref: '../components/schemas/RateCoefficientResponse.yaml'
+            example:
+              success: true
+              message: "Коэффициент создан успешно."
+              data:
+                id: 15
+                name: "Зимний коэффициент"
+                code: "WINTER_2024"
+                value: 15.50
+                type: "percentage"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Коэффициент с таким кодом уже существует в вашей организации."
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Данные не прошли валидацию."
+                errors:
+                  type: object
+                  example:
+                    name: ["Поле name обязательно для заполнения."]
+                    valid_to: ["Дата окончания должна быть после или равна дате начала."]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Не удалось создать коэффициент."
 
 /rate-coefficients/{id}:
   get:
     tags: [RateCoefficients]
-    summary: Получить коэффициент
+    summary: Получить детальную информацию о коэффициенте
+    description: |
+      Возвращает полную информацию о коэффициенте расценок включая условия применения.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID коэффициента
+        example: 15
     responses:
       "200":
-        description: Коэффициент
+        description: Детальная информация о коэффициенте
         content:
           application/json:
             schema:
               $ref: '../components/schemas/RateCoefficientResponse.yaml'
+            example:
+              success: true
+              message: "Коэффициент найден успешно."
+              data:
+                id: 15
+                name: "Зимний коэффициент"
+                code: "WINTER_2024"
+                value: 15.50
+                type: "percentage"
+                applies_to: "work_costs"
+                scope: "global_org"
+      "404":
+        description: Коэффициент не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Коэффициент не найден."
   put:
     tags: [RateCoefficients]
-    summary: Обновить коэффициент
+    summary: Обновить коэффициент расценок
+    description: |
+      Обновляет коэффициент расценок с проверкой уникальности кода и валидацией полей.
+      Поддерживает частичное обновление полей.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID коэффициента для обновления
+        example: 15
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/RateCoefficientCreateRequest.yaml'
+            $ref: '../components/schemas/RateCoefficientUpdateRequest.yaml'
+          examples:
+            partial_update:
+              summary: "Частичное обновление"
+              value:
+                value: 18.75
+                description: "Обновленная надбавка за зимний период"
+            scope_change:
+              summary: "Изменение области применения"
+              value:
+                scope: "project"
+                conditions:
+                  project_ids: [1, 3, 5, 8]
     responses:
       "200":
-        description: Обновлено
+        description: Коэффициент успешно обновлен
         content:
           application/json:
             schema:
               $ref: '../components/schemas/RateCoefficientResponse.yaml'
+            example:
+              success: true
+              message: "Коэффициент обновлен успешно."
+              data:
+                id: 15
+                value: 18.75
+                description: "Обновленная надбавка за зимний период"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Другой коэффициент с таким кодом уже существует в вашей организации."
+      "404":
+        description: Коэффициент не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Коэффициент не найден или у вас нет прав на его изменение."
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Данные не прошли валидацию."
+                errors:
+                  type: object
+                  example:
+                    valid_to: ["Дата окончания должна быть после или равна дате начала."]
   delete:
     tags: [RateCoefficients]
-    summary: Удалить коэффициент
+    summary: Удалить коэффициент расценок
+    description: |
+      Удаляет коэффициент расценок. Операция необратима.
+      Проверяется принадлежность коэффициента организации.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID коэффициента для удаления
+        example: 15
     responses:
       "204":
-        description: Успешно удалено 
+        description: Коэффициент успешно удален
+      "404":
+        description: Коэффициент не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Коэффициент не найден или у вас нет прав на его удаление."
+
+/rate-coefficients/apply:
+  post:
+    tags: [RateCoefficients]
+    summary: Рассчитать скорректированное значение с учётом коэффициентов
+    description: |
+      Быстрый расчёт значения с применением всех подходящих коэффициентов организации.
+      Возвращает детальную информацию о каждом применённом коэффициенте.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/RateCoefficientApplyRequest.yaml'
+          examples:
+            work_cost_calculation:
+              summary: "Расчёт стоимости работ"
+              value:
+                original_value: 120000.00
+                applies_to: "work_costs"
+                scope: "project"
+                contextual_ids:
+                  project_id: 5
+                date: "2024-02-15"
+            material_norms_calculation:
+              summary: "Расчёт норм материалов"
+              value:
+                original_value: 25.5
+                applies_to: "material_norms"
+                contextual_ids:
+                  material_id: 67
+                  work_type_id: 12
+    responses:
+      "200":
+        description: Расчёт выполнен успешно
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/RateCoefficientApplyResponse.yaml'
+            example:
+              original: 120000.0000
+              final: 142650.0000
+              applications:
+                - id: 1
+                  name: "Зимний коэффициент"
+                  type: "percentage"
+                  value: 15.50
+                  before: 120000.0000
+                  after: 138600.0000
+                - id: 3
+                  name: "Региональный коэффициент"
+                  type: "percentage"
+                  value: 2.92
+                  before: 138600.0000
+                  after: 142650.0000
+      "400":
+        description: Ошибка определения организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Не удалось определить организацию."
+      "422":
+        description: Ошибка валидации параметров
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    original_value: ["Поле original_value обязательно для заполнения."]
+                    applies_to: ["Выбранное значение для applies_to некорректно."] 

@@ -1,0 +1,37 @@
+type: object
+description: Схема для расчёта скорректированного значения с учётом коэффициентов.
+required:
+  - original_value
+  - applies_to
+properties:
+  original_value:
+    type: number
+    format: float
+    description: Исходное значение для применения коэффициентов (минимум 0).
+    minimum: 0
+    example: 120000.00
+  applies_to:
+    type: string
+    description: К чему применяются коэффициенты.
+    enum: [material_norms, work_costs, labor_hours, general]
+    example: "work_costs"
+  scope:
+    type: string
+    nullable: true
+    description: Область применения (опционально, для фильтрации коэффициентов).
+    enum: [global_org, project, work_type_category, work_type, material_category, material]
+    example: "project"
+  contextual_ids:
+    type: object
+    nullable: true
+    description: Контекстные ID для уточнения области применения коэффициентов.
+    example:
+      project_id: 5
+      work_type_id: 12
+      material_id: 67
+  date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата для проверки действия коэффициентов (формат YYYY-MM-DD). Если не указана, используется текущая дата.
+    example: "2024-02-15"

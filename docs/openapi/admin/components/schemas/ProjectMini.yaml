@@ -1,7 +1,21 @@
 type: object
+description: Сокращенная информация о проекте.
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор проекта.
+    example: 5
   name:
     type: string
-required: [id, name] 
+    description: Название проекта.
+    example: "ЖК Солнечный"
+  address:
+    type: string
+    nullable: true
+    description: Адрес объекта проекта.
+    example: "г. Москва, ул. Солнечная, д. 15"
+  status:
+    type: string
+    description: Статус проекта.
+    enum: [active, completed, paused, cancelled]
+    example: "active"

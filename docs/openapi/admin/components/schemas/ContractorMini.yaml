@@ -1,10 +1,21 @@
 type: object
+description: Сокращенная информация о подрядчике.
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор подрядчика.
+    example: 3
   name:
     type: string
+    description: Наименование подрядчика.
+    example: "ООО Строймонтаж"
   inn:
     type: string
     nullable: true
-required: [id, name] 
+    description: ИНН подрядчика.
+    example: "7707083893"
+  contact_person:
+    type: string
+    nullable: true
+    description: Контактное лицо.
+    example: "Иванов И.И."
