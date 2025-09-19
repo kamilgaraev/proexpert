@@ -83,8 +83,59 @@ jobs:
           host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
-          source: public/docs
-          target: /var/www/prohelper/public/
+          source: public/docs/*
+          target: /var/www/prohelper/public/docs/
+          strip_components: 2
+
+      - name: Verify and fix docs structure (appleboy)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: 89.169.44.117
+          username: root
+          key: ${{ secrets.DEPLOY }}
+          script: |
+            cd /var/www/prohelper
+            echo "Checking docs files structure..."
+            ls -la public/docs/
+            
+            # Ensure all required directories exist
+            mkdir -p public/docs/admin public/docs/lk public/docs/mobile public/docs/landing_admin
+            
+            # Copy HTML files to correct locations if they exist
+            if [ -f "public/docs/admin_api.html" ]; then
+              cp public/docs/admin_api.html public/docs/admin/index.html
+              echo "✅ Copied admin_api.html"
+            else
+              echo "❌ Missing admin_api.html"
+            fi
+            
+            if [ -f "public/docs/mobile_api.html" ]; then
+              cp public/docs/mobile_api.html public/docs/mobile/index.html
+              echo "✅ Copied mobile_api.html"
+            else
+              echo "❌ Missing mobile_api.html"
+            fi
+            
+            if [ -f "public/docs/lk_api.html" ]; then
+              cp public/docs/lk_api.html public/docs/lk/index.html
+              echo "✅ Copied lk_api.html"
+            else
+              echo "❌ Missing lk_api.html"
+            fi
+            
+            if [ -f "public/docs/landing_admin_api.html" ]; then
+              cp public/docs/landing_admin_api.html public/docs/landing_admin/index.html
+              echo "✅ Copied landing_admin_api.html"
+            else
+              echo "❌ Missing landing_admin_api.html"
+            fi
+            
+            # Set correct permissions
+            chown -R www-data:www-data public/docs/
+            chmod -R 755 public/docs/
+            
+            echo "Final docs structure:"
+            ls -la public/docs/*/index.html 2>/dev/null || echo "Some index.html files missing"
 
       - name: Setup Monitoring (appleboy)
         uses: appleboy/ssh-action@v1.0.3
