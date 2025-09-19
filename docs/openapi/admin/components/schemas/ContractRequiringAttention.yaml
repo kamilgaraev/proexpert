@@ -1,0 +1,74 @@
+type: object
+description: Контракт, требующий внимания (превышен лимит, просрочен или завершен).
+properties:
+  id:
+    type: integer
+    description: ID контракта
+    example: 25
+  number:
+    type: string
+    description: Номер контракта
+    example: "КТ-2024-0025"
+  project_name:
+    type: string
+    nullable: true
+    description: Название проекта
+    example: "Жилой комплекс Солнечный"
+  contractor_name:
+    type: string
+    nullable: true
+    description: Название подрядчика
+    example: "ООО СтройТех"
+  total_amount:
+    type: number
+    format: decimal
+    description: Общая сумма контракта
+    example: 2500000.00
+  completed_works_amount:
+    type: number
+    format: decimal
+    description: Сумма выполненных работ
+    example: 2350000.00
+  completion_percentage:
+    type: number
+    format: decimal
+    description: Процент выполнения
+    example: 94.00
+  remaining_amount:
+    type: number
+    format: decimal
+    description: Оставшаяся сумма
+    example: 150000.00
+  status:
+    type: string
+    enum: [draft, active, completed, on_hold, terminated]
+    description: Статус контракта
+    example: "active"
+  end_date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата окончания контракта
+    example: "2024-12-31"
+  is_nearing_limit:
+    type: boolean
+    description: Приближается к лимиту (>= 90%)
+    example: true
+  is_overdue:
+    type: boolean
+    description: Просрочен по дате
+    example: false
+  is_completed:
+    type: boolean
+    description: Выполнен на 100%
+    example: false
+  attention_reason:
+    type: array
+    items:
+      type: string
+    description: Причины требования внимания
+    example: ["Приближение к лимиту (94%)"]
+  priority:
+    type: integer
+    description: Приоритет для сортировки (чем выше, тем важнее)
+    example: 119

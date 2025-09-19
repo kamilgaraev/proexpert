@@ -1,86 +1,356 @@
 /work-types:
   get:
     tags: [WorkTypes]
-    summary: Получить список видов работ
+    summary: Получить список видов работ организации
+    description: |
+      Возвращает пагинированный список видов работ с возможностью детальной фильтрации
+      и сортировки. Включает связанную единицу измерения.
+    parameters:
+      - in: query
+        name: name
+        schema:
+          type: string
+        description: Фильтр по названию (частичное совпадение)
+        example: "Кладка"
+      - in: query
+        name: category
+        schema:
+          type: string
+        description: Фильтр по категории
+        example: "Каменные работы"
+      - in: query
+        name: is_active
+        schema:
+          type: boolean
+        description: Фильтр по активности
+        example: true
+      - in: query
+        name: sort_by
+        schema:
+          type: string
+          enum: [name, category, created_at, updated_at]
+          default: "name"
+        description: Поле для сортировки
+        example: "name"
+      - in: query
+        name: sort_direction
+        schema:
+          type: string
+          enum: [asc, desc]
+          default: "asc"
+        description: Направление сортировки
+        example: "asc"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 25
     responses:
       "200":
-        description: Список видов работ
+        description: Список видов работ успешно получен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/WorkType.yaml'
+              $ref: '../components/schemas/WorkTypeCollection.yaml'
+            example:
+              data:
+                - id: 5
+                  name: "Кладка кирпичных стен"
+                  category: "Каменные работы"
+                  is_active: true
+                  measurement_unit:
+                    id: 3
+                    name: "квадратный метр"
+                    short_name: "м²"
+              meta:
+                current_page: 1
+                total: 35
+      "500":
+        description: Ошибка определения контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен."
   post:
     tags: [WorkTypes]
-    summary: Создать вид работ
+    summary: Создать новый вид работ
+    description: |
+      Создает новый вид работ для организации с проверкой уникальности названия
+      и валидацией всех полей.
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/WorkTypeCreateRequest.yaml'
+          examples:
+            basic_work_type:
+              summary: "Базовый вид работ"
+              value:
+                name: "Кладка кирпичных стен"
+                measurement_unit_id: 3
+                category: "Каменные работы"
+                description: "Кладка несущих стен из керамического кирпича"
+                default_price: 1250.00
+            complex_work_type:
+              summary: "Сложный вид работ с дополнительными свойствами"
+              value:
+                name: "Монтаж металлоконструкций"
+                measurement_unit_id: 5
+                category: "Металлоконструкции"
+                code: "MK-001"
+                description: "Монтаж стальных каркасов с высотными работами"
+                default_price: 2800.00
+                additional_properties:
+                  complexity: "высокая"
+                  safety_requirements: ["страховка", "допуск к высотным работам"]
+                  tools_required: ["сварочный аппарат", "кран"]
+                external_code: "1C_WT_12345"
     responses:
       "201":
-        description: Создано
+        description: Вид работ успешно создан
         content:
           application/json:
             schema:
               $ref: '../components/schemas/WorkTypeResponse.yaml'
+            example:
+              success: true
+              message: "Work Type created successfully (raw response)"
+              data:
+                id: 25
+                name: "Кладка кирпичных стен"
+                category: "Каменные работы"
+                is_active: true
+                measurement_unit:
+                  id: 3
+                  name: "квадратный метр"
+                  short_name: "м²"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Вид работ с таким названием уже существует в вашей организации"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Validation Failed"
+                errors:
+                  type: object
+                  example:
+                    name: ["Название вида работ обязательно для заполнения."]
+                    measurement_unit_id: ["Выбранная единица измерения не существует."]
+                    default_price: ["Цена по умолчанию не может быть отрицательной."]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Server error during work type creation."
 
 /work-types/{id}:
   get:
     tags: [WorkTypes]
-    summary: Получить вид работ
+    summary: Получить детальную информацию о виде работ
+    description: |
+      Возвращает полную информацию о виде работ включая связанную единицу измерения.
+      Проверяет принадлежность к организации.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID вида работ
+        example: 25
     responses:
       "200":
-        description: Вид работ
+        description: Детальная информация о виде работ
         content:
           application/json:
             schema:
               $ref: '../components/schemas/WorkTypeResponse.yaml'
+            example:
+              id: 25
+              name: "Кладка кирпичных стен"
+              code: "KLAD-001"
+              category: "Каменные работы"
+              description: "Кладка несущих стен из керамического кирпича"
+              default_price: 1250.00
+              is_active: true
+              measurement_unit:
+                id: 3
+                name: "квадратный метр"
+                short_name: "м²"
+              additional_properties:
+                complexity: "средняя"
+                tools_required: ["мастерок", "уровень", "отвес"]
+              created_at: "2024-12-20T10:00:00Z"
+              updated_at: "2024-12-20T15:30:00Z"
+      "404":
+        description: Вид работ не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Work type not found"
   put:
     tags: [WorkTypes]
     summary: Обновить вид работ
+    description: |
+      Обновляет вид работ с проверкой принадлежности к организации
+      и валидацией уникальности названия (игнорируя текущую запись).
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID вида работ для обновления
+        example: 25
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/WorkTypeUpdateRequest.yaml'
+          examples:
+            partial_update:
+              summary: "Частичное обновление"
+              value:
+                default_price: 1350.00
+                description: "Обновленное описание кладки стен"
+            full_update:
+              summary: "Полное обновление"
+              value:
+                name: "Кладка кирпичных стен усиленная"
+                category: "Каменные работы усиленные"
+                description: "Кладка несущих стен с армированием"
+                default_price: 1450.00
+                additional_properties:
+                  complexity: "высокая"
+                  tools_required: ["мастерок", "уровень", "отвес", "арматура"]
+                is_active: true
     responses:
       "200":
-        description: Обновлено
+        description: Вид работ успешно обновлен
         content:
           application/json:
             schema:
               $ref: '../components/schemas/WorkTypeResponse.yaml'
+            example:
+              id: 25
+              name: "Кладка кирпичных стен усиленная"
+              default_price: 1450.00
+              description: "Кладка несущих стен с армированием"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Вид работы не найден или не принадлежит вашей организации."
+      "404":
+        description: Вид работ не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Work type not found or update failed"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    name: ["Вид работ с таким названием уже существует в вашей организации."]
   delete:
     tags: [WorkTypes]
     summary: Удалить вид работ
+    description: |
+      Удаляет вид работ (soft delete) с проверкой принадлежности к организации.
+      Проверяет возможность удаления (не используется в других записях).
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID вида работ для удаления
+        example: 25
     responses:
       "204":
-        description: Успешно удалено 
+        description: Вид работ успешно удален
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Вид работы не найден или не принадлежит вашей организации."
+      "404":
+        description: Вид работ не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Work type not found or delete failed"

@@ -1,11 +1,20 @@
-"/dashboard/widgets":
+/dashboard/widgets:
   get:
-    tags: [Dashboard]
-    summary: Реестр доступных виджетов дашборда
-    description: Возвращает перечень виджетов с дефолтами и текущую версию. Может быть отфильтрован по ролям пользователя.
+    tags: [DashboardSettings]
+    summary: Получить доступные виджеты дашборда
+    description: |
+      Возвращает реестр всех доступных виджетов дашборда с учетом ролей пользователя.
+      Виджеты фильтруются по ролям пользователя в указанной организации.
+    parameters:
+      - in: query
+        name: org_id
+        schema:
+          type: integer
+        description: ID организации (если не указан, используется текущая организация)
+        example: 10
     responses:
-      '200':
-        description: OK
+      "200":
+        description: Список доступных виджетов
         content:
           application/json:
             schema:
@@ -15,162 +24,276 @@
                   type: boolean
                   example: true
                 data:
-                  $ref: '#/components/schemas/DashboardWidgetsRegistry'
+                  type: object
+                  properties:
+                    version:
+                      type: integer
+                      description: Версия реестра виджетов
+                      example: 1
+                    widgets:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/DashboardWidget.yaml'
+            example:
+              success: true
+              data:
+                version: 1
+                widgets:
+                  - id: "contracts_statistics"
+                    title: "Статистика контрактов"
+                    description: "Общая статистика по контрактам организации"
+                    component: "ContractsStatisticsWidget"
+                    default_enabled: true
+                    default_size:
+                      xs: 12
+                      md: 6
+                      lg: 4
+                    roles: ["admin", "manager"]
 
-"/dashboard/settings":
+/dashboard/settings:
   get:
-    tags: [Dashboard]
-    summary: Получить персональные настройки дашборда пользователя
+    tags: [DashboardSettings]
+    summary: Получить настройки дашборда пользователя
+    description: |
+      Возвращает персональные настройки дашборда для текущего пользователя
+      в указанной организации. Настройки автоматически синхронизируются с реестром виджетов.
     parameters:
       - in: query
         name: org_id
-        schema: { type: integer }
-        required: false
+        schema:
+          type: integer
+        description: ID организации
+        example: 10
     responses:
-      '200':
-        description: OK
+      "200":
+        description: Настройки дашборда пользователя
         content:
           application/json:
             schema:
               type: object
               properties:
-                success: { type: boolean, example: true }
+                success:
+                  type: boolean
+                  example: true
                 data:
-                  $ref: '#/components/schemas/UserDashboardSettings'
-      '204': { description: No Content }
-      '401': { $ref: '../components/responses/Unauthorized.yaml' }
-      '403': { $ref: '../components/responses/Forbidden.yaml' }
-
+                  $ref: '../components/schemas/DashboardSettings.yaml'
+            example:
+              success: true
+              data:
+                version: 1
+                layout_mode: "simple"
+                items:
+                  - id: "contracts_statistics"
+                    enabled: true
+                    order: 10
+                    size:
+                      xs: 12
+                      md: 6
+                      lg: 4
+                updated_at: "2024-12-20T15:30:00Z"
+      "204":
+        description: Настройки не найдены (пользователь использует настройки по умолчанию)
   put:
-    tags: [Dashboard]
-    summary: Сохранить персональные настройки дашборда пользователя
+    tags: [DashboardSettings]
+    summary: Сохранить настройки дашборда
+    description: |
+      Сохраняет персональные настройки дашборда пользователя.
+      Настройки валидируются против текущего реестра виджетов.
     parameters:
       - in: query
         name: org_id
-        schema: { type: integer }
-        required: false
+        schema:
+          type: integer
+        description: ID организации
+        example: 10
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/UserDashboardSettings'
+            $ref: '../components/schemas/DashboardSettingsSaveRequest.yaml'
+          examples:
+            simple_layout:
+              summary: "Простой макет с базовыми виджетами"
+              value:
+                version: 1
+                layout_mode: "simple"
+                items:
+                  - id: "contracts_statistics"
+                    enabled: true
+                    order: 10
+                    size:
+                      xs: 12
+                      md: 6
+                      lg: 4
+                  - id: "recent_activity"
+                    enabled: true
+                    order: 20
+                    size:
+                      xs: 12
+                      md: 6
+                      lg: 8
+            grid_layout:
+              summary: "Grid макет с позиционированием"
+              value:
+                version: 1
+                layout_mode: "grid"
+                items:
+                  - id: "contracts_statistics"
+                    enabled: true
+                    order: 10
+                    size:
+                      xs: 12
+                      md: 6
+                      lg: 4
+                    layout:
+                      x: 0
+                      y: 0
+                      w: 4
+                      h: 3
     responses:
-      '200':
-        description: OK
+      "200":
+        description: Настройки успешно сохранены
         content:
           application/json:
             schema:
               type: object
               properties:
-                success: { type: boolean, example: true }
+                success:
+                  type: boolean
+                  example: true
                 data:
-                  $ref: '#/components/schemas/UserDashboardSettings'
-      '409':
-        description: Конфликт версий (если версия клиента не совпала с реестром)
-      '422':
-        description: Ошибка валидации (unknown_widget_id, duplicate_order, size_too_small, invalid_version)
-
+                  $ref: '../components/schemas/DashboardSettings.yaml'
+            example:
+              success: true
+              data:
+                version: 1
+                layout_mode: "simple"
+                items:
+                  - id: "contracts_statistics"
+                    enabled: true
+                    order: 10
+      "409":
+        description: Конфликт версий (версия в запросе не соответствует текущей)
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                error:
+                  type: string
+                  example: "invalid_version"
+      "422":
+        description: Ошибка валидации настроек
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                error:
+                  type: string
+                  example: "unknown_widget_id"
+            examples:
+              unknown_widget:
+                summary: "Неизвестный виджет"
+                value:
+                  success: false
+                  error: "unknown_widget_id"
+              duplicate_order:
+                summary: "Дублирующийся порядок"
+                value:
+                  success: false
+                  error: "duplicate_order"
+              size_too_small:
+                summary: "Размер меньше минимального"
+                value:
+                  success: false
+                  error: "size_too_small"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                error:
+                  type: string
+                  example: "internal_error"
   delete:
-    tags: [Dashboard]
-    summary: Сбросить настройки дашборда к дефолтам
+    tags: [DashboardSettings]
+    summary: Сбросить настройки дашборда к умолчанию
+    description: |
+      Удаляет персональные настройки дашборда пользователя,
+      возвращая к настройкам по умолчанию из реестра виджетов.
     parameters:
       - in: query
         name: org_id
-        schema: { type: integer }
-        required: false
-    responses:
-      '200':
-        description: OK
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                success: { type: boolean, example: true }
-                message: { type: string, example: reset }
-
-"/dashboard/settings/defaults":
-  get:
-    tags: [Dashboard]
-    summary: Получить дефолтную конфигурацию дашборда
-    parameters:
-      - in: query
-        name: org_id
-        schema: { type: integer }
-        required: false
-    responses:
-      '200':
-        description: OK
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                success: { type: boolean, example: true }
-                data:
-                  $ref: '#/components/schemas/UserDashboardSettings'
-
-components:
-  schemas:
-    DashboardWidgetsRegistry:
-      type: object
-      required: [version, widgets]
-      properties:
-        version:
+        schema:
           type: integer
-          example: 1
-        widgets:
-          type: array
-          items:
-            type: object
-            required: [id, title, default_enabled, default_size]
-            properties:
-              id: { type: string, example: summary }
-              title: { type: string, example: Ключевые показатели }
-              default_enabled: { type: boolean, example: true }
-              default_size:
-                type: object
-                properties:
-                  xs: { type: integer, example: 12 }
-                  md: { type: integer, example: 12 }
-                  lg: { type: integer, example: 12 }
-              min_size:
-                type: object
-                nullable: true
-                properties:
-                  xs: { type: integer, example: 12 }
-                  md: { type: integer, example: 6 }
-                  lg: { type: integer, example: 4 }
-              roles:
-                type: array
-                items: { type: string }
+        description: ID организации
+        example: 10
+    responses:
+      "200":
+        description: Настройки успешно сброшены
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "reset"
 
-    UserDashboardSettings:
-      type: object
-      required: [version, items]
-      properties:
-        version: { type: integer, example: 1 }
-        layout_mode: { type: string, example: simple }
-        items:
-          type: array
-          items:
-            type: object
-            required: [id, enabled, order]
-            properties:
-              id: { type: string, example: summary }
-              enabled: { type: boolean, example: true }
-              order: { type: integer, example: 10 }
-              size:
-                type: object
-                nullable: true
-                properties:
-                  xs: { type: integer, example: 12 }
-                  md: { type: integer, example: 12 }
-                  lg: { type: integer, example: 12 }
-        updated_at:
-          type: string
-          format: date-time
-          example: '2025-08-12T12:00:00Z'
-
-
+/dashboard/settings/defaults:
+  get:
+    tags: [DashboardSettings]
+    summary: Получить настройки дашборда по умолчанию
+    description: |
+      Возвращает настройки дашборда по умолчанию, построенные на основе
+      реестра виджетов с учетом ролей пользователя в организации.
+    parameters:
+      - in: query
+        name: org_id
+        schema:
+          type: integer
+        description: ID организации
+        example: 10
+    responses:
+      "200":
+        description: Настройки по умолчанию
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  $ref: '../components/schemas/DashboardSettings.yaml'
+            example:
+              success: true
+              data:
+                version: 1
+                layout_mode: "simple"
+                items:
+                  - id: "contracts_statistics"
+                    enabled: true
+                    order: 10
+                    size:
+                      xs: 12
+                      md: 6
+                      lg: 4
+                updated_at: "2024-12-20T15:30:00Z"

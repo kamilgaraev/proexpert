@@ -1,0 +1,57 @@
+type: object
+description: Акт выполненных работ с детальной информацией.
+properties:
+  id:
+    type: integer
+    description: ID акта
+    example: 15
+  contract_id:
+    type: integer
+    description: ID контракта
+    example: 25
+  act_document_number:
+    type: string
+    description: Номер документа акта
+    example: "АКТ-2024-001"
+  act_date:
+    type: string
+    format: date
+    description: Дата акта
+    example: "2024-12-20"
+  amount:
+    type: number
+    format: decimal
+    description: Общая сумма акта
+    example: 125000.00
+  description:
+    type: string
+    nullable: true
+    description: Описание акта
+    example: "Акт выполненных работ по кладке стен 1 этажа"
+  is_approved:
+    type: boolean
+    description: Статус утверждения акта
+    example: true
+  approval_date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата утверждения
+    example: "2024-12-21"
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания
+    example: "2024-12-20T10:00:00Z"
+  updated_at:
+    type: string
+    format: date-time
+    description: Дата последнего обновления
+    example: "2024-12-21T15:30:00Z"
+  contract:
+    $ref: './ContractMini.yaml'
+  completed_works:
+    type: array
+    description: Выполненные работы, включенные в акт
+    items:
+      $ref: './ActReportCompletedWork.yaml'

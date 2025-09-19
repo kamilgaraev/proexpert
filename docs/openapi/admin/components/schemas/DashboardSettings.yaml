@@ -1,0 +1,65 @@
+type: object
+description: Настройки дашборда пользователя.
+properties:
+  version:
+    type: integer
+    description: Версия настроек (для синхронизации с реестром)
+    example: 1
+  layout_mode:
+    type: string
+    description: Режим макета дашборда
+    example: "simple"
+  items:
+    type: array
+    description: Настройки виджетов пользователя
+    items:
+      type: object
+      properties:
+        id:
+          type: string
+          description: ID виджета
+          example: "contracts_statistics"
+        enabled:
+          type: boolean
+          description: Включен ли виджет
+          example: true
+        order:
+          type: integer
+          description: Порядок отображения
+          example: 10
+        size:
+          type: object
+          nullable: true
+          description: Размер виджета для разных экранов
+          properties:
+            xs:
+              type: integer
+              example: 12
+            md:
+              type: integer
+              example: 6
+            lg:
+              type: integer
+              example: 4
+        layout:
+          type: object
+          nullable: true
+          description: Позиция в grid-layout
+          properties:
+            x:
+              type: integer
+              example: 0
+            y:
+              type: integer
+              example: 0
+            w:
+              type: integer
+              example: 4
+            h:
+              type: integer
+              example: 3
+  updated_at:
+    type: string
+    format: date-time
+    description: Время последнего обновления
+    example: "2024-12-20T15:30:00Z"

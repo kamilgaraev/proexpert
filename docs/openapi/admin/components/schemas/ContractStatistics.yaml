@@ -1,0 +1,54 @@
+type: object
+description: Статистика по контрактам и выполненным работам организации.
+properties:
+  contracts:
+    type: object
+    description: Статистика контрактов
+    properties:
+      total:
+        type: integer
+        description: Общее количество контрактов
+        example: 23
+      active:
+        type: integer
+        description: Количество активных контрактов
+        example: 18
+      completed:
+        type: integer
+        description: Количество завершенных контрактов
+        example: 4
+      draft:
+        type: integer
+        description: Количество черновиков контрактов
+        example: 1
+      requiring_attention:
+        type: integer
+        description: Количество контрактов, требующих внимания
+        example: 3
+      total_amount:
+        type: number
+        format: decimal
+        description: Общая сумма всех контрактов
+        example: 45600000.00
+      avg_amount:
+        type: number
+        format: decimal
+        description: Средняя сумма контракта
+        example: 1982608.70
+  completed_works:
+    type: object
+    description: Статистика выполненных работ
+    properties:
+      total:
+        type: integer
+        description: Общее количество выполненных работ
+        example: 156
+      confirmed:
+        type: integer
+        description: Количество подтвержденных работ
+        example: 142
+      confirmed_amount:
+        type: number
+        format: decimal
+        description: Сумма подтвержденных работ
+        example: 38450000.00

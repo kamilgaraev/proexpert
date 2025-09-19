@@ -1,23 +1,52 @@
 type: object
-description: Схема для обновления вида работ (на основе UpdateWorkTypeRequest, все поля с sometimes правилами)
+description: Схема для обновления вида работ (все поля опциональны для частичного обновления)
 properties:
   name:
     type: string
-    description: Название вида работ (правило sometimes|required, уникальное в рамках организации)
+    description: Название вида работ (уникальное в рамках организации, игнорирует текущую запись)
     example: "Кладка кирпичных стен с утеплением"
     maxLength: 255
   measurement_unit_id:
     type: integer
-    description: ID единицы измерения (правило sometimes|required|exists:measurement_units,id)
+    description: ID единицы измерения (должна существовать)
     example: 5
     minimum: 1
   category:
     type: string
     nullable: true
-    description: Категория вида работ (правило nullable)
+    description: Категория вида работ
     example: "Каменные работы с утеплением"
     maxLength: 100
   is_active:
     type: boolean
-    description: Активен ли вид работ (правило sometimes|boolean)
+    description: Активен ли вид работ
     example: true
+  code:
+    type: string
+    nullable: true
+    description: Внутренний код вида работ
+    example: "WT-001-UPD"
+    maxLength: 100
+  description:
+    type: string
+    nullable: true
+    description: Описание вида работ
+    example: "Кладка стен с утеплением из керамического кирпича"
+  default_price:
+    type: number
+    format: decimal
+    nullable: true
+    description: Цена по умолчанию за единицу работ
+    example: 950.00
+    minimum: 0
+  additional_properties:
+    type: object
+    nullable: true
+    description: Дополнительные свойства в формате JSON
+    example: {"сложность": "высокая", "требования": "опыт кладки от 3 лет"}
+  external_code:
+    type: string
+    nullable: true
+    description: Внешний код для интеграции
+    example: "EXT-WT-001-UPD"
+    maxLength: 255

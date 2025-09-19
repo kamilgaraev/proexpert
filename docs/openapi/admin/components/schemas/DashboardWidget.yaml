@@ -1,0 +1,59 @@
+type: object
+description: Виджет дашборда с настройками и ограничениями.
+properties:
+  id:
+    type: string
+    description: Уникальный идентификатор виджета
+    example: "contracts_statistics"
+  title:
+    type: string
+    description: Заголовок виджета
+    example: "Статистика контрактов"
+  description:
+    type: string
+    nullable: true
+    description: Описание виджета
+    example: "Общая статистика по контрактам организации"
+  component:
+    type: string
+    description: Название компонента для рендеринга
+    example: "ContractsStatisticsWidget"
+  default_enabled:
+    type: boolean
+    description: Включен ли виджет по умолчанию
+    example: true
+  default_size:
+    type: object
+    nullable: true
+    description: Размер по умолчанию для разных экранов
+    properties:
+      xs:
+        type: integer
+        example: 12
+      md:
+        type: integer
+        example: 6
+      lg:
+        type: integer
+        example: 4
+  min_size:
+    type: object
+    nullable: true
+    description: Минимальный размер виджета
+    properties:
+      xs:
+        type: integer
+        example: 6
+      md:
+        type: integer
+        example: 4
+      lg:
+        type: integer
+        example: 3
+  roles:
+    type: array
+    nullable: true
+    items:
+      type: string
+    description: Роли, для которых доступен виджет (null = для всех)
+    example: ["admin", "manager"]

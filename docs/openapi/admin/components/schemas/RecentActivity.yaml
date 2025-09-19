@@ -1,0 +1,54 @@
+type: array
+description: Последняя активность по выполненным работам.
+items:
+  type: object
+  properties:
+    id:
+      type: integer
+      description: ID выполненной работы
+      example: 342
+    project_name:
+      type: string
+      nullable: true
+      description: Название проекта
+      example: "Жилой комплекс Солнечный"
+    contract_number:
+      type: string
+      nullable: true
+      description: Номер контракта
+      example: "КТ-2024-0025"
+    work_type_name:
+      type: string
+      nullable: true
+      description: Название вида работ
+      example: "Кладка кирпичных стен"
+    user_name:
+      type: string
+      nullable: true
+      description: Имя пользователя (прораба)
+      example: "Иван Петров"
+    quantity:
+      type: number
+      format: decimal
+      description: Количество выполненных работ
+      example: 25.50
+    total_amount:
+      type: number
+      format: decimal
+      description: Общая сумма работ
+      example: 31875.00
+    status:
+      type: string
+      enum: [draft, confirmed, cancelled]
+      description: Статус работы
+      example: "confirmed"
+    completion_date:
+      type: string
+      format: date
+      description: Дата выполнения работы
+      example: "2024-12-20"
+    created_at:
+      type: string
+      format: date-time
+      description: Дата создания записи
+      example: "2024-12-20T15:30:00Z"

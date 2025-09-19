@@ -1,0 +1,45 @@
+type: object
+description: Выполненная работа в составе акта с информацией о включении.
+properties:
+  id:
+    type: integer
+    description: ID выполненной работы
+    example: 342
+  work_type_name:
+    type: string
+    description: Название вида работ
+    example: "Кладка кирпичных стен"
+  user_name:
+    type: string
+    description: Имя исполнителя (прораба)
+    example: "Иван Петров"
+  total_quantity:
+    type: number
+    format: decimal
+    description: Общее количество выполненной работы
+    example: 25.50
+  total_amount:
+    type: number
+    format: decimal
+    description: Общая сумма выполненной работы
+    example: 31875.00
+  completion_date:
+    type: string
+    format: date
+    description: Дата выполнения работы
+    example: "2024-12-18"
+  included_quantity:
+    type: number
+    format: decimal
+    description: Количество, включенное в акт
+    example: 25.50
+  included_amount:
+    type: number
+    format: decimal
+    description: Сумма, включенная в акт
+    example: 31875.00
+  notes:
+    type: string
+    nullable: true
+    description: Примечания к включению в акт
+    example: "Включено полностью"

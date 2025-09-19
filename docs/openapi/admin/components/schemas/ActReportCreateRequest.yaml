@@ -1,0 +1,30 @@
+type: object
+required: [contract_id, act_document_number, act_date]
+description: Запрос для создания нового акта выполненных работ.
+properties:
+  contract_id:
+    type: integer
+    description: ID контракта (должен принадлежать организации и быть активным)
+    example: 25
+  act_document_number:
+    type: string
+    maxLength: 255
+    description: Номер документа акта
+    example: "АКТ-2024-001"
+  act_date:
+    type: string
+    format: date
+    description: Дата акта
+    example: "2024-12-20"
+  description:
+    type: string
+    nullable: true
+    description: Описание акта
+    example: "Акт выполненных работ по кладке стен 1 этажа"
+  work_ids:
+    type: array
+    nullable: true
+    description: Массив ID выполненных работ для включения в акт
+    items:
+      type: integer
+    example: [342, 343, 344]

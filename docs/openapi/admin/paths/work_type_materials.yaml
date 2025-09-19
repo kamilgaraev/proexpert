@@ -1,93 +1,309 @@
 /work-types/{work_type}/materials:
   get:
     tags: [WorkTypeMaterials]
-    summary: Получить материалы вида работ
+    summary: Получить материалы, привязанные к виду работ
+    description: |
+      Возвращает список материалов с нормами расхода для указанного вида работ.
+      Включает информацию о количестве по умолчанию и примечания.
     parameters:
       - in: path
         name: work_type
         required: true
         schema:
           type: integer
+        description: ID вида работ
+        example: 25
     responses:
       "200":
-        description: Список материалов
+        description: Список материалов для вида работ
         content:
           application/json:
             schema:
-              type: array
-              items:
-                $ref: '../components/schemas/Material.yaml'
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/WorkTypeMaterialLink.yaml'
+            example:
+              data:
+                - material_id: 45
+                  material_name: "Кирпич керамический"
+                  measurement_unit: "шт"
+                  default_quantity: 120.5000
+                  notes: "С учетом отходов 5%"
+                  created_at: "2024-12-20T10:00:00Z"
+                  updated_at: "2024-12-20T15:30:00Z"
+                - material_id: 78
+                  material_name: "Раствор цементный"
+                  measurement_unit: "м³"
+                  default_quantity: 0.2500
+                  notes: "М150"
+      "403":
+        description: Вид работ не принадлежит организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Вид работ не найден в вашей организации."
   post:
     tags: [WorkTypeMaterials]
-    summary: Синхронизировать материалы вида работ
+    summary: Синхронизировать материалы для вида работ
+    description: |
+      Полностью синхронизирует список материалов с нормами расхода для вида работ.
+      Старые связи будут удалены, новые добавлены, существующие обновлены.
     parameters:
       - in: path
         name: work_type
         required: true
         schema:
           type: integer
+        description: ID вида работ
+        example: 25
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/WorkTypeMaterialSyncRequest.yaml'
+          examples:
+            sync_materials:
+              summary: "Синхронизация материалов"
+              value:
+                materials:
+                  - material_id: 45
+                    default_quantity: 120.5000
+                    notes: "С учетом отходов 5%"
+                  - material_id: 78
+                    default_quantity: 0.2500
+                    notes: "М150"
+                  - material_id: 92
+                    default_quantity: 15.0000
+                    notes: "Арматура 12мм"
     responses:
       "200":
-        description: Обновленный список материалов
+        description: Материалы успешно синхронизированы
         content:
           application/json:
             schema:
-              type: array
-              items:
-                $ref: '../components/schemas/Material.yaml'
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/WorkTypeMaterialLink.yaml'
+            example:
+              data:
+                - material_id: 45
+                  material_name: "Кирпич керамический"
+                  measurement_unit: "шт"
+                  default_quantity: 120.5000
+                  notes: "С учетом отходов 5%"
+                - material_id: 78
+                  material_name: "Раствор цементный"
+                  measurement_unit: "м³"
+                  default_quantity: 0.2500
+                  notes: "М150"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Материал с ID 45 не найден в вашей организации."
+      "403":
+        description: Доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Вид работ не найден в вашей организации."
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Данные не прошли валидацию."
+                errors:
+                  type: object
+                  example:
+                    materials: ["Поле materials обязательно для заполнения."]
+                    "materials.0.material_id": ["Поле materials.0.material_id обязательно для заполнения."]
+                    "materials.1.default_quantity": ["Поле materials.1.default_quantity должно быть больше 0."]
 
 /work-types/{work_type}/materials/{material_id}:
   delete:
     tags: [WorkTypeMaterials]
-    summary: Удалить материал из вида работ
+    summary: Отвязать материал от вида работ
+    description: |
+      Удаляет связь между видом работ и материалом.
+      Проверяет принадлежность обеих сущностей к организации.
     parameters:
       - in: path
         name: work_type
         required: true
         schema:
           type: integer
+        description: ID вида работ
+        example: 25
       - in: path
         name: material_id
         required: true
         schema:
           type: integer
+        description: ID материала для отвязки
+        example: 45
     responses:
       "204":
-        description: Успешно удалено
+        description: Материал успешно отвязан от вида работ
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Не удалось отвязать материал от вида работ"
+      "403":
+        description: Доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ресурс не найден в вашей организации."
 
 /work-types/{work_type}/suggest-materials:
   get:
     tags: [WorkTypeMaterials]
-    summary: Получить предложенные материалы для объема
+    summary: Получить предложенные материалы для объема работ
+    description: |
+      Рассчитывает количество материалов на основе норм расхода
+      для заданного объема выполняемых работ.
     parameters:
       - in: path
         name: work_type
         required: true
         schema:
           type: integer
+        description: ID вида работ
+        example: 25
       - in: query
         name: quantity
         required: true
         schema:
           type: number
-          format: float
-        description: Объем работ
+          format: decimal
+          minimum: 0.0001
+        description: Объем выполняемых работ (в единицах измерения вида работ)
+        example: 5.0
     responses:
       "200":
-        description: Список предложенных материалов
+        description: Предложенные материалы с рассчитанным количеством
         content:
           application/json:
             schema:
-              type: array
-              items:
-                $ref: '../components/schemas/WorkTypeMaterialSuggestion.yaml'
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/WorkTypeMaterialSuggestion.yaml'
+            example:
+              success: true
+              data:
+                - material_id: 45
+                  material_name: "Кирпич керамический"
+                  material_code: "KIRP-001"
+                  suggested_quantity: 602.5000
+                  measurement_unit_short_name: "шт"
+                  default_norm_per_unit: 120.5000
+                  norm_notes: "С учетом отходов 5%"
+                - material_id: 78
+                  material_name: "Раствор цементный"
+                  material_code: "RAST-M150"
+                  suggested_quantity: 1.2500
+                  measurement_unit_short_name: "м³"
+                  default_norm_per_unit: 0.2500
+                  norm_notes: "М150"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Вид работ не найден."
+      "403":
+        description: Доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Вид работ не найден в вашей организации."
       "422":
-        description: Неверный запрос 
+        description: Ошибка валидации параметров
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка валидации."
+                errors:
+                  type: object
+                  example:
+                    quantity: ["Поле quantity обязательно для заполнения."]

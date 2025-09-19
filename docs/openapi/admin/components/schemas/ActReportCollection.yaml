@@ -1,0 +1,45 @@
+type: object
+description: Пагинированная коллекция актов выполненных работ с статистикой.
+properties:
+  data:
+    type: array
+    items:
+      $ref: './ActReport.yaml'
+    description: Массив актов
+  pagination:
+    type: object
+    description: Информация о пагинации
+    properties:
+      current_page:
+        type: integer
+        description: Текущая страница
+        example: 1
+      last_page:
+        type: integer
+        description: Номер последней страницы
+        example: 5
+      per_page:
+        type: integer
+        description: Количество элементов на странице
+        example: 15
+      total:
+        type: integer
+        description: Общее количество элементов
+        example: 68
+  statistics:
+    type: object
+    description: Общая статистика по актам организации
+    properties:
+      total_acts:
+        type: integer
+        description: Общее количество актов
+        example: 68
+      approved_acts:
+        type: integer
+        description: Количество утвержденных актов
+        example: 45
+      total_amount:
+        type: number
+        format: decimal
+        description: Общая сумма всех актов
+        example: 4250000.00

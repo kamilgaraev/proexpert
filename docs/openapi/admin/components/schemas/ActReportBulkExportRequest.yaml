@@ -1,0 +1,11 @@
+type: object
+required: [act_ids]
+description: Запрос для массового экспорта актов в Excel.
+properties:
+  act_ids:
+    type: array
+    minItems: 1
+    description: Массив ID актов для экспорта
+    items:
+      type: integer
+    example: [25, 26, 27]

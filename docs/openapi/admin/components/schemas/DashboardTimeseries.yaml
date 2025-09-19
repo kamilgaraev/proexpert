@@ -1,0 +1,20 @@
+type: object
+description: Временной ряд по выбранной метрике за последние 6 месяцев.
+properties:
+  labels:
+    type: array
+    items:
+      type: string
+    description: Подписи периодов (формат YYYY-MM)
+    example: ["2024-07", "2024-08", "2024-09", "2024-10", "2024-11", "2024-12"]
+  values:
+    type: array
+    items:
+      type: integer
+    description: Значения по периодам
+    example: [3, 5, 2, 8, 4, 6]
+  metric:
+    type: string
+    description: Название метрики
+    enum: [users, projects, materials, suppliers, contracts, completed_works]
+    example: "users"

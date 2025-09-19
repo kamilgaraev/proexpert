@@ -1,3 +1,66 @@
-type: array
-items:
-  $ref: './WorkType.yaml' 
+type: object
+description: Пагинированная коллекция видов работ.
+properties:
+  data:
+    type: array
+    items:
+      $ref: './WorkType.yaml'
+    description: Массив видов работ
+  links:
+    type: object
+    description: Ссылки для навигации по страницам
+    properties:
+      first:
+        type: string
+        nullable: true
+        description: Ссылка на первую страницу
+        example: "http://example.com/api/v1/admin/work-types?page=1"
+      last:
+        type: string
+        nullable: true
+        description: Ссылка на последнюю страницу
+        example: "http://example.com/api/v1/admin/work-types?page=8"
+      prev:
+        type: string
+        nullable: true
+        description: Ссылка на предыдущую страницу
+        example: "http://example.com/api/v1/admin/work-types?page=2"
+      next:
+        type: string
+        nullable: true
+        description: Ссылка на следующую страницу
+        example: "http://example.com/api/v1/admin/work-types?page=4"
+  meta:
+    type: object
+    description: Метаданные пагинации
+    properties:
+      current_page:
+        type: integer
+        description: Текущая страница
+        example: 3
+      from:
+        type: integer
+        nullable: true
+        description: Номер первого элемента на странице
+        example: 31
+      last_page:
+        type: integer
+        description: Номер последней страницы
+        example: 8
+      path:
+        type: string
+        description: Базовый путь для пагинации
+        example: "http://example.com/api/v1/admin/work-types"
+      per_page:
+        type: integer
+        description: Количество элементов на странице
+        example: 15
+      to:
+        type: integer
+        nullable: true
+        description: Номер последнего элемента на странице
+        example: 45
+      total:
+        type: integer
+        description: Общее количество элементов
+        example: 112

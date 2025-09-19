@@ -1,0 +1,27 @@
+type: object
+description: Сводная информация дашборда по основным сущностям организации.
+properties:
+  users_count:
+    type: integer
+    description: Количество пользователей (прорабов) в организации
+    example: 25
+  projects_count:
+    type: integer
+    description: Количество проектов организации
+    example: 12
+  materials_count:
+    type: integer
+    description: Количество материалов в каталоге
+    example: 345
+  suppliers_count:
+    type: integer
+    description: Количество поставщиков организации
+    example: 8
+  contracts_count:
+    type: integer
+    description: Количество контрактов организации
+    example: 23
+  completed_works_count:
+    type: integer
+    description: Количество выполненных работ
+    example: 156

@@ -1,0 +1,43 @@
+type: object
+description: Доступная для включения в акт выполненная работа.
+properties:
+  id:
+    type: integer
+    description: ID выполненной работы
+    example: 342
+  work_type_name:
+    type: string
+    description: Название вида работ
+    example: "Кладка кирпичных стен"
+  user_name:
+    type: string
+    description: Имя исполнителя (прораба)
+    example: "Иван Петров"
+  quantity:
+    type: number
+    format: decimal
+    description: Количество выполненной работы
+    example: 25.50
+  price:
+    type: number
+    format: decimal
+    description: Цена за единицу
+    example: 1250.00
+  total_amount:
+    type: number
+    format: decimal
+    description: Общая сумма работы
+    example: 31875.00
+  completion_date:
+    type: string
+    format: date
+    description: Дата выполнения работы
+    example: "2024-12-18"
+  is_included_in_approved_act:
+    type: boolean
+    description: Включена ли работа в другие утвержденные акты
+    example: false
+  is_included_in_current_act:
+    type: boolean
+    description: Включена ли работа в текущий акт
+    example: true

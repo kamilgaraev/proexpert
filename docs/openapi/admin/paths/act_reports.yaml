@@ -1,278 +1,821 @@
 /act-reports:
   get:
     tags: [ActReports]
-    summary: Получить список актов
+    summary: Получить список актов выполненных работ
+    description: |
+      Возвращает пагинированный список актов организации с возможностью детальной фильтрации
+      и сортировки. Включает статистику по актам.
     parameters:
-      - in: query
-        name: page
-        schema:
-          type: integer
-      - in: query
-        name: per_page
-        schema:
-          type: integer
       - in: query
         name: contract_id
         schema:
           type: integer
+        description: Фильтр по ID контракта
+        example: 25
       - in: query
         name: project_id
         schema:
           type: integer
+        description: Фильтр по ID проекта
+        example: 12
       - in: query
         name: contractor_id
         schema:
           type: integer
+        description: Фильтр по ID подрядчика
+        example: 8
       - in: query
         name: is_approved
         schema:
           type: boolean
+        description: Фильтр по статусу утверждения
+        example: true
       - in: query
         name: date_from
         schema:
           type: string
           format: date
+        description: Фильтр по дате акта (от)
+        example: "2024-12-01"
       - in: query
         name: date_to
         schema:
           type: string
           format: date
+        description: Фильтр по дате акта (до)
+        example: "2024-12-31"
       - in: query
         name: search
         schema:
           type: string
+        description: Поиск по номеру акта, описанию или номеру контракта
+        example: "АКТ-2024"
+      - in: query
+        name: sort_by
+        schema:
+          type: string
+          default: "act_date"
+        description: Поле для сортировки
+        example: "act_date"
+      - in: query
+        name: sort_direction
+        schema:
+          type: string
+          enum: [asc, desc]
+          default: "desc"
+        description: Направление сортировки
+        example: "desc"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 15
     responses:
       "200":
-        description: Список актов
+        description: Список актов успешно получен
         content:
           application/json:
             schema:
               allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
                 - type: object
                   properties:
                     data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/PerformanceAct.yaml'
+                      $ref: '../components/schemas/ActReportCollection.yaml'
+                    message:
+                      type: string
+                      example: "Акты получены успешно"
+            example:
+              data:
+                data:
+                  - id: 15
+                    contract_id: 25
+                    act_document_number: "АКТ-2024-001"
+                    act_date: "2024-12-20"
+                    amount: 125000.00
+                    is_approved: true
+                pagination:
+                  current_page: 1
+                  last_page: 5
+                  per_page: 15
+                  total: 68
+                statistics:
+                  total_acts: 68
+                  approved_acts: 45
+                  total_amount: 4250000.00
+              message: "Акты получены успешно"
+      "400":
+        description: Не определена организация пользователя
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Не определена организация пользователя"
+      "500":
+        description: Ошибка при получении актов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Ошибка при получении актов"
+                message:
+                  type: string
+                  example: "Database connection failed"
   post:
     tags: [ActReports]
-    summary: Создать акт
+    summary: Создать новый акт выполненных работ
+    description: |
+      Создает новый акт с возможностью включения выполненных работ.
+      Автоматически рассчитывает сумму акта на основе включенных работ.
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/PerformanceActCreateRequest.yaml'
+            $ref: '../components/schemas/ActReportCreateRequest.yaml'
+          examples:
+            act_with_works:
+              summary: "Акт с включенными работами"
+              value:
+                contract_id: 25
+                act_document_number: "АКТ-2024-001"
+                act_date: "2024-12-20"
+                description: "Акт выполненных работ по кладке стен 1 этажа"
+                work_ids: [342, 343, 344]
+            empty_act:
+              summary: "Пустой акт без работ"
+              value:
+                contract_id: 25
+                act_document_number: "АКТ-2024-002"
+                act_date: "2024-12-21"
+                description: "Заготовка акта для будущих работ"
     responses:
       "201":
-        description: Создано
+        description: Акт успешно создан
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/PerformanceActResponse.yaml'
-      "422":
-        description: Неверный запрос
+              $ref: '../components/schemas/ActReportResponse.yaml'
+            example:
+              data:
+                id: 16
+                contract_id: 25
+                act_document_number: "АКТ-2024-001"
+                act_date: "2024-12-20"
+                amount: 125000.00
+                description: "Акт выполненных работ по кладке стен 1 этажа"
+                is_approved: false
+                completed_works:
+                  - id: 342
+                    work_type_name: "Кладка кирпичных стен"
+                    included_amount: 31875.00
+              message: "Акт создан успешно"
+      "400":
+        description: Ошибка валидации или бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                message:
+                  type: string
+            examples:
+              validation_error:
+                summary: "Ошибка валидации"
+                value:
+                  error: "Validation failed"
+                  message: "The contract_id field is required."
+              organization_error:
+                summary: "Организация не определена"
+                value:
+                  error: "Не определена организация пользователя"
+      "403":
+        description: Контракт не найден или доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Контракт не найден или доступ запрещен"
+      "500":
+        description: Ошибка при создании акта
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Ошибка при создании акта"
+                message:
+                  type: string
 
 /act-reports/contracts:
   get:
     tags: [ActReports]
-    summary: Получить контракты для актов
+    summary: Получить список контрактов для создания актов
+    description: |
+      Возвращает список активных контрактов организации,
+      доступных для создания актов выполненных работ.
     responses:
       "200":
-        description: Список контрактов
+        description: Список контрактов успешно получен
         content:
           application/json:
             schema:
-              type: array
-              items:
-                type: object
-                properties:
-                  id:
-                    type: integer
-                  contract_number:
-                    type: string
-                  project_name:
-                    type: string
-                  contractor_name:
-                    type: string
-                  contract_date:
-                    type: string
-                  start_date:
-                    type: string
-                  end_date:
-                    type: string
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/ActReportContract.yaml'
+                message:
+                  type: string
+                  example: "Контракты получены успешно"
+            example:
+              data:
+                - id: 25
+                  contract_number: "КТ-2024-0025"
+                  project_name: "Жилой комплекс Солнечный"
+                  contractor_name: "ООО СтройТех"
+                  contract_date: "2024-01-15"
+                  start_date: "2024-02-01"
+                  end_date: "2024-12-31"
+              message: "Контракты получены успешно"
+      "400":
+        description: Не определена организация пользователя
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Не определена организация пользователя"
 
 /act-reports/bulk-export/excel:
   post:
     tags: [ActReports]
     summary: Массовый экспорт актов в Excel
+    description: |
+      Экспортирует выбранные акты в один Excel файл с детальной информацией
+      по всем работам и материалам.
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            type: object
-            properties:
-              act_ids:
-                type: array
-                items:
-                  type: integer
+            $ref: '../components/schemas/ActReportBulkExportRequest.yaml'
+          example:
+            act_ids: [25, 26, 27]
     responses:
       "200":
-        description: Файл Excel
+        description: Excel файл с актами
         content:
           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
             schema:
               type: string
               format: binary
+        headers:
+          Content-Disposition:
+            description: Имя файла для скачивания
+            schema:
+              type: string
+              example: 'attachment; filename="acts_bulk_export_2024-12-20_15-30-00.xlsx"'
+      "400":
+        description: Не выбраны акты для экспорта
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Не выбраны акты для экспорта"
+      "500":
+        description: Ошибка при массовом экспорте
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Ошибка при массовом экспорте"
+                message:
+                  type: string
 
 /act-reports/{act}:
   get:
     tags: [ActReports]
-    summary: Получить акт
+    summary: Получить детальную информацию об акте
+    description: |
+      Возвращает полную информацию об акте, включая связанный контракт,
+      проект, подрядчика и все включенные выполненные работы.
     parameters:
       - in: path
         name: act
         required: true
         schema:
           type: integer
+        description: ID акта
+        example: 15
     responses:
       "200":
-        description: Акт
+        description: Детальная информация об акте
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/PerformanceActResponse.yaml'
+              $ref: '../components/schemas/ActReportResponse.yaml'
+            example:
+              data:
+                id: 15
+                contract_id: 25
+                act_document_number: "АКТ-2024-001"
+                act_date: "2024-12-20"
+                amount: 125000.00
+                description: "Акт выполненных работ по кладке стен 1 этажа"
+                is_approved: true
+                approval_date: "2024-12-21"
+                contract:
+                  id: 25
+                  number: "КТ-2024-0025"
+                  project_name: "Жилой комплекс Солнечный"
+                completed_works:
+                  - id: 342
+                    work_type_name: "Кладка кирпичных стен"
+                    included_amount: 31875.00
+              message: "Акт получен успешно"
+      "400":
+        description: Не определена организация пользователя
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Не определена организация пользователя"
+      "403":
+        description: Доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Доступ запрещен"
+      "500":
+        description: Ошибка при получении акта
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Ошибка при получении акта"
+                message:
+                  type: string
   put:
     tags: [ActReports]
-    summary: Обновить акт
+    summary: Обновить основную информацию акта
+    description: |
+      Обновляет основную информацию акта: номер документа, дату, описание
+      и статус утверждения. Состав работ обновляется отдельным эндпоинтом.
     parameters:
       - in: path
         name: act
         required: true
         schema:
           type: integer
+        description: ID акта для обновления
+        example: 15
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/PerformanceActUpdateRequest.yaml'
+            $ref: '../components/schemas/ActReportUpdateRequest.yaml'
+          examples:
+            approve_act:
+              summary: "Утверждение акта"
+              value:
+                is_approved: true
+            update_info:
+              summary: "Обновление основной информации"
+              value:
+                act_document_number: "АКТ-2024-001-УТВ"
+                description: "Акт выполненных работ по кладке стен 1 этажа (утвержден)"
     responses:
       "200":
-        description: Обновлено
+        description: Акт успешно обновлен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/PerformanceActResponse.yaml'
-      "422":
-        description: Неверный запрос
+              $ref: '../components/schemas/ActReportResponse.yaml'
+            example:
+              data:
+                id: 15
+                act_document_number: "АКТ-2024-001-УТВ"
+                is_approved: true
+              message: "Акт обновлен успешно"
+      "400":
+        description: Ошибка валидации или организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+      "403":
+        description: Доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Доступ запрещен"
+      "500":
+        description: Ошибка при обновлении акта
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Ошибка при обновлении акта"
+                message:
+                  type: string
 
 /act-reports/{act}/available-works:
   get:
     tags: [ActReports]
-    summary: Получить доступные работы для акта
+    summary: Получить доступные работы для включения в акт
+    description: |
+      Возвращает список подтвержденных выполненных работ по контракту,
+      которые можно включить в акт. Показывает статус включения в другие акты.
     parameters:
       - in: path
         name: act
         required: true
         schema:
           type: integer
+        description: ID акта
+        example: 15
     responses:
       "200":
-        description: Список работ
+        description: Список доступных работ
         content:
           application/json:
             schema:
-              type: array
-              items:
-                $ref: '../components/schemas/CompletedWork.yaml'
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/ActReportAvailableWork.yaml'
+                message:
+                  type: string
+                  example: "Доступные работы получены успешно"
+            example:
+              data:
+                - id: 342
+                  work_type_name: "Кладка кирпичных стен"
+                  user_name: "Иван Петров"
+                  quantity: 25.50
+                  price: 1250.00
+                  total_amount: 31875.00
+                  completion_date: "2024-12-18"
+                  is_included_in_approved_act: false
+                  is_included_in_current_act: true
+              message: "Доступные работы получены успешно"
+      "400":
+        description: Не определена организация пользователя
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Не определена организация пользователя"
+      "403":
+        description: Доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Доступ запрещен"
+      "500":
+        description: Ошибка при получении доступных работ
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Ошибка при получении доступных работ"
+                message:
+                  type: string
 
 /act-reports/{act}/works:
   put:
     tags: [ActReports]
-    summary: Обновить состав работ акта
+    summary: Обновить состав работ в акте
+    description: |
+      Полностью заменяет состав работ в акте и пересчитывает общую сумму.
+      Все ранее включенные работы будут исключены.
     parameters:
       - in: path
         name: act
         required: true
         schema:
           type: integer
+        description: ID акта
+        example: 15
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/PerformanceActUpdateWorksRequest.yaml'
+            $ref: '../components/schemas/ActReportWorksUpdateRequest.yaml'
+          example:
+            work_ids: [342, 343, 344]
     responses:
       "200":
-        description: Обновленный акт
+        description: Состав работ успешно обновлен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/PerformanceActResponse.yaml'
-      "422":
-        description: Неверный запрос
+              $ref: '../components/schemas/ActReportResponse.yaml'
+            example:
+              data:
+                id: 15
+                amount: 95250.00
+                completed_works:
+                  - id: 342
+                    work_type_name: "Кладка кирпичных стен"
+                    included_amount: 31875.00
+                  - id: 343
+                    work_type_name: "Штукатурка стен"
+                    included_amount: 31687.50
+                  - id: 344
+                    work_type_name: "Покраска стен"
+                    included_amount: 31687.50
+              message: "Состав работ акта обновлен успешно"
+      "400":
+        description: Не определена организация пользователя
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Не определена организация пользователя"
+      "403":
+        description: Доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Доступ запрещен"
+      "500":
+        description: Ошибка при обновлении работ в акте
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Ошибка при обновлении работ в акте"
+                message:
+                  type: string
 
 /act-reports/{act}/export/pdf:
   get:
     tags: [ActReports]
     summary: Экспорт акта в PDF
+    description: |
+      Генерирует PDF файл акта с детальной информацией по всем работам.
+      Файл автоматически сохраняется в S3 и возвращается для скачивания.
     parameters:
       - in: path
         name: act
         required: true
         schema:
           type: integer
+        description: ID акта для экспорта
+        example: 15
     responses:
       "200":
-        description: PDF файл
+        description: PDF файл акта
         content:
           application/pdf:
             schema:
               type: string
               format: binary
+        headers:
+          Content-Disposition:
+            description: Имя файла для скачивания
+            schema:
+              type: string
+              example: 'attachment; filename="act_АКТ-2024-001_2024-12-20.pdf"'
+      "400":
+        description: Не определена организация пользователя
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Не определена организация пользователя"
+      "403":
+        description: Доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Доступ запрещен"
+      "500":
+        description: Ошибка при экспорте в PDF
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Ошибка при экспорте в PDF"
+                message:
+                  type: string
 
 /act-reports/{act}/download-pdf/{file}:
   get:
     tags: [ActReports]
-    summary: Скачать PDF акта
+    summary: Скачать сохраненный PDF файл акта
+    description: |
+      Скачивает ранее сохраненный PDF файл акта из хранилища S3.
+      Проверяет принадлежность файла к акту и организации.
     parameters:
       - in: path
         name: act
         required: true
         schema:
           type: integer
+        description: ID акта
+        example: 15
       - in: path
         name: file
         required: true
         schema:
           type: integer
+        description: ID файла
+        example: 456
     responses:
       "200":
-        description: PDF файл
+        description: PDF файл акта
         content:
           application/pdf:
             schema:
               type: string
               format: binary
+        headers:
+          Content-Disposition:
+            description: Имя оригинального файла
+            schema:
+              type: string
+              example: 'attachment; filename="Акт_АКТ-2024-001.pdf"'
+      "403":
+        description: Доступ запрещен или файл не принадлежит акту
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+            examples:
+              access_denied:
+                summary: "Доступ запрещен"
+                value:
+                  error: "Доступ запрещен"
+              file_mismatch:
+                summary: "Файл не принадлежит акту"
+                value:
+                  error: "Файл не принадлежит данному акту"
+      "404":
+        description: Файл не найден в хранилище
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Файл не найден в хранилище"
+      "500":
+        description: Ошибка при скачивании файла
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Ошибка при скачивании файла"
+                message:
+                  type: string
 
 /act-reports/{act}/export/excel:
   get:
     tags: [ActReports]
     summary: Экспорт акта в Excel
+    description: |
+      Генерирует Excel файл акта с детальной информацией по всем работам и материалам.
+      Файл автоматически сохраняется в S3 и возвращается для скачивания.
     parameters:
       - in: path
         name: act
         required: true
         schema:
           type: integer
+        description: ID акта для экспорта
+        example: 15
     responses:
       "200":
-        description: Файл Excel
+        description: Excel файл акта
         content:
           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
             schema:
               type: string
-              format: binary 
+              format: binary
+        headers:
+          Content-Disposition:
+            description: Имя файла для скачивания
+            schema:
+              type: string
+              example: 'attachment; filename="act_АКТ-2024-001_2024-12-20.xlsx"'
+      "400":
+        description: Не определена организация пользователя
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Не определена организация пользователя"
+      "403":
+        description: Доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Доступ запрещен"
+      "500":
+        description: Ошибка при экспорте в Excel
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Ошибка при экспорте в Excel"
+                message:
+                  type: string

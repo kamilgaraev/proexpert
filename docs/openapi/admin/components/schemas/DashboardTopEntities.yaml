@@ -1,0 +1,17 @@
+type: array
+description: Топ-5 сущностей по активности или объему.
+items:
+  type: object
+  properties:
+    id:
+      type: integer
+      description: ID сущности
+      example: 15
+    name:
+      type: string
+      description: Название сущности
+      example: "Жилой комплекс Солнечный"
+    materials_count:
+      type: integer
+      description: Количество связанных материалов (для проектов)
+      example: 45

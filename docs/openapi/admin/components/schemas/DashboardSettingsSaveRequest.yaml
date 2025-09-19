@@ -1,0 +1,82 @@
+type: object
+required: [version, items]
+description: Запрос для сохранения настроек дашборда пользователя.
+properties:
+  version:
+    type: integer
+    minimum: 1
+    description: Версия настроек (должна соответствовать текущей версии реестра)
+    example: 1
+  layout_mode:
+    type: string
+    maxLength: 50
+    nullable: true
+    description: Режим макета дашборда
+    example: "simple"
+  items:
+    type: array
+    maxItems: 50
+    description: Настройки виджетов (максимум 50 виджетов)
+    items:
+      type: object
+      required: [id, enabled, order]
+      properties:
+        id:
+          type: string
+          maxLength: 100
+          description: ID виджета (должен существовать в реестре)
+          example: "contracts_statistics"
+        enabled:
+          type: boolean
+          description: Включен ли виджет
+          example: true
+        order:
+          type: integer
+          minimum: 0
+          description: Порядок отображения (должен быть уникальным)
+          example: 10
+        size:
+          type: object
+          nullable: true
+          description: Размер виджета для разных экранов
+          properties:
+            xs:
+              type: integer
+              minimum: 1
+              nullable: true
+              example: 12
+            md:
+              type: integer
+              minimum: 1
+              nullable: true
+              example: 6
+            lg:
+              type: integer
+              minimum: 1
+              nullable: true
+              example: 4
+        layout:
+          type: object
+          nullable: true
+          description: Позиция в grid-layout
+          properties:
+            x:
+              type: integer
+              minimum: 0
+              nullable: true
+              example: 0
+            y:
+              type: integer
+              minimum: 0
+              nullable: true
+              example: 0
+            w:
+              type: integer
+              minimum: 1
+              nullable: true
+              example: 4
+            h:
+              type: integer
+              minimum: 1
+              nullable: true
+              example: 3

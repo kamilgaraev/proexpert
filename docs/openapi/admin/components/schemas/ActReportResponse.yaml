@@ -1,0 +1,9 @@
+type: object
+description: Ответ с одним актом выполненных работ.
+properties:
+  data:
+    $ref: './ActReport.yaml'
+  message:
+    type: string
+    description: Сообщение о результате операции
+    example: "Акт получен успешно"

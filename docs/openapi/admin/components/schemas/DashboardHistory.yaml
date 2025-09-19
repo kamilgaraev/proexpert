@@ -1,0 +1,18 @@
+type: array
+description: История последних действий в системе.
+items:
+  type: object
+  properties:
+    id:
+      type: integer
+      description: ID записи
+      example: 125
+    name:
+      type: string
+      description: Название сущности
+      example: "Кирпич керамический рядовой"
+    created_at:
+      type: string
+      format: date-time
+      description: Дата создания записи
+      example: "2024-12-20T15:30:00Z"

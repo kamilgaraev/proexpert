@@ -1,10 +1,36 @@
 type: object
+description: Связь между видом работ и материалом с нормой расхода.
 properties:
   material_id:
     type: integer
+    description: ID материала
+    example: 45
+  material_name:
+    type: string
+    description: Название материала
+    example: "Кирпич керамический"
+  measurement_unit:
+    type: string
+    description: Единица измерения материала
+    example: "шт"
   default_quantity:
     type: number
-    format: float
+    format: decimal
+    minimum: 0
+    description: Норма расхода материала на единицу работ
+    example: 120.5000
   notes:
     type: string
-    nullable: true 
+    nullable: true
+    description: Примечания к норме расхода
+    example: "С учетом отходов 5%"
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания связи
+    example: "2024-12-20T10:00:00Z"
+  updated_at:
+    type: string
+    format: date-time
+    description: Дата последнего обновления
+    example: "2024-12-20T15:30:00Z"

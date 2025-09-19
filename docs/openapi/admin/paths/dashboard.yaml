@@ -1,451 +1,471 @@
 /dashboard:
   get:
     tags: [Dashboard]
-    summary: Получить сводную информацию для дашборда
+    summary: Получить сводную информацию дашборда
+    description: |
+      Возвращает общие статистические данные по основным сущностям организации:
+      количество пользователей, проектов, материалов, поставщиков, контрактов и выполненных работ.
+    parameters:
+      - in: query
+        name: organization_id
+        schema:
+          type: integer
+        description: ID организации (если не указан, используется текущая организация пользователя)
+        example: 10
     responses:
       "200":
-        description: Сводная информация
+        description: Сводная информация успешно получена
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: object
-                      properties:
-                        users_count:
-                          type: integer
-                        projects_count:
-                          type: integer
-                        materials_count:
-                          type: integer
-                        suppliers_count:
-                          type: integer
-                        contracts_count:
-                          type: integer
-                        completed_works_count:
-                          type: integer
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  $ref: '../components/schemas/DashboardSummary.yaml'
+            example:
+              success: true
+              data:
+                users_count: 25
+                projects_count: 12
+                materials_count: 345
+                suppliers_count: 8
+                contracts_count: 23
+                completed_works_count: 156
+      "400":
+        description: Не указан контекст организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Organization context is required."
 
 /dashboard/timeseries:
   get:
     tags: [Dashboard]
-    summary: Получить временной ряд по выбранной метрике
+    summary: Получить временной ряд по метрике
+    description: |
+      Возвращает данные временного ряда за последние 6 месяцев
+      по выбранной метрике с разбивкой по месяцам.
     parameters:
       - in: query
         name: metric
         schema:
           type: string
           enum: [users, projects, materials, suppliers, contracts, completed_works]
-        description: Метрика, по которой строится ряд
+          default: "users"
+        description: Метрика для построения временного ряда
+        example: "users"
       - in: query
         name: period
         schema:
           type: string
-          enum: [month]
-          default: month
-        description: Период агрегации
+          default: "month"
+        description: Период группировки (пока поддерживается только month)
+        example: "month"
       - in: query
         name: organization_id
         schema:
           type: integer
-        description: Фильтр по организации
+        description: ID организации
+        example: 10
     responses:
       "200":
-        description: Временной ряд
+        description: Данные временного ряда
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: object
-                      properties:
-                        labels:
-                          type: array
-                          items:
-                            type: string
-                        values:
-                          type: array
-                          items:
-                            type: integer
-                        metric:
-                          type: string
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  $ref: '../components/schemas/DashboardTimeseries.yaml'
+            example:
+              success: true
+              data:
+                labels: ["2024-07", "2024-08", "2024-09", "2024-10", "2024-11", "2024-12"]
+                values: [3, 5, 2, 8, 4, 6]
+                metric: "users"
 
 /dashboard/top-entities:
   get:
     tags: [Dashboard]
-    summary: Получить топ-5 сущностей по активности/объёму
+    summary: Получить топ-5 сущностей по активности
+    description: |
+      Возвращает список топ-5 сущностей по выбранному критерию активности.
+      Например, проекты с наибольшим количеством материалов.
     parameters:
       - in: query
         name: entity
         schema:
           type: string
           enum: [projects]
-        description: Сущность для анализа (пока поддерживаются только проекты)
+          default: "projects"
+        description: Тип сущности для анализа
+        example: "projects"
       - in: query
         name: period
         schema:
           type: string
-          enum: [month]
-          default: month
+          default: "month"
+        description: Период для анализа
+        example: "month"
       - in: query
         name: organization_id
         schema:
           type: integer
+        description: ID организации
+        example: 10
     responses:
       "200":
-        description: Топ-5 сущностей
+        description: Топ сущностей по активности
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          id:
-                            type: integer
-                          name:
-                            type: string
-                          materials_count:
-                            type: integer
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  $ref: '../components/schemas/DashboardTopEntities.yaml'
+            example:
+              success: true
+              data:
+                - id: 15
+                  name: "Жилой комплекс Солнечный"
+                  materials_count: 45
+                - id: 23
+                  name: "Торговый центр Московский"
+                  materials_count: 38
 
 /dashboard/history:
   get:
     tags: [Dashboard]
     summary: Получить историю последних действий
+    description: |
+      Возвращает историю последних действий в системе
+      (например, добавленные материалы).
     parameters:
       - in: query
         name: type
         schema:
           type: string
           enum: [materials]
-          default: materials
+          default: "materials"
+        description: Тип истории для отображения
+        example: "materials"
       - in: query
         name: limit
         schema:
           type: integer
           default: 10
+          minimum: 1
+          maximum: 50
+        description: Количество записей для отображения
+        example: 10
       - in: query
         name: organization_id
         schema:
           type: integer
+        description: ID организации
+        example: 10
     responses:
       "200":
         description: История действий
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          id:
-                            type: integer
-                          name:
-                            type: string
-                          created_at:
-                            type: string
-                            format: date-time
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  $ref: '../components/schemas/DashboardHistory.yaml'
+            example:
+              success: true
+              data:
+                - id: 125
+                  name: "Кирпич керамический рядовой"
+                  created_at: "2024-12-20T15:30:00Z"
+                - id: 124
+                  name: "Раствор цементный М150"
+                  created_at: "2024-12-20T14:15:00Z"
 
 /dashboard/limits:
   get:
     tags: [Dashboard]
-    summary: Получить информацию о лимитах
+    summary: Получить лимиты подписки и их заполнение
+    description: |
+      Возвращает информацию о лимитах текущей подписки организации
+      и степени их заполнения.
     parameters:
       - in: query
         name: organization_id
         schema:
           type: integer
+        description: ID организации
+        example: 10
     responses:
       "200":
-        description: Лимиты
+        description: Информация о лимитах
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: object
-                      properties:
-                        monthly_limit:
-                          type: number
-                        monthly_used:
-                          type: number
-                        yearly_limit:
-                          type: number
-                        yearly_used:
-                          type: number
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  description: Лимиты подписки (структура зависит от SubscriptionLimitsService)
+            example:
+              success: true
+              data:
+                max_users: 50
+                current_users: 25
+                max_projects: 20
+                current_projects: 12
 
 /dashboard/contracts/requiring-attention:
   get:
     tags: [Dashboard]
-    summary: Контракты, требующие внимания
+    summary: Получить контракты, требующие внимания
+    description: |
+      Возвращает список контрактов, которые требуют внимания администратора:
+      - приближающиеся к лимиту выполнения (>= 90%)
+      - завершенные на 100%
+      - просроченные по дате окончания
+      
+      Контракты отсортированы по приоритету (самые критичные первыми).
     responses:
       "200":
-        description: Контракты
+        description: Список контрактов, требующих внимания
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          id:
-                            type: integer
-                          number:
-                            type: string
-                          project_name:
-                            type: string
-                          contractor_name:
-                            type: string
-                          total_amount:
-                            type: number
-                            format: float
-                          completed_works_amount:
-                            type: number
-                            format: float
-                          completion_percentage:
-                            type: number
-                            format: float
-                          remaining_amount:
-                            type: number
-                            format: float
-                          status:
-                            type: string
-                          end_date:
-                            type: string
-                            format: date
-                            nullable: true
-                          is_nearing_limit:
-                            type: boolean
-                          is_overdue:
-                            type: boolean
-                          is_completed:
-                            type: boolean
-                          attention_reason:
-                            type: array
-                            items:
-                              type: string
-                          priority:
-                            type: integer
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/ContractRequiringAttention.yaml'
+            example:
+              success: true
+              data:
+                - id: 25
+                  number: "КТ-2024-0025"
+                  project_name: "Жилой комплекс Солнечный"
+                  contractor_name: "ООО СтройТех"
+                  total_amount: 2500000.00
+                  completed_works_amount: 2350000.00
+                  completion_percentage: 94.00
+                  remaining_amount: 150000.00
+                  status: "active"
+                  end_date: "2024-12-31"
+                  is_nearing_limit: true
+                  is_overdue: false
+                  is_completed: false
+                  attention_reason: ["Приближение к лимиту (94%)"]
+                  priority: 119
 
 /dashboard/contracts/statistics:
   get:
     tags: [Dashboard]
-    summary: Общая статистика по контрактам
+    summary: Получить статистику по контрактам
+    description: |
+      Возвращает общую статистику по контрактам и выполненным работам организации:
+      количество контрактов по статусам, суммы, статистику работ.
     responses:
       "200":
-        description: Статистика
+        description: Статистика по контрактам
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: object
-                      properties:
-                        contracts:
-                          type: object
-                          properties:
-                            total:
-                              type: integer
-                            active:
-                              type: integer
-                            completed:
-                              type: integer
-                            draft:
-                              type: integer
-                            requiring_attention:
-                              type: integer
-                            total_amount:
-                              type: number
-                              format: float
-                            avg_amount:
-                              type: number
-                              format: float
-                        completed_works:
-                          type: object
-                          properties:
-                            total:
-                              type: integer
-                            confirmed:
-                              type: integer
-                            confirmed_amount:
-                              type: number
-                              format: float
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  $ref: '../components/schemas/ContractStatistics.yaml'
+            example:
+              success: true
+              data:
+                contracts:
+                  total: 23
+                  active: 18
+                  completed: 4
+                  draft: 1
+                  requiring_attention: 3
+                  total_amount: 45600000.00
+                  avg_amount: 1982608.70
+                completed_works:
+                  total: 156
+                  confirmed: 142
+                  confirmed_amount: 38450000.00
 
 /dashboard/contracts/top:
   get:
     tags: [Dashboard]
-    summary: Топ контрактов по сумме
+    summary: Получить топ контрактов по объему
+    description: |
+      Возвращает список топ контрактов организации, отсортированных
+      по общей сумме в убывающем порядке.
     parameters:
       - in: query
         name: limit
         schema:
           type: integer
           default: 5
+          minimum: 1
+          maximum: 20
+        description: Количество контрактов для отображения
+        example: 5
     responses:
       "200":
-        description: Топ контрактов
+        description: Топ контрактов по сумме
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          id:
-                            type: integer
-                          number:
-                            type: string
-                          project_name:
-                            type: string
-                          contractor_name:
-                            type: string
-                          total_amount:
-                            type: number
-                            format: float
-                          completed_works_amount:
-                            type: number
-                            format: float
-                          completion_percentage:
-                            type: number
-                            format: float
-                          status:
-                            type: string
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                        example: 25
+                      number:
+                        type: string
+                        example: "КТ-2024-0025"
+                      project_name:
+                        type: string
+                        nullable: true
+                        example: "Жилой комплекс Солнечный"
+                      contractor_name:
+                        type: string
+                        nullable: true
+                        example: "ООО СтройТех"
+                      total_amount:
+                        type: number
+                        format: decimal
+                        example: 2500000.00
+                      completed_works_amount:
+                        type: number
+                        format: decimal
+                        example: 2350000.00
+                      completion_percentage:
+                        type: number
+                        format: decimal
+                        example: 94.00
+                      status:
+                        type: string
+                        enum: [draft, active, completed, on_hold, terminated]
+                        example: "active"
 
 /dashboard/recent-activity:
   get:
     tags: [Dashboard]
-    summary: Последняя активность по выполненным работам
+    summary: Получить последнюю активность по работам
+    description: |
+      Возвращает список последних выполненных работ за указанный период
+      с информацией о проектах, контрактах, пользователях и суммах.
     parameters:
       - in: query
         name: days
         schema:
           type: integer
           default: 30
+          minimum: 1
+          maximum: 365
+        description: Количество дней для анализа активности
+        example: 30
     responses:
       "200":
-        description: Список последних работ
+        description: Последняя активность по работам
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        type: object
-                        properties:
-                          id:
-                            type: integer
-                          project_name:
-                            type: string
-                          contract_number:
-                            type: string
-                          work_type_name:
-                            type: string
-                          user_name:
-                            type: string
-                          quantity:
-                            type: number
-                            format: float
-                          total_amount:
-                            type: number
-                            format: float
-                          status:
-                            type: string
-                          completion_date:
-                            type: string
-                            format: date
-                          created_at:
-                            type: string
-                            format: date-time
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  $ref: '../components/schemas/RecentActivity.yaml'
+            example:
+              success: true
+              data:
+                - id: 342
+                  project_name: "Жилой комплекс Солнечный"
+                  contract_number: "КТ-2024-0025"
+                  work_type_name: "Кладка кирпичных стен"
+                  user_name: "Иван Петров"
+                  quantity: 25.50
+                  total_amount: 31875.00
+                  status: "confirmed"
+                  completion_date: "2024-12-20"
+                  created_at: "2024-12-20T15:30:00Z"
 
 /dashboard/site-requests/statistics:
   get:
     tags: [Dashboard]
-    summary: Получить статистику по заявкам для дашборда
-    description: Получить агрегированную статистику по заявкам
+    summary: Получить статистику по заявкам с сайта
+    description: |
+      Возвращает статистическую информацию по заявкам с сайта организации,
+      включая заявки на персонал и другие типы запросов.
     responses:
-      '200':
-        description: Статистика по заявкам
+      "200":
+        description: Статистика заявок
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: object
-                      properties:
-                        total_requests:
-                          type: integer
-                          description: Общее количество заявок
-                        by_status:
-                          type: object
-                          properties:
-                            pending:
-                              type: integer
-                            in_progress:
-                              type: integer
-                            completed:
-                              type: integer
-                            overdue:
-                              type: integer
-                        by_type:
-                          type: object
-                          properties:
-                            personnel_request:
-                              type: integer
-                            material_request:
-                              type: integer
-                            equipment_request:
-                              type: integer
-                        by_priority:
-                          type: object
-                          properties:
-                            urgent:
-                              type: integer
-                            high:
-                              type: integer
-                        personnel_stats:
-                          type: object
-                          properties:
-                            total_personnel_requests:
-                              type: integer
-                            by_personnel_type:
-                              type: object
-                              additionalProperties:
-                                type: integer
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  description: Статистика заявок (структура зависит от SiteRequestService)
+            example:
+              success: true
+              data:
+                total_requests: 45
+                pending_requests: 12
+                processed_requests: 33
+                personnel_requests: 8
+      "400":
+        description: Не указан контекст организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Organization context is required."

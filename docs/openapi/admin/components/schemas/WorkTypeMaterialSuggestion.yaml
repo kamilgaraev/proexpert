@@ -1,12 +1,35 @@
 type: object
+description: Предложение материала для заданного объема работ.
 properties:
   material_id:
     type: integer
+    description: ID материала
+    example: 45
   material_name:
     type: string
+    description: Название материала
+    example: "Кирпич керамический"
+  material_code:
+    type: string
+    nullable: true
+    description: Код материала
+    example: "KIRP-001"
   suggested_quantity:
     type: number
-    format: float
-  measurement_unit:
+    format: decimal
+    description: Рекомендуемое количество материала для заданного объема работ
+    example: 602.5000
+  measurement_unit_short_name:
     type: string
-    nullable: true 
+    description: Краткое обозначение единицы измерения
+    example: "шт"
+  default_norm_per_unit:
+    type: number
+    format: decimal
+    description: Норма расхода на единицу работ
+    example: 120.5000
+  norm_notes:
+    type: string
+    nullable: true
+    description: Примечания к норме
+    example: "С учетом отходов 5%"
