@@ -1,107 +1,543 @@
 /cost-categories:
   get:
     tags: [CostCategories]
-    summary: Получить список категорий затрат
+    summary: Получить список категорий затрат организации
+    description: |
+      Возвращает пагинированный список категорий затрат организации с возможностью
+      фильтрации, поиска и построения иерархии. Поддерживает загрузку связанных данных.
+    parameters:
+      - in: query
+        name: search
+        schema:
+          type: string
+        description: Поиск по названию, коду или внешнему коду
+        example: "строительн"
+      - in: query
+        name: is_active
+        schema:
+          type: boolean
+        description: Фильтр по активности категории
+        example: true
+      - in: query
+        name: parent_id
+        schema:
+          type: string
+        description: Фильтр по родительской категории (null или 0 для корневых)
+        example: "5"
+      - in: query
+        name: sort_by
+        schema:
+          type: string
+          enum: [sort_order, name, created_at, updated_at]
+          default: "sort_order"
+        description: Поле для сортировки
+        example: "sort_order"
+      - in: query
+        name: sort_direction
+        schema:
+          type: string
+          enum: [asc, desc]
+          default: "asc"
+        description: Направление сортировки
+        example: "asc"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 15
     responses:
       "200":
-        description: Список категорий
+        description: Список категорий затрат успешно получен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/CostCategory.yaml'
+              $ref: '../components/schemas/CostCategoryCollection.yaml'
+            example:
+              data:
+                - id: 15
+                  name: "Строительно-монтажные работы"
+                  code: "SMR"
+                  external_code: "EXT-001"
+                  is_active: true
+                  parent_id: 5
+                  parent:
+                    id: 5
+                    name: "Основные работы"
+                    code: "MAIN"
+                  projects_count: 12
+              links:
+                first: "http://example.com/api/v1/admin/cost-categories?page=1"
+                last: "http://example.com/api/v1/admin/cost-categories?page=3"
+                prev: null
+                next: "http://example.com/api/v1/admin/cost-categories?page=2"
+              meta:
+                current_page: 1
+                per_page: 15
+                total: 42
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка сервера при получении списка категорий затрат."
   post:
     tags: [CostCategories]
-    summary: Создать категорию затрат
+    summary: Создать новую категорию затрат
+    description: |
+      Создает новую категорию затрат для организации с проверкой уникальности
+      кодов и валидацией иерархических связей.
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/CostCategoryCreateRequest.yaml'
+          examples:
+            root_category:
+              summary: "Корневая категория"
+              value:
+                name: "Основные работы"
+                code: "MAIN"
+                external_code: "EXT-MAIN"
+                description: "Категория для основных строительных работ"
+                is_active: true
+                sort_order: 10
+            child_category:
+              summary: "Дочерняя категория"
+              value:
+                name: "Строительно-монтажные работы"
+                code: "SMR"
+                parent_id: 5
+                description: "Работы по строительству и монтажу конструкций"
+                additional_attributes:
+                  priority: "high"
+                  department: "construction"
     responses:
       "201":
-        description: Создано
+        description: Категория затрат успешно создана
         content:
           application/json:
             schema:
               $ref: '../components/schemas/CostCategoryResponse.yaml'
+            example:
+              data:
+                id: 15
+                name: "Строительно-монтажные работы"
+                code: "SMR"
+                external_code: "EXT-001"
+                description: "Работы по строительству и монтажу конструкций"
+                organization_id: 10
+                parent_id: 5
+                is_active: true
+                sort_order: 10
+                created_at: "2024-12-20T10:00:00Z"
+                updated_at: "2024-12-20T10:00:00Z"
+                parent:
+                  id: 5
+                  name: "Основные работы"
+                  code: "MAIN"
+      "400":
+        description: Ошибка бизнес-логики или валидации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+            examples:
+              parent_not_found:
+                summary: "Родительская категория не найдена"
+                value:
+                  success: false
+                  message: "Родительская категория не найдена или принадлежит другой организации."
+              validation_error:
+                summary: "Ошибка валидации"
+                value:
+                  success: false
+                  message: "Категория затрат с таким кодом уже существует в вашей организации."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка сервера при создании категории затрат."
+
+/cost-categories/import:
+  post:
+    tags: [CostCategories]
+    summary: Импортировать категории затрат из файла
+    description: |
+      Импортирует категории затрат из Excel/CSV файла с поддержкой различных
+      форматов данных и автоматическим созданием иерархических связей.
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
+          schema:
+            $ref: '../components/schemas/CostCategoryImportRequest.yaml'
+          examples:
+            simple_import:
+              summary: "Простой импорт"
+              value:
+                format: "simple"
+            sbis_import:
+              summary: "Импорт из СБИС"
+              value:
+                format: "sbis"
+    responses:
+      "200":
+        description: Импорт выполнен (может содержать ошибки)
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CostCategoryImportResponse.yaml'
+            examples:
+              successful_import:
+                summary: "Успешный импорт"
+                value:
+                  success: true
+                  imported: 25
+                  updated: 5
+                  errors: []
+              partial_import:
+                summary: "Импорт с ошибками"
+                value:
+                  success: true
+                  imported: 20
+                  updated: 3
+                  errors:
+                    - "Строка 5: отсутствует обязательное поле 'name'"
+                    - "Строка 12: Категория затрат с таким кодом уже существует"
+      "400":
+        description: Ошибка валидации файла или формата
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Неподдерживаемый формат файла"
+      "500":
+        description: Внутренняя ошибка при импорте
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка сервера при импорте категорий затрат."
 
 /cost-categories/{id}:
   get:
     tags: [CostCategories]
-    summary: Получить категорию затрат
+    summary: Получить детальную информацию о категории затрат
+    description: |
+      Возвращает полную информацию о категории затрат включая иерархические
+      связи (родитель, дочерние категории) и количество связанных проектов.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID категории затрат
+        example: 15
     responses:
       "200":
-        description: Категория затрат
+        description: Детальная информация о категории затрат
         content:
           application/json:
             schema:
               $ref: '../components/schemas/CostCategoryResponse.yaml'
+            example:
+              data:
+                id: 15
+                name: "Строительно-монтажные работы"
+                code: "SMR"
+                external_code: "EXT-001"
+                description: "Работы по строительству и монтажу конструкций"
+                organization_id: 10
+                parent_id: 5
+                is_active: true
+                sort_order: 10
+                additional_attributes:
+                  priority: "high"
+                  department: "construction"
+                created_at: "2024-12-20T10:00:00Z"
+                updated_at: "2024-12-20T15:30:00Z"
+                parent:
+                  id: 5
+                  name: "Основные работы"
+                  code: "MAIN"
+                children:
+                  - id: 25
+                    name: "Кирпичная кладка"
+                    code: "BRICK"
+                projects_count: 12
+                path:
+                  - id: 1
+                    name: "Корневая категория"
+                  - id: 5
+                    name: "Основные работы"
+      "404":
+        description: Категория затрат не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Категория затрат не найдена в вашей организации."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка сервера при получении категории затрат."
   put:
     tags: [CostCategories]
     summary: Обновить категорию затрат
+    description: |
+      Обновляет категорию затрат с проверками:
+      - принадлежности к организации
+      - уникальности кодов (игнорирует текущую запись)
+      - предотвращения установки самой себя в качестве родителя
+      - валидации иерархических связей
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID категории затрат для обновления
+        example: 15
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/CostCategoryUpdateRequest.yaml'
+          examples:
+            partial_update:
+              summary: "Частичное обновление"
+              value:
+                description: "Обновленное описание категории"
+                is_active: false
+            hierarchy_change:
+              summary: "Изменение иерархии"
+              value:
+                parent_id: 8
+                sort_order: 25
+            full_update:
+              summary: "Полное обновление"
+              value:
+                name: "Строительно-монтажные работы (расширенные)"
+                code: "SMR-EXT"
+                description: "Расширенный перечень строительно-монтажных работ"
+                parent_id: 3
+                is_active: true
+                sort_order: 15
+                additional_attributes:
+                  priority: "medium"
+                  department: "renovation"
     responses:
       "200":
-        description: Обновлено
+        description: Категория затрат успешно обновлена
         content:
           application/json:
             schema:
               $ref: '../components/schemas/CostCategoryResponse.yaml'
+            example:
+              data:
+                id: 15
+                name: "Строительно-монтажные работы (расширенные)"
+                code: "SMR-EXT"
+                is_active: true
+                sort_order: 15
+                parent:
+                  id: 3
+                  name: "Новая родительская категория"
+                  code: "NEW-PARENT"
+      "400":
+        description: Ошибка бизнес-логики или валидации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+            examples:
+              self_parent_error:
+                summary: "Попытка установить себя родителем"
+                value:
+                  success: false
+                  message: "Категория не может быть родителем самой себя."
+              parent_not_found:
+                summary: "Родительская категория не найдена"
+                value:
+                  success: false
+                  message: "Родительская категория не найдена или принадлежит другой организации."
+      "404":
+        description: Категория затрат не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Категория затрат не найдена или не удалось обновить."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка сервера при обновлении категории затрат."
   delete:
     tags: [CostCategories]
     summary: Удалить категорию затрат
+    description: |
+      Удаляет категорию затрат с проверками:
+      - принадлежности к организации
+      - отсутствия дочерних категорий
+      - отсутствия связанных проектов
+      Использует soft delete для сохранения целостности данных.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
-    responses:
-      "204":
-        description: Успешно удалено
-
-/cost-categories/import:
-  post:
-    tags: [CostCategories]
-    summary: Импорт категорий затрат из файла
-    requestBody:
-      content:
-        multipart/form-data:
-          schema:
-            type: object
-            properties:
-              file:
-                type: string
-                format: binary
+        description: ID категории затрат для удаления
+        example: 15
     responses:
       "200":
-        description: Импорт завершён
+        description: Категория затрат успешно удалена
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml' 
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Категория затрат успешно удалена."
+      "400":
+        description: Удаление запрещено
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+            examples:
+              has_children:
+                summary: "Есть дочерние категории"
+                value:
+                  success: false
+                  message: "Нельзя удалить категорию, у которой есть дочерние категории."
+              has_projects:
+                summary: "Есть связанные проекты"
+                value:
+                  success: false
+                  message: "Нельзя удалить категорию, к которой привязаны проекты."
+      "404":
+        description: Категория затрат не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Категория затрат не найдена или не удалось удалить."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка сервера при удалении категории затрат."

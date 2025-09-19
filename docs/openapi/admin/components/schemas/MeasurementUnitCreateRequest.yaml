@@ -1,7 +1,30 @@
 type: object
-required: [name, code]
+required: [name, short_name]
+description: Запрос для создания новой единицы измерения.
 properties:
   name:
     type: string
-  code:
-    type: string 
+    maxLength: 255
+    description: Название единицы измерения (уникальное в рамках организации)
+    example: "квадратный метр"
+  short_name:
+    type: string
+    maxLength: 50
+    description: Краткое обозначение единицы измерения
+    example: "м²"
+  type:
+    type: string
+    enum: [material, work, other]
+    default: "material"
+    description: Тип единицы измерения
+    example: "material"
+  description:
+    type: string
+    nullable: true
+    description: Описание единицы измерения
+    example: "Единица измерения площади"
+  is_default:
+    type: boolean
+    default: false
+    description: Является ли единица измерения по умолчанию для данного типа
+    example: false

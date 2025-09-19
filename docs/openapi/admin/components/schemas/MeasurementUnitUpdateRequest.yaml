@@ -1,6 +1,27 @@
 type: object
+description: Запрос для обновления единицы измерения (все поля опциональны для частичного обновления).
 properties:
   name:
     type: string
-  code:
-    type: string 
+    maxLength: 255
+    description: Название единицы измерения (уникальное в рамках организации, игнорирует текущую запись)
+    example: "кубический метр"
+  short_name:
+    type: string
+    maxLength: 50
+    description: Краткое обозначение единицы измерения
+    example: "м³"
+  type:
+    type: string
+    enum: [material, work, other]
+    description: Тип единицы измерения (нельзя изменить, если единица уже используется)
+    example: "material"
+  description:
+    type: string
+    nullable: true
+    description: Описание единицы измерения
+    example: "Единица измерения объема"
+  is_default:
+    type: boolean
+    description: Является ли единица измерения по умолчанию для данного типа
+    example: true

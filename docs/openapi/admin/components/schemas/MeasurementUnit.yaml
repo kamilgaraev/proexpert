@@ -1,24 +1,56 @@
 type: object
-description: Единица измерения (на основе MeasurementUnitResource)
+description: Единица измерения с полной информацией.
 properties:
   id:
     type: integer
     description: Уникальный идентификатор единицы измерения
-    example: 3
+    example: 1
   name:
     type: string
-    description: Полное название единицы измерения
-    example: "штука"
+    description: Название единицы измерения
+    example: "квадратный метр"
   code:
     type: string
-    description: Краткое обозначение единицы измерения (из поля short_name)
-    example: "шт"
+    description: Краткое обозначение единицы измерения (алиас для short_name)
+    example: "м²"
+  short_name:
+    type: string
+    description: Краткое обозначение единицы измерения
+    example: "м²"
+  type:
+    type: string
+    enum: [material, work, other]
+    description: Тип единицы измерения
+    example: "material"
+  description:
+    type: string
+    nullable: true
+    description: Описание единицы измерения
+    example: "Единица измерения площади"
+  is_default:
+    type: boolean
+    description: Является ли единица измерения по умолчанию для данного типа
+    example: false
+  is_system:
+    type: boolean
+    description: Является ли единица измерения системной (защищена от изменения/удаления)
+    example: false
   organization_id:
     type: integer
-    nullable: true
-    description: ID организации (если единица создана для конкретной организации)
+    description: ID организации
     example: 10
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания
+    example: "2024-12-20T10:00:00Z"
+  updated_at:
+    type: string
+    format: date-time
+    description: Дата последнего обновления
+    example: "2024-12-20T15:30:00Z"
 required:
   - id
   - name
   - code
+  - organization_id

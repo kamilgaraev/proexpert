@@ -1,6 +1,5 @@
-allOf:
-  - $ref: './ApiResponse.yaml'
-  - type: object
-    properties:
-      data:
-        $ref: './Supplier.yaml' 
+type: object
+description: Ответ с одним поставщиком.
+properties:
+  data:
+    $ref: './Supplier.yaml'

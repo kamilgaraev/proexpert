@@ -1,19 +1,37 @@
 type: object
+description: Запрос для обновления поставщика (все поля опциональны для частичного обновления).
 properties:
   name:
     type: string
-  contactPerson:
+    maxLength: 255
+    description: Название поставщика (уникальное в рамках организации, игнорирует текущую запись)
+    example: "ООО СтройМатериалы Плюс"
+  contact_person:
     type: string
+    maxLength: 255
     nullable: true
+    description: Контактное лицо
+    example: "Петров Петр Петрович"
   phone:
     type: string
+    maxLength: 50
     nullable: true
+    description: Контактный телефон
+    example: "+7 (495) 987-65-43"
   email:
     type: string
     format: email
+    maxLength: 255
     nullable: true
+    description: Контактный email
+    example: "contact@stroymat-plus.ru"
   address:
     type: string
+    maxLength: 1000
     nullable: true
-  isActive:
-    type: boolean 
+    description: Адрес поставщика
+    example: "г. Москва, ул. Промышленная, д. 25, стр. 2"
+  is_active:
+    type: boolean
+    description: Активность поставщика
+    example: false

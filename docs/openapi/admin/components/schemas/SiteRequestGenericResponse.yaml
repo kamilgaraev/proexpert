@@ -1,0 +1,13 @@
+type: object
+description: Общий ответ для операций с заявками.
+properties:
+  success:
+    type: boolean
+    example: true
+  message:
+    type: string
+    example: "Заявка успешно создана"
+  data:
+    type: object
+    nullable: true
+    description: Данные ответа (если применимо)

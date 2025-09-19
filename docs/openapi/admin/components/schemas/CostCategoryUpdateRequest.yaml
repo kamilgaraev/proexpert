@@ -1,21 +1,44 @@
 type: object
+description: Запрос для обновления категории затрат (все поля опциональны для частичного обновления).
 properties:
   name:
     type: string
+    maxLength: 255
+    description: Название категории затрат
+    example: "Строительно-монтажные работы (обновленное)"
   code:
     type: string
+    maxLength: 100
     nullable: true
+    description: Код категории (уникальный в рамках организации, игнорирует текущую запись)
+    example: "SMR-UPD"
   external_code:
     type: string
+    maxLength: 100
     nullable: true
+    description: Внешний код категории для интеграции с учетными системами
+    example: "EXT-001-UPD"
   description:
     type: string
     nullable: true
+    description: Описание категории затрат
+    example: "Обновленное описание работ по строительству и монтажу"
   parent_id:
     type: integer
     nullable: true
+    description: ID родительской категории (не может быть равен собственному ID)
+    example: 3
   is_active:
     type: boolean
+    description: Активность категории
+    example: false
   sort_order:
     type: integer
-    nullable: true 
+    nullable: true
+    description: Порядок сортировки для отображения
+    example: 20
+  additional_attributes:
+    type: object
+    nullable: true
+    description: Дополнительные атрибуты в виде JSON
+    example: {"priority": "medium", "department": "renovation"}

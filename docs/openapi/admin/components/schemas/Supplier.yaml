@@ -1,29 +1,73 @@
 type: object
+description: Поставщик с полной информацией.
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор поставщика
+    example: 15
   name:
     type: string
+    description: Название поставщика
+    example: "ООО СтройМатериалы"
+  code:
+    type: string
+    nullable: true
+    description: Код поставщика в системе
+    example: "SUP-001"
   contactPerson:
     type: string
     nullable: true
+    description: Контактное лицо
+    example: "Иванов Иван Иванович"
   phone:
     type: string
     nullable: true
+    description: Контактный телефон
+    example: "+7 (495) 123-45-67"
   email:
     type: string
-    format: email
     nullable: true
+    description: Контактный email
+    example: "info@stroymat.ru"
   address:
     type: string
     nullable: true
+    description: Адрес поставщика
+    example: "г. Москва, ул. Стройтельная, д. 15"
+  tax_number:
+    type: string
+    nullable: true
+    description: Налоговый номер (ИНН)
+    example: "7701234567"
+  description:
+    type: string
+    nullable: true
+    description: Дополнительное описание поставщика
+    example: "Крупный поставщик строительных материалов"
   isActive:
     type: boolean
+    description: Активность поставщика
+    example: true
+  additional_info:
+    type: object
+    nullable: true
+    description: Дополнительная информация в виде JSON
+    example: {"specialization": "ceramics", "rating": 4.5}
   organizationId:
     type: integer
+    description: ID организации
+    example: 10
   createdAt:
     type: string
     format: date-time
+    description: Дата создания
+    example: "2024-12-20 10:00:00"
   updatedAt:
     type: string
-    format: date-time 
+    format: date-time
+    description: Дата последнего обновления
+    example: "2024-12-20 15:30:00"
+required:
+  - id
+  - name
+  - organizationId

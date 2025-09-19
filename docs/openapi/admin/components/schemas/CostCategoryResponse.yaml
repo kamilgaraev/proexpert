@@ -1,6 +1,5 @@
-allOf:
-  - $ref: './ApiResponse.yaml'
-  - type: object
-    properties:
-      data:
-        $ref: './CostCategory.yaml' 
+type: object
+description: Ответ с одной категорией затрат.
+properties:
+  data:
+    $ref: './CostCategory.yaml'

@@ -1,6 +1,5 @@
-allOf:
-  - $ref: './ApiResponse.yaml'
-  - type: object
-    properties:
-      data:
-        $ref: './MeasurementUnit.yaml' 
+type: object
+description: Ответ с одной единицей измерения.
+properties:
+  data:
+    $ref: './MeasurementUnit.yaml'

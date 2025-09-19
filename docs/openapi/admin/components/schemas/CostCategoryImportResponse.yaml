@@ -1,0 +1,26 @@
+type: object
+description: Результат импорта категорий затрат.
+properties:
+  success:
+    type: boolean
+    description: Успешность операции импорта
+    example: true
+  imported:
+    type: integer
+    description: Количество импортированных категорий
+    example: 25
+  updated:
+    type: integer
+    description: Количество обновленных категорий
+    example: 5
+  errors:
+    type: array
+    description: Ошибки, возникшие при импорте
+    items:
+      type: string
+    example: ["Строка 10: отсутствует обязательное поле 'name'"]
+  message:
+    type: string
+    nullable: true
+    description: Дополнительное сообщение (при ошибке)
+    example: null

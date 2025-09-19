@@ -1,108 +1,345 @@
 /suppliers:
   get:
     tags: [Suppliers]
-    summary: Получить список поставщиков
+    summary: Получить список поставщиков организации
+    description: |
+      Возвращает пагинированный список поставщиков организации
+      с возможностью фильтрации и сортировки.
+    parameters:
+      - in: query
+        name: name
+        schema:
+          type: string
+        description: Фильтр по названию поставщика (поиск по подстроке)
+        example: "СтройМат"
+      - in: query
+        name: is_active
+        schema:
+          type: boolean
+        description: Фильтр по активности поставщика
+        example: true
+      - in: query
+        name: sort_by
+        schema:
+          type: string
+          enum: [name, created_at, updated_at]
+          default: "name"
+        description: Поле для сортировки
+        example: "name"
+      - in: query
+        name: sort_direction
+        schema:
+          type: string
+          enum: [asc, desc]
+          default: "asc"
+        description: Направление сортировки
+        example: "asc"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 15
     responses:
       "200":
-        description: Список поставщиков
+        description: Список поставщиков успешно получен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/Supplier.yaml'
+              $ref: '../components/schemas/SupplierCollection.yaml'
+            example:
+              data:
+                - id: 15
+                  name: "ООО СтройМатериалы"
+                  contactPerson: "Иванов Иван Иванович"
+                  phone: "+7 (495) 123-45-67"
+                  email: "info@stroymat.ru"
+                  isActive: true
+                  organizationId: 10
+              links:
+                first: "http://example.com/api/v1/admin/suppliers?page=1"
+                last: "http://example.com/api/v1/admin/suppliers?page=5"
+                prev: null
+                next: "http://example.com/api/v1/admin/suppliers?page=2"
+              meta:
+                current_page: 1
+                per_page: 15
+                total: 68
+      "500":
+        description: Контекст организации не определен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Контекст организации не определен."
   post:
     tags: [Suppliers]
-    summary: Создать поставщика
+    summary: Создать нового поставщика
+    description: |
+      Создает нового поставщика для организации с проверкой уникальности названия
+      в рамках организации.
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/SupplierCreateRequest.yaml'
+          examples:
+            basic_supplier:
+              summary: "Базовый поставщик"
+              value:
+                name: "ООО СтройМатериалы"
+                contact_person: "Иванов Иван Иванович"
+                phone: "+7 (495) 123-45-67"
+                email: "info@stroymat.ru"
+                address: "г. Москва, ул. Стройтельная, д. 15"
+            minimal_supplier:
+              summary: "Минимальные данные"
+              value:
+                name: "ИП Петров"
+                is_active: true
     responses:
       "201":
-        description: Поставщик создан
+        description: Поставщик успешно создан
         content:
           application/json:
             schema:
               $ref: '../components/schemas/SupplierResponse.yaml'
+            example:
+              data:
+                id: 15
+                name: "ООО СтройМатериалы"
+                contactPerson: "Иванов Иван Иванович"
+                phone: "+7 (495) 123-45-67"
+                email: "info@stroymat.ru"
+                address: "г. Москва, ул. Стройтельная, д. 15"
+                isActive: true
+                organizationId: 10
+                createdAt: "2024-12-20 10:00:00"
+                updatedAt: "2024-12-20 10:00:00"
+      "403":
+        description: Доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "This action is unauthorized."
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                errors:
+                  type: object
+            examples:
+              validation_error:
+                summary: "Ошибки валидации"
+                value:
+                  message: "The given data was invalid."
+                  errors:
+                    name: ["Поле name обязательно для заполнения.", "Поставщик с таким названием уже существует в вашей организации."]
+                    email: ["Поле email должно быть действительным электронным адресом."]
+      "500":
+        description: Контекст организации не определен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Контекст организации не определен."
 
 /suppliers/{id}:
   get:
     tags: [Suppliers]
-    summary: Получить поставщика
+    summary: Получить детальную информацию о поставщике
+    description: |
+      Возвращает полную информацию о поставщике
+      с проверкой принадлежности к организации.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID поставщика
+        example: 15
     responses:
       "200":
-        description: Поставщик
+        description: Детальная информация о поставщике
         content:
           application/json:
             schema:
               $ref: '../components/schemas/SupplierResponse.yaml'
+            example:
+              data:
+                id: 15
+                name: "ООО СтройМатериалы"
+                code: "SUP-001"
+                contactPerson: "Иванов Иван Иванович"
+                phone: "+7 (495) 123-45-67"
+                email: "info@stroymat.ru"
+                address: "г. Москва, ул. Стройтельная, д. 15"
+                tax_number: "7701234567"
+                description: "Крупный поставщик строительных материалов"
+                isActive: true
+                additional_info: {"specialization": "ceramics", "rating": 4.5}
+                organizationId: 10
+                createdAt: "2024-12-20 10:00:00"
+                updatedAt: "2024-12-20 15:30:00"
+      "404":
+        description: Поставщик не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Supplier not found"
+      "500":
+        description: Контекст организации не определен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Контекст организации не определен."
   put:
     tags: [Suppliers]
     summary: Обновить поставщика
+    description: |
+      Обновляет поставщика с проверками:
+      - принадлежности к организации
+      - прав доступа
+      - уникальности названия (игнорирует текущую запись)
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID поставщика для обновления
+        example: 15
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/SupplierUpdateRequest.yaml'
+          examples:
+            partial_update:
+              summary: "Частичное обновление"
+              value:
+                phone: "+7 (495) 987-65-43"
+                email: "new-email@stroymat.ru"
+            full_update:
+              summary: "Полное обновление"
+              value:
+                name: "ООО СтройМатериалы Плюс"
+                contact_person: "Петров Петр Петрович"
+                phone: "+7 (495) 987-65-43"
+                email: "contact@stroymat-plus.ru"
+                address: "г. Москва, ул. Промышленная, д. 25, стр. 2"
+                is_active: false
     responses:
       "200":
-        description: Поставщик обновлен
+        description: Поставщик успешно обновлен
         content:
           application/json:
             schema:
               $ref: '../components/schemas/SupplierResponse.yaml'
-  patch:
-    tags: [Suppliers]
-    summary: Частичное обновление поставщика
-    parameters:
-      - in: path
-        name: id
-        required: true
-        schema:
-          type: integer
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/SupplierUpdateRequest.yaml'
-    responses:
-      "200":
-        description: Поставщик обновлен
+            example:
+              data:
+                id: 15
+                name: "ООО СтройМатериалы Плюс"
+                contactPerson: "Петров Петр Петрович"
+                phone: "+7 (495) 987-65-43"
+                email: "contact@stroymat-plus.ru"
+                isActive: false
+      "403":
+        description: Доступ запрещен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/SupplierResponse.yaml'
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "This action is unauthorized."
+      "404":
+        description: Поставщик не найден или обновление не удалось
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Supplier not found or update failed"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                errors:
+                  type: object
   delete:
     tags: [Suppliers]
     summary: Удалить поставщика
+    description: |
+      Удаляет поставщика с проверками:
+      - принадлежности к организации
+      - прав доступа
+      - возможности удаления (не используется в системе)
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID поставщика для удаления
+        example: 15
     responses:
       "204":
-        description: Успешно удалено 
+        description: Поставщик успешно удален
+      "403":
+        description: Доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "This action is unauthorized."
+      "404":
+        description: Поставщик не найден или удаление не удалось
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Supplier not found or delete failed" 

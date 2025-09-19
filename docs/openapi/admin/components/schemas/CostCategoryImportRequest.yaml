@@ -1,0 +1,15 @@
+type: object
+required: [file]
+description: Запрос для импорта категорий затрат из файла.
+properties:
+  file:
+    type: string
+    format: binary
+    description: Файл для импорта (Excel, CSV)
+    example: "categories.xlsx"
+  format:
+    type: string
+    enum: [simple, sbis, onec]
+    default: "simple"
+    description: Формат данных в файле
+    example: "simple"

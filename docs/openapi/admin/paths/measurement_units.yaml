@@ -1,105 +1,449 @@
 /measurement-units:
   get:
     tags: [MeasurementUnits]
-    summary: Получить список единиц измерения
+    summary: Получить список единиц измерения организации
+    description: |
+      Возвращает пагинированный список единиц измерения организации
+      с возможностью фильтрации по типу.
+    parameters:
+      - in: query
+        name: type
+        schema:
+          type: string
+          enum: [material, work, other]
+        description: Фильтр по типу единиц измерения
+        example: "material"
+      - in: query
+        name: page
+        schema:
+          type: integer
+          default: 1
+          minimum: 1
+        description: Номер страницы
+        example: 1
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 15
     responses:
       "200":
-        description: Список единиц измерения
+        description: Список единиц измерения успешно получен
         content:
           application/json:
             schema:
               allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/MeasurementUnit.yaml'
+                - $ref: '../components/schemas/MeasurementUnitCollection.yaml'
+            example:
+              data:
+                - id: 1
+                  name: "квадратный метр"
+                  code: "м²"
+                  type: "material"
+                  is_default: true
+                  is_system: false
+                - id: 2
+                  name: "кубический метр"
+                  code: "м³"
+                  type: "material"
+                  is_default: false
+                  is_system: false
+              links:
+                first: "http://example.com/api/v1/admin/measurement-units?page=1"
+                last: "http://example.com/api/v1/admin/measurement-units?page=3"
+                prev: null
+                next: "http://example.com/api/v1/admin/measurement-units?page=2"
+              meta:
+                current_page: 1
+                from: 1
+                last_page: 3
+                per_page: 15
+                to: 15
+                total: 45
+      "400":
+        description: ID организации не найден в контексте
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Organization ID not found in context."
   post:
     tags: [MeasurementUnits]
-    summary: Создать единицу измерения
+    summary: Создать новую единицу измерения
+    description: |
+      Создает новую единицу измерения для организации с проверкой уникальности
+      названия и автоматической обработкой флага по умолчанию.
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/MeasurementUnitCreateRequest.yaml'
+          examples:
+            basic_unit:
+              summary: "Базовая единица измерения"
+              value:
+                name: "квадратный метр"
+                short_name: "м²"
+                type: "material"
+                description: "Единица измерения площади"
+            default_unit:
+              summary: "Единица измерения по умолчанию"
+              value:
+                name: "штука"
+                short_name: "шт"
+                type: "material"
+                description: "Единица измерения количества"
+                is_default: true
     responses:
       "201":
-        description: Создано
+        description: Единица измерения успешно создана
         content:
           application/json:
             schema:
               $ref: '../components/schemas/MeasurementUnitResponse.yaml'
+            example:
+              data:
+                id: 15
+                name: "квадратный метр"
+                code: "м²"
+                type: "material"
+                description: "Единица измерения площади"
+                is_default: false
+                is_system: false
+                organization_id: 10
+                created_at: "2024-12-20T10:00:00Z"
+                updated_at: "2024-12-20T10:00:00Z"
+      "400":
+        description: ID организации не найден в контексте
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Organization ID not found in context."
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                errors:
+                  type: object
+            examples:
+              validation_error:
+                summary: "Ошибки валидации"
+                value:
+                  message: "The given data was invalid."
+                  errors:
+                    name: ["Единица измерения с таким названием уже существует в вашей организации."]
+                    short_name: ["Краткое обозначение обязательно для заполнения."]
+      "500":
+        description: Ошибка создания единицы измерения
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Ошибка создания единицы измерения"
+                error:
+                  type: string
 
 /measurement-units/{id}:
   get:
     tags: [MeasurementUnits]
-    summary: Получить единицу измерения
+    summary: Получить детальную информацию о единице измерения
+    description: |
+      Возвращает полную информацию о единице измерения
+      с проверкой принадлежности к организации.
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID единицы измерения
+        example: 15
     responses:
       "200":
-        description: Единица измерения
+        description: Детальная информация о единице измерения
         content:
           application/json:
             schema:
               $ref: '../components/schemas/MeasurementUnitResponse.yaml'
+            example:
+              data:
+                id: 15
+                name: "квадратный метр"
+                code: "м²"
+                type: "material"
+                description: "Единица измерения площади"
+                is_default: false
+                is_system: false
+                organization_id: 10
+                created_at: "2024-12-20T10:00:00Z"
+                updated_at: "2024-12-20T15:30:00Z"
+      "400":
+        description: ID организации не найден в контексте
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Organization ID not found in context."
+      "404":
+        description: Единица измерения не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Единица измерения не найдена"
   put:
     tags: [MeasurementUnits]
     summary: Обновить единицу измерения
+    description: |
+      Обновляет единицу измерения с проверками:
+      - принадлежности к организации
+      - защиты системных единиц от изменения
+      - ограничения изменения типа для используемых единиц
+      - автоматической обработки флага по умолчанию
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID единицы измерения для обновления
+        example: 15
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/MeasurementUnitUpdateRequest.yaml'
+          examples:
+            partial_update:
+              summary: "Частичное обновление"
+              value:
+                description: "Обновленное описание единицы измерения"
+            set_default:
+              summary: "Установка единицы по умолчанию"
+              value:
+                is_default: true
+            rename_unit:
+              summary: "Переименование единицы"
+              value:
+                name: "метр квадратный"
+                short_name: "кв.м"
+                description: "Альтернативное название для площади"
     responses:
       "200":
-        description: Обновлено
+        description: Единица измерения успешно обновлена
         content:
           application/json:
             schema:
               $ref: '../components/schemas/MeasurementUnitResponse.yaml'
+            example:
+              data:
+                id: 15
+                name: "метр квадратный"
+                code: "кв.м"
+                type: "material"
+                description: "Альтернативное название для площади"
+                is_default: false
+                is_system: false
+      "400":
+        description: ID организации не найден в контексте
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Organization ID not found in context."
+      "403":
+        description: Операция запрещена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                error:
+                  type: string
+            examples:
+              system_unit:
+                summary: "Попытка изменить системную единицу"
+                value:
+                  message: "Ошибка обновления единицы измерения"
+                  error: "System measurement units cannot be modified."
+              type_change:
+                summary: "Попытка изменить тип используемой единицы"
+                value:
+                  message: "Ошибка обновления единицы измерения"
+                  error: "Cannot change type of measurement unit that is already in use."
+      "404":
+        description: Единица измерения не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Единица измерения не найдена или не может быть обновлена"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                errors:
+                  type: object
+      "500":
+        description: Ошибка обновления единицы измерения
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Ошибка обновления единицы измерения"
+                error:
+                  type: string
   delete:
     tags: [MeasurementUnits]
     summary: Удалить единицу измерения
+    description: |
+      Удаляет единицу измерения с проверками:
+      - принадлежности к организации
+      - защиты системных единиц от удаления
+      - проверки использования в материалах или видах работ
     parameters:
       - in: path
         name: id
         required: true
         schema:
           type: integer
+        description: ID единицы измерения для удаления
+        example: 15
     responses:
       "204":
-        description: Успешно удалено
+        description: Единица измерения успешно удалена
+      "400":
+        description: ID организации не найден в контексте
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Organization ID not found in context."
+      "403":
+        description: Удаление запрещено
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                error:
+                  type: string
+            examples:
+              system_unit:
+                summary: "Попытка удалить системную единицу"
+                value:
+                  message: "Ошибка удаления единицы измерения"
+                  error: "System measurement units cannot be deleted."
+              unit_in_use:
+                summary: "Попытка удалить используемую единицу"
+                value:
+                  message: "Ошибка удаления единицы измерения"
+                  error: "Cannot delete measurement unit that is in use."
+      "404":
+        description: Единица измерения не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Единица измерения не найдена"
 
 /measurement-units/material-units:
   get:
     tags: [MeasurementUnits]
-    summary: Получить единицы измерения материалов
+    summary: Получить единицы измерения для материалов
+    description: |
+      Возвращает список единиц измерения, специфичных для материалов организации.
+      Это упрощенный эндпоинт для использования в селекторах при создании/редактировании материалов.
     responses:
       "200":
-        description: Список единиц измерения
+        description: Список единиц измерения для материалов
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/MeasurementUnit.yaml' 
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/MeasurementUnit.yaml'
+            example:
+              data:
+                - id: 1
+                  name: "квадратный метр"
+                  code: "м²"
+                  type: "material"
+                  is_default: true
+                  is_system: false
+                - id: 2
+                  name: "кубический метр"  
+                  code: "м³"
+                  type: "material"
+                  is_default: false
+                  is_system: false
+                - id: 3
+                  name: "штука"
+                  code: "шт"
+                  type: "material"
+                  is_default: false
+                  is_system: true
+      "400":
+        description: ID организации не найден в контексте
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Organization ID not found in context."

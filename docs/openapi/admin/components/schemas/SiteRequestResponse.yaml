@@ -1,0 +1,12 @@
+type: object
+description: Ответ с одной заявкой с сайта.
+properties:
+  success:
+    type: boolean
+    example: true
+  message:
+    type: string
+    nullable: true
+    example: null
+  data:
+    $ref: './SiteRequest.yaml'

@@ -1,3 +1,71 @@
-type: array
-items:
-  $ref: './MeasurementUnit.yaml' 
+type: object
+description: Пагинированная коллекция единиц измерения с метаданными.
+properties:
+  data:
+    type: array
+    description: Массив единиц измерения
+    items:
+      $ref: './MeasurementUnit.yaml'
+  links:
+    type: object
+    description: Ссылки для навигации по страницам
+    properties:
+      first:
+        type: string
+        nullable: true
+        description: Ссылка на первую страницу
+        example: "http://example.com/api/v1/admin/measurement-units?page=1"
+      last:
+        type: string
+        nullable: true
+        description: Ссылка на последнюю страницу
+        example: "http://example.com/api/v1/admin/measurement-units?page=3"
+      prev:
+        type: string
+        nullable: true
+        description: Ссылка на предыдущую страницу
+        example: null
+      next:
+        type: string
+        nullable: true
+        description: Ссылка на следующую страницу
+        example: "http://example.com/api/v1/admin/measurement-units?page=2"
+  meta:
+    type: object
+    description: Метаданные пагинации
+    properties:
+      current_page:
+        type: integer
+        nullable: true
+        description: Номер текущей страницы
+        example: 1
+      from:
+        type: integer
+        nullable: true
+        description: Номер первой записи на странице
+        example: 1
+      last_page:
+        type: integer
+        nullable: true
+        description: Номер последней страницы
+        example: 3
+      path:
+        type: string
+        nullable: true
+        description: Базовый путь для пагинации
+        example: "http://example.com/api/v1/admin/measurement-units"
+      per_page:
+        type: integer
+        nullable: true
+        description: Количество записей на странице
+        example: 15
+      to:
+        type: integer
+        nullable: true
+        description: Номер последней записи на странице
+        example: 15
+      total:
+        type: integer
+        nullable: true
+        description: Общее количество записей
+        example: 45 

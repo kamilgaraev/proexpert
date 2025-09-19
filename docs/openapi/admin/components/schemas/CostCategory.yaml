@@ -1,10 +1,10 @@
 type: object
-description: Категория затрат для выбора при создании/редактировании проекта
+description: Категория затрат с полной информацией и иерархическими связями.
 properties:
   id:
     type: integer
-    description: Уникальный идентификатор категории затрат
-    example: 5
+    description: Уникальный идентификатор категории
+    example: 15
   name:
     type: string
     description: Название категории затрат
@@ -12,18 +12,88 @@ properties:
   code:
     type: string
     nullable: true
-    description: Внутренний код категории
-    example: "СМР"
+    description: Код категории
+    example: "SMR"
   external_code:
     type: string
     nullable: true
-    description: Внешний код для интеграции с бухгалтерскими системами
-    example: "41.20.1"
+    description: Внешний код категории для интеграции
+    example: "EXT-001"
+  description:
+    type: string
+    nullable: true
+    description: Описание категории затрат
+    example: "Работы по строительству и монтажу конструкций"
+  organization_id:
+    type: integer
+    description: ID организации
+    example: 10
   parent_id:
     type: integer
     nullable: true
-    description: ID родительской категории (для иерархической структуры)
-    example: 2
+    description: ID родительской категории
+    example: 5
+  is_active:
+    type: boolean
+    description: Активность категории
+    example: true
+  sort_order:
+    type: integer
+    nullable: true
+    description: Порядок сортировки
+    example: 10
+  additional_attributes:
+    type: object
+    nullable: true
+    description: Дополнительные атрибуты в виде JSON
+    example: {"priority": "high", "department": "construction"}
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания
+    example: "2024-12-20T10:00:00Z"
+  updated_at:
+    type: string
+    format: date-time
+    description: Дата последнего обновления
+    example: "2024-12-20T15:30:00Z"
+  parent:
+    type: object
+    nullable: true
+    description: Информация о родительской категории
+    properties:
+      id:
+        type: integer
+        example: 5
+      name:
+        type: string
+        example: "Основные работы"
+      code:
+        type: string
+        nullable: true
+        example: "MAIN"
+  children:
+    type: array
+    description: Дочерние категории
+    items:
+      $ref: './CostCategory.yaml'
+  projects_count:
+    type: integer
+    description: Количество проектов, связанных с категорией
+    example: 12
+  path:
+    type: array
+    description: Путь в иерархии от корня до текущей категории
+    items:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 3
+        name:
+          type: string
+          example: "Корневая категория"
 required:
   - id
   - name
+  - organization_id

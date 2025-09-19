@@ -1,20 +1,39 @@
 type: object
 required: [name]
+description: Запрос для создания нового поставщика.
 properties:
   name:
     type: string
-  contactPerson:
+    maxLength: 255
+    description: Название поставщика (уникальное в рамках организации)
+    example: "ООО СтройМатериалы"
+  contact_person:
     type: string
+    maxLength: 255
     nullable: true
+    description: Контактное лицо
+    example: "Иванов Иван Иванович"
   phone:
     type: string
+    maxLength: 50
     nullable: true
+    description: Контактный телефон
+    example: "+7 (495) 123-45-67"
   email:
     type: string
     format: email
+    maxLength: 255
     nullable: true
+    description: Контактный email
+    example: "info@stroymat.ru"
   address:
     type: string
+    maxLength: 1000
     nullable: true
-  isActive:
-    type: boolean 
+    description: Адрес поставщика
+    example: "г. Москва, ул. Стройтельная, д. 15"
+  is_active:
+    type: boolean
+    default: true
+    description: Активность поставщика
+    example: true

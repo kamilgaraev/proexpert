@@ -1,0 +1,9 @@
+type: object
+required: [file]
+description: Запрос для загрузки файла к заявке.
+properties:
+  file:
+    type: string
+    format: binary
+    description: Файл для загрузки (максимум 10MB)
+    example: "document.pdf"

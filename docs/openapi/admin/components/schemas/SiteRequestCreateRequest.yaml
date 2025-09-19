@@ -1,0 +1,116 @@
+type: object
+required: [organization_id, project_id, title, description, request_type, priority, required_date]
+description: Запрос для создания новой заявки с сайта (поддерживает разные типы заявок).
+properties:
+  organization_id:
+    type: integer
+    description: ID организации
+    example: 10
+  project_id:
+    type: integer
+    description: ID проекта
+    example: 25
+  user_id:
+    type: integer
+    nullable: true
+    description: ID пользователя (если не указан, берется текущий пользователь)
+    example: 15
+  title:
+    type: string
+    maxLength: 255
+    description: Заголовок заявки
+    example: "Требуются рабочие для укладки кирпича"
+  description:
+    type: string
+    description: Подробное описание заявки
+    example: "Необходимо 5 каменщиков для кладки стен 1-го этажа"
+  request_type:
+    type: string
+    enum: [material_request, info_request, issue_report, work_order, personnel_request, other]
+    description: Тип заявки
+    example: "personnel_request"
+  status:
+    type: string
+    enum: [draft, pending, submitted, approved, rejected, in_progress, completed, on_hold]
+    default: "pending"
+    description: Статус заявки
+    example: "pending"
+  priority:
+    type: string
+    enum: [low, medium, high, urgent]
+    description: Приоритет заявки
+    example: "high"
+  required_date:
+    type: string
+    format: date
+    description: Требуемая дата выполнения (не может быть в прошлом)
+    example: "2024-12-25"
+  notes:
+    type: string
+    nullable: true
+    description: Дополнительные заметки
+    example: "Работы должны начаться в 8:00"
+  files:
+    type: array
+    nullable: true
+    description: Прикрепляемые файлы (до 10MB каждый)
+    items:
+      type: string
+      format: binary
+  # Поля для заявок на персонал (обязательны если request_type = personnel_request)
+  personnel_type:
+    type: string
+    enum: [general_worker, skilled_worker, foreman, engineer, specialist, operator, electrician, plumber, welder, carpenter, mason, painter, security, driver, other]
+    nullable: true
+    description: Тип персонала (обязательно для personnel_request)
+    example: "mason"
+  personnel_count:
+    type: integer
+    minimum: 1
+    maximum: 100
+    nullable: true
+    description: Количество требуемого персонала (обязательно для personnel_request)
+    example: 5
+  personnel_requirements:
+    type: string
+    nullable: true
+    description: Требования к персоналу (обязательно для personnel_request)
+    example: "Опыт работы от 2 лет, знание технологии кладки"
+  hourly_rate:
+    type: number
+    format: decimal
+    minimum: 0
+    maximum: 10000
+    nullable: true
+    description: Почасовая ставка (обязательно для personnel_request)
+    example: 800.50
+  work_hours_per_day:
+    type: integer
+    minimum: 1
+    maximum: 24
+    nullable: true
+    description: Количество рабочих часов в день (обязательно для personnel_request)
+    example: 8
+  work_start_date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата начала работы (обязательно для personnel_request)
+    example: "2024-12-20"
+  work_end_date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата окончания работы (обязательно для personnel_request, должна быть после work_start_date)
+    example: "2024-12-30"
+  work_location:
+    type: string
+    maxLength: 500
+    nullable: true
+    description: Место выполнения работы (обязательно для personnel_request)
+    example: "Строительная площадка, 1-й этаж, секция А"
+  additional_conditions:
+    type: string
+    nullable: true
+    description: Дополнительные условия работы
+    example: "Предоставляется спецодежда и инструмент"

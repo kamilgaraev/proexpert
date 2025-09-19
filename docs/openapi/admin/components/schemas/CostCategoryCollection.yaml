@@ -1,11 +1,11 @@
 type: object
-description: Пагинированная коллекция поставщиков.
+description: Пагинированная коллекция категорий затрат.
 properties:
   data:
     type: array
-    description: Массив поставщиков
+    description: Массив категорий затрат
     items:
-      $ref: './Supplier.yaml'
+      $ref: './CostCategory.yaml'
   links:
     type: object
     description: Ссылки для навигации по страницам
@@ -13,11 +13,11 @@ properties:
       first:
         type: string
         nullable: true
-        example: "http://example.com/api/v1/admin/suppliers?page=1"
+        example: "http://example.com/api/v1/admin/cost-categories?page=1"
       last:
         type: string
         nullable: true
-        example: "http://example.com/api/v1/admin/suppliers?page=5"
+        example: "http://example.com/api/v1/admin/cost-categories?page=3"
       prev:
         type: string
         nullable: true
@@ -25,7 +25,7 @@ properties:
       next:
         type: string
         nullable: true
-        example: "http://example.com/api/v1/admin/suppliers?page=2"
+        example: "http://example.com/api/v1/admin/cost-categories?page=2"
   meta:
     type: object
     description: Метаданные пагинации
@@ -39,10 +39,10 @@ properties:
         example: 1
       last_page:
         type: integer
-        example: 5
+        example: 3
       path:
         type: string
-        example: "http://example.com/api/v1/admin/suppliers"
+        example: "http://example.com/api/v1/admin/cost-categories"
       per_page:
         type: integer
         example: 15
@@ -52,4 +52,4 @@ properties:
         example: 15
       total:
         type: integer
-        example: 68
+        example: 42

@@ -1,22 +1,46 @@
 type: object
 required: [name]
+description: Запрос для создания новой категории затрат.
 properties:
   name:
     type: string
+    maxLength: 255
+    description: Название категории затрат
+    example: "Строительно-монтажные работы"
   code:
     type: string
+    maxLength: 100
     nullable: true
+    description: Код категории (уникальный в рамках организации)
+    example: "SMR"
   external_code:
     type: string
+    maxLength: 100
     nullable: true
+    description: Внешний код категории для интеграции с учетными системами
+    example: "EXT-001"
   description:
     type: string
     nullable: true
+    description: Описание категории затрат
+    example: "Работы по строительству и монтажу конструкций"
   parent_id:
     type: integer
     nullable: true
+    description: ID родительской категории для создания иерархии
+    example: 5
   is_active:
     type: boolean
+    default: true
+    description: Активность категории
+    example: true
   sort_order:
     type: integer
-    nullable: true 
+    nullable: true
+    description: Порядок сортировки для отображения
+    example: 10
+  additional_attributes:
+    type: object
+    nullable: true
+    description: Дополнительные атрибуты в виде JSON
+    example: {"priority": "high", "department": "construction"}

@@ -1,0 +1,102 @@
+type: object
+description: Статистика заявок с сайта для дашборда.
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: object
+    properties:
+      total_requests:
+        type: integer
+        description: Общее количество заявок в организации
+        example: 125
+      by_status:
+        type: object
+        description: Распределение заявок по статусам
+        properties:
+          pending:
+            type: integer
+            example: 15
+          in_progress:
+            type: integer
+            example: 45
+          completed:
+            type: integer
+            example: 55
+          overdue:
+            type: integer
+            description: Просроченные заявки (не completed/cancelled)
+            example: 10
+      by_type:
+        type: object
+        description: Распределение заявок по типам
+        properties:
+          personnel_request:
+            type: integer
+            example: 45
+          material_request:
+            type: integer
+            example: 35
+          equipment_request:
+            type: integer
+            example: 25
+      by_priority:
+        type: object
+        description: Распределение заявок по приоритетам
+        properties:
+          urgent:
+            type: integer
+            example: 8
+          high:
+            type: integer
+            example: 25
+      personnel_stats:
+        type: object
+        description: Детальная статистика заявок на персонал
+        properties:
+          total_requests:
+            type: integer
+            description: Общее количество заявок на персонал
+            example: 45
+          total_personnel_needed:
+            type: integer
+            description: Общее количество требуемого персонала
+            example: 180
+          average_hourly_rate:
+            type: number
+            format: decimal
+            description: Средняя почасовая ставка
+            example: 825.50
+          by_personnel_type:
+            type: object
+            description: Распределение по типам персонала
+            additionalProperties:
+              type: object
+              properties:
+                count:
+                  type: integer
+                  description: Количество заявок данного типа
+                  example: 12
+                total_personnel:
+                  type: integer
+                  description: Общее количество персонала данного типа
+                  example: 48
+                average_rate:
+                  type: number
+                  format: decimal
+                  description: Средняя ставка для данного типа
+                  example: 900.00
+            example:
+              mason:
+                count: 12
+                total_personnel: 48
+                average_rate: 900.00
+              carpenter:
+                count: 8
+                total_personnel: 32
+                average_rate: 750.00
+              electrician:
+                count: 5
+                total_personnel: 15
+                average_rate: 1200.00
