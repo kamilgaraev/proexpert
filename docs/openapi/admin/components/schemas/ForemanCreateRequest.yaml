@@ -30,7 +30,7 @@ properties:
   phone:
     type: string
     nullable: true
-    description: Контактный номер телефона (опционально, regex: /^\\+?[0-9\\s\\-\\(\\)]{7,20}$/)
+    description: Контактный номер телефона (опционально, regex pattern)
     example: "+7 (900) 123-45-67"
     pattern: "^\\+?[0-9\\s\\-\\(\\)]{7,20}$"
   position:
@@ -43,4 +43,4 @@ properties:
     type: string
     format: binary
     nullable: true
-    description: Файл аватара прораба (image/jpeg, image/png, image/jpg, макс 2MB) 
+    description: Файл аватара прораба (изображение JPEG, PNG, JPG, макс 2MB) 

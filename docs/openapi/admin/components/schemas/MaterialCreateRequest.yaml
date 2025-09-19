@@ -70,7 +70,7 @@ properties:
   consumption_rates:
     type: object
     nullable: true
-    description: Нормы расхода по видам работ в формате {work_type_id: количество}
+    description: Нормы расхода по видам работ в формате work_type_id - количество
     example: {"5": 100, "12": 50}
     additionalProperties:
       type: number

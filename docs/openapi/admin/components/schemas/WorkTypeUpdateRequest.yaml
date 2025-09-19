@@ -3,21 +3,21 @@ description: Схема для обновления вида работ (на о
 properties:
   name:
     type: string
-    description: Название вида работ (правило: sometimes|required, уникальное в рамках организации)
+    description: Название вида работ (правило sometimes|required, уникальное в рамках организации)
     example: "Кладка кирпичных стен с утеплением"
     maxLength: 255
   measurement_unit_id:
     type: integer
-    description: ID единицы измерения (правило: sometimes|required|exists:measurement_units,id)
+    description: ID единицы измерения (правило sometimes|required|exists:measurement_units,id)
     example: 5
     minimum: 1
   category:
     type: string
     nullable: true
-    description: Категория вида работ (правило: nullable)
+    description: Категория вида работ (правило nullable)
     example: "Каменные работы с утеплением"
     maxLength: 100
   is_active:
     type: boolean
-    description: Активен ли вид работ (правило: sometimes|boolean)
+    description: Активен ли вид работ (правило sometimes|boolean)
     example: true

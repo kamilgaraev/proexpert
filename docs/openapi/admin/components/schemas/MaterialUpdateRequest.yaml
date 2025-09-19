@@ -66,7 +66,7 @@ properties:
   consumption_rates:
     type: object
     nullable: true
-    description: Нормы расхода по видам работ (правило: sometimes|nullable|array, каждое значение numeric|min:0)
+    description: Нормы расхода по видам работ (правило sometimes|nullable|array, каждое значение numeric|min:0)
     example: {"5": 120, "12": 60, "8": 80}
     additionalProperties:
       type: number

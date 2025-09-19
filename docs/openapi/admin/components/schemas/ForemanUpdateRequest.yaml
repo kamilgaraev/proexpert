@@ -3,40 +3,40 @@ description: Схема для обновления данных прораба 
 properties:
   name:
     type: string
-    description: Обновленное полное имя прораба (правило валидации: sometimes|required)
+    description: Обновленное полное имя прораба (правило валидации sometimes|required)
     example: "Александр Николаевич Сидоров"
     maxLength: 255
   password:
     type: string
     format: password
     nullable: true
-    description: Новый пароль (опционально, используется Password::defaults() + confirmed)
+    description: Новый пароль (опционально, используется Password defaults + confirmed)
     example: "NewSecurePass456!"
   password_confirmation:
     type: string
     format: password
     nullable: true
-    description: Подтверждение нового пароля (обязательно если пассворд указан)
+    description: Подтверждение нового пароля (обязательно если password указан)
     example: "NewSecurePass456!"
   phone:
     type: string
     nullable: true
-    description: Обновленный номер телефона (правило: sometimes|nullable|regex)
+    description: Обновленный номер телефона (правило sometimes|nullable|regex)
     example: "+7 (900) 765-43-21"
     pattern: "^\\+?[0-9\\s\\-\\(\\)]{7,20}$"
   position:
     type: string
     nullable: true
-    description: Обновленная должность (правило: sometimes|nullable)
+    description: Обновленная должность (правило sometimes|nullable)
     example: "Старший прораб отделочных работ"
     maxLength: 255
   avatar:
     type: string
     format: binary
     nullable: true
-    description: Новый файл аватара (sometimes|nullable|file|mimetypes:image/jpeg,image/png,image/jpg|max:2048)
+    description: Новый файл аватара (sometimes|nullable|file|mimetypes image/jpeg,png,jpg|max 2048)
   remove_avatar:
     type: boolean
-    description: Удалить текущий аватар (правило: sometimes|boolean)
+    description: Удалить текущий аватар (правило sometimes|boolean)
     example: false
     default: false 
