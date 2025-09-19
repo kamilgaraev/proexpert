@@ -65,7 +65,7 @@
       responses:
         "200":
           description: Список заявок успешно получен
-        content:
+          content:
             application/json:
               schema:
                 type: object
@@ -102,7 +102,7 @@
                   overdue_count: 2
         "400":
           description: Контекст организации не определен
-        content:
+          content:
             application/json:
               schema:
                 type: object
@@ -115,7 +115,7 @@
                     example: "Organization context is required."
         "500":
           description: Внутренняя ошибка сервера
-        content:
+          content:
             application/json:
               schema:
                 type: object
@@ -440,9 +440,9 @@
                 priority: "urgent"
                 notes: "Сокращено количество, увеличена ставка"
       responses:
-      "200":
+        "200":
           description: Заявка успешно обновлена
-        content:
+          content:
           application/json:
             schema:
               $ref: '../components/schemas/SiteRequestResponse.yaml'
@@ -526,9 +526,9 @@
         description: ID заявки для удаления
         example: 150
       responses:
-      "200":
+        "200":
           description: Заявка успешно удалена
-        content:
+          content:
             application/json:
               schema:
                 type: object
@@ -602,10 +602,10 @@
           schema:
             $ref: '../components/schemas/SiteRequestFileUploadRequest.yaml'
       responses:
-      "201":
-        description: Файл успешно загружен
-        content:
-            application/json:
+        "201":
+          description: Файл успешно загружен
+          content:
+          application/json:
               schema:
                 type: object
                 properties:
