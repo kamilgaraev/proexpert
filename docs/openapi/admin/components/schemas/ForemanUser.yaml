@@ -1,30 +1,58 @@
 type: object
+description: Ресурс прораба на основе ForemanUserResource
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор прораба
+    example: 15
   name:
     type: string
+    description: Полное имя прораба
+    example: "Иван Петров"
   email:
     type: string
     format: email
+    description: Уникальный email адрес прораба для входа в систему
+    example: "foreman@prohelper.com"
   phone:
     type: string
     nullable: true
+    description: Контактный номер телефона прораба
+    example: "+79001234567"
   position:
     type: string
     nullable: true
+    description: Должность или специализация прораба
+    example: "Прораб общих строительных работ"
   avatar_path:
     type: string
     nullable: true
+    description: Путь к файлу аватара на сервере (для служебного использования)
+    example: "avatars/foreman_15.jpg"
   avatar_url:
     type: string
     format: uri
     nullable: true
+    description: Полный URL для отображения аватара прораба
+    example: "https://storage.prohelper.com/avatars/foreman_15.jpg"
   is_active:
     type: boolean
+    description: Глобальный статус активности прораба
+    example: true
   createdAt:
     type: string
     format: date-time
+    description: Дата и время создания записи о прорабе
+    example: "2024-01-15T10:30:00.000000Z"
   updatedAt:
     type: string
-    format: date-time 
+    format: date-time
+    description: Дата и время последнего обновления записи
+    example: "2024-01-20T14:45:00.000000Z"
+required:
+  - id
+  - name
+  - email
+  - is_active
+  - createdAt
+  - updatedAt 

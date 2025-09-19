@@ -1,0 +1,23 @@
+type: object
+description: Стандартный ответ для операций управления пользователями (block/unblock/delete)
+properties:
+  success:
+    type: boolean
+    description: Статус успешности операции
+    example: true
+  message:
+    type: string
+    description: Сообщение о результате операции
+    examples:
+      block:
+        summary: Блокировка прораба
+        value: "Прораб успешно заблокирован."
+      unblock:
+        summary: Разблокировка прораба
+        value: "Прораб успешно разблокирован."
+      delete:
+        summary: Удаление прораба
+        value: "Прораб успешно удален/деактивирован."
+required:
+  - success
+  - message

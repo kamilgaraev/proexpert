@@ -1,0 +1,23 @@
+type: object
+description: Стандартный ответ для операций управления проектами (назначение прорабов, удаление и т.д.)
+properties:
+  success:
+    type: boolean
+    description: Статус успешности операции
+    example: true
+  message:
+    type: string
+    description: Сообщение о результате операции
+    examples:
+      delete:
+        summary: Удаление проекта
+        value: "Проект успешно удален."
+      assign_foreman:
+        summary: Назначение прораба
+        value: "Прораб успешно назначен на проект."
+      detach_foreman:
+        summary: Открепление прораба
+        value: "Прораб успешно откреплен от проекта."
+required:
+  - success
+  - message

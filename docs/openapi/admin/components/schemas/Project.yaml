@@ -1,65 +1,124 @@
 type: object
+description: Модель проекта (на основе ProjectResource и Project модели)
 properties:
   id:
     type: integer
-  organization_id:
-    type: integer
+    description: Уникальный идентификатор проекта
+    example: 25
   name:
     type: string
+    description: Название проекта
+    example: "Жилой комплекс Березовая роща"
   address:
     type: string
     nullable: true
+    description: Адрес проекта
+    example: "г. Москва, ул. Березовая, д. 15"
   description:
     type: string
     nullable: true
+    description: Описание проекта
+    example: "Строительство жилого комплекса из 3 корпусов"
   customer:
     type: string
     nullable: true
+    description: Заказчик проекта
+    example: "ООО Строительная Компания"
   designer:
     type: string
     nullable: true
+    description: Проектировщик
+    example: "Архитектурное бюро ПРОЕКТ"
+  budget_amount:
+    type: number
+    format: decimal
+    nullable: true
+    description: Бюджет проекта
+    example: 15000000.50
+  site_area_m2:
+    type: number
+    format: decimal
+    nullable: true
+    description: Площадь участка в кв.м
+    example: 2500.75
+  contract_number:
+    type: string
+    nullable: true
+    description: Номер договора
+    example: "Д-2024/001"
+  status:
+    type: string
+    description: Статус проекта
+    enum: [active, completed, paused, cancelled]
+    example: "active"
   start_date:
     type: string
     format: date
     nullable: true
+    description: Дата начала проекта (форматируется через toDateString())
+    example: "2024-02-01"
   end_date:
     type: string
     format: date
     nullable: true
-  status:
-    type: string
-    enum: [active, completed, paused, cancelled]
+    description: Дата окончания проекта (форматируется через toDateString())
+    example: "2024-12-31"
   is_archived:
     type: boolean
+    description: Архивный ли проект
+    example: false
   additional_info:
     type: object
     nullable: true
+    description: Дополнительная информация в формате JSON
+    example: {"особенности": "проект с повышенной энергоэффективностью"}
   external_code:
     type: string
     nullable: true
+    description: Внешний код проекта
+    example: "PRJ-2024-001"
   cost_category_id:
     type: integer
     nullable: true
+    description: ID категории затрат
+    example: 5
   accounting_data:
     type: object
     nullable: true
+    description: Бухгалтерские данные в формате JSON
+    example: {"центр_затрат": "ЦЗ-001", "аналитика": "А1-15"}
   use_in_accounting_reports:
     type: boolean
-  budget_amount:
-    type: number
-    format: float
-    nullable: true
-  site_area_m2:
-    type: number
-    format: float
-    nullable: true
-  contract_number:
-    type: string
-    maxLength: 100
-    nullable: true
+    description: Использовать в бухгалтерских отчетах
+    example: true
+  organization_id:
+    type: integer
+    description: ID организации-владельца проекта
+    example: 10
   created_at:
     type: string
     format: date-time
+    description: Дата создания
+    example: "2024-01-15T10:30:00.000000Z"
   updated_at:
     type: string
-    format: date-time 
+    format: date-time
+    description: Дата последнего обновления
+    example: "2024-01-20T14:45:00.000000Z"
+  assigned_users:
+    type: array
+    description: Назначенные пользователи (прорабы), если загружены через whenLoaded('users')
+    items:
+      $ref: './ForemanUser.yaml'
+  assigned_users_count:
+    type: integer
+    nullable: true
+    description: Количество назначенных пользователей, если загружено через withCount('users')
+    example: 3
+required:
+  - id
+  - name
+  - status
+  - organization_id
+  - created_at
+  - updated_at

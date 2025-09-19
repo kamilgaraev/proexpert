@@ -1,72 +1,120 @@
 type: object
+description: Модель материала (на основе MaterialResource и Material модели)
 properties:
   id:
     type: integer
-  organization_id:
-    type: integer
+    description: Уникальный идентификатор материала
+    example: 42
   name:
     type: string
+    description: Название материала
+    example: "Кирпич красный керамический"
   code:
     type: string
     nullable: true
-  measurement_unit_id:
-    type: integer
-    deprecated: true
+    description: Внутренний код материала
+    example: "MTR-001"
   description:
     type: string
     nullable: true
+    description: Описание материала
+    example: "Кирпич керамический красный одинарный М-150"
   category:
     type: string
     nullable: true
+    description: Категория материала
+    example: "Строительные материалы"
   default_price:
     type: number
-    format: float
+    format: decimal
     nullable: true
+    description: Цена по умолчанию
+    example: 12.50
+  is_active:
+    type: boolean
+    description: Активен ли материал
+    example: true
   additional_properties:
     type: object
     nullable: true
-  is_active:
-    type: boolean
+    description: Дополнительные свойства в формате JSON
+    example: {"прочность": "М-150", "морозостойкость": "F50"}
   external_code:
     type: string
     nullable: true
+    description: Внешний код для интеграции с бухгалтерскими системами
+    example: "EXT-MTR-001"
   sbis_nomenclature_code:
     type: string
     nullable: true
+    description: Код номенклатуры в системе СБИС
+    example: "00001234"
   sbis_unit_code:
     type: string
     nullable: true
+    description: Код единицы измерения в системе СБИС
+    example: "796"
   consumption_rates:
-    type: array
-    items:
-      type: number
+    type: object
     nullable: true
+    description: Нормы расхода по видам работ в формате {work_type_id: количество}
+    example: {"5": 100, "12": 50}
   accounting_data:
     type: object
     nullable: true
+    description: Дополнительные бухгалтерские данные в формате JSON
+    example: {"центр_затрат": "10.01", "субконто": "Материалы"}
   use_in_accounting_reports:
     type: boolean
+    description: Использовать в бухгалтерских отчетах
+    example: true
   accounting_account:
     type: string
     nullable: true
-  created_at:
-    type: string
-    format: date-time
-  updated_at:
-    type: string
-    format: date-time
+    description: Счет бухгалтерского учета
+    example: "10.01"
   measurement_unit:
-    $ref: './MeasurementUnit.yaml'
-    nullable: true
+    allOf:
+      - $ref: './MeasurementUnit.yaml'
+    description: Единица измерения материала (загружается через whenLoaded('measurementUnit'))
   consumption_rates_with_work_types:
     type: array
+    description: Нормы расхода с названиями видов работ (включается при include_consumption_rates=true)
     items:
       type: object
       properties:
         work_type_id:
           type: integer
-        consumption_rate:
+          example: 5
+        work_type_name:
+          type: string
+          example: "Кладка стен"
+        rate:
           type: number
-          format: float
-      required: [work_type_id, consumption_rate]
-    nullable: true 
+          nullable: true
+          example: 100
+        notes:
+          type: string
+          nullable: true
+          example: "Норма расхода на 1 м³"
+  organization_id:
+    type: integer
+    description: ID организации-владельца материала
+    example: 10
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания (формат Y-m-d H:i:s)
+    example: "2024-01-15 10:30:00"
+  updated_at:
+    type: string
+    format: date-time
+    description: Дата последнего обновления (формат Y-m-d H:i:s)
+    example: "2024-01-20 14:45:00"
+required:
+  - id
+  - name
+  - is_active
+  - organization_id
+  - created_at
+  - updated_at

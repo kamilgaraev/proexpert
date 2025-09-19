@@ -1,0 +1,99 @@
+type: object
+description: Схема для обновления проекта (на основе UpdateProjectRequest, все поля с sometimes правилами)
+properties:
+  name:
+    type: string
+    description: Название проекта (правило валидации: sometimes|required)
+    example: "Жилой комплекс Березовая роща - этап 2"
+    maxLength: 255
+  address:
+    type: string
+    nullable: true
+    description: Адрес проекта
+    example: "г. Москва, ул. Березовая, д. 15 стр. 2"
+    maxLength: 1000
+  description:
+    type: string
+    nullable: true
+    description: Описание проекта
+    example: "Строительство жилого комплекса из 3 корпусов - второй этап"
+    maxLength: 2000
+  customer:
+    type: string
+    nullable: true
+    description: Заказчик проекта (правило: sometimes|nullable)
+    example: "ООО Строительная Компания Плюс"
+    maxLength: 255
+  designer:
+    type: string
+    nullable: true
+    description: Проектировщик (правило: sometimes|nullable)
+    example: "Архитектурное бюро ПРОЕКТ-2"
+    maxLength: 255
+  start_date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата начала проекта
+    example: "2024-03-01"
+  end_date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата окончания проекта (должна быть >= start_date)
+    example: "2025-02-28"
+  status:
+    type: string
+    description: Статус проекта (правило: sometimes|required)
+    enum: [active, completed, paused, cancelled]
+    example: "active"
+  is_archived:
+    type: boolean
+    description: Архивный ли проект (правило: sometimes|boolean)
+    example: false
+  additional_info:
+    type: object
+    nullable: true
+    description: Дополнительная информация в формате JSON (правило: sometimes|nullable|array)
+    example: {"особенности": "проект с повышенной энергоэффективностью", "этап": 2}
+  external_code:
+    type: string
+    nullable: true
+    description: Внешний код проекта (правило: sometimes|nullable)
+    example: "PRJ-2024-001-E2"
+    maxLength: 100
+  cost_category_id:
+    type: integer
+    nullable: true
+    description: ID категории затрат (правило: sometimes|nullable|exists:cost_categories,id)
+    example: 7
+  accounting_data:
+    type: object
+    nullable: true
+    description: Бухгалтерские данные в формате JSON (правило: sometimes|nullable|array)
+    example: {"центр_затрат": "ЦЗ-002", "аналитика": "А1-16"}
+  use_in_accounting_reports:
+    type: boolean
+    nullable: true
+    description: Использовать в бухгалтерских отчетах (правило: sometimes|nullable|boolean)
+    example: true
+  budget_amount:
+    type: number
+    format: decimal
+    nullable: true
+    description: Бюджет проекта (правило: sometimes|nullable|numeric|min:0)
+    example: 18500000.75
+    minimum: 0
+  site_area_m2:
+    type: number
+    format: decimal
+    nullable: true
+    description: Площадь участка в кв.м (правило: sometimes|nullable|numeric|min:0)
+    example: 3200.25
+    minimum: 0
+  contract_number:
+    type: string
+    nullable: true
+    description: Номер договора (правило: sometimes|nullable)
+    example: "Д-2024/001-ДОП"
+    maxLength: 100

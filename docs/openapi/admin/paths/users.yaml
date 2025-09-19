@@ -1,64 +1,241 @@
 /users:
   get:
     tags: [Users]
-    summary: Получить список прорабов
+    summary: Получить список прорабов организации
+    description: |
+      Возвращает пагинированный список прорабов текущей организации.
+      Поддерживает фильтрацию по имени и статусу активности, а также сортировку.
+      
+      **Обрабатывается:** UserManagementController::index
+      **Метод сервиса:** UserService::getForemenForCurrentOrg
+      **Требует прав:** admin.users.view
+    security:
+      - bearerAuth: []
     parameters:
       - in: query
         name: per_page
+        description: Количество элементов на странице
         schema:
           type: integer
           default: 15
+          minimum: 1
+          maximum: 100
+        example: 20
+      - in: query
+        name: name
+        description: Фильтр по имени прораба (поиск по подстроке)
+        schema:
+          type: string
+          maxLength: 255
+        example: "Иван"
+      - in: query
+        name: is_active
+        description: Фильтр по статусу активности
+        schema:
+          type: boolean
+        example: true
+      - in: query
+        name: sort_by
+        description: Поле для сортировки
+        schema:
+          type: string
+          default: created_at
+          enum: [created_at, updated_at, name, email]
+        example: name
+      - in: query
+        name: sort_direction
+        description: Направление сортировки
+        schema:
+          type: string
+          default: desc
+          enum: [asc, desc]
+        example: asc
     responses:
       "200":
-        description: Список прорабов
+        description: Пагинированный список прорабов получен успешно
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/ForemanUser.yaml'
+              $ref: '../components/schemas/ForemanCollection.yaml'
+      "400":
+        description: Ошибка бизнес-логики (например, недостаточно прав)
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Действие доступно только администратору организации"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка сервера при получении списка прорабов."
   post:
     tags: [Users]
-    summary: Создать прораба
+    summary: Создать нового прораба в организации
+    description: |
+      Создает нового прораба для текущей организации.
+      Если пользователь с таким email уже существует, то он будет добавлен в организацию с ролью foreman.
+      Поддерживает загрузку аватара.
+      
+      **Обрабатывается:** UserManagementController::store
+      **Метод сервиса:** UserService::createForeman
+      **Требует прав:** admin.users.create
+      **Миддлвары:** subscription.limit:max_users
+    security:
+      - bearerAuth: []
     requestBody:
       required: true
       content:
         multipart/form-data:
           schema:
             $ref: '../components/schemas/ForemanCreateRequest.yaml'
+          example:
+            name: "Александр Сидоров"
+            email: "alexander.sidorov@prohelper.com"
+            password: "SecurePass123!"
+            password_confirmation: "SecurePass123!"
+            phone: "+7 (900) 123-45-67"
+            position: "Прораб строительных работ"
+            avatar: "(binary file)"
         application/json:
           schema:
             $ref: '../components/schemas/ForemanCreateRequest.yaml'
+          example:
+            name: "Александр Сидоров"
+            email: "alexander.sidorov@prohelper.com"
+            password: "SecurePass123!"
+            password_confirmation: "SecurePass123!"
+            phone: "+7 (900) 123-45-67"
+            position: "Прораб строительных работ"
     responses:
       "201":
-        description: Прораб создан
+        description: Прораб успешно создан
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ForemanResponse.yaml'
+      "409":
+        description: Пользователь с таким email уже является прорабом в организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Пользователь с таким email уже является прорабом в этой организации."
+      "422":
+        description: Ошибки валидации входных данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Данные не прошли валидацию."
+                errors:
+                  type: object
+                  properties:
+                    email:
+                      type: array
+                      items:
+                        type: string
+                      example: ["Поль email обязательно для заполнения", "Поль email должно содержать корректный адрес электронной почты", "Поль email уже занято"]
+                    password:
+                      type: array
+                      items:
+                        type: string
+                      example: ["Поле password обязательно для заполнения", "Поле password должно совпадать с полем password confirmation"]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка сервера при создании прораба."
 
 /users/{id}:
   get:
     tags: [Users]
-    summary: Получить данные прораба
+    summary: Получить данные конкретного прораба
+    description: |
+      Возвращает детальную информацию о конкретном прорабе в рамках текущей организации.
+      Проверяет, что пользователь действительно является прорабом в этой организации.
+      
+      **Обрабатывается:** UserManagementController::show
+      **Метод сервиса:** UserService::findForemanById
+      **Требует прав:** admin.users.view
+    security:
+      - bearerAuth: []
     parameters:
       - in: path
         name: id
         required: true
+        description: Уникальный идентификатор прораба
         schema:
           type: integer
+          minimum: 1
+        example: 15
     responses:
       "200":
-        description: Прораб
+        description: Данные прораба получены успешно
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ForemanResponse.yaml'
+      "404":
+        description: Прораб не найден в этой организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Прораб не найден."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка сервера при получении данных прораба."
   put:
     tags: [Users]
     summary: Обновить прораба

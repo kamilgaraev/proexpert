@@ -1,6 +1,14 @@
 allOf:
-  - $ref: './ApiResponse.yaml'
-  - type: object
-    properties:
-      data:
-        $ref: './ForemanUser.yaml' 
+  - $ref: './ForemanUser.yaml'
+description: Ответ с данными о прорабе (возвращается как ForemanUserResource)
+example:
+  id: 15
+  name: "Александр Сидоров"
+  email: "alexander.sidorov@prohelper.com"
+  phone: "+7 (900) 123-45-67"
+  position: "Прораб строительных работ"
+  avatar_path: "avatars/foreman_15.jpg"
+  avatar_url: "https://storage.prohelper.com/avatars/foreman_15.jpg"
+  is_active: true
+  createdAt: "2024-01-15T10:30:00.000000Z"
+  updatedAt: "2024-01-20T14:45:00.000000Z" 

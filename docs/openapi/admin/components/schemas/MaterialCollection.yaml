@@ -1,3 +1,85 @@
-type: array
-items:
-  $ref: './Material.yaml' 
+type: object
+description: Пагинированная коллекция материалов (возвращается от MaterialResource::collection)
+properties:
+  data:
+    type: array
+    description: Массив материалов текущей страницы
+    items:
+      $ref: './Material.yaml'
+  links:
+    type: object
+    description: Ссылки для навигации по страницам
+    properties:
+      first:
+        type: string
+        format: uri
+        nullable: true
+        example: "https://api.prohelper.com/api/v1/admin/materials?page=1"
+      last:
+        type: string
+        format: uri
+        nullable: true
+        example: "https://api.prohelper.com/api/v1/admin/materials?page=12"
+      prev:
+        type: string
+        format: uri
+        nullable: true
+        example: "https://api.prohelper.com/api/v1/admin/materials?page=2"
+      next:
+        type: string
+        format: uri
+        nullable: true
+        example: "https://api.prohelper.com/api/v1/admin/materials?page=4"
+  meta:
+    type: object
+    description: Метаданные пагинации
+    properties:
+      current_page:
+        type: integer
+        description: Номер текущей страницы
+        example: 3
+      from:
+        type: integer
+        nullable: true
+        description: Номер первого элемента на текущей странице
+        example: 31
+      last_page:
+        type: integer
+        description: Номер последней страницы
+        example: 12
+      links:
+        type: array
+        description: Массив ссылок для навигации
+        items:
+          type: object
+          properties:
+            url:
+              type: string
+              format: uri
+              nullable: true
+            label:
+              type: string
+            active:
+              type: boolean
+      path:
+        type: string
+        format: uri
+        description: Базовый URL для пагинации
+        example: "https://api.prohelper.com/api/v1/admin/materials"
+      per_page:
+        type: integer
+        description: Количество элементов на странице
+        example: 15
+      to:
+        type: integer
+        nullable: true
+        description: Номер последнего элемента на текущей странице
+        example: 45
+      total:
+        type: integer
+        description: Общее количество элементов
+        example: 178
+required:
+  - data
+  - links
+  - meta

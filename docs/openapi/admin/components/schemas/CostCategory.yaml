@@ -1,48 +1,29 @@
 type: object
+description: Категория затрат для выбора при создании/редактировании проекта
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор категории затрат
+    example: 5
   name:
     type: string
+    description: Название категории затрат
+    example: "Строительно-монтажные работы"
   code:
     type: string
     nullable: true
+    description: Внутренний код категории
+    example: "СМР"
   external_code:
     type: string
     nullable: true
-  description:
-    type: string
-    nullable: true
+    description: Внешний код для интеграции с бухгалтерскими системами
+    example: "41.20.1"
   parent_id:
     type: integer
     nullable: true
-  additional_attributes:
-    type: object
-    nullable: true
-  parent:
-    $ref: './CostCategory.yaml'
-    nullable: true
-  children:
-    type: array
-    items:
-      $ref: './CostCategory.yaml'
-    nullable: true
-  projects_count:
-    type: integer
-    nullable: true
-  path:
-    type: string
-    nullable: true
-  is_active:
-    type: boolean
-  sort_order:
-    type: integer
-    nullable: true
-  organization_id:
-    type: integer
-  created_at:
-    type: string
-    format: date-time
-  updated_at:
-    type: string
-    format: date-time 
+    description: ID родительской категории (для иерархической структуры)
+    example: 2
+required:
+  - id
+  - name

@@ -1,11 +1,24 @@
 type: object
+description: Единица измерения (на основе MeasurementUnitResource)
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор единицы измерения
+    example: 3
   name:
     type: string
+    description: Полное название единицы измерения
+    example: "штука"
   code:
     type: string
+    description: Краткое обозначение единицы измерения (из поля short_name)
+    example: "шт"
   organization_id:
     type: integer
-    nullable: true 
+    nullable: true
+    description: ID организации (если единица создана для конкретной организации)
+    example: 10
+required:
+  - id
+  - name
+  - code

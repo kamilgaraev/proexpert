@@ -1,0 +1,89 @@
+type: object
+description: Схема для обновления материала (на основе UpdateMaterialRequest, все поля с sometimes правилами)
+properties:
+  name:
+    type: string
+    description: Название материала (правило: sometimes|required, уникальное в рамках организации)
+    example: "Кирпич красный керамический М-200"
+    maxLength: 255
+  code:
+    type: string
+    nullable: true
+    description: Внутренний код материала (правило: sometimes|nullable)
+    example: "MTR-001-UPD"
+    maxLength: 50
+  measurement_unit_id:
+    type: integer
+    description: ID единицы измерения (правило: sometimes|required|exists:measurement_units,id)
+    example: 3
+    minimum: 1
+  description:
+    type: string
+    nullable: true
+    description: Описание материала (правило: sometimes|nullable)
+    example: "Кирпич керамический красный одинарный М-200 улучшенного качества"
+    maxLength: 1000
+  category:
+    type: string
+    nullable: true
+    description: Категория материала (правило: sometimes|nullable)
+    example: "Строительные материалы премиум"
+    maxLength: 100
+  default_price:
+    type: number
+    format: decimal
+    nullable: true
+    description: Цена по умолчанию (правило: sometimes|nullable|numeric|min:0)
+    example: 15.75
+    minimum: 0
+  additional_properties:
+    type: object
+    nullable: true
+    description: Дополнительные свойства в формате JSON (правило: sometimes|nullable|array)
+    example: {"прочность": "М-200", "морозостойкость": "F75", "водопоглощение": "10%"}
+  is_active:
+    type: boolean
+    description: Активен ли материал (правило: sometimes|boolean)
+    example: true
+  external_code:
+    type: string
+    nullable: true
+    description: Внешний код для интеграции (правило: sometimes|nullable, уникальный в рамках организации)
+    example: "EXT-MTR-001-V2"
+    maxLength: 100
+  sbis_nomenclature_code:
+    type: string
+    nullable: true
+    description: Код номенклатуры в системе СБИС (правило: sometimes|nullable)
+    example: "00001234"
+    maxLength: 100
+  sbis_unit_code:
+    type: string
+    nullable: true
+    description: Код единицы измерения в системе СБИС (правило: sometimes|nullable)
+    example: "796"
+    maxLength: 100
+  consumption_rates:
+    type: object
+    nullable: true
+    description: Нормы расхода по видам работ (правило: sometimes|nullable|array, каждое значение numeric|min:0)
+    example: {"5": 120, "12": 60, "8": 80}
+    additionalProperties:
+      type: number
+      minimum: 0
+  accounting_data:
+    type: object
+    nullable: true
+    description: Дополнительные бухгалтерские данные (правило: sometimes|nullable|array)
+    example: {"центр_затрат": "10.02", "субконто": "Материалы премиум"}
+  use_in_accounting_reports:
+    type: boolean
+    nullable: true
+    description: Использовать в бухгалтерских отчетах (правило: sometimes|nullable|boolean)
+    example: true
+  accounting_account:
+    type: string
+    nullable: true
+    description: Счет бухгалтерского учета (правило: sometimes|nullable)
+    example: "10.02"
+    maxLength: 50

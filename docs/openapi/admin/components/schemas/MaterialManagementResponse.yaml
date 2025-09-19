@@ -1,0 +1,50 @@
+type: object
+description: Стандартный ответ для операций управления материалами (удаление, обновление норм расхода и т.д.)
+properties:
+  success:
+    type: boolean
+    description: Статус успешности операции
+    example: true
+  message:
+    type: string
+    description: Сообщение о результате операции
+    examples:
+      delete:
+        summary: Удаление материала
+        value: "Материал успешно удален."
+      consumption_rates_updated:
+        summary: Обновление норм расхода
+        value: "Нормы списания успешно обновлены."
+  data:
+    type: object
+    nullable: true
+    description: Дополнительные данные (например, при обновлении норм расхода)
+    properties:
+      material_id:
+        type: integer
+        example: 42
+      material_name:
+        type: string
+        example: "Кирпич красный керамический"
+      consumption_rates:
+        type: array
+        items:
+          type: object
+          properties:
+            work_type_id:
+              type: integer
+              example: 5
+            work_type_name:
+              type: string
+              example: "Кладка стен"
+            rate:
+              type: number
+              nullable: true
+              example: 100
+            notes:
+              type: string
+              nullable: true
+              example: "Норма расхода на 1 м³"
+required:
+  - success
+  - message

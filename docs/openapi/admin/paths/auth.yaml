@@ -1,26 +1,110 @@
 /auth/login:
   post:
     tags: [Auth]
-    summary: Вход администратора
+    summary: Авторизация администратора в системе
+    description: |
+      Аутентифицирует администратора по email/паролю и возвращает JWT токен для доступа к административной панели.
+      
+      **Особенности:**
+      - Токен действует 1 час
+      - Поддерживается only администраторы и супер-администраторы
+      - После авторизации пользователь получает доступ ко всем функциям админ-панели согласно своей роли
+      
+      **Обрабатывается:** AuthController::login
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/LoginRequest.yaml'
+          example:
+            email: "admin@prohelper.com"
+            password: "AdminPassword123"
     responses:
       "200":
-        description: Успешный вход
+        description: Успешная авторизация администратора
         content:
           application/json:
             schema:
               $ref: '../components/schemas/LoginResponse.yaml'
+            example:
+              success: true
+              message: "Вход выполнен успешно"
+              data:
+                token: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwOi8vbG9jYWxob3N0OjgwMDAvYXBpL3YxL2FkbWluL2F1dGgvbG9naW4iLCJpYXQiOjE3MjY3MzI2NDQsImV4cCI6MTcyNjczNjI0NCwibmJmIjoxNzI2NzMyNjQ0LCJqdGkiOiJkNGY4OGI4YjkzNGVhMmYwIiwic3ViIjoiMSIsInBydiI6ImE1Y2JmMjQyNGI5ODk0Mzc0MThmMzllYzEyNmYwNDYwMGQzNmFiMTQifQ.example"
+                user:
+                  id: 1
+                  name: "Иван Петров"
+                  email: "admin@prohelper.com"
+                  role: "admin"
       "401":
-        description: Неверные учётные данные
+        description: Неверные учетные данные
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ErrorResponse.yaml'
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Неверный email или пароль"
+                data:
+                  type: "null"
+                  example: null
+      "403":
+        description: Недостаточно прав для доступа к административной панели
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "У вас нет доступа к панели администратора"
+                data:
+                  type: "null"
+                  example: null
+      "422":
+        description: Ошибки валидации входных данных (от Laravel FormRequest)
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  properties:
+                    email:
+                      type: array
+                      items:
+                        type: string
+                      example: ["Email обязателен для заполнения", "Введите корректный email адрес"]
+                    password:
+                      type: array
+                      items:
+                        type: string
+                      example: ["Пароль обязателен для заполнения"]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Internal Server Error in Controller"
 
 /auth/me:
   get:
@@ -28,57 +112,181 @@
       - bearerAuth: []
     tags: [Auth]
     summary: Получить профиль текущего администратора
+    description: |
+      Возвращает детальную информацию о профиле аутентифицированного администратора.
+      
+      **Используется для:**
+      - Отображения информации в шапке админ-панели
+      - Проверки актуальности данных пользователя
+      - Получения ролей и разрешений
+      
+      **Обрабатывается:** AuthController::me
     responses:
       "200":
-        description: Данные пользователя
+        description: Профиль администратора получен успешно
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  nullable: true
+                  example: null
+                data:
+                  type: object
                   properties:
-                    data:
-                      $ref: '../components/schemas/UserSimple.yaml'
-      "401":
-        $ref: '../components/responses/UnauthorizedError.yaml'
+                    user:
+                      type: object
+                      description: Полный объект User модели
+                      example: {
+                        "id": 1,
+                        "name": "Иван Петров",
+                        "email": "admin@prohelper.com",
+                        "phone": "+79001234567",
+                        "position": "Администратор",
+                        "avatar_path": "avatars/user_1.jpg",
+                        "avatar_url": "https://storage.prohelper.com/avatars/user_1.jpg",
+                        "is_active": true,
+                        "current_organization_id": 5,
+                        "created_at": "2024-01-15T10:30:00.000000Z",
+                        "updated_at": "2024-01-20T14:45:00.000000Z"
+                      }
+      "404":
+        description: Пользователь не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Пользователь не найден"
+                data:
+                  type: "null"
+                  example: null
 
 /auth/refresh:
   post:
     security:
       - bearerAuth: []
     tags: [Auth]
-    summary: Обновить JWT токен
+    summary: Обновить JWT токен администратора
+    description: |
+      Обновляет JWT токен используя текущий валидный токен.
+      Возвращает новый токен с продленным временем действия (1 час).
+      
+      **Рекомендуется использовать:**
+      - За 10-15 минут до истечения текущего токена
+      - При получении ошибок 401 на других эндпоинтах
+      
+      **Обрабатывается:** AuthController::refresh
     responses:
       "200":
-        description: Новый токен
+        description: Токен успешно обновлен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Токен успешно обновлен"
+                data:
+                  type: object
                   properties:
-                    data:
-                      type: object
-                      properties:
-                        token:
-                          type: string
+                    token:
+                      type: string
+                      description: Новый JWT токен с продленным сроком действия
+                      example: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.new_refreshed_token.example"
       "401":
-        $ref: '../components/responses/UnauthorizedError.yaml'
+        description: Токен недействителен или истек
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Токен недействителен или истек"
+                data:
+                  type: "null"
+                  example: null
 
 /auth/logout:
   post:
     security:
       - bearerAuth: []
     tags: [Auth]
-    summary: Выход (инвалидация токена)
+    summary: Выход администратора из системы
+    description: |
+      Аннулирует JWT токен администратора и завершает сессию.
+      После вызова токен становится недействительным и добавляется в черный список.
+      
+      **Рекомендуется вызывать:**
+      - При нажатии кнопки "Выйти" в интерфейсе
+      - При смене пользователя
+      - При подозрении на компрометацию аккаунта
+      
+      **Обрабатывается:** AuthController::logout
     responses:
       "200":
-        description: Успешный выход
+        description: Успешный выход из системы
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Выход выполнен успешно"
+                data:
+                  type: "null"
+                  example: null
       "401":
-        $ref: '../components/responses/UnauthorizedError.yaml' 
+        description: Администратор не аутентифицирован или токен недействителен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Пользователь не аутентифицирован"
+                data:
+                  type: "null"
+                  example: null
+      "500":
+        description: Внутренняя ошибка сервера при обработке выхода
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Произошла ошибка при выходе из системы"
+                data:
+                  type: "null"
+                  example: null 

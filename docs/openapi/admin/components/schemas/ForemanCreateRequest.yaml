@@ -1,24 +1,46 @@
 type: object
-required: [name, email, password, password_confirmation]
+description: Схема для создания нового прораба (на основе StoreForemanRequest)
+required:
+  - name
+  - email
+  - password
+  - password_confirmation
 properties:
   name:
     type: string
+    description: Полное имя нового прораба
+    example: "Александр Сидоров"
+    maxLength: 255
   email:
     type: string
     format: email
+    description: Уникальный email адрес (проверяется unique:users,email)
+    example: "alexander.sidorov@prohelper.com"
+    maxLength: 255
   password:
     type: string
     format: password
+    description: Пароль (используется Password::defaults() - мин 8 симв, смешанные регистры, символы)
+    example: "SecurePass123!"
   password_confirmation:
     type: string
     format: password
+    description: Подтверждение пароля (должно совпадать с password)
+    example: "SecurePass123!"
   phone:
     type: string
     nullable: true
+    description: Контактный номер телефона (опционально, regex: /^\\+?[0-9\\s\\-\\(\\)]{7,20}$/)
+    example: "+7 (900) 123-45-67"
+    pattern: "^\\+?[0-9\\s\\-\\(\\)]{7,20}$"
   position:
     type: string
     nullable: true
+    description: Должность или специализация прораба (опционально)
+    example: "Прораб строительных работ"
+    maxLength: 255
   avatar:
     type: string
     format: binary
-    nullable: true 
+    nullable: true
+    description: Файл аватара прораба (image/jpeg, image/png, image/jpg, макс 2MB) 

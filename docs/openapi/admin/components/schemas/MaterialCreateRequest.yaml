@@ -1,61 +1,94 @@
 type: object
+description: Схема для создания нового материала (на основе StoreMaterialRequest)
 required:
   - name
   - measurement_unit_id
 properties:
   name:
     type: string
+    description: Название материала (уникальное в рамках организации)
+    example: "Кирпич красный керамический"
     maxLength: 255
   code:
     type: string
-    maxLength: 50
     nullable: true
+    description: Внутренний код материала
+    example: "MTR-001"
+    maxLength: 50
   measurement_unit_id:
     type: integer
+    description: ID единицы измерения (должна существовать в measurement_units)
+    example: 3
+    minimum: 1
   description:
     type: string
-    maxLength: 1000
     nullable: true
+    description: Описание материала
+    example: "Кирпич керамический красный одинарный М-150"
+    maxLength: 1000
   category:
     type: string
-    maxLength: 100
     nullable: true
+    description: Категория материала
+    example: "Строительные материалы"
+    maxLength: 100
   default_price:
     type: number
-    format: float
-    minimum: 0
+    format: decimal
     nullable: true
+    description: Цена по умолчанию (не может быть отрицательной)
+    example: 12.50
+    minimum: 0
   additional_properties:
     type: object
     nullable: true
+    description: Дополнительные свойства в формате JSON
+    example: {"прочность": "М-150", "морозостойкость": "F50"}
   is_active:
     type: boolean
-    nullable: true
+    description: Активен ли материал
+    example: true
+    default: true
   external_code:
     type: string
-    maxLength: 100
     nullable: true
+    description: Внешний код для интеграции (уникальный в рамках организации)
+    example: "EXT-MTR-001"
+    maxLength: 100
   sbis_nomenclature_code:
     type: string
-    maxLength: 100
     nullable: true
+    description: Код номенклатуры в системе СБИС
+    example: "00001234"
+    maxLength: 100
   sbis_unit_code:
     type: string
-    maxLength: 100
     nullable: true
+    description: Код единицы измерения в системе СБИС
+    example: "796"
+    maxLength: 100
   consumption_rates:
-    type: array
-    items:
+    type: object
+    nullable: true
+    description: Нормы расхода по видам работ в формате {work_type_id: количество}
+    example: {"5": 100, "12": 50}
+    additionalProperties:
       type: number
       minimum: 0
-    nullable: true
   accounting_data:
     type: object
     nullable: true
+    description: Дополнительные бухгалтерские данные в формате JSON
+    example: {"центр_затрат": "10.01", "субконто": "Материалы"}
   use_in_accounting_reports:
     type: boolean
     nullable: true
+    description: Использовать в бухгалтерских отчетах
+    example: true
+    default: false
   accounting_account:
     type: string
+    nullable: true
+    description: Счет бухгалтерского учета
+    example: "10.01"
     maxLength: 50
-    nullable: true 

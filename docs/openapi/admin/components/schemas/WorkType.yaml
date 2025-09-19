@@ -1,22 +1,45 @@
 type: object
+description: Модель вида работ (на основе WorkTypeResource и WorkType модели)
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор вида работ
+    example: 15
   name:
     type: string
+    description: Название вида работ
+    example: "Кладка кирпичных стен"
   category:
     type: string
     nullable: true
+    description: Категория вида работ
+    example: "Каменные работы"
   isActive:
     type: boolean
+    description: Активен ли вид работ (в ресурсе используется camelCase)
+    example: true
   measurementUnit:
-    $ref: './MeasurementUnit.yaml'
-    nullable: true
+    allOf:
+      - $ref: './MeasurementUnit.yaml'
+    description: Единица измерения вида работ (загружается через whenLoaded('measurementUnit'))
+  organizationId:
+    type: integer
+    description: ID организации-владельца вида работ (в ресурсе используется camelCase)
+    example: 10
   createdAt:
     type: string
     format: date-time
+    description: Дата создания (формат Y-m-d H:i:s, в ресурсе используется camelCase)
+    example: "2024-01-15 10:30:00"
   updatedAt:
     type: string
     format: date-time
-  organizationId:
-    type: integer 
+    description: Дата последнего обновления (формат Y-m-d H:i:s, в ресурсе используется camelCase)
+    example: "2024-01-20 14:45:00"
+required:
+  - id
+  - name
+  - isActive
+  - organizationId
+  - createdAt
+  - updatedAt

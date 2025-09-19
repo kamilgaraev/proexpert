@@ -1,9 +1,16 @@
 type: object
-required: [email, password]
+required:
+  - email
+  - password
 properties:
   email:
     type: string
     format: email
+    description: Email администратора для входа в систему
+    example: "admin@prohelper.com"
+    maxLength: 255
   password:
     type: string
-    format: password 
+    format: password
+    description: Пароль администратора (без минимальной длины в валидации)
+    example: "AdminPassword123" 

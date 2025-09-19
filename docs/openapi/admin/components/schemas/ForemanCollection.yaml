@@ -1,11 +1,11 @@
 type: object
-description: Пагинированная коллекция проектов (возвращается от ProjectResource::collection)
+description: Пагинированная коллекция прорабов (возвращается от ForemanUserResource::collection)
 properties:
   data:
     type: array
-    description: Массив проектов текущей страницы
+    description: Массив данных о прорабах текущей страницы
     items:
-      $ref: './Project.yaml'
+      $ref: './ForemanUser.yaml'
   links:
     type: object
     description: Ссылки для навигации по страницам
@@ -14,22 +14,22 @@ properties:
         type: string
         format: uri
         nullable: true
-        example: "https://api.prohelper.com/api/v1/admin/projects?page=1"
+        example: "https://api.prohelper.com/api/v1/admin/users?page=1"
       last:
         type: string
         format: uri
         nullable: true
-        example: "https://api.prohelper.com/api/v1/admin/projects?page=8"
+        example: "https://api.prohelper.com/api/v1/admin/users?page=10"
       prev:
         type: string
         format: uri
         nullable: true
-        example: "https://api.prohelper.com/api/v1/admin/projects?page=1"
+        example: "https://api.prohelper.com/api/v1/admin/users?page=1"
       next:
         type: string
         format: uri
         nullable: true
-        example: "https://api.prohelper.com/api/v1/admin/projects?page=3"
+        example: "https://api.prohelper.com/api/v1/admin/users?page=3"
   meta:
     type: object
     description: Метаданные пагинации
@@ -46,7 +46,7 @@ properties:
       last_page:
         type: integer
         description: Номер последней страницы
-        example: 8
+        example: 10
       links:
         type: array
         description: Массив ссылок для навигации
@@ -65,7 +65,7 @@ properties:
         type: string
         format: uri
         description: Базовый URL для пагинации
-        example: "https://api.prohelper.com/api/v1/admin/projects"
+        example: "https://api.prohelper.com/api/v1/admin/users"
       per_page:
         type: integer
         description: Количество элементов на странице
@@ -78,7 +78,7 @@ properties:
       total:
         type: integer
         description: Общее количество элементов
-        example: 120
+        example: 147
 required:
   - data
   - links

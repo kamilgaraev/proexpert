@@ -1,13 +1,56 @@
 type: object
-required: [name]
+description: Схема для создания нового вида работ (на основе StoreWorkTypeRequest)
+required:
+  - name
+  - measurement_unit_id
 properties:
   name:
     type: string
+    description: Название вида работ (уникальное в рамках организации)
+    example: "Кладка кирпичных стен"
+    maxLength: 255
+  measurement_unit_id:
+    type: integer
+    description: ID единицы измерения (должна существовать в measurement_units)
+    example: 5
+    minimum: 1
   category:
     type: string
     nullable: true
-  measurement_unit_id:
-    type: integer
+    description: Категория вида работ
+    example: "Каменные работы"
+    maxLength: 100
+  is_active:
+    type: boolean
+    description: Активен ли вид работ
+    example: true
+    default: true
+  code:
+    type: string
     nullable: true
-  isActive:
-    type: boolean 
+    description: Внутренний код вида работ
+    example: "WT-001"
+    maxLength: 100
+  description:
+    type: string
+    nullable: true
+    description: Описание вида работ
+    example: "Кладка стен из керамического кирпича на цементно-песчаном растворе"
+  default_price:
+    type: number
+    format: decimal
+    nullable: true
+    description: Цена по умолчанию за единицу работ (не может быть отрицательной)
+    example: 850.00
+    minimum: 0
+  additional_properties:
+    type: object
+    nullable: true
+    description: Дополнительные свойства в формате JSON
+    example: {"сложность": "средняя", "требования": "опыт кладки от 2 лет"}
+  external_code:
+    type: string
+    nullable: true
+    description: Внешний код для интеграции с бухгалтерскими системами
+    example: "EXT-WT-001"
+    maxLength: 255

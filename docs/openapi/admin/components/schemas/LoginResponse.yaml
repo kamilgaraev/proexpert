@@ -1,19 +1,78 @@
-allOf:
-  - $ref: './ApiResponse.yaml'
+type: object
 properties:
+  success:
+    type: boolean
+    description: Статус успешности операции (всегда true для успешного входа)
+    example: true
+  message:
+    type: string
+    description: Сообщение о результате авторизации
+    example: "Вход выполнен успешно"
   data:
     type: object
+    description: Данные авторизованного администратора
     properties:
       token:
         type: string
+        description: JWT токен для аутентификации запросов к API админки
+        example: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJodHRwOi8vbG9jYWxob3N0OjgwMDAvYXBpL3YxL2FkbWluL2F1dGgvbG9naW4iLCJpYXQiOjE3MjY3MzI2NDQsImV4cCI6MTcyNjczNjI0NCwibmJmIjoxNzI2NzMyNjQ0LCJqdGkiOiJkNGY4OGI4YjkzNGVhMmYwIiwic3ViIjoiMSIsInBydiI6ImE1Y2JmMjQyNGI5ODk0Mzc0MThmMzllYzEyNmYwNDYwMGQzNmFiMTQifQ.example"
       user:
-        $ref: './UserSimple.yaml'
-example:
-  success: true
-  message: 'Вход выполнен успешно'
-  data:
-    token: 'jwt_token_here'
-    user:
-      id: 1
-      name: 'Admin'
-      email: 'admin@example.com' 
+        type: object
+        description: Объект пользователя (модель User) со всеми полями
+        properties:
+          id:
+            type: integer
+            description: Уникальный идентификатор пользователя
+            example: 1
+          name:
+            type: string
+            description: Полное имя пользователя
+            example: "Иван Петров"
+          email:
+            type: string
+            format: email
+            description: Email пользователя
+            example: "admin@prohelper.com"
+          phone:
+            type: string
+            nullable: true
+            description: Телефон пользователя
+            example: "+79001234567"
+          position:
+            type: string
+            nullable: true
+            description: Должность пользователя
+            example: "Администратор"
+          avatar_path:
+            type: string
+            nullable: true
+            description: Путь к файлу аватара на сервере
+            example: "avatars/user_1.jpg"
+          avatar_url:
+            type: string
+            nullable: true
+            description: Полный URL аватара пользователя
+            example: "https://storage.prohelper.com/avatars/user_1.jpg"
+          is_active:
+            type: boolean
+            description: Статус активности пользователя
+            example: true
+          current_organization_id:
+            type: integer
+            nullable: true
+            description: ID текущей организации пользователя
+            example: 5
+          created_at:
+            type: string
+            format: date-time
+            description: Дата создания записи
+            example: "2024-01-15T10:30:00.000000Z"
+          updated_at:
+            type: string
+            format: date-time
+            description: Дата последнего обновления
+            example: "2024-01-20T14:45:00.000000Z"
+required:
+  - success
+  - message
+  - data 

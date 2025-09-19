@@ -1,66 +1,104 @@
 type: object
+description: Схема для создания нового проекта (на основе StoreProjectRequest)
 required:
   - name
   - status
 properties:
   name:
     type: string
+    description: Название проекта
+    example: "Жилой комплекс Березовая роща"
     maxLength: 255
   address:
     type: string
-    maxLength: 1000
     nullable: true
+    description: Адрес проекта
+    example: "г. Москва, ул. Березовая, д. 15"
+    maxLength: 1000
   description:
     type: string
-    maxLength: 2000
     nullable: true
+    description: Описание проекта
+    example: "Строительство жилого комплекса из 3 корпусов"
+    maxLength: 2000
   customer:
     type: string
-    maxLength: 255
     nullable: true
+    description: Заказчик проекта
+    example: "ООО Строительная Компания"
+    maxLength: 255
   designer:
     type: string
-    maxLength: 255
     nullable: true
+    description: Проектировщик
+    example: "Архитектурное бюро ПРОЕКТ"
+    maxLength: 255
   start_date:
     type: string
     format: date
     nullable: true
+    description: Дата начала проекта
+    example: "2024-02-01"
   end_date:
     type: string
     format: date
     nullable: true
+    description: Дата окончания проекта (должна быть >= start_date)
+    example: "2024-12-31"
   status:
     type: string
+    description: Статус проекта
     enum: [active, completed, paused, cancelled]
+    example: "active"
   is_archived:
     type: boolean
-    nullable: true
+    description: Архивный ли проект
+    example: false
+    default: false
   additional_info:
     type: object
     nullable: true
+    description: Дополнительная информация в формате JSON
+    example: {"особенности": "проект с повышенной энергоэффективностью"}
   external_code:
     type: string
-    maxLength: 100
     nullable: true
+    description: Внешний код проекта для интеграции с бухгалтерскими системами
+    example: "PRJ-2024-001"
+    maxLength: 100
   cost_category_id:
     type: integer
     nullable: true
+    description: ID категории затрат (должна существовать в cost_categories)
+    example: 5
   accounting_data:
     type: object
     nullable: true
+    description: Бухгалтерские данные в формате JSON
+    example: {"центр_затрат": "ЦЗ-001", "аналитика": "А1-15"}
   use_in_accounting_reports:
     type: boolean
     nullable: true
+    description: Использовать в бухгалтерских отчетах
+    example: true
+    default: false
   budget_amount:
     type: number
-    format: float
+    format: decimal
     nullable: true
+    description: Бюджет проекта
+    example: 15000000.50
+    minimum: 0
   site_area_m2:
     type: number
-    format: float
+    format: decimal
     nullable: true
+    description: Площадь участка в кв.м
+    example: 2500.75
+    minimum: 0
   contract_number:
     type: string
+    nullable: true
+    description: Номер договора
+    example: "Д-2024/001"
     maxLength: 100
-    nullable: true 

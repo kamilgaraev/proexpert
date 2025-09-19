@@ -2,8 +2,36 @@ type: object
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор пользователя
+    example: 1
   name:
     type: string
+    description: Полное имя пользователя
+    example: "Иван Петров"
+    maxLength: 255
   email:
     type: string
-    format: email 
+    format: email
+    description: Email адрес пользователя
+    example: "user@prohelper.com"
+    maxLength: 255
+  role:
+    type: string
+    description: Роль пользователя в системе
+    example: "foreman"
+    enum: ["admin", "foreman", "manager"]
+  avatar_url:
+    type: string
+    format: uri
+    nullable: true
+    description: URL аватара пользователя
+    example: "https://storage.prohelper.com/avatars/user1.jpg"
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания пользователя
+    example: "2024-01-15T10:30:00Z"
+required:
+  - id
+  - name
+  - email 
