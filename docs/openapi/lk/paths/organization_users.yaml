@@ -1,137 +1,984 @@
-/organization-users:
+/organization-users/{userId}/roles:
   get:
     tags: [OrganizationUsers]
-    summary: Список пользователей организации
-    security: [{ bearerAuth: [] }]
-    responses:
-      "200":
-        description: Список пользователей
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/OrganizationUser.yaml'
-/organization-users/{userId}:
-  parameters:
-    - name: userId
-      in: path
-      required: true
-      schema: { type: integer }
-  get:
-    tags: [OrganizationUsers]
-    summary: Получить пользователя организации
-    security: [{ bearerAuth: [] }]
-    responses:
-      "200":
-        description: Пользователь
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationUser.yaml'
-  put:
-    tags: [OrganizationUsers]
-    summary: Обновить пользователя
-    security: [{ bearerAuth: [] }]
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/UpdateOrganizationUserRequest.yaml'
-    responses:
-      "200":
-        description: Пользователь обновлён
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationUser.yaml'
-  delete:
-    tags: [OrganizationUsers]
-    summary: Удалить пользователя
-    security: [{ bearerAuth: [] }]
-    responses:
-      "204":
-        description: Удалено
-/organization-users/{userId}/toggle-status:
-  post:
-    tags: [OrganizationUsers]
-    summary: Переключить статус активности пользователя
-    security: [{ bearerAuth: [] }]
+    summary: Получить роли пользователя (НЕ РЕАЛИЗОВАН)
+    description: |
+      ⚠️ **ВНИМАНИЕ: ЭНДПОИНТ НЕ РЕАЛИЗОВАН**
+      
+      Этот эндпоинт описан в роутах, но метод `getRoles()` в `OrganizationUserController` не реализован.
+      Возвращает пустой ответ.
+      
+      Для получения ролей используйте эндпоинт `/available-roles`.
+    security:
+      - bearerAuth: []
     parameters:
       - name: userId
         in: path
         required: true
-        schema: { type: integer }
+        description: ID пользователя
+        schema:
+          type: integer
+          example: 123
     responses:
-      "200":
-        description: Статус изменён
+      "501":
+        description: Эндпоинт не реализован
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
-/organization-users/{userId}/roles:
-  get:
-    tags: [OrganizationUsers]
-    summary: Список ролей пользователя
-    security: [{ bearerAuth: [] }]
-    parameters:
-      - { name: userId, in: path, required: true, schema: { type: integer } }
-    responses:
-      "200":
-        description: Роли
-        content:
-          application/json:
-            schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Метод не реализован"
+    deprecated: true
   post:
     tags: [OrganizationUsers]
-    summary: Обновить роли пользователя
-    security: [{ bearerAuth: [] }]
+    summary: Обновить кастомные роли пользователя
+    description: |
+      Обновляет список кастомных ролей пользователя в организации.
+      
+      **Процесс обновления:**
+      1. Проверяется принадлежность пользователя к организации
+      2. Валидируются указанные роли (должны существовать в организации)
+      3. Назначаются новые кастомные роли пользователю
+      4. Предыдущие кастомные роли заменяются новыми
+      
+      **Важно:**
+      - Системные роли (organization_owner, foreman) не затрагиваются
+      - Обновляются только кастомные роли, созданные в организации
+      - Пользователь должен принадлежать текущей организации
+      
+      Требует права `users.manage_roles` в организации.
+    security:
+      - bearerAuth: []
     parameters:
-      - { name: userId, in: path, required: true, schema: { type: integer } }
+      - name: userId
+        in: path
+        required: true
+        description: ID пользователя для обновления ролей
+        schema:
+          type: integer
+          example: 123
     requestBody:
       required: true
       content:
         application/json:
           schema:
             type: object
+            required:
+              - custom_role_ids
             properties:
-              role_slugs:
+              custom_role_ids:
                 type: array
-                items: { type: string }
-            required: [role_slugs]
+                items:
+                  type: integer
+                minItems: 0
+                maxItems: 20
+                description: Массив ID кастомных ролей для назначения пользователю
+                example: [5, 12, 18]
+          examples:
+            single_role:
+              summary: Назначение одной роли
+              value:
+                custom_role_ids: [5]
+            multiple_roles:
+              summary: Назначение нескольких ролей
+              value:
+                custom_role_ids: [5, 12, 18]
+            remove_all_roles:
+              summary: Удаление всех кастомных ролей
+              value:
+                custom_role_ids: []
     responses:
       "200":
-        description: Роли обновлены
+        description: Роли пользователя успешно обновлены
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Роли пользователя успешно обновлены"
+      "400":
+        description: Ошибка валидации или бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
+            examples:
+              validation_error:
+                summary: Ошибка валидации
+                value:
+                  success: false
+                  message: "Ошибка валидации"
+                  errors:
+                    custom_role_ids: ["Поле custom_role_ids обязательно для заполнения"]
+              organization_context:
+                summary: Контекст организации не определен
+                value:
+                  success: false
+                  message: "Контекст организации не определен"
+      "404":
+        description: Пользователь не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Пользователь не найден"
+      "403":
+        description: Нет прав или пользователь не принадлежит организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+            examples:
+              no_permission:
+                summary: Нет прав на управление ролями
+                value:
+                  success: false
+                  message: "Нет прав для управления ролями пользователей"
+              user_not_in_org:
+                summary: Пользователь не принадлежит к организации
+                value:
+                  success: false
+                  message: "Пользователь не принадлежит к данной организации"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка при обновлении ролей пользователя"
+
+/organization-users/{userId}/assign-role/{roleId}:
+  post:
+    tags: [OrganizationUsers]
+    summary: Назначить кастомную роль пользователю
+    description: |
+      Назначает указанную кастомную роль пользователю в контексте организации.
+      
+      **Процесс назначения:**
+      1. Проверяется существование пользователя и роли
+      2. Валидируется принадлежность роли к организации
+      3. Создается назначение роли в контексте организации
+      4. Права пользователя пересчитываются автоматически
+      
+      **Особенности:**
+      - Роль назначается в контексте текущей организации
+      - Пользователь может иметь несколько кастомных ролей одновременно
+      - Назначение роли дополняет существующие роли (не заменяет)
+      
+      Требует права `users.manage_roles` в организации.
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        description: ID пользователя для назначения роли
+        schema:
+          type: integer
+          example: 123
+      - name: roleId
+        in: path
+        required: true
+        description: ID кастомной роли для назначения
+        schema:
+          type: integer
+          example: 15
+    responses:
+      "200":
+        description: Роль успешно назначена пользователю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Роль успешно назначена пользователю"
+      "400":
+        description: Контекст организации не определен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен"
+      "404":
+        description: Пользователь или роль не найдены
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+            examples:
+              user_not_found:
+                summary: Пользователь не найден
+                value:
+                  success: false
+                  message: "Пользователь не найден"
+              role_not_found:
+                summary: Роль не найдена
+                value:
+                  success: false
+                  message: "Роль не найдена"
+      "403":
+        description: Нет прав для назначения ролей
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Нет прав для назначения ролей"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка при назначении роли"
+
+/organization-users/{userId}/unassign-role/{roleId}:
+  delete:
+    tags: [OrganizationUsers]
+    summary: Отозвать кастомную роль у пользователя
+    description: |
+      Отзывает (удаляет) указанную кастомную роль у пользователя в контексте организации.
+      
+      **Процесс отзыва:**
+      1. Проверяется существование назначения роли пользователю
+      2. Роль удаляется из активных назначений
+      3. Права пользователя пересчитываются автоматически
+      4. Информация об отзыве сохраняется в аудит-лог
+      
+      **Ограничения:**
+      - Можно отзывать только кастомные роли (не системные)
+      - Нельзя отозвать последнюю роль владельца организации
+      - Роль должна быть реально назначена пользователю
+      
+      Требует права `users.manage_roles` в организации.
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        description: ID пользователя для отзыва роли
+        schema:
+          type: integer
+          example: 123
+      - name: roleId
+        in: path
+        required: true
+        description: ID кастомной роли для отзыва
+        schema:
+          type: integer
+          example: 15
+    responses:
+      "200":
+        description: Роль успешно отозвана у пользователя
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Роль успешно отозвана у пользователя"
+      "400":
+        description: Контекст организации не определен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен"
+      "404":
+        description: Пользователь или роль не найдены
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+            examples:
+              user_not_found:
+                summary: Пользователь не найден
+                value:
+                  success: false
+                  message: "Пользователь не найден"
+              role_not_found:
+                summary: Роль не найдена
+                value:
+                  success: false
+                  message: "Роль не найдена"
+      "403":
+        description: Нет прав для отзыва ролей
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Нет прав для отзыва ролей"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка при отзыве роли"
+
 /user-limits:
   get:
     tags: [OrganizationUsers]
-    summary: Лимиты пользователя в рамках подписки
-    security: [{ bearerAuth: [] }]
+    summary: Получить лимиты пользователя в рамках подписки
+    description: |
+      Возвращает информацию о лимитах пользователя в рамках текущей подписки организации.
+      
+      **Типы лимитов:**
+      - **Пользователи** - максимальное количество пользователей в организации
+      - **Проекты** - максимальное количество активных проектов
+      - **Хранилище** - лимит на объем загружаемых файлов (в ГБ)
+      - **API запросы** - лимит на количество API запросов в месяц
+      - **Экспорт отчетов** - лимит на количество экспортов в месяц
+      
+      **Информация о текущем использовании:**
+      - Текущее количество по каждому лимиту
+      - Процент использования
+      - Дата сброса лимитов (если применимо)
+      
+      Лимиты зависят от тарифного плана организации и активированных модулей.
+    security:
+      - bearerAuth: []
     responses:
       "200":
-        description: Лимиты
+        description: Лимиты пользователя получены успешно
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml' 
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  properties:
+                    subscription_plan:
+                      type: object
+                      description: Информация о текущем тарифном плане
+                      properties:
+                        name:
+                          type: string
+                          description: Название тарифного плана
+                          example: "Профессиональный"
+                        expires_at:
+                          type: string
+                          format: date-time
+                          nullable: true
+                          description: Дата окончания подписки
+                          example: "2024-12-31T23:59:59Z"
+                        is_trial:
+                          type: boolean
+                          description: Является ли текущий период пробным
+                          example: false
+                    limits:
+                      type: object
+                      description: Лимиты и их использование
+                      properties:
+                        users:
+                          type: object
+                          properties:
+                            max:
+                              type: integer
+                              description: Максимальное количество пользователей
+                              example: 50
+                            current:
+                              type: integer
+                              description: Текущее количество пользователей
+                              example: 23
+                            usage_percent:
+                              type: number
+                              format: float
+                              description: Процент использования лимита
+                              example: 46.0
+                        projects:
+                          type: object
+                          properties:
+                            max:
+                              type: integer
+                              description: Максимальное количество проектов
+                              example: 100
+                            current:
+                              type: integer
+                              description: Текущее количество проектов
+                              example: 15
+                            usage_percent:
+                              type: number
+                              format: float
+                              example: 15.0
+                        storage_gb:
+                          type: object
+                          properties:
+                            max:
+                              type: number
+                              format: float
+                              description: Максимальный объем хранилища в ГБ
+                              example: 100.0
+                            current:
+                              type: number
+                              format: float
+                              description: Текущий объем занятого места в ГБ
+                              example: 12.5
+                            usage_percent:
+                              type: number
+                              format: float
+                              example: 12.5
+                        api_requests:
+                          type: object
+                          properties:
+                            max:
+                              type: integer
+                              description: Лимит API запросов в месяц
+                              example: 100000
+                            current:
+                              type: integer
+                              description: Использовано API запросов в текущем месяце
+                              example: 15420
+                            usage_percent:
+                              type: number
+                              format: float
+                              example: 15.42
+                            reset_date:
+                              type: string
+                              format: date
+                              description: Дата сброса счетчика
+                              example: "2024-10-01"
+                    warnings:
+                      type: array
+                      description: Предупреждения о приближении к лимитам
+                      items:
+                        type: object
+                        properties:
+                          type:
+                            type: string
+                            description: Тип лимита
+                            example: "users"
+                          message:
+                            type: string
+                            description: Текст предупреждения
+                            example: "Вы используете 92% лимита пользователей"
+                          severity:
+                            type: string
+                            enum: [info, warning, critical]
+                            description: Уровень критичности
+                            example: "warning"
+            examples:
+              success:
+                summary: Лимиты получены успешно
+                value:
+                  success: true
+                  data:
+                    subscription_plan:
+                      name: "Профессиональный"
+                      expires_at: "2024-12-31T23:59:59Z"
+                      is_trial: false
+                    limits:
+                      users:
+                        max: 50
+                        current: 23
+                        usage_percent: 46.0
+                      projects:
+                        max: 100
+                        current: 15
+                        usage_percent: 15.0
+                      storage_gb:
+                        max: 100.0
+                        current: 12.5
+                        usage_percent: 12.5
+                    warnings:
+                      - type: "storage_gb"
+                        message: "Вы используете 85% лимита хранилища"
+                        severity: "warning"
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Пользователь не авторизован"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка при получении лимитов пользователя"
+
+/create-user-with-custom-roles:
+  post:
+    tags: [OrganizationUsers]
+    summary: Создать пользователя с кастомными ролями
+    description: |
+      Создает нового пользователя и сразу назначает ему указанные кастомные роли в организации.
+      
+      **Процесс создания:**
+      1. Валидируются данные пользователя (email должен быть уникальным)
+      2. Создается новый пользователь с захешированным паролем
+      3. Пользователь привязывается к текущей организации
+      4. Назначаются указанные кастомные роли через новую систему авторизации
+      5. Опционально отправляются учетные данные на email
+      
+      **Особенности:**
+      - Пользователь сразу получает доступ к организации
+      - Можно назначить несколько кастомных ролей одновременно
+      - Автоматическая установка текущей организации для пользователя
+      - Поддержка отправки учетных данных по email
+      
+      Требует права `users.manage` в организации.
+    security:
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - name
+              - email
+              - password
+              - custom_role_ids
+            properties:
+              name:
+                type: string
+                maxLength: 255
+                description: Полное имя пользователя
+                example: "Иван Иванов"
+              email:
+                type: string
+                format: email
+                maxLength: 255
+                description: Email пользователя (должен быть уникальным)
+                example: "ivan.ivanov@company.com"
+              password:
+                type: string
+                minLength: 8
+                description: Пароль пользователя
+                example: "SecurePassword123"
+              password_confirmation:
+                type: string
+                minLength: 8
+                description: Подтверждение пароля (должно совпадать с password)
+                example: "SecurePassword123"
+              custom_role_ids:
+                type: array
+                items:
+                  type: integer
+                minItems: 1
+                maxItems: 10
+                description: Массив ID кастомных ролей для назначения
+                example: [5, 12]
+              send_credentials:
+                type: boolean
+                description: Отправить учетные данные пользователю на email
+                default: false
+                example: true
+          examples:
+            project_manager:
+              summary: Создание менеджера проектов
+              value:
+                name: "Мария Петрова"
+                email: "maria.petrova@company.com"
+                password: "SecurePassword123"
+                password_confirmation: "SecurePassword123"
+                custom_role_ids: [5, 12]
+                send_credentials: true
+            foreman:
+              summary: Создание прораба
+              value:
+                name: "Сергей Прорабов"
+                email: "sergey.prorabov@company.com"
+                password: "ForemanPass456"
+                password_confirmation: "ForemanPass456"
+                custom_role_ids: [8]
+                send_credentials: false
+    responses:
+      "201":
+        description: Пользователь успешно создан с назначенными ролями
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Пользователь успешно создан с назначенными ролями"
+                data:
+                  type: object
+                  properties:
+                    user:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                          description: ID созданного пользователя
+                          example: 156
+                        name:
+                          type: string
+                          description: Имя пользователя
+                          example: "Мария Петрова"
+                        email:
+                          type: string
+                          format: email
+                          description: Email пользователя
+                          example: "maria.petrova@company.com"
+                        created_at:
+                          type: string
+                          format: date-time
+                          description: Дата создания пользователя
+                          example: "2024-09-19T15:30:00Z"
+      "400":
+        description: Ошибка валидации или бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                errors:
+                  type: object
+            examples:
+              validation_error:
+                summary: Ошибка валидации
+                value:
+                  success: false
+                  message: "Ошибка валидации"
+                  errors:
+                    email: ["Пользователь с таким email уже существует"]
+                    password: ["Пароль должен содержать минимум 8 символов"]
+                    custom_role_ids: ["Указанные роли не найдены"]
+              organization_context:
+                summary: Контекст организации не определен
+                value:
+                  success: false
+                  message: "Контекст организации не определен"
+      "403":
+        description: Нет прав для создания пользователей
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Нет прав для создания пользователей"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка валидации"
+                errors:
+                  type: object
+                  additionalProperties:
+                    type: array
+                    items:
+                      type: string
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка при создании пользователя"
+
+/available-roles:
+  get:
+    tags: [OrganizationUsers]
+    summary: Получить доступные роли для организации
+    description: |
+      Возвращает список всех ролей, доступных для назначения пользователям в текущей организации.
+      
+      **Типы ролей:**
+      
+      **🔧 Системные роли:**
+      - Предопределенные роли системы
+      - Нельзя создавать или изменять
+      - Имеют фиксированный набор разрешений
+      - Примеры: `organization_owner`, `foreman`, `accountant`
+      
+      **🎨 Кастомные роли:**
+      - Созданные администраторами организации
+      - Можно настраивать разрешения
+      - Уникальны для каждой организации
+      - Поддерживают описания и дополнительные настройки
+      
+      Информация полезна для создания селектов в интерфейсе и понимания доступных возможностей.
+      Требует права `roles.view_custom` в организации.
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: include_inactive
+        in: query
+        required: false
+        description: Включить неактивные кастомные роли
+        schema:
+          type: boolean
+          default: false
+      - name: interface_filter
+        in: query
+        required: false
+        description: Фильтр по типу доступа к интерфейсу
+        schema:
+          type: string
+          enum: [lk, mobile, admin]
+    responses:
+      "200":
+        description: Список доступных ролей получен успешно
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  properties:
+                    system_roles:
+                      type: array
+                      description: Системные роли (слаги)
+                      items:
+                        type: string
+                      example: ["organization_owner", "organization_admin", "foreman", "accountant", "worker"]
+                    custom_roles:
+                      type: array
+                      description: Кастомные роли организации
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: integer
+                            description: ID кастомной роли
+                            example: 5
+                          name:
+                            type: string
+                            description: Название роли
+                            example: "Менеджер проектов"
+                          slug:
+                            type: string
+                            description: Уникальный слаг роли
+                            example: "custom_project_manager"
+                          description:
+                            type: string
+                            nullable: true
+                            description: Описание роли
+                            example: "Управление проектами и командой"
+                          is_active:
+                            type: boolean
+                            description: Активна ли роль
+                            example: true
+                          interface_access:
+                            type: array
+                            items:
+                              type: string
+                            description: Доступные интерфейсы
+                            example: ["lk"]
+                          users_count:
+                            type: integer
+                            description: Количество пользователей с этой ролью
+                            example: 3
+                    organization_id:
+                      type: integer
+                      description: ID текущей организации
+                      example: 123
+            examples:
+              success:
+                summary: Доступные роли получены
+                value:
+                  success: true
+                  data:
+                    system_roles: ["organization_owner", "organization_admin", "foreman", "accountant", "worker"]
+                    custom_roles:
+                      - id: 5
+                        name: "Менеджер проектов"
+                        slug: "custom_project_manager"
+                        description: "Управление проектами и командой"
+                        is_active: true
+                        interface_access: ["lk"]
+                        users_count: 3
+                      - id: 8
+                        name: "Прораб участка"
+                        slug: "custom_foreman_site"
+                        description: "Контроль работ на конкретном участке"
+                        is_active: true
+                        interface_access: ["mobile"]
+                        users_count: 5
+                    organization_id: 123
+      "400":
+        description: Контекст организации не определен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Контекст организации не определен"
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Пользователь не авторизован"
+      "403":
+        description: Нет прав для просмотра ролей
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Нет прав для просмотра ролей"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка при получении доступных ролей"

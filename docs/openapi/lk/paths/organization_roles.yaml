@@ -1,12 +1,40 @@
-/roles:
+/custom-roles:
   get:
     tags: [OrganizationRoles]
-    summary: Список ролей организации (кастомные + системные)
+    summary: Получить список кастомных ролей организации
+    description: |
+      Возвращает все кастомные роли, созданные в текущей организации.
+      
+      **Типы ролей:**
+      - **Системные роли** - предопределенные роли системы (organization_owner, foreman, etc.)
+      - **Кастомные роли** - роли, созданные администраторами организации
+      
+      **Разрешения для ролей:**
+      - `system_permissions` - системные разрешения (users.manage, projects.view, etc.)
+      - `module_permissions` - разрешения модулей (billing.view, reports.export, etc.)
+      - `interface_access` - доступ к интерфейсам (lk, mobile, admin)
+      
+      Требует права `roles.view_custom` в организации.
     security:
       - bearerAuth: []
+    parameters:
+      - name: search
+        in: query
+        required: false
+        description: Поиск по названию роли
+        schema:
+          type: string
+          example: "Менеджер"
+      - name: interface_access
+        in: query
+        required: false
+        description: Фильтр по типу доступа к интерфейсу
+        schema:
+          type: string
+          enum: [lk, mobile, admin]
     responses:
       "200":
-        description: Список ролей
+        description: Список кастомных ролей получен успешно
         content:
           application/json:
             schema:
@@ -15,24 +43,73 @@
                 - type: object
                   properties:
                     data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/OrganizationRole.yaml'
+                    meta:
                       type: object
                       properties:
-                        custom_roles:
-                          type: array
-                          items:
-                            $ref: '../components/schemas/OrganizationRole.yaml'
-                        system_roles:
-                          type: array
-                          items:
-                            type: object
-                            properties:
-                              slug:
-                                type: string
-                              name:
-                                type: string
+                        total:
+                          type: integer
+                          description: Общее количество ролей
+                          example: 15
+                        organization_id:
+                          type: integer
+                          description: ID организации
+                          example: 123
+            examples:
+              success:
+                summary: Успешный ответ с ролями
+                value:
+                  success: true
+                  data:
+                    - id: 1
+                      slug: "custom_manager"
+                      name: "Менеджер проектов"
+                      description: "Управление проектами и командой"
+                      is_system: false
+                      interface_access: ["lk"]
+                      system_permissions: ["projects.view", "projects.edit", "users.view"]
+                      module_permissions: ["reports.view"]
+                      users_count: 5
+                      created_by:
+                        id: 10
+                        name: "Администратор"
+                        email: "admin@company.com"
+                      created_at: "2024-09-15T10:30:00Z"
+                  meta:
+                    total: 15
+                    organization_id: 123
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для просмотра ролей
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
   post:
     tags: [OrganizationRoles]
-    summary: Создать новую роль
+    summary: Создать новую кастомную роль
+    description: |
+      Создает новую кастомную роль в организации с указанными разрешениями.
+      
+      **Процесс создания роли:**
+      1. Проверяется уникальность названия роли в организации
+      2. Валидируются указанные разрешения (должны быть доступны для организации)
+      3. Создается роль с уникальным slug
+      4. Роль становится доступна для назначения пользователям
+      
+      **Ограничения:**
+      - Максимум 50 кастомных ролей на организацию
+      - Название роли должно быть уникальным в рамках организации
+      - Разрешения должны быть из списка доступных для организации
+      
+      Требует права `roles.create_custom` в организации.
     security:
       - bearerAuth: []
     requestBody:
@@ -41,9 +118,37 @@
         application/json:
           schema:
             $ref: '../components/schemas/StoreOrganizationRoleRequest.yaml'
+          examples:
+            project_manager:
+              summary: Роль менеджера проектов
+              value:
+                name: "Менеджер проектов"
+                description: "Управление проектами, задачами и отчетами"
+                system_permissions: ["projects.view", "projects.edit", "reports.view", "users.view"]
+                module_permissions: ["project_management.manage"]
+                interface_access: ["lk"]
+                conditions:
+                  max_projects: 10
+                  can_export: true
+            foreman_role:
+              summary: Роль прораба
+              value:
+                name: "Прораб участка"
+                description: "Контроль выполнения работ на объекте"
+                system_permissions: ["projects.view", "completed_works.manage", "acts.create"]
+                module_permissions: []
+                interface_access: ["mobile"]
+            accountant_role:
+              summary: Роль бухгалтера
+              value:
+                name: "Главный бухгалтер"
+                description: "Ведение финансовой отчетности"
+                system_permissions: ["billing.view", "reports.export", "acts.approve"]
+                module_permissions: ["billing.advanced"]
+                interface_access: ["lk", "admin"]
     responses:
       "201":
-        description: Роль создана
+        description: Кастомная роль создана успешно
         content:
           application/json:
             schema:
@@ -53,21 +158,96 @@
                   properties:
                     data:
                       $ref: '../components/schemas/OrganizationRole.yaml'
-/roles/{roleId}:
+            examples:
+              success:
+                summary: Роль создана
+                value:
+                  success: true
+                  message: "Роль успешно создана"
+                  data:
+                    id: 25
+                    slug: "custom_project_manager"
+                    name: "Менеджер проектов"
+                    description: "Управление проектами, задачами и отчетами"
+                    is_system: false
+                    interface_access: ["lk"]
+                    system_permissions: ["projects.view", "projects.edit", "reports.view"]
+                    module_permissions: ["project_management.manage"]
+                    users_count: 0
+                    created_by:
+                      id: 5
+                      name: "Администратор"
+                      email: "admin@company.com"
+                    created_at: "2024-09-19T14:30:00Z"
+      "400":
+        description: Ошибка валидации или бизнес-логики
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+            examples:
+              validation_error:
+                summary: Ошибка валидации
+                value:
+                  success: false
+                  message: "Validation failed"
+                  errors:
+                    name: ["Поле name обязательно для заполнения"]
+                    system_permissions: ["Указанные разрешения недоступны для данной организации"]
+              name_exists:
+                summary: Роль с таким именем уже существует
+                value:
+                  success: false
+                  message: "Роль с названием 'Менеджер проектов' уже существует в организации"
+              limit_exceeded:
+                summary: Превышен лимит ролей
+                value:
+                  success: false
+                  message: "Превышен лимит кастомных ролей для организации (максимум 50)"
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для создания ролей
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/custom-roles/{roleId}:
   parameters:
     - name: roleId
       in: path
       required: true
+      description: ID кастомной роли
       schema:
         type: integer
+        example: 123
   get:
     tags: [OrganizationRoles]
-    summary: Получить роль по ID
+    summary: Получить детали кастомной роли
+    description: |
+      Возвращает подробную информацию о кастомной роли, включая:
+      
+      **Основная информация:**
+      - Название, описание, разрешения
+      - Информация о создателе роли
+      - Статистика использования
+      
+      **Связанные данные:**
+      - Список пользователей с этой ролью
+      - История назначений и изменений
+      - Условия и ограничения роли
+      
+      Требует права `roles.view_custom` в организации.
     security:
       - bearerAuth: []
     responses:
       "200":
-        description: Роль
+        description: Детали роли получены успешно
         content:
           application/json:
             schema:
@@ -76,10 +256,71 @@
                 - type: object
                   properties:
                     data:
-                      $ref: '../components/schemas/OrganizationRole.yaml'
+                      allOf:
+                        - $ref: '../components/schemas/OrganizationRole.yaml'
+                        - type: object
+                          properties:
+                            assignments:
+                              type: array
+                              description: Назначения роли пользователям
+                              items:
+                                type: object
+                                properties:
+                                  user:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      name:
+                                        type: string
+                                      email:
+                                        type: string
+                                  assigned_at:
+                                    type: string
+                                    format: date-time
+                                  assigned_by:
+                                    type: object
+                                    properties:
+                                      id:
+                                        type: integer
+                                      name:
+                                        type: string
+      "404":
+        description: Роль не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для просмотра роли
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
   put:
     tags: [OrganizationRoles]
-    summary: Обновить роль
+    summary: Обновить кастомную роль
+    description: |
+      Обновляет существующую кастомную роль организации.
+      
+      **Что можно изменить:**
+      - Название и описание роли
+      - Разрешения (системные и модульные)
+      - Доступ к интерфейсам
+      - Условия и ограничения
+      
+      **Ограничения при обновлении:**
+      - Нельзя изменить slug роли (генерируется автоматически)
+      - При изменении разрешений, они применяются ко всем пользователям с этой ролью
+      - Нельзя удалить критические разрешения, если роль назначена активным пользователям
+      
+      Требует права `roles.manage_custom` в организации.
     security:
       - bearerAuth: []
     requestBody:
@@ -90,7 +331,7 @@
             $ref: '../components/schemas/UpdateOrganizationRoleRequest.yaml'
     responses:
       "200":
-        description: Роль обновлена
+        description: Роль обновлена успешно
         content:
           application/json:
             schema:
@@ -100,51 +341,273 @@
                   properties:
                     data:
                       $ref: '../components/schemas/OrganizationRole.yaml'
-  delete:
-    tags: [OrganizationRoles]
-    summary: Удалить роль
-    security:
-      - bearerAuth: []
-    responses:
-      "204":
-        description: Роль удалена
-/roles/permissions/available:
-  get:
-    tags: [OrganizationRoles]
-    summary: Доступные разрешения для ролей
-    security:
-      - bearerAuth: []
-    responses:
-      "200":
-        description: Список разрешений
+      "400":
+        description: Ошибка валидации
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
-/roles/{roleId}/duplicate:
+      "404":
+        description: Роль не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для изменения роли
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+  delete:
+    tags: [OrganizationRoles]
+    summary: Удалить кастомную роль
+    description: |
+      Удаляет кастомную роль из организации.
+      
+      **Процесс удаления:**
+      1. Проверяется, что роль не назначена активным пользователям
+      2. Роль помечается как удаленная
+      3. Все связанные назначения архивируются
+      
+      **Ограничения:**
+      - Нельзя удалить роль, если она назначена хотя бы одному пользователю
+      - Системные роли не могут быть удалены
+      - Роль владельца организации не может быть удалена
+      
+      Требует права `roles.manage_custom` в организации.
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: force
+        in: query
+        required: false
+        description: Принудительное удаление с переназначением пользователей
+        schema:
+          type: boolean
+          default: false
+      - name: reassign_to_role_id
+        in: query
+        required: false
+        description: ID роли для переназначения пользователей (обязательно при force=true)
+        schema:
+          type: integer
+    responses:
+      "200":
+        description: Роль удалена успешно
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Роль успешно удалена"
+      "400":
+        description: Нельзя удалить роль
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+            examples:
+              has_users:
+                summary: Роль назначена пользователям
+                value:
+                  success: false
+                  message: "Нельзя удалить роль, назначенную пользователям. Используйте параметр force для принудительного удаления."
+                  details:
+                    assigned_users_count: 5
+      "404":
+        description: Роль не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для удаления роли
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/custom-roles/permissions/available:
+  get:
+    tags: [OrganizationRoles]
+    summary: Получить доступные разрешения для создания ролей
+    description: |
+      Возвращает полный список разрешений, доступных для создания кастомных ролей в организации.
+      
+      **Типы разрешений:**
+      
+      **🔧 Системные разрешения:**
+      - `users.*` - управление пользователями
+      - `projects.*` - управление проектами
+      - `contracts.*` - управление договорами
+      - `reports.*` - доступ к отчетам
+      - `billing.*` - управление биллингом
+      
+      **📦 Модульные разрешения:**
+      - Зависят от активированных модулей организации
+      - `project_management.*` - модуль управления проектами
+      - `multi_organization.*` - модуль мультиорганизации
+      - И другие активные модули
+      
+      **🖥️ Доступ к интерфейсам:**
+      - `lk` - личный кабинет (web)
+      - `mobile` - мобильное приложение
+      - `admin` - административная панель
+      
+      Разрешения автоматически переводятся на русский язык и группируются по категориям.
+      Требует права `roles.create_custom` в организации.
+    security:
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Список доступных разрешений получен успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        system_permissions:
+                          type: object
+                          description: Системные разрешения, сгруппированные по категориям
+                          additionalProperties:
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                                description: Название категории
+                              permissions:
+                                type: object
+                                additionalProperties:
+                                  type: string
+                                  description: Название разрешения
+                        module_permissions:
+                          type: object
+                          description: Модульные разрешения (только для активированных модулей)
+                          additionalProperties:
+                            type: object
+                            properties:
+                              name:
+                                type: string
+                              permissions:
+                                type: object
+                                additionalProperties:
+                                  type: string
+                        interface_access:
+                          type: object
+                          description: Доступные интерфейсы
+                          additionalProperties:
+                            type: string
+            examples:
+              success:
+                summary: Доступные разрешения
+                value:
+                  success: true
+                  data:
+                    system_permissions:
+                      users:
+                        name: "Управление пользователями"
+                        permissions:
+                          "users.view": "Просмотр пользователей"
+                          "users.manage": "Управление пользователями"
+                          "users.invite": "Приглашение пользователей"
+                      projects:
+                        name: "Управление проектами"
+                        permissions:
+                          "projects.view": "Просмотр проектов"
+                          "projects.edit": "Редактирование проектов"
+                          "projects.create": "Создание проектов"
+                          "projects.delete": "Удаление проектов"
+                    module_permissions:
+                      project_management:
+                        name: "Модуль управления проектами"
+                        permissions:
+                          "project_management.advanced": "Расширенные функции"
+                          "project_management.reports": "Отчеты по проектам"
+                    interface_access:
+                      lk: "Личный кабинет"
+                      mobile: "Мобильное приложение"
+                      admin: "Административная панель"
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для просмотра разрешений
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/custom-roles/{roleId}/clone:
   post:
     tags: [OrganizationRoles]
-    summary: Дублировать роль
+    summary: Клонировать кастомную роль
+    description: |
+      Создает копию существующей кастомной роли с новым названием.
+      
+      **Процесс клонирования:**
+      1. Копируются все разрешения и настройки исходной роли
+      2. Генерируется новый slug на основе нового названия
+      3. Клон создается в той же или другой организации (если указано)
+      4. Пользователи НЕ копируются (клон создается пустым)
+      
+      **Возможности:**
+      - Клонирование в ту же организацию (для создания вариаций роли)
+      - Клонирование в другую организацию (если есть права)
+      - Автоматическая адаптация разрешений под целевую организацию
+      
+      Требует права `roles.manage_custom` в организации.
     security:
       - bearerAuth: []
     parameters:
       - name: roleId
         in: path
         required: true
+        description: ID роли для клонирования
         schema:
           type: integer
+          example: 123
     requestBody:
       required: true
       content:
         application/json:
           schema:
             type: object
+            required:
+              - name
             properties:
               name:
                 type: string
+                maxLength: 255
+                description: Название новой роли (должно быть уникальным)
+                example: "Копия - Менеджер проектов"
+              target_organization_id:
+                type: integer
+                nullable: true
+                description: ID организации для клонирования (по умолчанию текущая)
+                example: 456
+              description:
+                type: string
+                maxLength: 1000
+                nullable: true
+                description: Новое описание роли (опционально)
+                example: "Клонированная роль для другого отдела"
     responses:
       "201":
-        description: Новая роль создана на основе существующей
+        description: Роль успешно клонирована
         content:
           application/json:
             schema:
@@ -154,51 +617,357 @@
                   properties:
                     data:
                       $ref: '../components/schemas/OrganizationRole.yaml'
-/roles/{roleId}/assign-user:
-  post:
-    tags: [OrganizationRoles]
-    summary: Назначить пользователя на роль
-    security: [{ bearerAuth: [] }]
-    parameters:
-      - name: roleId
-        in: path
-        required: true
-        schema: { type: integer }
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              user_id: { type: integer }
-            required: [user_id]
-    responses:
-      "200":
-        description: Пользователь назначен
+            examples:
+              success:
+                summary: Роль клонирована
+                value:
+                  success: true
+                  message: "Роль успешно клонирована"
+                  data:
+                    id: 45
+                    slug: "copy_project_manager"
+                    name: "Копия - Менеджер проектов"
+                    description: "Клонированная роль для другого отдела"
+                    is_system: false
+                    interface_access: ["lk"]
+                    system_permissions: ["projects.view", "projects.edit"]
+                    module_permissions: ["project_management.manage"]
+                    users_count: 0
+                    created_by:
+                      id: 5
+                      name: "Администратор"
+                      email: "admin@company.com"
+                    created_at: "2024-09-19T15:00:00Z"
+      "400":
+        description: Ошибка клонирования
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
-/roles/{roleId}/remove-user:
-  delete:
+            examples:
+              name_exists:
+                summary: Роль с таким именем уже существует
+                value:
+                  success: false
+                  message: "Роль с названием 'Копия - Менеджер проектов' уже существует в организации"
+      "404":
+        description: Исходная роль не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для клонирования роли
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/custom-roles/{roleId}/users:
+  get:
     tags: [OrganizationRoles]
-    summary: Удалить пользователя из роли
-    security: [{ bearerAuth: [] }]
+    summary: Получить пользователей с указанной ролью
+    description: |
+      Возвращает список всех пользователей, которым назначена указанная кастомная роль.
+      
+      **Информация о пользователях:**
+      - Основные данные пользователя (ID, имя, email)
+      - Дата назначения роли
+      - Информация о том, кто назначил роль
+      - Статус пользователя (активен/неактивен)
+      
+      Требует права `roles.view_custom` в организации.
+    security:
+      - bearerAuth: []
     parameters:
       - name: roleId
         in: path
         required: true
-        schema: { type: integer }
+        description: ID роли
+        schema:
+          type: integer
+          example: 123
+      - name: status
+        in: query
+        required: false
+        description: Фильтр по статусу пользователя
+        schema:
+          type: string
+          enum: [active, inactive]
+    responses:
+      "200":
+        description: Список пользователей получен успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: integer
+                            description: ID пользователя
+                            example: 25
+                          name:
+                            type: string
+                            description: Имя пользователя
+                            example: "Иван Петров"
+                          email:
+                            type: string
+                            format: email
+                            description: Email пользователя
+                            example: "ivan.petrov@company.com"
+                          assigned_at:
+                            type: string
+                            format: date-time
+                            description: Дата назначения роли
+                            example: "2024-09-10T09:15:00Z"
+                          assigned_by:
+                            type: object
+                            nullable: true
+                            description: Кто назначил роль
+                            properties:
+                              id:
+                                type: integer
+                                example: 5
+                              name:
+                                type: string
+                                example: "Администратор"
+                              email:
+                                type: string
+                                example: "admin@company.com"
+                          is_active:
+                            type: boolean
+                            description: Активен ли пользователь
+                            example: true
+      "404":
+        description: Роль не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для просмотра пользователей роли
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/custom-roles/{roleId}/assign:
+  post:
+    tags: [OrganizationRoles]
+    summary: Назначить роль пользователю
+    description: |
+      Назначает кастомную роль указанному пользователю в определенном контексте.
+      
+      **Типы контекстов:**
+      - `organization` - роль действует в рамках всей организации
+      - `project` - роль действует только в рамках конкретного проекта
+      
+      **Особенности назначения:**
+      - Один пользователь может иметь несколько ролей
+      - Роли могут иметь срок действия (expires_at)
+      - При назначении проверяются права на управление пользователями
+      - Системные роли имеют приоритет над кастомными
+      
+      Требует права `roles.manage_custom` в организации.
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: roleId
+        in: path
+        required: true
+        description: ID роли для назначения
+        schema:
+          type: integer
+          example: 123
     requestBody:
       required: true
       content:
         application/json:
           schema:
             type: object
+            required:
+              - user_id
+              - context_type
+              - context_id
             properties:
-              user_id: { type: integer }
-            required: [user_id]
+              user_id:
+                type: integer
+                description: ID пользователя для назначения роли
+                example: 25
+              context_type:
+                type: string
+                enum: [organization, project]
+                description: Тип контекста применения роли
+                example: "organization"
+              context_id:
+                type: integer
+                description: ID контекста (организации или проекта)
+                example: 123
+              expires_at:
+                type: string
+                format: date-time
+                nullable: true
+                description: Дата истечения назначения роли (опционально)
+                example: "2024-12-31T23:59:59Z"
+              note:
+                type: string
+                maxLength: 500
+                nullable: true
+                description: Комментарий к назначению
+                example: "Временно на период отпуска основного менеджера"
     responses:
-      "204":
-        description: Пользователь удалён 
+      "200":
+        description: Роль успешно назначена пользователю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Роль успешно назначена пользователю"
+                data:
+                  type: object
+                  nullable: true
+                  example: null
+      "400":
+        description: Ошибка назначения роли
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+            examples:
+              already_assigned:
+                summary: Роль уже назначена
+                value:
+                  success: false
+                  message: "Данная роль уже назначена пользователю в указанном контексте"
+              invalid_context:
+                summary: Недоступный контекст
+                value:
+                  success: false
+                  message: "У пользователя нет доступа к указанному контексту"
+      "404":
+        description: Роль или пользователь не найдены
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для назначения роли
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/custom-roles/{roleId}/unassign:
+  delete:
+    tags: [OrganizationRoles]
+    summary: Отозвать роль у пользователя
+    description: |
+      Отзывает (удаляет) назначение кастомной роли у указанного пользователя.
+      
+      **Процесс отзыва:**
+      1. Проверяется существование назначения роли
+      2. Роль удаляется из активных назначений пользователя
+      3. Информация об отзыве сохраняется в историю
+      4. Права пользователя пересчитываются автоматически
+      
+      **Ограничения:**
+      - Нельзя отозвать последнюю роль владельца организации
+      - Системные роли отзываются через отдельные эндпоинты
+      - При отзыве роли пользователь может потерять доступ к данным
+      
+      Требует права `roles.manage_custom` в организации.
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: roleId
+        in: path
+        required: true
+        description: ID роли для отзыва
+        schema:
+          type: integer
+          example: 123
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - user_id
+            properties:
+              user_id:
+                type: integer
+                description: ID пользователя для отзыва роли
+                example: 25
+              context_type:
+                type: string
+                enum: [organization, project]
+                description: Тип контекста (опционально, если не указан - все контексты)
+                example: "organization"
+              context_id:
+                type: integer
+                nullable: true
+                description: ID контекста (опционально)
+                example: 123
+              reason:
+                type: string
+                maxLength: 500
+                nullable: true
+                description: Причина отзыва роли
+                example: "Смена должности"
+    responses:
+      "200":
+        description: Роль успешно отозвана у пользователя
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Роль успешно отозвана у пользователя"
+      "400":
+        description: Ошибка отзыва роли
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+            examples:
+              not_assigned:
+                summary: Роль не назначена
+                value:
+                  success: false
+                  message: "Данная роль не назначена пользователю"
+              cannot_revoke:
+                summary: Нельзя отозвать роль
+                value:
+                  success: false
+                  message: "Нельзя отозвать последнюю роль владельца организации"
+      "404":
+        description: Роль или пользователь не найдены
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для отзыва роли
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'

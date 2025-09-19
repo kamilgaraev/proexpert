@@ -1,11 +1,53 @@
 /adminPanelUsers:
   get:
     tags: [AdminPanelUsers]
-    summary: Список пользователей админ-панели
-    security: [{ bearerAuth: [] }]
+    summary: Получить список пользователей админ-панели
+    description: |
+      Возвращает список всех пользователей, имеющих доступ к административной панели организации.
+      
+      **Типы пользователей админ-панели:**
+      - `super_admin` - суперадминистратор системы
+      - `admin` - администратор организации  
+      - `content_admin` - контент-администратор
+      - `support_admin` - администратор поддержки
+      - `web_admin` - веб-администратор
+      - `accountant` - бухгалтер с доступом к админке
+      
+      **Функции админ-панели:**
+      - Управление пользователями и ролями
+      - Настройка организации и модулей
+      - Доступ к расширенным отчетам
+      - Управление биллингом и подписками
+      
+      Требует права `users.manage_admin` в организации.
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: role_slug
+        in: query
+        required: false
+        description: Фильтр по роли пользователя
+        schema:
+          type: string
+          enum: [super_admin, admin, content_admin, support_admin, web_admin, accountant]
+          example: "web_admin"
+      - name: is_active
+        in: query
+        required: false
+        description: Фильтр по статусу активности
+        schema:
+          type: boolean
+          example: true
+      - name: search
+        in: query
+        required: false
+        description: Поиск по имени или email
+        schema:
+          type: string
+          example: "admin@company.com"
     responses:
       "200":
-        description: Список пользователей
+        description: Список пользователей админ-панели получен успешно
         content:
           application/json:
             schema:
@@ -17,19 +59,98 @@
                       type: array
                       items:
                         $ref: '../components/schemas/AdminPanelUser.yaml'
+            examples:
+              success:
+                summary: Успешный ответ
+                value:
+                  success: true
+                  data:
+                    - id: 1
+                      name: "Главный Администратор"
+                      email: "admin@company.com"
+                      role_slug: "admin"
+                      is_active: true
+                      created_at: "2024-01-15T10:30:00Z"
+                      updated_at: "2024-09-19T14:25:00Z"
+                    - id: 5
+                      name: "Веб-администратор"
+                      email: "webadmin@company.com"
+                      role_slug: "web_admin"
+                      is_active: true
+                      created_at: "2024-03-20T16:45:00Z"
+                      updated_at: "2024-09-10T11:15:00Z"
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для просмотра пользователей админ-панели
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
   post:
     tags: [AdminPanelUsers]
     summary: Создать пользователя админ-панели
-    security: [{ bearerAuth: [] }]
+    description: |
+      Создает нового пользователя с доступом к административной панели организации.
+      
+      **Процесс создания:**
+      1. Валидируется уникальность email
+      2. Проверяется допустимость указанной роли
+      3. Создается пользователь с захешированным паролем
+      4. Назначается роль админ-панели
+      5. Пользователь привязывается к организации
+      
+      **Доступные роли:**
+      - `admin` - полные права администратора
+      - `content_admin` - управление контентом
+      - `support_admin` - поддержка пользователей
+      - `web_admin` - настройка веб-интерфейсов
+      - `accountant` - бухгалтерские функции
+      
+      **Права доступа:**
+      Каждая роль предоставляет специфический набор разрешений для работы с административной панелью.
+      
+      Требует права `users.manage_admin` в организации.
+    security:
+      - bearerAuth: []
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/StoreAdminPanelUserRequest.yaml'
+          examples:
+            web_admin:
+              summary: Создание веб-администратора
+              value:
+                name: "Веб Администратор"
+                email: "webadmin@company.com"
+                password: "SecureAdminPass123"
+                password_confirmation: "SecureAdminPass123"
+                role_slug: "web_admin"
+            accountant:
+              summary: Создание бухгалтера
+              value:
+                name: "Главный Бухгалтер"
+                email: "accountant@company.com"
+                password: "AccountantPass456"
+                password_confirmation: "AccountantPass456"
+                role_slug: "accountant"
+            content_admin:
+              summary: Создание контент-администратора
+              value:
+                name: "Контент Менеджер"
+                email: "content@company.com"
+                password: "ContentPass789"
+                password_confirmation: "ContentPass789"
+                role_slug: "content_admin"
     responses:
       "201":
-        description: Пользователь создан
+        description: Пользователь админ-панели создан успешно
         content:
           application/json:
             schema:
@@ -39,19 +160,99 @@
                   properties:
                     data:
                       $ref: '../components/schemas/AdminPanelUser.yaml'
-/adminPanelUsers/{userId}:
+            examples:
+              success:
+                summary: Пользователь создан
+                value:
+                  success: true
+                  message: "Пользователь админ-панели успешно создан"
+                  data:
+                    id: 25
+                    name: "Веб Администратор"
+                    email: "webadmin@company.com"
+                    role_slug: "web_admin"
+                    is_active: true
+                    created_at: "2024-09-19T15:30:00Z"
+                    updated_at: "2024-09-19T15:30:00Z"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+            examples:
+              business_error:
+                summary: Бизнес-ошибка
+                value:
+                  success: false
+                  message: "Превышен лимит пользователей административной панели для данного тарифного плана"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+            examples:
+              validation_error:
+                summary: Ошибка валидации
+                value:
+                  success: false
+                  message: "Validation failed"
+                  errors:
+                    email: ["Пользователь с таким email уже существует"]
+                    password: ["Пароли не совпадают"]
+                    role_slug: ["Недопустимая роль для данной организации"]
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для создания пользователей админ-панели
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+/adminPanelUsers/{user}:
   parameters:
-    - name: userId
+    - name: user
       in: path
       required: true
-      schema: { type: integer }
+      description: ID пользователя админ-панели
+      schema:
+        type: integer
+        example: 123
   get:
     tags: [AdminPanelUsers]
-    summary: Получить пользователя админ-панели
-    security: [{ bearerAuth: [] }]
+    summary: Получить детали пользователя админ-панели
+    description: |
+      Возвращает подробную информацию о конкретном пользователе административной панели.
+      
+      **Возвращаемая информация:**
+      - Основные данные пользователя (имя, email)
+      - Текущая роль и права доступа
+      - Статус активности
+      - Даты создания и последнего обновления
+      - История активности (если доступно)
+      
+      **Области применения:**
+      - Просмотр профиля пользователя админ-панели
+      - Проверка назначенных ролей и прав
+      - Мониторинг активности пользователя
+      
+      Требует права `users.manage_admin` в организации.
+    security:
+      - bearerAuth: []
     responses:
       "200":
-        description: Пользователь
+        description: Данные пользователя админ-панели получены успешно
         content:
           application/json:
             schema:
@@ -61,19 +262,95 @@
                   properties:
                     data:
                       $ref: '../components/schemas/AdminPanelUser.yaml'
+            examples:
+              success:
+                summary: Успешный ответ
+                value:
+                  success: true
+                  data:
+                    id: 15
+                    name: "Веб Администратор"
+                    email: "webadmin@company.com"
+                    role_slug: "web_admin"
+                    is_active: true
+                    created_at: "2024-03-20T16:45:00Z"
+                    updated_at: "2024-09-19T11:30:00Z"
+      "404":
+        description: Пользователь админ-панели не найден
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+            examples:
+              not_found:
+                summary: Пользователь не найден
+                value:
+                  success: false
+                  message: "Пользователь админ-панели не найден."
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для просмотра пользователей админ-панели
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
   put:
     tags: [AdminPanelUsers]
     summary: Обновить пользователя админ-панели
-    security: [{ bearerAuth: [] }]
+    description: |
+      Обновляет информацию о пользователе административной панели.
+      
+      **Что можно обновить:**
+      - Имя пользователя
+      - Email (должен остаться уникальным)
+      - Роль администратора (с соответствующими правами)
+      - Статус активности (включить/отключить пользователя)
+      - Пароль (с подтверждением)
+      
+      **Ограничения при обновлении:**
+      - Нельзя изменить роль на недоступную для организации
+      - Email должен быть уникальным в системе
+      - При изменении роли права пересчитываются автоматически
+      - Нельзя деактивировать последнего администратора
+      
+      **Безопасность:**
+      - Все изменения логируются для аудита
+      - При смене пароля пользователь получает уведомление
+      - Смена критичных данных требует подтверждения
+      
+      Требует права `users.manage_admin` в организации.
+    security:
+      - bearerAuth: []
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/UpdateAdminPanelUserRequest.yaml'
+          examples:
+            update_role:
+              summary: Изменение роли
+              value:
+                name: "Старший Веб-администратор"
+                role_slug: "admin"
+                is_active: true
+            update_profile:
+              summary: Обновление профиля
+              value:
+                name: "Иван Петрович Администратов"
+                email: "new.admin@company.com"
+            deactivate_user:
+              summary: Деактивация пользователя
+              value:
+                is_active: false
     responses:
       "200":
-        description: Обновлено
+        description: Пользователь админ-панели обновлен успешно
         content:
           application/json:
             schema:
@@ -83,10 +360,142 @@
                   properties:
                     data:
                       $ref: '../components/schemas/AdminPanelUser.yaml'
+            examples:
+              success:
+                summary: Пользователь обновлен
+                value:
+                  success: true
+                  message: "Пользователь админ-панели успешно обновлен."
+                  data:
+                    id: 15
+                    name: "Старший Веб-администратор"
+                    email: "webadmin@company.com"
+                    role_slug: "admin"
+                    is_active: true
+                    created_at: "2024-03-20T16:45:00Z"
+                    updated_at: "2024-09-19T16:00:00Z"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+            examples:
+              business_error:
+                summary: Бизнес-ошибка
+                value:
+                  success: false
+                  message: "Нельзя деактивировать последнего администратора организации"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+            examples:
+              validation_error:
+                summary: Ошибка валидации
+                value:
+                  success: false
+                  message: "Validation failed"
+                  errors:
+                    email: ["Пользователь с таким email уже существует"]
+                    role_slug: ["Недопустимая роль для данной организации"]
+      "404":
+        description: Пользователь не найден
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для изменения пользователей админ-панели
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
   delete:
     tags: [AdminPanelUsers]
     summary: Удалить пользователя админ-панели
-    security: [{ bearerAuth: [] }]
+    description: |
+      Удаляет пользователя из административной панели организации.
+      
+      **Процесс удаления:**
+      1. Проверяется возможность удаления (не последний администратор)
+      2. Отзываются все права доступа к админ-панели
+      3. Пользователь удаляется из системы или деактивируется
+      4. Все активные сессии пользователя завершаются
+      5. Действие логируется для аудита
+      
+      **Ограничения удаления:**
+      - Нельзя удалить последнего администратора организации
+      - Нельзя удалить владельца организации через этот эндпоинт
+      - Суперадминистраторы могут удаляться только другими суперадминистраторами
+      
+      **Последствия удаления:**
+      - Потеря доступа ко всем административным функциям
+      - Завершение всех активных сессий
+      - Невозможность восстановления без повторного создания
+      
+      **Альтернатива:** Вместо полного удаления рекомендуется деактивация пользователя (PUT с is_active: false).
+      
+      Требует права `users.manage_admin` в организации.
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: force
+        in: query
+        required: false
+        description: Принудительное удаление (игнорировать предупреждения)
+        schema:
+          type: boolean
+          default: false
     responses:
       "204":
-        description: Удалено 
+        description: Пользователь админ-панели удален успешно
+      "400":
+        description: Невозможно удалить пользователя
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+            examples:
+              cannot_delete:
+                summary: Нельзя удалить
+                value:
+                  success: false
+                  message: "Нельзя удалить последнего администратора организации"
+              owner_protection:
+                summary: Защита владельца
+                value:
+                  success: false
+                  message: "Владельца организации нельзя удалить через админ-панель"
+      "404":
+        description: Пользователь не найден
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+            examples:
+              not_found:
+                summary: Пользователь не найден
+                value:
+                  success: false
+                  message: "Не удалось удалить пользователя админ-панели."
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для удаления пользователей админ-панели
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml' 
