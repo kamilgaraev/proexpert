@@ -70,6 +70,12 @@
   $ref: './billing.yaml#/~1billing~1balance~1top-up'
 /billing/subscription/limits:
   $ref: './billing.yaml#/~1billing~1subscription~1limits'
+/billing/subscription/change-plan-preview:
+  $ref: './billing.yaml#/~1billing~1subscription~1change-plan-preview'
+/billing/subscription/change-plan:
+  $ref: './billing.yaml#/~1billing~1subscription~1change-plan'
+/billing/dashboard:
+  $ref: './billing.yaml#/~1billing~1dashboard'
 /modules:
   $ref: './modules.yaml#/~1modules'
 /modules/available:
@@ -112,24 +118,6 @@
   $ref: './organization_roles.yaml#/~1roles~1{roleId}~1assign-user'
 /roles/{roleId}/remove-user:
   $ref: './organization_roles.yaml#/~1roles~1{roleId}~1remove-user'
-/billing/addons:
-  $ref: './billing.yaml#/~1billing~1addons'
-/billing/org-subscription:
-  $ref: './billing.yaml#/~1billing~1org-subscription'
-/billing/org-subscription/auto-payment:
-  $ref: './billing.yaml#/~1billing~1org-subscription~1auto-payment'
-/billing/org-subscribe:
-  $ref: './billing.yaml#/~1billing~1org-subscribe'
-/billing/org-addon:
-  $ref: './billing.yaml#/~1billing~1org-addon'
-/billing/org-addon/{id}:
-  $ref: './billing.yaml#/~1billing~1org-addon~1{id}'
-/billing/org-one-time-purchase:
-  $ref: './billing.yaml#/~1billing~1org-one-time-purchase'
-/billing/org-one-time-purchases:
-  $ref: './billing.yaml#/~1billing~1org-one-time-purchases'
-/billing/org-dashboard:
-  $ref: './billing.yaml#/~1billing~1org-dashboard'
 /dashboard:
   $ref: './dashboard.yaml#/~1dashboard'
 /multi-organization/summary:
