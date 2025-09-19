@@ -1,70 +1,70 @@
 /site-requests:
     get:
-    tags: [SiteRequests]
-    summary: Получить список заявок с сайта организации
-    description: |
-      Возвращает пагинированный список заявок с сайта для организации
-      с возможностью фильтрации по множественным параметрам.
-      Включает сводную информацию и метаданные.
+      tags: [Site Requests]
+      summary: Получить список заявок с сайта организации
+      description: |
+        Возвращает пагинированный список заявок с сайта для организации
+        с возможностью фильтрации по множественным параметрам.
+        Включает сводную информацию и метаданные.
       parameters:
-      - in: query
-        name: organization_id
+        - in: query
+          name: organization_id
           schema:
             type: integer
-        description: ID организации (если не указан, берется из текущего пользователя)
-        example: 10
-      - in: query
-        name: request_type
-        schema:
-          type: string
-          enum: [material_request, info_request, issue_report, work_order, personnel_request, other]
-        description: Фильтр по типу заявки
-        example: "personnel_request"
-      - in: query
-        name: status
-        schema:
-          type: string
-          enum: [draft, pending, submitted, approved, rejected, in_progress, completed, on_hold]
-        description: Фильтр по статусу заявки
-        example: "in_progress"
-      - in: query
-        name: project_id
-          schema:
-            type: integer
-        description: Фильтр по проекту
-        example: 25
-      - in: query
-        name: priority
-        schema:
-          type: string
-          enum: [low, medium, high, urgent]
-        description: Фильтр по приоритету
-        example: "high"
-      - in: query
-        name: personnel_type
+          description: ID организации (если не указан, берется из текущего пользователя)
+          example: 10
+        - in: query
+          name: request_type
           schema:
             type: string
-          enum: [general_worker, skilled_worker, foreman, engineer, specialist, operator, electrician, plumber, welder, carpenter, mason, painter, security, driver, other]
-        description: Фильтр по типу персонала (для заявок на персонал)
-        example: "mason"
-      - in: query
-        name: search
+            enum: [material_request, info_request, issue_report, work_order, personnel_request, other]
+          description: Фильтр по типу заявки
+          example: "personnel_request"
+        - in: query
+          name: status
           schema:
             type: string
-        description: Поиск по заголовку и описанию заявки
-        example: "кирпич"
-      - in: query
-        name: per_page
+            enum: [draft, pending, submitted, approved, rejected, in_progress, completed, on_hold]
+          description: Фильтр по статусу заявки
+          example: "in_progress"
+        - in: query
+          name: project_id
           schema:
             type: integer
-          default: 15
-          minimum: 1
+          description: Фильтр по проекту
+          example: 25
+        - in: query
+          name: priority
+          schema:
+            type: string
+            enum: [low, medium, high, urgent]
+          description: Фильтр по приоритету
+          example: "high"
+        - in: query
+          name: personnel_type
+          schema:
+            type: string
+            enum: [general_worker, skilled_worker, foreman, engineer, specialist, operator, electrician, plumber, welder, carpenter, mason, painter, security, driver, other]
+          description: Фильтр по типу персонала (для заявок на персонал)
+          example: "mason"
+        - in: query
+          name: search
+          schema:
+            type: string
+          description: Поиск по заголовку и описанию заявки
+          example: "кирпич"
+        - in: query
+          name: per_page
+          schema:
+            type: integer
+            default: 15
+            minimum: 1
           maximum: 100
         description: Количество записей на страницу
         example: 15
       responses:
-      "200":
-        description: Список заявок успешно получен
+        "200":
+          description: Список заявок успешно получен
           content:
             application/json:
               schema:
@@ -74,7 +74,7 @@
                     type: boolean
                     example: true
                   data:
-                  $ref: '../components/schemas/SiteRequestCollection.yaml'
+                    $ref: '../components/schemas/SiteRequestCollection.yaml'
             example:
               success: true
               data:
@@ -100,45 +100,45 @@
                     in_progress: 8
                     completed: 2
                   overdue_count: 2
-      "400":
-        description: Контекст организации не определен
+        "400":
+          description: Контекст организации не определен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Organization context is required."
+        "500":
+          description: Внутренняя ошибка сервера
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Произошла ошибка при получении заявок"
+    post:
+      tags: [Site Requests]
+      summary: Создать новую заявку с сайта
+      description: |
+        Создает новую заявку с сайта с поддержкой различных типов заявок.
+        Для заявок на персонал требуются дополнительные поля.
+        Поддерживает загрузку файлов.
+      requestBody:
+        required: true
         content:
-          application/json:
+          multipart/form-data:
             schema:
-              type: object
-              properties:
-                success:
-                  type: boolean
-                  example: false
-                message:
-                  type: string
-                  example: "Organization context is required."
-      "500":
-        description: Внутренняя ошибка сервера
-        content:
-          application/json:
-            schema:
-                    type: object
-                    properties:
-                success:
-                  type: boolean
-                  example: false
-                message:
-                  type: string
-                  example: "Произошла ошибка при получении заявок"
-  post:
-    tags: [Site Requests]
-    summary: Создать новую заявку с сайта
-    description: |
-      Создает новую заявку с сайта с поддержкой различных типов заявок.
-      Для заявок на персонал требуются дополнительные поля.
-      Поддерживает загрузку файлов.
-    requestBody:
-      required: true
-      content:
-        multipart/form-data:
-          schema:
-            $ref: '../components/schemas/SiteRequestCreateRequest.yaml'
+              $ref: '../components/schemas/SiteRequestCreateRequest.yaml'
           examples:
             personnel_request:
               summary: "Заявка на персонал"
