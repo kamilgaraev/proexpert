@@ -1,11 +1,15 @@
 /billing/plans:
   get:
-    tags: [Billing]
-    summary: Список тарифных планов
-    security: [{ bearerAuth: [] }]
+    tags: [Billing, Subscription]
+    summary: Получить список доступных тарифных планов
+    description: |
+      Возвращает все доступные тарифные планы для оформления подписки организации.
+      Требует права 'billing.manage'.
+    security: 
+      - bearerAuth: []
     responses:
       "200":
-        description: Планы
+        description: Список тарифных планов получен успешно
         content:
           application/json:
             schema:
@@ -17,58 +21,329 @@
                       type: array
                       items:
                         $ref: '../components/schemas/BillingPlan.yaml'
+
 /billing/subscription:
   get:
-    tags: [Billing]
-    summary: Текущая подписка пользователя
-    security: [{ bearerAuth: [] }]
+    tags: [Billing, Subscription]
+    summary: Получить текущую подписку организации
+    description: |
+      Возвращает информацию о текущей активной подписке организации.
+      Если подписки нет, возвращает соответствующее сообщение.
+    security: 
+      - bearerAuth: []
     responses:
       "200":
-        description: Подписка
+        description: Информация о подписке получена
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
                   properties:
-                    data:
-                      $ref: '../components/schemas/UserSubscription.yaml'
-/billing/subscribe:
-  post:
-    tags: [Billing]
-    summary: Оформить подписку
-    security: [{ bearerAuth: [] }]
+                    has_subscription:
+                      type: boolean
+                      description: Есть ли активная подписка
+                      example: true
+                    subscription:
+                      type: object
+                      nullable: true
+                      properties:
+                        id:
+                          type: integer
+                          example: 5
+                        status:
+                          type: string
+                          example: "active"
+                        plan_name:
+                          type: string
+                          example: "Базовый"
+                        plan_description:
+                          type: string
+                          example: "Базовый план для малого бизнеса"
+                        is_trial:
+                          type: boolean
+                          example: false
+                        trial_ends_at:
+                          type: string
+                          nullable: true
+                          format: date-time
+                          example: null
+                        ends_at:
+                          type: string
+                          nullable: true
+                          format: date-time
+                          example: "2024-02-15 12:00:00"
+                        next_billing_at:
+                          type: string
+                          nullable: true
+                          format: date-time
+                          example: "2024-02-01 12:00:00"
+                        is_canceled:
+                          type: boolean
+                          example: false
+                        is_auto_payment_enabled:
+                          type: boolean
+                          example: true
+                    message:
+                      type: string
+                      nullable: true
+                      example: null
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Организация не найдена или нет доступа"
+  patch:
+    tags: [Billing, Subscription]
+    summary: Обновить подписку организации
+    description: |
+      Обновляет подписку на новый план или изменяет настройки автоплатежа.
+    security: 
+      - bearerAuth: []
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/SubscribeRequest.yaml'
-    responses:
-      "201":
-        description: Подписка оформлена
-        content:
-          application/json:
-            schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
-/billing/subscription/cancel:
-  post:
-    tags: [Billing]
-    summary: Отменить подписку
-    security: [{ bearerAuth: [] }]
+            type: object
+            properties:
+              plan_slug:
+                type: string
+                description: Слаг нового плана
+                example: "basic"
+              is_auto_payment_enabled:
+                type: boolean
+                description: Включить автоплатеж
+                example: true
     responses:
       "200":
-        description: Отменена
+        description: Подписка обновлена успешно
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  description: Обновленная подписка
+                  additionalProperties: true
+
+/billing/subscribe:
+  post:
+    tags: [Billing, Subscription]
+    summary: Оформить подписку для организации
+    description: |
+      Оформляет новую подписку на выбранный план для организации.
+    security: 
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - plan_slug
+            properties:
+              plan_slug:
+                type: string
+                description: Слаг тарифного плана
+                example: "basic"
+              is_auto_payment_enabled:
+                type: boolean
+                description: Включить автоматические платежи
+                default: true
+                example: true
+    responses:
+      "200":
+        description: Подписка оформлена успешно
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  description: Данные о созданной подписке
+                  additionalProperties: true
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Организация не найдена или нет доступа"
+
+/billing/subscription/cancel:
+  post:
+    tags: [Billing, Subscription]
+    summary: Отменить подписку организации
+    description: |
+      Отменяет текущую подписку организации. Доступ к функциям сохраняется до окончания периода.
+    security: 
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Подписка отменена успешно
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  description: Отмененная подписка
+                  additionalProperties: true
+                message:
+                  type: string
+                  example: "Подписка отменена. Доступ сохранится до 15.02.2024"
+      "400":
+        description: Ошибка отмены подписки
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Невозможно отменить подписку"
+
+/billing/subscription/change-plan-preview:
+  post:
+    tags: [Billing, Subscription]
+    summary: Предварительный просмотр смены плана
+    description: |
+      Показывает что произойдет при смене тарифного плана (стоимость, пропорциональные расчеты и т.д.).
+    security: 
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - plan_slug
+            properties:
+              plan_slug:
+                type: string
+                description: Слаг нового плана для предпросмотра
+                example: "premium"
+    responses:
+      "200":
+        description: Предпросмотр смены плана получен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  description: Детали предпросмотра
+                  additionalProperties: true
+                message:
+                  type: string
+                  example: "Доплата за смену плана составит 500 руб."
+      "400":
+        description: Ошибка получения предпросмотра
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
+      "422":
+        description: Ошибки валидации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/billing/subscription/change-plan:
+  post:
+    tags: [Billing, Subscription]
+    summary: Сменить тарифный план
+    description: |
+      Выполняет смену тарифного плана подписки с пропорциональным перерасчетом стоимости.
+    security: 
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - plan_slug
+            properties:
+              plan_slug:
+                type: string
+                description: Слаг нового плана
+                example: "premium"
+    responses:
+      "200":
+        description: План успешно изменен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  description: Обновленная подписка
+                  additionalProperties: true
+                billing_info:
+                  type: object
+                  nullable: true
+                  description: Информация о биллинге
+                  additionalProperties: true
+                message:
+                  type: string
+                  example: "План успешно изменен на Premium"
+      "400":
+        description: Ошибка смены плана
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
 /billing/subscription/auto-payment:
   patch:
-    tags: [Billing]
-    summary: Включить/выключить автоплатеж для подписки
-    security: [{ bearerAuth: [] }]
+    tags: [Billing, Subscription]
+    summary: Включить/выключить автоплатеж подписки
+    description: |
+      Изменяет настройку автоматических платежей для текущей подписки организации.
+    security: 
+      - bearerAuth: []
     requestBody:
       required: true
       content:
@@ -77,7 +352,7 @@
             $ref: '../components/schemas/AutoPaymentToggleRequest.yaml'
     responses:
       "200":
-        description: Подписка обновлена
+        description: Настройка автоплатежа обновлена
         content:
           application/json:
             schema:
@@ -87,73 +362,18 @@
                   properties:
                     data:
                       $ref: '../components/schemas/UserSubscription.yaml'
-/billing/balance:
-  get:
-    tags: [Billing]
-    summary: Баланс организации
-    security: [{ bearerAuth: [] }]
-    responses:
-      "200":
-        description: Баланс
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationBalance.yaml'
-/billing/balance/transactions:
-  get:
-    tags: [Billing]
-    summary: Транзакции баланса
-    security: [{ bearerAuth: [] }]
-    responses:
-      "200":
-        description: Транзакции
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/BalanceTransaction.yaml'
-/billing/balance/top-up:
-  post:
-    tags: [Billing]
-    summary: Пополнить баланс
-    security: [{ bearerAuth: [] }]
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              amount:
-                type: number
-                format: float
-            required: [amount]
-    responses:
-      "200":
-        description: Пополнено
-        content:
-          application/json:
-            schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+
 /billing/subscription/limits:
   get:
-    tags: [Billing]
-    summary: Лимиты подписки
-    security: [{ bearerAuth: [] }]
+    tags: [Billing, Subscription]
+    summary: Получить лимиты текущей подписки
+    description: |
+      Возвращает лимиты и ограничения текущего тарифного плана организации.
+    security: 
+      - bearerAuth: []
     responses:
       "200":
-        description: Лимиты
+        description: Лимиты подписки получены успешно
         content:
           application/json:
             schema:
@@ -163,200 +383,178 @@
                   properties:
                     data:
                       $ref: '../components/schemas/SubscriptionLimits.yaml'
-/billing/addons:
+
+/billing/balance:
   get:
-    tags: [Billing]
-    summary: Список доступных add-ons
-    security: [{ bearerAuth: [] }]
+    tags: [Billing, Balance]
+    summary: Получить баланс организации
+    description: |
+      Возвращает текущий баланс организации и связанную информацию.
+    security: 
+      - bearerAuth: []
     responses:
       "200":
-        description: Список add-ons
+        description: Баланс организации получен успешно
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/AddonsResponse.yaml'
-/billing/org-subscription:
+              $ref: '../components/schemas/OrganizationBalance.yaml'
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Organization not found for this user."
+
+/billing/balance/transactions:
   get:
-    tags: [Billing]
-    summary: Подписка организации
-    security: [{ bearerAuth: [] }]
+    tags: [Billing, Balance]
+    summary: Получить историю транзакций баланса
+    description: |
+      Возвращает список транзакций по балансу организации с пагинацией.
+    security: 
+      - bearerAuth: []
+    parameters:
+      - name: limit
+        in: query
+        description: Количество записей на страницу
+        required: false
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
     responses:
       "200":
-        description: Подписка
+        description: История транзакций получена успешно
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationSubscription.yaml'
-  patch:
-    tags: [Billing]
-    summary: Обновить подписку организации
-    security: [{ bearerAuth: [] }]
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/OrgSubscribeRequest.yaml'
-    responses:
-      "200":
-        description: Подписка обновлена
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/BalanceTransaction.yaml'
+                links:
+                  type: object
+                  description: Ссылки пагинации
+                meta:
+                  type: object
+                  description: Метаданные пагинации
+      "404":
+        description: Организация не найдена
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationSubscription.yaml'
-/billing/org-subscription/auto-payment:
-  patch:
-    tags: [Billing]
-    summary: Включить/выключить автоплатеж для подписки организации
-    security: [{ bearerAuth: [] }]
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/AutoPaymentToggleRequest.yaml'
-    responses:
-      "200":
-        description: Подписка организации обновлена
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationSubscription.yaml'
-/billing/org-subscribe:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Organization not found."
+
+/billing/balance/top-up:
   post:
-    tags: [Billing]
-    summary: Оформить/сменить подписку организации
-    security: [{ bearerAuth: [] }]
+    tags: [Billing, Balance]
+    summary: Пополнить баланс организации
+    description: |
+      Инициирует процесс пополнения баланса организации через платежный шлюз.
+    security: 
+      - bearerAuth: []
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/OrgSubscribeRequest.yaml'
-    responses:
-      "201":
-        description: Подписка оформлена
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationSubscription.yaml'
-/billing/org-addon:
-  post:
-    tags: [Billing]
-    summary: Подключить add-on
-    security: [{ bearerAuth: [] }]
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/OrgAddonAttachRequest.yaml'
-    responses:
-      "201":
-        description: Add-on подключён
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationSubscriptionAddon.yaml'
-/billing/org-addon/{id}:
-  parameters:
-    - name: id
-      in: path
-      required: true
-      schema: { type: integer }
-  delete:
-    tags: [Billing]
-    summary: Отключить add-on
-    security: [{ bearerAuth: [] }]
-    responses:
-      "204":
-        description: Add-on отключён
-/billing/org-one-time-purchase:
-  post:
-    tags: [Billing]
-    summary: Совершить одноразовую покупку
-    security: [{ bearerAuth: [] }]
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/OneTimePurchaseRequest.yaml'
-    responses:
-      "201":
-        description: Покупка совершена
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationOneTimePurchase.yaml'
-/billing/org-one-time-purchases:
-  get:
-    tags: [Billing]
-    summary: История одноразовых покупок
-    security: [{ bearerAuth: [] }]
+            type: object
+            required:
+              - amount
+              - currency
+            properties:
+              amount:
+                type: number
+                format: float
+                minimum: 1
+                description: Сумма пополнения в основной валюте (рублях)
+                example: 1000.00
+              currency:
+                type: string
+                minLength: 3
+                maxLength: 3
+                pattern: '^[A-Z]{3}$'
+                description: Код валюты в формате ISO 4217
+                example: "RUB"
+              payment_method_token:
+                type: string
+                nullable: true
+                description: Токен метода оплаты от платежного шлюза
+                example: "tok_mock_visa"
     responses:
       "200":
-        description: История
+        description: Запрос на пополнение создан успешно
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/OrganizationOneTimePurchase.yaml'
-/billing/org-dashboard:
+              $ref: '../components/schemas/PaymentGatewayChargeResponse.yaml'
+      "400":
+        description: Ошибка операции
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Неверная сумма или валюта"
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Organization not found for this user."
+      "422":
+        description: Ошибки валидации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/billing/dashboard:
   get:
-    tags: [Billing]
-    summary: Дашборд организации
-    security: [{ bearerAuth: [] }]
+    tags: [Billing, Dashboard]
+    summary: Получить дашборд биллинга организации
+    description: |
+      Возвращает сводную информацию о биллинге организации: подписка, баланс, статистика платежей и т.д.
+    security: 
+      - bearerAuth: []
     responses:
       "200":
-        description: Данные дашборда
+        description: Дашборд биллинга получен успешно
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationDashboard.yaml' 
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  $ref: '../components/schemas/OrganizationDashboard.yaml'
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Организация не найдена или нет доступа"

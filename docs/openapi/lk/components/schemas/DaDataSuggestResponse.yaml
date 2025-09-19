@@ -1,0 +1,28 @@
+type: object
+properties:
+  success:
+    type: boolean
+    description: Статус успешности операции
+    example: true
+  message:
+    type: string
+    description: Сообщение о результате
+    example: "Подсказки получены успешно"
+  data:
+    type: array
+    description: Список найденных организаций или адресов
+    items:
+      type: object
+      properties:
+        value:
+          type: string
+          description: Отображаемое значение
+          example: "ПАО СБЕРБАНК"
+        unrestricted_value:
+          type: string
+          description: Полное значение без ограничений
+          example: "ПУБЛИЧНОЕ АКЦИОНЕРНОЕ ОБЩЕСТВО \"СБЕРБАНК РОССИИ\""
+        data:
+          type: object
+          description: Дополнительные данные (структура зависит от типа подсказки)
+          additionalProperties: true

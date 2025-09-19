@@ -27,5 +27,19 @@ components:
       $ref: './components/schemas/LkUpdateProfileRequest.yaml'
     LkUserProfile:
       $ref: './components/schemas/LkUserProfile.yaml'
+    
+    # Организация (обновлено)
+    LkUpdateOrganizationRequest:
+      $ref: './components/schemas/LkUpdateOrganizationRequest.yaml'
+    LkOrganizationProfile:
+      $ref: './components/schemas/LkOrganizationProfile.yaml'
+    LkOrganizationVerification:
+      $ref: './components/schemas/LkOrganizationVerification.yaml'
+    
+    # DaData API
+    DaDataSuggestRequest:
+      $ref: './components/schemas/DaDataSuggestRequest.yaml'
+    DaDataSuggestResponse:
+      $ref: './components/schemas/DaDataSuggestResponse.yaml'
   responses: {}
   parameters: {}

@@ -1,0 +1,32 @@
+allOf:
+  - $ref: './ApiResponse.yaml'
+  - type: object
+    properties:
+      data:
+        type: object
+        properties:
+          organization:
+            $ref: './LkOrganizationProfile.yaml'
+          recommendations:
+            type: array
+            description: Рекомендации по улучшению верификации
+            items:
+              type: object
+              properties:
+                field:
+                  type: string
+                  description: Поле требующее внимания
+                  example: "tax_number"
+                message:
+                  type: string
+                  description: Описание рекомендации
+                  example: "Добавьте ИНН для повышения уровня верификации"
+                priority:
+                  type: string
+                  enum: [high, medium, low]
+                  description: Приоритет рекомендации
+                  example: "high"
+          user_message:
+            type: string
+            description: Дружественное сообщение пользователю
+            example: "Ваша организация почти готова к верификации! Добавьте ИНН и ОГРН для завершения."

@@ -1,0 +1,88 @@
+allOf:
+  - $ref: './ApiResponse.yaml'
+  - type: object
+    properties:
+      data:
+        type: object
+        properties:
+          id:
+            type: integer
+            description: ID организации
+            example: 5
+          name:
+            type: string
+            description: Название организации
+            example: "ООО Строймонтаж"
+          legal_name:
+            type: string
+            nullable: true
+            description: Юридическое название
+            example: "Общество с ограниченной ответственностью \"Строймонтаж\""
+          tax_number:
+            type: string
+            nullable: true
+            description: ИНН организации
+            example: "7707083893"
+          registration_number:
+            type: string
+            nullable: true
+            description: ОГРН организации
+            example: "1037739010891"
+          phone:
+            type: string
+            nullable: true
+            description: Телефон организации
+            example: "+74951234567"
+          email:
+            type: string
+            nullable: true
+            description: Email организации
+            example: "info@stroymontazh.ru"
+          address:
+            type: string
+            nullable: true
+            description: Адрес организации
+            example: "115093, г. Москва, ул. Люсиновская, д. 36, стр. 1"
+          city:
+            type: string
+            nullable: true
+            description: Город
+            example: "Москва"
+          postal_code:
+            type: string
+            nullable: true
+            description: Почтовый индекс
+            example: "115093"
+          country:
+            type: string
+            nullable: true
+            description: Страна
+            example: "Россия"
+          description:
+            type: string
+            nullable: true
+            description: Описание организации
+            example: "Строительно-монтажные работы"
+          is_verified:
+            type: boolean
+            description: Статус верификации
+            example: true
+          verification_score:
+            type: integer
+            nullable: true
+            description: Оценка верификации (0-100)
+            example: 85
+          owner_id:
+            type: integer
+            description: ID владельца организации
+            example: 1
+          created_at:
+            type: string
+            format: date-time
+            description: Дата создания
+            example: "2024-01-10T09:00:00Z"
+          updated_at:
+            type: string
+            format: date-time
+            description: Дата последнего обновления
+            example: "2024-01-15T14:20:00Z"

@@ -3,33 +3,75 @@
     security:
       - bearerAuth: []
     tags: [Organization]
-    summary: Получить данные организации текущего контекста
+    summary: Получить данные текущей организации
+    description: |
+      Возвращает детальную информацию об организации пользователя.
+      Использует контекст текущей организации из middleware.
     responses:
       "200":
-        description: Организация
+        description: Данные организации получены успешно
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationProfile.yaml'
-  put:
+              $ref: '../components/schemas/LkOrganizationProfile.yaml'
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+  patch:
     security:
       - bearerAuth: []
     tags: [Organization]
     summary: Обновить данные организации
+    description: |
+      Обновляет информацию о текущей организации пользователя.
+      Требует права 'organization.manage'. Автоматически запускает верификацию при наличии достаточных данных.
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/UpdateOrganizationRequest.yaml'
+            $ref: '../components/schemas/LkUpdateOrganizationRequest.yaml'
+          example:
+            name: "ООО Строймонтаж"
+            legal_name: "Общество с ограниченной ответственностью \"Строймонтаж\""
+            tax_number: "7707083893"
+            registration_number: "1037739010891"
+            phone: "+74951234567"
+            email: "info@stroymontazh.ru"
+            address: "115093, г. Москва, ул. Люсиновская, д. 36, стр. 1"
+            city: "Москва"
+            postal_code: "115093"
+            country: "Россия"
     responses:
       "200":
-        description: Обновлено
+        description: Данные организации успешно обновлены
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Данные организации обновлены"
+                data:
+                  type: object
+                  properties:
+                    organization:
+                      $ref: '../components/schemas/LkOrganizationProfile.yaml'
+      "403":
+        description: Недостаточно прав для обновления
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "422":
+        description: Ошибки валидации
         content:
           application/json:
             schema:
@@ -39,34 +81,59 @@
   get:
     security:
       - bearerAuth: []
-    tags: [Organization]
-    summary: Получить статус верификации организации
+    tags: [Organization, Verification]
+    summary: Получить статус верификации и рекомендации
+    description: |
+      Возвращает статус верификации организации, рекомендации по улучшению
+      и понятное пользователю сообщение о следующих шагах.
     responses:
       "200":
-        description: Статус
+        description: Статус верификации получен успешно
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationVerification.yaml'
-  put:
+              $ref: '../components/schemas/LkOrganizationVerification.yaml'
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+  patch:
     security:
       - bearerAuth: []
-    tags: [Organization]
-    summary: Обновить данные верификации организации
+    tags: [Organization, Verification]
+    summary: Обновить данные организации для верификации
+    description: |
+      Обновляет данные организации и автоматически запускает процесс верификации,
+      если предоставлены все необходимые данные.
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/OrganizationVerificationUpdateRequest.yaml'
+            $ref: '../components/schemas/LkUpdateOrganizationRequest.yaml'
     responses:
       "200":
-        description: Обновлено
+        description: Данные обновлены, верификация запущена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Данные организации обновлены"
+                data:
+                  type: object
+                  properties:
+                    organization:
+                      $ref: '../components/schemas/LkOrganizationProfile.yaml'
+      "404":
+        description: Организация не найдена
         content:
           application/json:
             schema:
@@ -76,11 +143,49 @@
   post:
     security:
       - bearerAuth: []
-    tags: [Organization]
-    summary: Отправить запрос на верификацию
+    tags: [Organization, Verification]
+    summary: Запросить верификацию организации
+    description: |
+      Инициирует процесс верификации организации. Организация должна иметь
+      все необходимые данные (название, ИНН, ОГРН и т.д.).
     responses:
       "200":
-        description: Запрос отправлен
+        description: Верификация запущена успешно
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Запрос на верификацию отправлен успешно"
+                data:
+                  type: object
+                  properties:
+                    verification_result:
+                      type: object
+                      description: Результат верификации
+                      additionalProperties: true
+                    organization:
+                      $ref: '../components/schemas/LkOrganizationProfile.yaml'
+      "400":
+        description: Верификация невозможна (недостаточно данных)
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Недостаточно данных для верификации"
+      "404":
+        description: Организация не найдена
         content:
           application/json:
             schema:
@@ -90,11 +195,48 @@
   get:
     security:
       - bearerAuth: []
-    tags: [Organization]
-    summary: Получить рекомендации по верификации
+    tags: [Organization, Verification]
+    summary: Получить рекомендации по улучшению верификации
+    description: |
+      Возвращает персонализированные рекомендации по заполнению данных
+      организации для повышения уровня верификации.
     responses:
       "200":
-        description: Рекомендации
+        description: Рекомендации получены успешно
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Рекомендации по верификации получены"
+                data:
+                  type: object
+                  properties:
+                    recommendations:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          field:
+                            type: string
+                            example: "tax_number"
+                          message:
+                            type: string
+                            example: "Добавьте ИНН для повышения уровня верификации"
+                          priority:
+                            type: string
+                            enum: [high, medium, low]
+                            example: "high"
+                    user_message:
+                      type: string
+                      example: "Добавьте ИНН и ОГРН для завершения верификации"
+      "404":
+        description: Организация не найдена
         content:
           application/json:
             schema:
@@ -102,45 +244,74 @@
 
 /dadata/suggest/organizations:
   post:
-    security:
-      - bearerAuth: []
-    tags: [Organization]
-    summary: Подсказка организации по ИНН/названию
+    tags: [DaData, Organization]
+    summary: Поиск организаций по ИНН или названию
+    description: |
+      **Публичное API** (без авторизации). Поиск организаций через DaData API.
+      Ограничение: 60 запросов в минуту.
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            type: object
-            properties:
-              query:
-                type: string
+            $ref: '../components/schemas/DaDataSuggestRequest.yaml'
+          example:
+            query: "7707083893"
     responses:
       "200":
-        description: Список организаций
+        description: Организации найдены успешно
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/DaDataSuggestResponse.yaml'
+      "422":
+        description: Ошибка валидации запроса
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
+      "429":
+        description: Превышен лимит запросов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Слишком много запросов. Попробуйте позже."
 
 /dadata/suggest/addresses:
   post:
-    security:
-      - bearerAuth: []
-    tags: [Organization]
-    summary: Подсказка адресов
+    tags: [DaData, Organization]
+    summary: Поиск адресов по части адреса
+    description: |
+      **Публичное API** (без авторизации). Поиск адресов через DaData API.
+      Ограничение: 60 запросов в минуту.
     requestBody:
       required: true
       content:
         application/json:
           schema:
             type: object
+            required:
+              - query
             properties:
               query:
                 type: string
+                minLength: 3
+                maxLength: 200
+                description: Часть адреса для поиска
+                example: "Москва, Красная площадь"
     responses:
       "200":
-        description: Список адресов
+        description: Адреса найдены успешно
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/DaDataSuggestResponse.yaml'
+      "422":
+        description: Ошибка валидации запроса
         content:
           application/json:
             schema:
@@ -148,22 +319,46 @@
 
 /dadata/clean/address:
   post:
-    security:
-      - bearerAuth: []
-    tags: [Organization]
-    summary: Очистка/нормализация адреса
+    tags: [DaData, Organization]
+    summary: Очистка и нормализация адреса
+    description: |
+      **Публичное API** (без авторизации). Очистка адреса через DaData API.
+      Ограничение: 60 запросов в минуту.
     requestBody:
       required: true
       content:
         application/json:
           schema:
             type: object
+            required:
+              - address
             properties:
               address:
                 type: string
+                minLength: 5
+                maxLength: 500
+                description: Адрес для очистки и стандартизации
+                example: "мск красная площадь 1"
     responses:
       "200":
-        description: Очищенный адрес
+        description: Адрес очищен и нормализован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Адрес очищен успешно"
+                data:
+                  type: object
+                  description: Очищенные и нормализованные данные адреса
+                  additionalProperties: true
+      "422":
+        description: Ошибка валидации запроса
         content:
           application/json:
             schema:
