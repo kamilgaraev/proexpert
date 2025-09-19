@@ -1,11 +1,39 @@
 /invitations:
   get:
     tags: [UserInvitations]
-    summary: Список приглашений
-    security: [{ bearerAuth: [] }]
+    summary: Получить список приглашений организации
+    description: |
+      Возвращает все приглашения пользователей для текущей организации.
+      
+      **Статусы приглашений:**
+      - `pending` - ожидает принятия
+      - `accepted` - принято пользователем
+      - `expired` - срок действия истек
+      - `cancelled` - отменено администратором
+      
+      Приглашения сортируются по дате создания (новые в начале).
+    security:
+      - bearerAuth: []
+    parameters:
+      - name: status
+        in: query
+        required: false
+        description: Фильтр по статусу приглашения
+        schema:
+          type: string
+          enum: [pending, accepted, expired, cancelled]
+          example: "pending"
+      - name: email
+        in: query
+        required: false
+        description: Поиск по email получателя
+        schema:
+          type: string
+          format: email
+          example: "user@example.com"
     responses:
       "200":
-        description: Список приглашений
+        description: Список приглашений получен успешно
         content:
           application/json:
             schema:
@@ -17,41 +45,95 @@
                       type: array
                       items:
                         $ref: '../components/schemas/UserInvitation.yaml'
+            examples:
+              success:
+                summary: Успешный ответ с приглашениями
+                value:
+                  success: true
+                  data:
+                    - id: 1
+                      email: "newuser@example.com"
+                      name: "Новый Пользователь"
+                      role_slugs: ["foreman"]
+                      role_names: ["Прораб"]
+                      status: "pending"
+                      status_text: "Ожидает принятия"
+                      status_color: "#f39c12"
+                      token: "abcd1234efgh5678"
+                      invitation_url: "https://mobile.prohelper.pro/invitation/abcd1234efgh5678"
+                      expires_at: "2024-10-19T14:30:00Z"
+                      accepted_at: null
+                      is_expired: false
+                      can_be_accepted: true
+                      invited_by:
+                        id: 5
+                        name: "Администратор"
+                        email: "admin@company.com"
+                      organization:
+                        id: 10
+                        name: "ООО Строймонтаж"
+                        inn: "7707083893"
+                      created_at: "2024-09-19T14:30:00Z"
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для просмотра приглашений
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
   post:
     tags: [UserInvitations]
-    summary: Создать приглашение
-    security: [{ bearerAuth: [] }]
+    summary: Создать приглашение пользователя
+    description: |
+      Создает новое приглашение пользователя в организацию и отправляет приглашение на email.
+      
+      **Процесс создания приглашения:**
+      1. Проверяется, что пользователь с таким email еще не состоит в организации
+      2. Проверяется отсутствие активных приглашений для этого email
+      3. Создается приглашение с уникальным токеном
+      4. Отправляется email с ссылкой для принятия приглашения
+      
+      **Типы ссылок в зависимости от ролей:**
+      - `foreman` → мобильное приложение (APK)
+      - `organization_admin`, `accountant`, `web_admin` → admin.prohelper.pro
+      - `organization_owner` или без ролей → prohelper.pro
+      
+      Требует права `users.invite` в организации.
+    security:
+      - bearerAuth: []
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/StoreUserInvitationRequest.yaml'
-    responses:
-      "201":
-        description: Приглашение создано
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/UserInvitation.yaml'
-/invitations/{invitationId}:
-  parameters:
-    - name: invitationId
-      in: path
-      required: true
-      schema: { type: integer }
-  get:
-    tags: [UserInvitations]
-    summary: Получить приглашение
-    security: [{ bearerAuth: [] }]
+          examples:
+            foreman_invitation:
+              summary: Приглашение прораба
+              value:
+                email: "foreman@example.com"
+                name: "Иван Прорабов"
+                roles: ["foreman"]
+            admin_invitation:
+              summary: Приглашение администратора
+              value:
+                email: "admin@example.com"
+                name: "Мария Администраторова"
+                roles: ["organization_admin"]
+            multiple_roles:
+              summary: Приглашение с несколькими ролями
+              value:
+                email: "manager@example.com"
+                name: "Петр Менеджеров"
+                roles: ["organization_admin", "accountant"]
     responses:
       "200":
-        description: Приглашение
+        description: Приглашение создано и отправлено успешно
         content:
           application/json:
             schema:
@@ -61,86 +143,139 @@
                   properties:
                     data:
                       $ref: '../components/schemas/UserInvitation.yaml'
-  delete:
-    tags: [UserInvitations]
-    summary: Удалить приглашение
-    security: [{ bearerAuth: [] }]
-    responses:
-      "204":
-        description: Удалено
+            examples:
+              success:
+                summary: Приглашение создано
+                value:
+                  success: true
+                  data:
+                    id: 15
+                    email: "newuser@example.com"
+                    name: "Новый Пользователь"
+                    role_slugs: ["foreman"]
+                    role_names: ["Прораб"]
+                    status: "pending"
+                    status_text: "Ожидает принятия"
+                    token: "xyz789abc123def456"
+                    invitation_url: "https://mobile.prohelper.pro/invitation/xyz789abc123def456"
+                    expires_at: "2024-10-19T14:30:00Z"
+                    invited_by:
+                      id: 5
+                      name: "Администратор"
+                      email: "admin@company.com"
+                    created_at: "2024-09-19T14:30:00Z"
+      "400":
+        description: Ошибка валидации или бизнес-логики
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+            examples:
+              validation_error:
+                summary: Ошибка валидации
+                value:
+                  success: false
+                  message: "Validation failed"
+                  errors:
+                    email: ["Поле email обязательно для заполнения"]
+                    name: ["Поле name обязательно для заполнения"]
+              user_exists:
+                summary: Пользователь уже в организации
+                value:
+                  success: false
+                  message: "Пользователь с таким email уже состоит в организации"
+              pending_invitation:
+                summary: Активное приглашение уже существует
+                value:
+                  success: false
+                  message: "Активное приглашение для этого email уже существует"
+      "401":
+        description: Пользователь не авторизован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для создания приглашений
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
 /invitations/{invitationId}/resend:
   post:
     tags: [UserInvitations]
     summary: Повторно отправить приглашение
-    security: [{ bearerAuth: [] }]
+    description: |
+      Повторно отправляет приглашение пользователю на email.
+      
+      **Условия для повторной отправки:**
+      - Приглашение должно иметь статус `pending`
+      - Срок действия приглашения не должен истечь
+      - Приглашение принадлежит текущей организации
+      
+      При повторной отправке обновляется время последней отправки (`sent_at`).
+      Требует права `users.invite` в организации.
+    security:
+      - bearerAuth: []
     parameters:
       - name: invitationId
         in: path
         required: true
-        schema: { type: integer }
+        description: ID приглашения для повторной отправки
+        schema:
+          type: integer
+          example: 123
     responses:
       "200":
-        description: Отправлено
+        description: Приглашение повторно отправлено успешно
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Приглашение повторно отправлено на email newuser@example.com"
+                data:
+                  type: object
+                  nullable: true
+                  example: null
+      "400":
+        description: Невозможно повторно отправить приглашение
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
-/invitations/stats/overview:
-  get:
-    tags: [UserInvitations]
-    summary: Статистика приглашений
-    security: [{ bearerAuth: [] }]
-    responses:
-      "200":
-        description: Статистика
+            examples:
+              expired:
+                summary: Приглашение истекло
+                value:
+                  success: false
+                  message: "Срок действия приглашения истек"
+              already_accepted:
+                summary: Приглашение уже принято
+                value:
+                  success: false
+                  message: "Приглашение уже принято пользователем"
+      "404":
+        description: Приглашение не найдено
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
-/invitation/{token}:
-  parameters:
-    - name: token
-      in: path
-      required: true
-      schema: { type: string }
-  get:
-    tags: [UserInvitations]
-    summary: Получить приглашение по токену (публичный)
-    responses:
-      "200":
-        description: Информация о приглашении
+      "401":
+        description: Пользователь не авторизован
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/UserInvitation.yaml'
-/invitation/{token}/accept:
-  post:
-    tags: [UserInvitations]
-    summary: Принять приглашение (публичный)
-    parameters:
-      - name: token
-        in: path
-        required: true
-        schema: { type: string }
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              password:
-                type: string
-            required: [password]
-    responses:
-      "200":
-        description: Приглашение принято
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет прав для управления приглашениями
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml' 
+              $ref: '../components/schemas/ApiResponse.yaml'

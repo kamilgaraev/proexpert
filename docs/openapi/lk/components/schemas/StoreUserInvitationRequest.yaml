@@ -1,16 +1,39 @@
 type: object
 properties:
-  email: { type: string, format: email }
-  name: { type: string, minLength: 2, maxLength: 100 }
+  email:
+    type: string
+    format: email
+    maxLength: 255
+    description: Email адрес приглашаемого пользователя
+    example: "newuser@example.com"
+  name:
+    type: string
+    minLength: 2
+    maxLength: 255
+    description: Полное имя приглашаемого пользователя
+    example: "Иван Прорабов"
   roles:
     type: array
     items:
       type: string
+    minItems: 0
+    maxItems: 10
     description: |
-      Слаги ролей, которые будут назначены приглашённому пользователю. 
-      От них зависит ссылка в письме:
-        • foreman → ссылка на APK 
-        • organization_admin / accountant / web_admin → admin.prohelper.pro
-        • organization_owner или пустой массив → prohelper.pro
-    example: ["organization_admin"]
+      Массив слагов ролей, которые будут назначены приглашенному пользователю.
+      
+      **Типы ролей:**
+      - `organization_owner` - владелец организации (полные права)
+      - `organization_admin` - администратор организации
+      - `foreman` - прораб (мобильное приложение)
+      - `accountant` - бухгалтер
+      - `web_admin` - веб-администратор
+      - `worker` - рабочий
+      
+      **Влияние на ссылку приглашения:**
+      - `foreman` → мобильное приложение (APK загрузка)
+      - `organization_admin`, `accountant`, `web_admin` → admin.prohelper.pro
+      - `organization_owner` или пустой массив → prohelper.pro (основной ЛК)
+      
+      Если массив пустой, пользователь получит базовые права.
+    example: ["foreman"]
 required: [email, name] 

@@ -1,7 +1,13 @@
 type: object
 properties:
-  subject: { type: string }
-  message: { type: string }
-  email: { type: string, format: email }
-  name: { type: string }
+  subject:
+    type: string
+    maxLength: 255
+    description: Тема обращения
+    example: "Проблема с выставлением счетов"
+  message:
+    type: string
+    maxLength: 5000
+    description: Текст обращения с подробным описанием проблемы
+    example: "Добрый день! При попытке создать счет в системе появляется ошибка 'Недостаточно прав'. Подскажите, пожалуйста, как это исправить?"
 required: [subject, message] 

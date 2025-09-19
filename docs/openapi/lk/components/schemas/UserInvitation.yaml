@@ -11,10 +11,14 @@ properties:
     type: array
     items:
       type: string
+    description: Массив слагов ролей пользователя
+    example: ["foreman", "worker"]
   role_names:
     type: array
     items:
       type: string
+    description: Массив названий ролей пользователя (на русском языке)
+    example: ["Прораб", "Рабочий"]
   status:
     type: string
   status_text:
