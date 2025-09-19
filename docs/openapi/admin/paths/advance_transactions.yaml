@@ -256,7 +256,7 @@
                   type: string
                   example: "Failed to create transaction: Database error"
 
-/advance-transactions/{id}:
+/advance-transactions/{transaction}:
   get:
     tags: [AdvanceTransactions]
     summary: Получить детальную информацию о транзакции
@@ -265,7 +265,7 @@
       о пользователе, проекте, создателе и утверждающем.
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
@@ -312,7 +312,7 @@
       можно изменять только для транзакций со статусом "pending".
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
@@ -402,7 +402,7 @@
       Можно удалять только транзакции со статусом "pending".
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
@@ -458,7 +458,7 @@
                   type: string
                   example: "Failed to delete transaction: Database error"
 
-/advance-transactions/{id}/report:
+/advance-transactions/{transaction}/report:
   post:
     tags: [AdvanceTransactions]
     summary: Отметить транзакцию как отчитанную
@@ -467,7 +467,7 @@
       прикрепления файлов. Изменяет статус на "reported".
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
@@ -561,7 +561,7 @@
                   type: string
                   example: "Failed to report transaction: File upload error"
 
-/advance-transactions/{id}/approve:
+/advance-transactions/{transaction}/approve:
   post:
     tags: [AdvanceTransactions]
     summary: Утвердить отчет по транзакции
@@ -570,7 +570,7 @@
       Возможно только для транзакций со статусом "reported".
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
@@ -644,7 +644,7 @@
                   type: string
                   example: "Failed to approve transaction: Database error"
 
-/advance-transactions/{id}/attachments:
+/advance-transactions/{transaction}/attachments:
   post:
     tags: [AdvanceTransactions]
     summary: Прикрепить файлы к транзакции
@@ -653,7 +653,7 @@
       Нельзя добавлять файлы к утвержденным транзакциям.
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
@@ -731,7 +731,7 @@
                     files: ["Поле files обязательно для заполнения."]
                     "files.0": ["Размер файла не должен превышать 10240 килобайт."]
 
-/advance-transactions/{id}/attachments/{fileId}:
+/advance-transactions/{transaction}/attachments/{fileId}:
   delete:
     tags: [AdvanceTransactions]
     summary: Открепить файл от транзакции
@@ -740,7 +740,7 @@
       Нельзя удалять файлы из утвержденных транзакций.
     parameters:
       - in: path
-        name: id
+        name: transaction
         required: true
         schema:
           type: integer
