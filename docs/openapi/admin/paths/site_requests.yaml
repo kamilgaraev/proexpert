@@ -305,31 +305,31 @@
           application/json:
             schema:
               type: object
-                properties:
-                  success:
-                    type: boolean
+              properties:
+                success:
+                  type: boolean
                   example: false
                 message:
                   type: string
                   example: "Произошла ошибка при получении статистики"
 
 /site-requests/{id}:
-    get:
+  get:
     tags: [SiteRequests]
     summary: Получить детальную информацию о заявке
     description: |
       Возвращает полную информацию о заявке включая
       связанные объекты (проект, пользователь, файлы)
       с проверкой доступа по организации.
-      parameters:
+    parameters:
       - in: path
         name: id
-          required: true
-          schema:
-            type: integer
+        required: true
+        schema:
+          type: integer
         description: ID заявки
         example: 150
-      responses:
+    responses:
       "200":
         description: Детальная информация о заявке
         content:
@@ -394,37 +394,37 @@
       "500":
         description: Внутренняя ошибка сервера
         content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
                   example: false
                 message:
                   type: string
                   example: "Произошла ошибка при получении заявки"
   put:
     tags: [SiteRequests]
-      summary: Обновить заявку
+    summary: Обновить заявку
     description: |
       Обновляет заявку с проверками:
       - принадлежности к организации
       - прав доступа текущего пользователя
       - валидации данных в зависимости от типа заявки
-      parameters:
+    parameters:
       - in: path
         name: id
-          required: true
-          schema:
-            type: integer
+        required: true
+        schema:
+          type: integer
         description: ID заявки для обновления
         example: 150
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
             $ref: '../components/schemas/SiteRequestUpdateRequest.yaml'
           examples:
             status_update:
@@ -439,10 +439,10 @@
                 hourly_rate: 900.00
                 priority: "urgent"
                 notes: "Сокращено количество, увеличена ставка"
-      responses:
-        "200":
-          description: Заявка успешно обновлена
-          content:
+    responses:
+      "200":
+        description: Заявка успешно обновлена
+        content:
           application/json:
             schema:
               $ref: '../components/schemas/SiteRequestResponse.yaml'
@@ -499,46 +499,46 @@
       "500":
         description: Внутренняя ошибка сервера
         content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
                   example: false
                 message:
                   type: string
                   example: "Произошла ошибка при обновлении заявки"
-    delete:
+  delete:
     tags: [SiteRequests]
-      summary: Удалить заявку
+    summary: Удалить заявку
     description: |
       Удаляет заявку с проверками:
       - принадлежности к организации
       - прав доступа текущего пользователя
       Также удаляет все связанные файлы с диска.
-      parameters:
+    parameters:
       - in: path
         name: id
-          required: true
-          schema:
-            type: integer
+        required: true
+        schema:
+          type: integer
         description: ID заявки для удаления
         example: 150
-      responses:
-        "200":
-          description: Заявка успешно удалена
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
-                  message:
-                    type: string
-                    example: "Заявка успешно удалена"
+    responses:
+      "200":
+        description: Заявка успешно удалена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Заявка успешно удалена"
       "403":
         description: Нет доступа к заявке
         content:
@@ -601,23 +601,23 @@
         multipart/form-data:
           schema:
             $ref: '../components/schemas/SiteRequestFileUploadRequest.yaml'
-      responses:
-        "201":
-          description: Файл успешно загружен
-          content:
+    responses:
+      "201":
+        description: Файл успешно загружен
+        content:
           application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                    example: true
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
                 message:
                   type: string
                   example: "Файл успешно загружен"
-                  data:
-                    type: object
-                    properties:
+                data:
+                  type: object
+                  properties:
                     id:
                       type: integer
                       example: 45
@@ -628,7 +628,7 @@
                       type: string
                       example: "Техническое задание.pdf"
                     size:
-                        type: integer
+                      type: integer
                       example: 1024000
                     mime_type:
                       type: string
@@ -651,8 +651,8 @@
         content:
           application/json:
             schema:
-                        type: object
-                        properties:
+              type: object
+              properties:
                 success:
                   type: boolean
                   example: false
@@ -664,8 +664,8 @@
         content:
           application/json:
             schema:
-                        type: object
-                        properties:
+              type: object
+              properties:
                 success:
                   type: boolean
                   example: false
@@ -685,14 +685,14 @@
         name: siteRequest
         required: true
         schema:
-                            type: integer
+          type: integer
         description: ID заявки
         example: 150
       - in: path
         name: file
         required: true
         schema:
-                            type: integer
+          type: integer
         description: ID файла
         example: 45
     responses:
@@ -701,8 +701,8 @@
         content:
           application/json:
             schema:
-                        type: object
-                        properties:
+              type: object
+              properties:
                 success:
                   type: boolean
                   example: true
@@ -714,8 +714,8 @@
         content:
           application/json:
             schema:
-                        type: object
-                        properties:
+              type: object
+              properties:
                 success:
                   type: boolean
                   example: false
@@ -727,7 +727,7 @@
         content:
           application/json:
             schema:
-                            type: object
+              type: object
               properties:
                 success:
                   type: boolean
@@ -740,8 +740,8 @@
         content:
           application/json:
             schema:
-                              type: object
-                              properties:
+              type: object
+              properties:
                 success:
                   type: boolean
                   example: false
