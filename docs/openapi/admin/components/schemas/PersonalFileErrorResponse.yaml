@@ -1,0 +1,18 @@
+type: object
+description: Ответ об ошибке при работе с личными файлами.
+properties:
+  message:
+    type: string
+    description: Описание ошибки
+    example: "File already exists."
+  errors:
+    type: object
+    nullable: true
+    description: Детали ошибок валидации (для статуса 422)
+    additionalProperties: 
+      type: array
+      items:
+        type: string
+    example:
+      file: ["The file field is required."]
+      name: ["The name field is required."]

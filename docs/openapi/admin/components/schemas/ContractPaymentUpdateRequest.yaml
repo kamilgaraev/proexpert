@@ -1,17 +1,17 @@
 type: object
-description: Запрос для создания платежа по контракту.
+description: Запрос для обновления платежа по контракту. Все поля необязательные.
 properties:
   payment_date:
     type: string
     format: date
     description: Дата платежа в формате YYYY-MM-DD
-    example: "2024-01-15"
+    example: "2024-01-20"
   amount:
     type: number
     format: decimal
     minimum: 0
     description: Сумма платежа в рублях
-    example: 150000.00
+    example: 175000.00
   payment_type:
     type: string
     enum: ["advance", "fact_payment", "deferred_payment", "other"]
@@ -21,19 +21,15 @@ properties:
       - fact_payment - Оплата по факту (например, по КС)
       - deferred_payment - Отложенный платеж
       - other - Другой тип платежа
-    example: "advance"
+    example: "fact_payment"
   reference_document_number:
     type: string
     maxLength: 255
     nullable: true
     description: Номер документа-основания для платежа (счет, акт, КС)
-    example: "СЧ-2024-001"
+    example: "АКТ-2024-001"
   description:
     type: string
     nullable: true
     description: Описание или комментарий к платежу
-    example: "Авансовый платеж за январь по договору на общестроительные работы"
-required:
-  - payment_date
-  - amount
-  - payment_type
+    example: "Оплата по факту выполненных работ за январь"

@@ -1,92 +1,374 @@
-/contracts/{contractId}/agreements:
+/contracts/{contract}/agreements:
   get:
-    tags: [Agreements]
-    summary: Список доп. соглашений контракта
+    tags: [Supplementary Agreements]
+    summary: Получить список дополнительных соглашений по контракту
+    description: |
+      Возвращает пагинированный список всех дополнительных соглашений для указанного контракта.
+      Соглашения сортируются по дате соглашения в убывающем порядке (новые сначала).
+      
+      **Особенности:**
+      - Доступны только соглашения контрактов текущей организации
+      - Автоматическая проверка принадлежности контракта к организации
+      - Поддержка пагинации с настраиваемым размером страницы
+      - Включает информацию об изменениях сумм и предмета договора
     parameters:
-      - name: contractId
+      - name: contract
         in: path
         required: true
         schema:
           type: integer
+        description: Идентификатор контракта
+        example: 15
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 15
+        description: Количество элементов на странице
+        example: 20
     responses:
-      '200':
-        description: OK
+      "200":
+        description: Список дополнительных соглашений успешно получен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SupplementaryAgreementCollection.yaml'
+            example:
+              data:
+                - id: 1
+                  contract_id: 15
+                  number: "ДС-1"
+                  agreement_date: "2024-02-15"
+                  change_amount: 50000.00
+                  subject_changes: 
+                    - "Увеличение объема работ по отделке"
+                    - "Изменение сроков выполнения работ"
+                  created_at: "2024-02-15T14:30:00Z"
+                  updated_at: "2024-02-15T14:30:00Z"
+                - id: 2
+                  contract_id: 15
+                  number: "ДС-2"
+                  agreement_date: "2024-03-01"
+                  change_amount: -10000.00
+                  subject_changes: 
+                    - "Корректировка объема работ"
+                  created_at: "2024-03-01T16:45:00Z"
+                  updated_at: "2024-03-01T16:45:00Z"
+              links:
+                first: "http://localhost/api/v1/admin/contracts/15/agreements?page=1"
+                last: "http://localhost/api/v1/admin/contracts/15/agreements?page=1"
+                prev: null
+                next: null
+              meta:
+                current_page: 1
+                from: 1
+                last_page: 1
+                path: "http://localhost/api/v1/admin/contracts/15/agreements"
+                per_page: 15
+                to: 2
+                total: 2
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Контракт не найден
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SupplementaryAgreementErrorResponse.yaml'
+            example:
+              message: "Contract not found"
+
+/agreements:
+  post:
+    tags: [Supplementary Agreements]
+    summary: Создать дополнительное соглашение
+    description: |
+      Создает новое дополнительное соглашение к указанному контракту.
+      
+      **Особенности:**
+      - Автоматическая проверка существования и принадлежности контракта к организации
+      - Валидация уникальности номера соглашения в рамках контракта
+      - Поддержка как положительных, так и отрицательных изменений суммы
+      - Структурированное хранение изменений в массиве subject_changes
+      - Soft deletes для возможности восстановления
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/SupplementaryAgreementCreateRequest.yaml'
+          example:
+            contract_id: 15
+            number: "ДС-1"
+            agreement_date: "2024-02-15"
+            change_amount: 50000.00
+            subject_changes: 
+              - "Увеличение объема работ по отделке"
+              - "Изменение сроков выполнения работ"
+              - "Корректировка материалов"
+    responses:
+      "201":
+        description: Дополнительное соглашение успешно создано
         content:
           application/json:
             schema:
               type: object
               properties:
-                data:
+                id:
+                  type: integer
+                  example: 1
+                contract_id:
+                  type: integer
+                  example: 15
+                number:
+                  type: string
+                  example: "ДС-1"
+                agreement_date:
+                  type: string
+                  format: date
+                  example: "2024-02-15"
+                change_amount:
+                  type: number
+                  format: decimal
+                  example: 50000.00
+                subject_changes:
                   type: array
                   items:
-                    $ref: '../components/schemas/SupplementaryAgreement.yaml'
-
-/agreements:
-  post:
-    tags: [Agreements]
-    summary: Создать доп. соглашение
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/SupplementaryAgreement.yaml'
-    responses:
-      '201':
-        description: Created
+                    type: string
+                  example: 
+                    - "Увеличение объема работ по отделке"
+                    - "Изменение сроков выполнения работ"
+                    - "Корректировка материалов"
+                created_at:
+                  type: string
+                  format: date-time
+                  example: "2024-02-15T14:30:00Z"
+                updated_at:
+                  type: string
+                  format: date-time
+                  example: "2024-02-15T14:30:00Z"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "422":
+        description: Ошибка валидации данных
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/SupplementaryAgreement.yaml'
-  get:
-    tags: [Agreements]
-    summary: Пагинированный список доп. соглашений (фильтры через query)
-    responses:
-      '200':
-        description: OK
+              $ref: '../components/schemas/SupplementaryAgreementErrorResponse.yaml'
+            example:
+              message: "Validation failed"
+              errors:
+                contract_id: ["The selected contract id is invalid."]
+                number: ["The number field is required."]
+                subject_changes: ["The subject changes field is required."]
 
-/agreements/{agreementId}:
+/agreements/{agreement}:
   get:
-    tags: [Agreements]
-    summary: Получить соглашение
+    tags: [Supplementary Agreements]
+    summary: Получить информацию о дополнительном соглашении
+    description: |
+      Возвращает детальную информацию о конкретном дополнительном соглашении.
+      
+      **Особенности:**
+      - Автоматическая проверка принадлежности к организации через контракт
+      - Возвращает полную информацию включая все изменения
+      - Поддержка soft deletes
     parameters:
-      - name: agreementId
+      - name: agreement
         in: path
         required: true
         schema:
           type: integer
+        description: Идентификатор дополнительного соглашения
+        example: 1
     responses:
-      '200':
-        description: OK
+      "200":
+        description: Информация о дополнительном соглашении успешно получена
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/SupplementaryAgreement.yaml'
+              type: object
+              properties:
+                id:
+                  type: integer
+                  example: 1
+                contract_id:
+                  type: integer
+                  example: 15
+                number:
+                  type: string
+                  example: "ДС-1"
+                agreement_date:
+                  type: string
+                  format: date
+                  example: "2024-02-15"
+                change_amount:
+                  type: number
+                  format: decimal
+                  example: 50000.00
+                subject_changes:
+                  type: array
+                  items:
+                    type: string
+                  example: 
+                    - "Увеличение объема работ по отделке"
+                    - "Изменение сроков выполнения работ"
+                    - "Корректировка материалов"
+                created_at:
+                  type: string
+                  format: date-time
+                  example: "2024-02-15T14:30:00Z"
+                updated_at:
+                  type: string
+                  format: date-time
+                  example: "2024-02-15T14:30:00Z"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Дополнительное соглашение не найдено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SupplementaryAgreementErrorResponse.yaml'
+            example:
+              message: "Not found"
   put:
-    tags: [Agreements]
-    summary: Обновить соглашение
+    tags: [Supplementary Agreements]
+    summary: Обновить дополнительное соглашение
+    description: |
+      Обновляет существующее дополнительное соглашение.
+      
+      **Особенности:**
+      - Все поля необязательные - обновляются только переданные поля
+      - contract_id не может быть изменен (установлен при создании)
+      - Автоматическая проверка принадлежности к организации
+      - Сохранение истории изменений в updated_at
     parameters:
-      - name: agreementId
+      - name: agreement
         in: path
         required: true
         schema:
           type: integer
+        description: Идентификатор дополнительного соглашения
+        example: 1
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/SupplementaryAgreement.yaml'
+            $ref: '../components/schemas/SupplementaryAgreementUpdateRequest.yaml'
+          example:
+            number: "ДС-1/И"
+            change_amount: 75000.00
+            subject_changes: 
+              - "Увеличение объема работ по отделке"
+              - "Изменение сроков выполнения работ"
+              - "Корректировка материалов"
+              - "Дополнительные работы по благоустройству"
     responses:
-      '200': { description: Updated }
+      "200":
+        description: Дополнительное соглашение успешно обновлено
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id:
+                  type: integer
+                  example: 1
+                contract_id:
+                  type: integer
+                  example: 15
+                number:
+                  type: string
+                  example: "ДС-1/И"
+                agreement_date:
+                  type: string
+                  format: date
+                  example: "2024-02-15"
+                change_amount:
+                  type: number
+                  format: decimal
+                  example: 75000.00
+                subject_changes:
+                  type: array
+                  items:
+                    type: string
+                  example: 
+                    - "Увеличение объема работ по отделке"
+                    - "Изменение сроков выполнения работ"
+                    - "Корректировка материалов"
+                    - "Дополнительные работы по благоустройству"
+                created_at:
+                  type: string
+                  format: date-time
+                  example: "2024-02-15T14:30:00Z"
+                updated_at:
+                  type: string
+                  format: date-time
+                  example: "2024-02-16T10:15:00Z"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Дополнительное соглашение не найдено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SupplementaryAgreementErrorResponse.yaml'
+            example:
+              message: "Not found"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SupplementaryAgreementErrorResponse.yaml'
+            example:
+              message: "Validation failed"
+              errors:
+                number: ["The number field must not exceed 255 characters."]
   delete:
-    tags: [Agreements]
-    summary: Удалить соглашение
+    tags: [Supplementary Agreements]
+    summary: Удалить дополнительное соглашение
+    description: |
+      Удаляет дополнительное соглашение (soft delete).
+      
+      **Особенности:**
+      - Использует soft deletes для возможности восстановления
+      - Автоматическая проверка принадлежности к организации
+      - Операция обратима через базу данных
+      - Не влияет на связанные данные контракта
     parameters:
-      - name: agreementId
+      - name: agreement
         in: path
         required: true
         schema:
           type: integer
+        description: Идентификатор дополнительного соглашения
+        example: 1
     responses:
-      '204': { description: Deleted } 
+      "204":
+        description: Дополнительное соглашение успешно удалено (нет содержимого в ответе)
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Дополнительное соглашение не найдено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SupplementaryAgreementErrorResponse.yaml'
+            example:
+              message: "Not found"

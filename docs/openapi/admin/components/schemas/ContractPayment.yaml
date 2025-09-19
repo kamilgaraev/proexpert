@@ -1,0 +1,59 @@
+type: object
+description: Платеж по контракту с полной информацией.
+properties:
+  id:
+    type: integer
+    description: Уникальный идентификатор платежа
+    example: 1
+  contract_id:
+    type: integer
+    description: Идентификатор контракта, к которому относится платеж
+    example: 15
+  payment_date:
+    type: string
+    format: date
+    description: Дата платежа
+    example: "2024-01-15"
+  amount:
+    type: number
+    format: decimal
+    description: Сумма платежа в рублях
+    example: 150000.00
+  payment_type:
+    type: string
+    enum: ["advance", "fact_payment", "deferred_payment", "other"]
+    description: Тип платежа
+    example: "advance"
+  payment_type_label:
+    type: string
+    description: Читаемое название типа платежа
+    example: "Авансовый платеж"
+  reference_document_number:
+    type: string
+    nullable: true
+    description: Номер документа-основания
+    example: "СЧ-2024-001"
+  description:
+    type: string
+    nullable: true
+    description: Описание платежа
+    example: "Авансовый платеж за январь по договору на общестроительные работы"
+  created_at:
+    type: string
+    format: date-time
+    description: Дата и время создания записи о платеже
+    example: "2024-01-15T10:30:00Z"
+  updated_at:
+    type: string
+    format: date-time
+    description: Дата и время последнего обновления записи
+    example: "2024-01-16T14:20:00Z"
+required:
+  - id
+  - contract_id
+  - payment_date
+  - amount
+  - payment_type
+  - payment_type_label
+  - created_at
+  - updated_at

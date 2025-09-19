@@ -1,0 +1,11 @@
+type: object
+description: Ответ при операциях с дополнительными соглашениями.
+properties:
+  data:
+    $ref: './SupplementaryAgreement.yaml'
+    description: Данные дополнительного соглашения
+  message:
+    type: string
+    nullable: true
+    description: Сообщение о результате операции
+    example: "Supplementary agreement created successfully"

@@ -1,0 +1,28 @@
+type: object
+description: Запрос для обновления дополнительного соглашения. Все поля необязательные.
+properties:
+  number:
+    type: string
+    maxLength: 255
+    description: Номер дополнительного соглашения
+    example: "ДС-1/И"
+  agreement_date:
+    type: string
+    format: date
+    description: Дата подписания дополнительного соглашения в формате YYYY-MM-DD
+    example: "2024-02-20"
+  change_amount:
+    type: number
+    format: decimal
+    description: Изменение суммы контракта (может быть положительным или отрицательным)
+    example: 75000.00
+  subject_changes:
+    type: array
+    items:
+      type: string
+    description: Массив изменений предмета договора или условий контракта
+    example: 
+      - "Увеличение объема работ по отделке"
+      - "Изменение сроков выполнения работ"
+      - "Корректировка материалов"
+      - "Дополнительные работы по благоустройству"

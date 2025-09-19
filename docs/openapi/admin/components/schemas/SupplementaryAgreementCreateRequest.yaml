@@ -1,22 +1,19 @@
 type: object
-description: Дополнительное соглашение к контракту с полной информацией.
+description: Запрос для создания дополнительного соглашения к контракту.
 properties:
-  id:
-    type: integer
-    description: Уникальный идентификатор дополнительного соглашения
-    example: 1
   contract_id:
     type: integer
-    description: Идентификатор контракта, к которому относится соглашение
+    description: Идентификатор контракта, к которому создается дополнительное соглашение
     example: 15
   number:
     type: string
+    maxLength: 255
     description: Номер дополнительного соглашения
     example: "ДС-1"
   agreement_date:
     type: string
     format: date
-    description: Дата подписания дополнительного соглашения
+    description: Дата подписания дополнительного соглашения в формате YYYY-MM-DD
     example: "2024-02-15"
   change_amount:
     type: number
@@ -32,22 +29,9 @@ properties:
       - "Увеличение объема работ по отделке"
       - "Изменение сроков выполнения работ"
       - "Корректировка материалов"
-  created_at:
-    type: string
-    format: date-time
-    description: Дата и время создания записи о соглашении
-    example: "2024-02-15T14:30:00Z"
-  updated_at:
-    type: string
-    format: date-time
-    description: Дата и время последнего обновления записи
-    example: "2024-02-16T10:15:00Z"
 required:
-  - id
   - contract_id
   - number
   - agreement_date
   - change_amount
   - subject_changes
-  - created_at
-  - updated_at

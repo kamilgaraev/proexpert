@@ -1,0 +1,15 @@
+type: object
+description: Запрос для загрузки файла в личные файлы пользователя.
+properties:
+  file:
+    type: string
+    format: binary
+    description: Файл для загрузки (максимум 10 MB)
+    example: "document.pdf"
+  parent_path:
+    type: string
+    nullable: true
+    description: Путь к родительской папке (относительно корня пользователя)
+    example: "Документы/Важные"
+required:
+  - file

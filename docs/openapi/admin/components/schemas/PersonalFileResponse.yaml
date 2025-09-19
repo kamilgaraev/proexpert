@@ -1,0 +1,7 @@
+type: object
+description: Ответ операций с личными файлами.
+properties:
+  message:
+    type: string
+    description: Сообщение о результате операции
+    example: "File uploaded."

@@ -1,3 +1,28 @@
-type: array
-items:
-  $ref: './ContractPaymentResponse.yaml' 
+type: object
+description: Коллекция платежей по контракту.
+properties:
+  data:
+    type: array
+    items:
+      $ref: './ContractPayment.yaml'
+    description: Массив платежей по контракту
+  meta:
+    type: object
+    nullable: true
+    description: Метаданные коллекции (если есть пагинация или другая информация)
+    properties:
+      total_paid_amount:
+        type: number
+        format: decimal
+        description: Общая сумма всех платежей по контракту
+        example: 500000.00
+      advance_amount:
+        type: number
+        format: decimal
+        description: Сумма авансовых платежей
+        example: 150000.00
+      fact_payment_amount:
+        type: number
+        format: decimal
+        description: Сумма платежей по факту
+        example: 350000.00

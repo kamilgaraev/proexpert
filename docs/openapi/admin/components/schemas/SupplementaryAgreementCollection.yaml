@@ -1,0 +1,58 @@
+type: object
+description: Пагинированная коллекция дополнительных соглашений.
+properties:
+  data:
+    type: array
+    items:
+      $ref: './SupplementaryAgreement.yaml'
+    description: Массив дополнительных соглашений
+  links:
+    type: object
+    properties:
+      first:
+        type: string
+        format: uri
+        nullable: true
+        example: "http://localhost/api/v1/admin/agreements?page=1"
+      last:
+        type: string
+        format: uri  
+        nullable: true
+        example: "http://localhost/api/v1/admin/agreements?page=3"
+      prev:
+        type: string
+        format: uri
+        nullable: true
+        example: null
+      next:
+        type: string
+        format: uri
+        nullable: true
+        example: "http://localhost/api/v1/admin/agreements?page=2"
+  meta:
+    type: object
+    properties:
+      current_page:
+        type: integer
+        example: 1
+      from:
+        type: integer
+        nullable: true
+        example: 1
+      last_page:
+        type: integer
+        example: 3
+      path:
+        type: string
+        format: uri
+        example: "http://localhost/api/v1/admin/agreements"
+      per_page:
+        type: integer
+        example: 15
+      to:
+        type: integer
+        nullable: true
+        example: 15
+      total:
+        type: integer
+        example: 42

@@ -1,19 +1,35 @@
 type: object
+description: Файл или папка в личном хранилище пользователя.
 properties:
   id:
     type: string
-    description: ULID идентификатор
+    description: Уникальный идентификатор файла/папки (ULID)
+    example: "01JFJK8HDNPZ8QAJ2YQF6SW6JH"
   path:
     type: string
-    description: Полный ключ объекта в S3
+    description: Полный путь к файлу/папке в хранилище (включает user_id в начале)
+    example: "123/Документы/document.pdf"
   filename:
     type: string
+    description: Имя файла или папки
+    example: "document.pdf"
   size:
     type: integer
-    description: Размер файла (0 для папок)
+    description: Размер файла в байтах (0 для папок)
+    example: 1048576
   is_folder:
     type: boolean
+    description: Является ли элемент папкой
+    example: false
   download_url:
     type: string
     format: uri
-required: [id, filename, is_folder] 
+    nullable: true
+    description: Временная ссылка для скачивания файла (null для папок, действует 30 минут)
+    example: "https://storage.yandexcloud.net/bucket/123/document.pdf?X-Amz-Algorithm=..."
+required:
+  - id
+  - path
+  - filename
+  - size
+  - is_folder

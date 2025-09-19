@@ -1,0 +1,17 @@
+type: object
+description: Ответ об ошибке при работе с файлами отчетов.
+properties:
+  message:
+    type: string
+    description: Описание ошибки
+    example: "File not found."
+  errors:
+    type: object
+    nullable: true
+    description: Детали ошибок валидации (для статуса 422)
+    additionalProperties: 
+      type: array
+      items:
+        type: string
+    example:
+      name: ["The name field is required."]

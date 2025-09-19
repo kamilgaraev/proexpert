@@ -1,9 +1,10 @@
-allOf:
-  - $ref: './ContractPaymentCreateRequest.yaml'
-  - type: object
-    properties:
-      id:
-        type: integer
-      contract_id:
-        type: integer
-required: [id, contract_id] 
+type: object
+description: Ответ при операциях с платежами по контракту.
+properties:
+  data:
+    $ref: './ContractPayment.yaml'
+    description: Данные платежа
+  message:
+    type: string
+    description: Сообщение о результате операции
+    example: "Payment created successfully"

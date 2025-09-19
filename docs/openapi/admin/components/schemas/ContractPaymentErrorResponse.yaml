@@ -1,0 +1,23 @@
+type: object
+description: Ответ об ошибке при работе с платежами по контракту.
+properties:
+  message:
+    type: string
+    description: Описание ошибки
+    example: "Failed to create payment"
+  error:
+    type: string
+    nullable: true
+    description: Техническая информация об ошибке
+    example: "Contract not found or does not belong to the organization."
+  errors:
+    type: object
+    nullable: true
+    description: Ошибки валидации (для статуса 422)
+    additionalProperties:
+      type: array
+      items:
+        type: string
+    example:
+      amount: ["The amount field is required.", "The amount must be greater than 0."]
+      payment_type: ["The selected payment type is invalid."]

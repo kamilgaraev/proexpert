@@ -1,51 +1,332 @@
-/payments/{payment}:
+/contracts/{contract}/payments:
   get:
-    tags: [Payments]
-    summary: Получить платеж
+    tags: [Contract Payments]
+    summary: Получить список платежей по контракту
+    description: |
+      Возвращает список всех платежей, связанных с указанным контрактом.
+      Платежи сортируются по дате платежа в убывающем порядке (новые сначала).
+      
+      **Особенности:**
+      - Доступны только платежи контрактов текущей организации
+      - Поддерживается фильтрация по типу платежа через query параметры
+      - Авансовые платежи влияют на поле actual_advance_amount контракта
+      - Возвращается дополнительная мета-информация о суммах
     parameters:
-      - in: path
-        name: payment
+      - name: contract
+        in: path
         required: true
         schema:
           type: integer
+        description: Идентификатор контракта
+        example: 15
+      - name: payment_type
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["advance", "fact_payment", "deferred_payment", "other"]
+        description: Фильтр по типу платежа
+        example: "advance"
     responses:
       "200":
-        description: Платеж
+        description: Список платежей успешно получен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ContractPaymentResponse.yaml'
-  put:
-    tags: [Payments]
-    summary: Обновить платеж
+              $ref: '../components/schemas/ContractPaymentCollection.yaml'
+            example:
+              data:
+                - id: 1
+                  contract_id: 15
+                  payment_date: "2024-01-15"
+                  amount: 150000.00
+                  payment_type: "advance"
+                  payment_type_label: "Авансовый платеж"
+                  reference_document_number: "СЧ-2024-001"
+                  description: "Авансовый платеж за январь"
+                  created_at: "2024-01-15T10:30:00Z"
+                  updated_at: "2024-01-15T10:30:00Z"
+                - id: 2
+                  contract_id: 15
+                  payment_date: "2024-02-01"
+                  amount: 350000.00
+                  payment_type: "fact_payment"
+                  payment_type_label: "Оплата по факту"
+                  reference_document_number: "АКТ-2024-001"
+                  description: "Оплата по акту выполненных работ"
+                  created_at: "2024-02-01T16:45:00Z"
+                  updated_at: "2024-02-01T16:45:00Z"
+              meta:
+                total_paid_amount: 500000.00
+                advance_amount: 150000.00
+                fact_payment_amount: 350000.00
+      "400":
+        description: Ошибка при получении платежей
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentErrorResponse.yaml'
+            example:
+              message: "Failed to retrieve payments"
+              error: "Contract not found or does not belong to the organization."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+  post:
+    tags: [Contract Payments]
+    summary: Создать платеж по контракту
+    description: |
+      Создает новый платеж, связанный с указанным контрактом.
+      
+      **Особенности:**
+      - Автоматически привязывается к контракту текущей организации
+      - При создании авансового платежа пересчитывается actual_advance_amount контракта
+      - Валидируется принадлежность контракта к текущей организации
+      - Сумма платежа не может быть отрицательной
     parameters:
-      - in: path
-        name: payment
+      - name: contract
+        in: path
         required: true
         schema:
           type: integer
+        description: Идентификатор контракта
+        example: 15
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/ContractPaymentCreateRequest.yaml'
+          example:
+            payment_date: "2024-01-15"
+            amount: 150000.00
+            payment_type: "advance"
+            reference_document_number: "СЧ-2024-001"
+            description: "Авансовый платеж за январь по договору на общестроительные работы"
     responses:
-      "200":
-        description: Обновлено
+      "201":
+        description: Платеж успешно создан
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ContractPaymentResponse.yaml'
-  delete:
-    tags: [Payments]
-    summary: Удалить платеж
+            example:
+              data:
+                id: 1
+                contract_id: 15
+                payment_date: "2024-01-15"
+                amount: 150000.00
+                payment_type: "advance"
+                payment_type_label: "Авансовый платеж"
+                reference_document_number: "СЧ-2024-001"
+                description: "Авансовый платеж за январь по договору на общестроительные работы"
+                created_at: "2024-01-15T10:30:00Z"
+                updated_at: "2024-01-15T10:30:00Z"
+              message: "Payment created successfully"
+      "400":
+        description: Ошибка при создании платежа
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentErrorResponse.yaml'
+            example:
+              message: "Failed to create payment"
+              error: "Contract not found or does not belong to the organization."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentErrorResponse.yaml'
+            example:
+              message: "Validation failed"
+              errors:
+                amount: ["The amount field is required.", "The amount must be greater than 0."]
+                payment_type: ["The selected payment type is invalid."]
+
+/payments/{payment}:
+  get:
+    tags: [Contract Payments]
+    summary: Получить информацию о платеже
+    description: |
+      Возвращает детальную информацию о конкретном платеже по его идентификатору.
+      
+      **Особенности:**
+      - Shallow routing - не требует указания contract_id в пути
+      - Автоматическая проверка принадлежности к организации
+      - Возвращает полную информацию о платеже
     parameters:
-      - in: path
-        name: payment
+      - name: payment
+        in: path
         required: true
         schema:
           type: integer
+        description: Идентификатор платежа
+        example: 1
+    responses:
+      "200":
+        description: Информация о платеже успешно получена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentResponse.yaml'
+            example:
+              data:
+                id: 1
+                contract_id: 15
+                payment_date: "2024-01-15"
+                amount: 150000.00
+                payment_type: "advance"
+                payment_type_label: "Авансовый платеж"
+                reference_document_number: "СЧ-2024-001"
+                description: "Авансовый платеж за январь по договору на общестроительные работы"
+                created_at: "2024-01-15T10:30:00Z"
+                updated_at: "2024-01-15T10:30:00Z"
+      "400":
+        description: Ошибка при получении платежа
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentErrorResponse.yaml'
+            example:
+              message: "Failed to retrieve payment"
+              error: "Payment not found or does not belong to the organization."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Платеж не найден
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentErrorResponse.yaml'
+            example:
+              message: "Payment not found"
+  put:
+    tags: [Contract Payments]
+    summary: Обновить платеж
+    description: |
+      Обновляет существующий платеж по его идентификатору.
+      
+      **Особенности:**
+      - Shallow routing - не требует указания contract_id в пути
+      - При изменении типа платежа пересчитывается actual_advance_amount контракта
+      - Все поля необязательные - обновляются только переданные поля
+      - Автоматическая проверка принадлежности к организации
+    parameters:
+      - name: payment
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Идентификатор платежа
+        example: 1
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ContractPaymentUpdateRequest.yaml'
+          example:
+            amount: 175000.00
+            payment_type: "fact_payment"
+            description: "Изменен тип платежа на оплату по факту"
+    responses:
+      "200":
+        description: Платеж успешно обновлен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentResponse.yaml'
+            example:
+              data:
+                id: 1
+                contract_id: 15
+                payment_date: "2024-01-15"
+                amount: 175000.00
+                payment_type: "fact_payment"
+                payment_type_label: "Оплата по факту"
+                reference_document_number: "СЧ-2024-001"
+                description: "Изменен тип платежа на оплату по факту"
+                created_at: "2024-01-15T10:30:00Z"
+                updated_at: "2024-01-16T14:20:00Z"
+      "400":
+        description: Ошибка при обновлении платежа
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentErrorResponse.yaml'
+            example:
+              message: "Failed to update payment"
+              error: "Payment not found or does not belong to the specified contract."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Платеж не найден
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentErrorResponse.yaml'
+            example:
+              message: "Payment not found"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentErrorResponse.yaml'
+            example:
+              message: "Validation failed"
+              errors:
+                amount: ["The amount must be greater than 0."]
+  delete:
+    tags: [Contract Payments]
+    summary: Удалить платеж
+    description: |
+      Удаляет платеж по его идентификатору.
+      
+      **Особенности:**
+      - Shallow routing - не требует указания contract_id в пути
+      - При удалении авансового платежа пересчитывается actual_advance_amount контракта
+      - Операция необратима - восстановление платежа невозможно
+      - Автоматическая проверка принадлежности к организации
+    parameters:
+      - name: payment
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: Идентификатор платежа
+        example: 1
     responses:
       "204":
-        description: Удалено 
+        description: Платеж успешно удален (нет содержимого в ответе)
+      "400":
+        description: Ошибка при удалении платежа
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentErrorResponse.yaml'
+            example:
+              message: "Failed to delete payment"
+              error: "Payment not found or does not belong to the specified contract."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Платеж не найден
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ContractPaymentErrorResponse.yaml'
+            example:
+              message: "Payment not found"

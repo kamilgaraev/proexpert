@@ -1,0 +1,24 @@
+type: object
+description: Ответ об ошибке при работе с дополнительными соглашениями.
+properties:
+  message:
+    type: string
+    description: Описание ошибки
+    example: "Not found"
+  error:
+    type: string
+    nullable: true
+    description: Техническая информация об ошибке
+    example: "Supplementary agreement not found for the current organization."
+  errors:
+    type: object
+    nullable: true
+    description: Ошибки валидации (для статуса 422)
+    additionalProperties:
+      type: array
+      items:
+        type: string
+    example:
+      contract_id: ["The selected contract id is invalid."]
+      number: ["The number field is required."]
+      subject_changes: ["The subject changes field is required."]

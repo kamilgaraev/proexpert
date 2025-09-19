@@ -1,0 +1,52 @@
+type: object
+description: Файл отчета с метаданными и ссылкой для скачивания.
+properties:
+  id:
+    type: string
+    description: Закодированный идентификатор файла (base64url от path)
+    example: "cmVwb3J0cy9tYXRlcmlhbC11c2FnZS8yMDI0LzAxLzE1L3JlcG9ydC54bHN4"
+  path:
+    type: string
+    description: Путь к файлу в S3 хранилище
+    example: "reports/material-usage/2024/01/15/report.xlsx"
+  filename:
+    type: string
+    description: Оригинальное имя файла
+    example: "material_usage_report_20240115.xlsx"
+  name:
+    type: string
+    nullable: true
+    description: Читаемое название файла (если установлено пользователем)
+    example: "Отчет по материалам за январь"
+  type:
+    type: string
+    description: Тип отчета (извлекается из пути до первого слеша)
+    example: "reports"
+  size:
+    type: integer
+    description: Размер файла в байтах
+    example: 2048576
+  created_at:
+    type: string
+    format: date-time
+    description: Дата и время создания файла
+    example: "2024-01-15T09:30:00Z"
+  expires_at:
+    type: string
+    format: date-time
+    nullable: true
+    description: Дата истечения срока хранения файла (обычно +1 год)
+    example: "2025-01-15T09:30:00Z"
+  download_url:
+    type: string
+    format: uri
+    description: Временная ссылка для скачивания файла (действует 5 минут)
+    example: "https://storage.yandexcloud.net/bucket/reports/material-usage/report.xlsx?X-Amz-Algorithm=..."
+required:
+  - id
+  - path
+  - filename
+  - type
+  - size
+  - created_at
+  - download_url

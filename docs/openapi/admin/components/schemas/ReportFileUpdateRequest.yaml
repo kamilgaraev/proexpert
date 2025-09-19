@@ -1,0 +1,10 @@
+type: object
+description: Запрос для обновления читаемого названия файла отчета.
+properties:
+  name:
+    type: string
+    maxLength: 255
+    description: Новое читаемое название файла
+    example: "Отчет по материалам за январь 2024"
+required:
+  - name

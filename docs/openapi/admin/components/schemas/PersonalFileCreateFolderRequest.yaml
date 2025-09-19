@@ -1,0 +1,15 @@
+type: object
+description: Запрос для создания папки в личных файлах пользователя.
+properties:
+  name:
+    type: string
+    maxLength: 255
+    description: Название папки (без слешей в начале и конце)
+    example: "Документы проекта"
+  parent_path:
+    type: string
+    nullable: true
+    description: Путь к родительской папке (относительно корня пользователя)
+    example: "Проекты/2024"
+required:
+  - name

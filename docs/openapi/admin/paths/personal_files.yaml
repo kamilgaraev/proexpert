@@ -1,114 +1,233 @@
 /personal-files:
   get:
-    tags: [PersonalFiles]
-    summary: Список файлов и папок текущего пользователя
-    security:
-      - bearerAuth: []
+    tags: [Personal Files]
+    summary: Получить список файлов и папок пользователя
+    description: |
+      Возвращает список файлов и папок в личном хранилище текущего пользователя.
+      Поддерживает навигацию по папкам через параметр path.
+      Для файлов генерируются временные ссылки для скачивания (действуют 30 минут).
+      
+      **Особенности:**
+      - Файлы организованы по структуре: {user_id}/{path}
+      - Папки сортируются первыми, затем файлы (по алфавиту)
+      - Временные ссылки создаются через S3 presigned URLs
+      - Доступ только к собственным файлам пользователя
     parameters:
-      - in: query
-        name: path
+      - name: path
+        in: query
+        required: false
         schema:
           type: string
-        description: Префикс пути (папка). Пусто = корень.
+          default: ""
+        description: Путь к папке относительно корня пользователя (пустая строка = корень)
+        examples:
+          root:
+            summary: "Корневая папка"
+            value: ""
+          subfolder:
+            summary: "Подпапка"
+            value: "Документы/Проекты"
     responses:
       "200":
-        description: Список файлов/папок
+        description: Список файлов и папок успешно получен
         content:
           application/json:
             schema:
               type: array
               items:
                 $ref: '../components/schemas/PersonalFile.yaml'
+            example:
+              - id: "01JFJK8HDNPZ8QAJ2YQF6SW6JH"
+                path: "123/Документы/"
+                filename: "Документы"
+                size: 0
+                is_folder: true
+                download_url: null
+              - id: "01JFJK8HDNPZ8QAJ2YQF6SW6JI"
+                path: "123/report.pdf"
+                filename: "report.pdf"
+                size: 2048576
+                is_folder: false
+                download_url: "https://storage.yandexcloud.net/bucket/123/report.pdf?X-Amz-Algorithm=..."
+              - id: "01JFJK8HDNPZ8QAJ2YQF6SW6JJ"
+                path: "123/photo.jpg"
+                filename: "photo.jpg"
+                size: 1024000
+                is_folder: false
+                download_url: "https://storage.yandexcloud.net/bucket/123/photo.jpg?X-Amz-Algorithm=..."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
 
 /personal-files/folder:
   post:
-    tags: [PersonalFiles]
-    summary: Создать папку
-    security:
-      - bearerAuth: []
+    tags: [Personal Files]
+    summary: Создать папку в личных файлах
+    description: |
+      Создает новую папку в личном хранилище пользователя.
+      Папка создается как объект нулевого размера в S3 хранилище.
+      
+      **Особенности:**
+      - Путь формируется как: {user_id}/{parent_path}/{name}/
+      - Проверяется уникальность пути папки
+      - Создается запись в базе данных с is_folder = true
+      - В S3 создается объект-заглушка для обозначения папки
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            type: object
-            properties:
-              name:
-                type: string
-              parent_path:
-                type: string
-                description: Префикс родительской папки
-            required: [name]
+            $ref: '../components/schemas/PersonalFileCreateFolderRequest.yaml'
+          examples:
+            root_folder:
+              summary: "Папка в корне"
+              value:
+                name: "Мои документы"
+            nested_folder:
+              summary: "Вложенная папка"
+              value:
+                name: "2024"
+                parent_path: "Проекты"
     responses:
       "200":
-        description: Папка создана
+        description: Папка успешно создана
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              $ref: '../components/schemas/PersonalFileResponse.yaml'
+            example:
+              message: "Folder created."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
       "409":
-        description: Уже существует
+        description: Папка уже существует
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              $ref: '../components/schemas/PersonalFileErrorResponse.yaml'
+            example:
+              message: "Folder already exists."
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/PersonalFileErrorResponse.yaml'
+            example:
+              errors:
+                name: ["The name field is required."]
 
 /personal-files/upload:
   post:
-    tags: [PersonalFiles]
-    summary: Загрузить файл
-    security:
-      - bearerAuth: []
+    tags: [Personal Files]
+    summary: Загрузить файл в личные файлы
+    description: |
+      Загружает файл в личное хранилище пользователя.
+      Поддерживает файлы до 10 MB через multipart/form-data.
+      
+      **Особенности:**
+      - Максимальный размер файла: 10 MB
+      - Путь формируется как: {user_id}/{parent_path}/{original_filename}
+      - Проверяется уникальность пути файла
+      - Файл загружается в S3 хранилище организации
+      - Создается запись в базе данных с метаданными файла
     requestBody:
       required: true
       content:
         multipart/form-data:
           schema:
-            type: object
-            properties:
-              file:
-                type: string
-                format: binary
-              parent_path:
-                type: string
-            required: [file]
+            $ref: '../components/schemas/PersonalFileUploadRequest.yaml'
+          examples:
+            root_upload:
+              summary: "Загрузка в корень"
+              value:
+                file: "(binary file data)"
+            folder_upload:
+              summary: "Загрузка в папку"
+              value:
+                file: "(binary file data)"
+                parent_path: "Документы/Важные"
     responses:
       "200":
-        description: Файл загружен
+        description: Файл успешно загружен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              $ref: '../components/schemas/PersonalFileResponse.yaml'
+            example:
+              message: "File uploaded."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
       "409":
-        description: Уже существует
+        description: Файл уже существует
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              $ref: '../components/schemas/PersonalFileErrorResponse.yaml'
+            example:
+              message: "File already exists."
+      "422":
+        description: Ошибка валидации файла
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/PersonalFileErrorResponse.yaml'
+            examples:
+              missing_file:
+                summary: "Файл не предоставлен"
+                value:
+                  errors:
+                    file: ["The file field is required."]
+              file_too_large:
+                summary: "Файл слишком большой"
+                value:
+                  errors:
+                    file: ["The file may not be greater than 10240 kilobytes."]
 
 /personal-files/{id}:
   delete:
-    tags: [PersonalFiles]
-    summary: Удалить файл или папку (рекурсивно)
-    security:
-      - bearerAuth: []
+    tags: [Personal Files]
+    summary: Удалить файл или папку
+    description: |
+      Удаляет файл или папку из личного хранилища пользователя.
+      При удалении папки удаляются все вложенные файлы и подпапки.
+      
+      **Особенности:**
+      - Доступ только к собственным файлам пользователя
+      - При удалении папки рекурсивно удаляются все содержимое
+      - Файлы удаляются как из S3 хранилища, так и из базы данных
+      - Операция необратима
     parameters:
-      - in: path
-        name: id
+      - name: id
+        in: path
         required: true
         schema:
           type: string
-        description: ULID файла/папки
+        description: Уникальный идентификатор файла или папки (ULID)
+        example: "01JFJK8HDNPZ8QAJ2YQF6SW6JH"
     responses:
       "200":
-        description: Удалено
+        description: Файл или папка успешно удалены
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              $ref: '../components/schemas/PersonalFileResponse.yaml'
+            example:
+              message: "Deleted."
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
       "404":
-        description: Не найдено
+        description: Файл или папка не найдены
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              $ref: '../components/schemas/PersonalFileErrorResponse.yaml'
+            example:
+              message: "Not found."
