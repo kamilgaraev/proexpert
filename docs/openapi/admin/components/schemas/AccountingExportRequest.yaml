@@ -1,0 +1,15 @@
+type: object
+description: Запрос для экспорта транзакций в бухгалтерскую систему.
+properties:
+  start_date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата начала периода для экспорта (формат YYYY-MM-DD). Если не указана, используется 30 дней назад.
+    example: "2024-01-01"
+  end_date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата окончания периода для экспорта (формат YYYY-MM-DD). Если не указана, используется текущая дата.
+    example: "2024-12-31"

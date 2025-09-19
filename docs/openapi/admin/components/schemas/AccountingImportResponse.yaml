@@ -1,0 +1,45 @@
+type: object
+description: Ответ на запросы импорта данных из бухгалтерской системы.
+properties:
+  success:
+    type: boolean
+    description: Статус выполнения операции импорта
+    example: true
+  message:
+    type: string
+    description: Сообщение о результате операции
+    example: "Импорт пользователей завершен"
+  stats:
+    type: object
+    description: Статистика операции импорта
+    properties:
+      total:
+        type: integer
+        description: Общее количество записей для обработки
+        example: 25
+      created:
+        type: integer
+        description: Количество созданных записей
+        example: 5
+      updated:
+        type: integer
+        description: Количество обновленных записей
+        example: 18
+      skipped:
+        type: integer
+        description: Количество пропущенных записей (например, пользователи без аккаунтов в системе)
+        example: 2
+      errors:
+        type: integer
+        description: Количество записей с ошибками при обработке
+        example: 0
+    required:
+      - total
+      - created
+      - updated
+      - skipped
+      - errors
+required:
+  - success
+  - message
+  - stats

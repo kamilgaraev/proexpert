@@ -1,0 +1,35 @@
+type: object
+description: Ответ на запрос экспорта транзакций в бухгалтерскую систему.
+properties:
+  success:
+    type: boolean
+    description: Статус выполнения операции экспорта
+    example: true
+  message:
+    type: string
+    description: Сообщение о результате операции
+    example: "Экспорт транзакций завершен"
+  stats:
+    type: object
+    description: Статистика операции экспорта
+    properties:
+      total:
+        type: integer
+        description: Общее количество транзакций для экспорта
+        example: 15
+      exported:
+        type: integer
+        description: Количество успешно экспортированных транзакций
+        example: 14
+      errors:
+        type: integer
+        description: Количество транзакций с ошибками при экспорте
+        example: 1
+    required:
+      - total
+      - exported
+      - errors
+required:
+  - success
+  - message
+  - stats

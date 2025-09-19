@@ -1,0 +1,14 @@
+type: object
+description: Ответ об ошибке при работе с бухгалтерской интеграцией.
+properties:
+  success:
+    type: boolean
+    description: Статус операции (всегда false для ошибок)
+    example: false
+  message:
+    type: string
+    description: Описание ошибки
+    example: "Ошибка при импорте пользователей: Connection timeout"
+required:
+  - success
+  - message

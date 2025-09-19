@@ -87,7 +87,7 @@
           application/json:
             schema:
               type: object
-                  properties:
+              properties:
                 success:
                   type: boolean
                   example: false

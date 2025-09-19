@@ -1,0 +1,52 @@
+type: object
+description: Ответ с информацией о статусе синхронизации с бухгалтерской системой.
+properties:
+  success:
+    type: boolean
+    description: Статус проверки синхронизации
+    example: true
+  message:
+    type: string
+    description: Общее сообщение о состоянии синхронизации
+    example: "Синхронизация работает нормально"
+  last_sync:
+    type: object
+    description: Информация о последней синхронизации
+    properties:
+      timestamp:
+        type: string
+        format: date-time
+        description: Дата и время последней синхронизации
+        example: "2024-12-20 18:30:15"
+      status:
+        type: string
+        enum: ["completed", "in_progress", "failed"]
+        description: Статус последней синхронизации
+        example: "completed"
+      users_synced:
+        type: boolean
+        description: Статус синхронизации пользователей
+        example: true
+      projects_synced:
+        type: boolean
+        description: Статус синхронизации проектов
+        example: true
+      materials_synced:
+        type: boolean
+        description: Статус синхронизации материалов
+        example: true
+      transactions_synced:
+        type: boolean
+        description: Статус синхронизации транзакций
+        example: true
+    required:
+      - timestamp
+      - status
+      - users_synced
+      - projects_synced
+      - materials_synced
+      - transactions_synced
+required:
+  - success
+  - message
+  - last_sync

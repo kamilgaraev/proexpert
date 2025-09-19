@@ -1,103 +1,315 @@
 /accounting/import-users:
   post:
-    tags: [Accounting]
-    summary: Импорт пользователей из бухгалтерии
-    requestBody:
-      required: true
-      content:
-        multipart/form-data:
-          schema:
-            type: object
-            properties:
-              file:
-                type: string
-                format: binary
+    tags: [Accounting Integration]
+    summary: Импорт пользователей из бухгалтерской системы
+    description: |
+      Импортирует данные сотрудников из внешней бухгалтерской системы.
+      Обновляет существующих пользователей по external_code или employee_id.
+      Если пользователь не найден в системе, запись пропускается.
+      
+      **Поля обновления:**
+      - external_code - внешний код из бухгалтерской системы
+      - employee_id - табельный номер сотрудника  
+      - accounting_account - счет бухгалтерского учета
+      - accounting_data - дополнительные данные для интеграции
     responses:
       "200":
-        description: Импорт выполнен
+        description: Импорт пользователей успешно выполнен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              $ref: '../components/schemas/AccountingImportResponse.yaml'
+            example:
+              success: true
+              message: "Импорт пользователей завершен"
+              stats:
+                total: 25
+                created: 0
+                updated: 23
+                skipped: 2
+                errors: 0
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Organization ID is required"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "500":
+        description: Ошибка при импорте пользователей
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AccountingErrorResponse.yaml'
+            example:
+              success: false
+              message: "Ошибка при импорте пользователей: API endpoint not configured"
 
 /accounting/import-projects:
   post:
-    tags: [Accounting]
-    summary: Импорт проектов
-    requestBody:
-      required: true
-      content:
-        multipart/form-data:
-          schema:
-            type: object
-            properties:
-              file:
-                type: string
-                format: binary
+    tags: [Accounting Integration]
+    summary: Импорт проектов из бухгалтерской системы
+    description: |
+      Импортирует данные проектов из внешней бухгалтерской системы.
+      Создает новые проекты или обновляет существующие по external_code.
+      Автоматически импортирует и связывает категории затрат.
+      
+      **Поля создания/обновления:**
+      - external_code - внешний код проекта
+      - name - название проекта
+      - cost_category_id - связь с категорией затрат (автоматически создается)
+      - accounting_data - дополнительные данные
+      - use_in_accounting_reports - флаг использования в отчетах (устанавливается в true)
+      - status - статус проекта (для новых устанавливается 'active')
     responses:
       "200":
-        description: Импорт выполнен
+        description: Импорт проектов успешно выполнен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              $ref: '../components/schemas/AccountingImportResponse.yaml'
+            example:
+              success: true
+              message: "Импорт проектов завершен"
+              stats:
+                total: 12
+                created: 5
+                updated: 7
+                skipped: 0
+                errors: 0
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Organization ID is required"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "500":
+        description: Ошибка при импорте проектов
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AccountingErrorResponse.yaml'
+            example:
+              success: false
+              message: "Ошибка при импорте проектов: Invalid API response format"
 
 /accounting/import-materials:
   post:
-    tags: [Accounting]
-    summary: Импорт материалов
-    requestBody:
-      required: true
-      content:
-        multipart/form-data:
-          schema:
-            type: object
-            properties:
-              file:
-                type: string
-                format: binary
+    tags: [Accounting Integration]
+    summary: Импорт материалов из бухгалтерской системы
+    description: |
+      Импортирует данные материалов из внешней бухгалтерской системы.
+      Обновляет существующие материалы по external_code или sbis_nomenclature_code.
+      Если материал не найден в системе, запись пропускается.
+      
+      **Поддерживаемые системы:**
+      - Общая интеграция через external_code
+      - СБИС интеграция через sbis_nomenclature_code и sbis_unit_code
+      
+      **Поля обновления:**
+      - external_code - внешний код материала
+      - sbis_nomenclature_code - код номенклатуры СБИС
+      - sbis_unit_code - код единицы измерения СБИС
+      - accounting_account - счет бухгалтерского учета
+      - accounting_data - дополнительные данные
+      - use_in_accounting_reports - флаг использования в отчетах (устанавливается в true)
     responses:
       "200":
-        description: Импорт выполнен
+        description: Импорт материалов успешно выполнен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
+              $ref: '../components/schemas/AccountingImportResponse.yaml'
+            example:
+              success: true
+              message: "Импорт материалов завершен"
+              stats:
+                total: 150
+                created: 0
+                updated: 145
+                skipped: 5
+                errors: 0
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Organization ID is required"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "500":
+        description: Ошибка при импорте материалов
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AccountingErrorResponse.yaml'
+            example:
+              success: false
+              message: "Ошибка при импорте материалов: Database connection failed"
 
 /accounting/export-transactions:
   post:
-    tags: [Accounting]
-    summary: Экспорт транзакций подотчетных средств
+    tags: [Accounting Integration]
+    summary: Экспорт транзакций подотчетных средств в бухгалтерскую систему
+    description: |
+      Экспортирует утвержденные транзакции подотчетных средств во внешнюю бухгалтерскую систему.
+      Экспортируются только транзакции без external_code (еще не экспортированные) 
+      со статусом 'approved'.
+      
+      **Критерии экспорта:**
+      - reporting_status = 'approved'
+      - external_code = null (не экспортированные ранее)
+      - created_at в указанном периоде
+      
+      **Данные экспорта:**
+      - Информация о пользователе и его external_code
+      - Информация о проекте и его external_code
+      - Тип, сумма и описание транзакции
+      - Номер и дата документа
+      - Даты отчета и утверждения
+      
+      После успешного экспорта транзакции помечаются external_code из ответа API.
     requestBody:
-      required: true
+      required: false
       content:
         application/json:
           schema:
-            type: object
-            properties:
-              date_from:
-                type: string
-                format: date
-              date_to:
-                type: string
-                format: date
+            $ref: '../components/schemas/AccountingExportRequest.yaml'
+          examples:
+            with_period:
+              summary: "Экспорт за определенный период"
+              value:
+                start_date: "2024-01-01"
+                end_date: "2024-12-31"
+            recent_transactions:
+              summary: "Экспорт последних транзакций (без параметров)"
+              value: {}
     responses:
       "200":
-        description: Файл экспорта
-        content:
-          application/octet-stream:
-            schema:
-              type: string
-              format: binary
-
-/accounting/sync-status:
-  get:
-    tags: [Accounting]
-    summary: Статус синхронизации с бухгалтерской системой
-    responses:
-      "200":
-        description: Статус
+        description: Экспорт транзакций успешно выполнен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml' 
+              $ref: '../components/schemas/AccountingExportResponse.yaml'
+            examples:
+              successful_export:
+                summary: "Успешный экспорт"
+                value:
+                  success: true
+                  message: "Экспорт транзакций завершен"
+                  stats:
+                    total: 15
+                    exported: 14
+                    errors: 1
+              no_transactions:
+                summary: "Нет новых транзакций"
+                value:
+                  success: true
+                  message: "Нет новых транзакций для экспорта"
+                  stats:
+                    total: 0
+                    exported: 0
+                    errors: 0
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Organization ID is required"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "500":
+        description: Ошибка при экспорте транзакций
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AccountingErrorResponse.yaml'
+            example:
+              success: false
+              message: "Ошибка при экспорте транзакций: API timeout"
+
+/accounting/sync-status:
+  get:
+    tags: [Accounting Integration]
+    summary: Получить статус синхронизации с бухгалтерской системой
+    description: |
+      Возвращает информацию о состоянии синхронизации с внешней бухгалтерской системой.
+      Показывает статус последней синхронизации по каждому типу данных:
+      пользователи, проекты, материалы, транзакции.
+      
+      **Примечание:** Данный endpoint в настоящее время возвращает заглушку 
+      с актуальной датой и статусом "completed" для всех типов данных.
+      В будущем планируется реализация реального мониторинга статуса.
+    responses:
+      "200":
+        description: Статус синхронизации успешно получен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AccountingSyncStatusResponse.yaml'
+            example:
+              success: true
+              message: "Синхронизация работает нормально"
+              last_sync:
+                timestamp: "2024-12-20 18:30:15"
+                status: "completed"
+                users_synced: true
+                projects_synced: true
+                materials_synced: true
+                transactions_synced: true
+      "400":
+        description: Ошибка контекста организации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Organization ID is required"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
