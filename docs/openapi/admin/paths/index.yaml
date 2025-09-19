@@ -256,6 +256,23 @@
 /suppliers/{id}:
   $ref: './suppliers.yaml#/~1suppliers~1{id}'
 
+/time-tracking:
+  $ref: './time_tracking.yaml#/~1time-tracking'
+/time-tracking/{id}:
+  $ref: './time_tracking.yaml#/~1time-tracking~1{id}'
+/time-tracking/{id}/approve:
+  $ref: './time_tracking.yaml#/~1time-tracking~1{id}~1approve'
+/time-tracking/{id}/reject:
+  $ref: './time_tracking.yaml#/~1time-tracking~1{id}~1reject'
+/time-tracking/{id}/submit:
+  $ref: './time_tracking.yaml#/~1time-tracking~1{id}~1submit'
+/time-tracking/statistics/overview:
+  $ref: './time_tracking.yaml#/~1time-tracking~1statistics~1overview'
+/time-tracking/calendar/entries:
+  $ref: './time_tracking.yaml#/~1time-tracking~1calendar~1entries'
+/time-tracking/reports/generate:
+  $ref: './time_tracking.yaml#/~1time-tracking~1reports~1generate'
+
 /measurement-units:
   $ref: './measurement_units.yaml#/~1measurement-units'
 /measurement-units/{id}:

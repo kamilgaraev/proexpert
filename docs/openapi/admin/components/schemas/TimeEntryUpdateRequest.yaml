@@ -1,0 +1,106 @@
+type: object
+description: |
+  Схема для обновления записи времени. Все поля опциональны (используется правило 'sometimes').
+  Можно обновлять только записи в статусе 'draft' или 'rejected'.
+properties:
+  user_id:
+    type: integer
+    description: ID пользователя, который выполнял работу
+    example: 15
+  project_id:
+    type: integer
+    description: ID проекта, в рамках которого выполнялась работа
+    example: 8
+  work_type_id:
+    type: integer
+    nullable: true
+    description: ID типа работы (опционально)
+    example: 3
+  task_id:
+    type: integer
+    nullable: true
+    description: ID задачи из календарного плана (опционально)
+    example: 45
+  work_date:
+    type: string
+    format: date
+    description: Дата выполнения работы (не может быть в будущем)
+    example: "2024-01-15"
+  start_time:
+    type: string
+    format: time
+    description: Время начала работы в формате HH:MM:SS
+    example: "09:00:00"
+  end_time:
+    type: string
+    format: time
+    nullable: true
+    description: Время окончания работы в формате HH:MM:SS (должно быть позже start_time)
+    example: "17:30:00"
+  break_time:
+    type: number
+    format: float
+    nullable: true
+    minimum: 0
+    maximum: 24
+    description: Время перерыва в часах (от 0 до 24)
+    example: 1.0
+  title:
+    type: string
+    maxLength: 255
+    description: Название/краткое описание выполненной работы
+    example: "Разработка модуля авторизации"
+  description:
+    type: string
+    maxLength: 1000
+    nullable: true
+    description: Подробное описание выполненной работы
+    example: "Реализованы методы входа через email и телефон, добавлена двухфакторная аутентификация"
+  status:
+    type: string
+    enum: ["draft", "submitted", "approved", "rejected"]
+    description: |
+      Статус записи времени:
+      - `draft` - черновик
+      - `submitted` - отправлено на утверждение
+      - `approved` - утверждено
+      - `rejected` - отклонено
+    example: "submitted"
+  is_billable:
+    type: boolean
+    description: Является ли время оплачиваемым
+    example: true
+  hourly_rate:
+    type: number
+    format: float
+    nullable: true
+    minimum: 0
+    description: Почасовая ставка в рублях (должна быть неотрицательной)
+    example: 1500.00
+  location:
+    type: string
+    maxLength: 255
+    nullable: true
+    description: Место выполнения работы
+    example: "Офис, переговорная комната 2"
+  custom_fields:
+    type: object
+    nullable: true
+    description: Дополнительные пользовательские поля
+    additionalProperties: true
+    example:
+      equipment_used: "Laptop Dell, Монитор Samsung"
+      weather_conditions: "sunny"
+  notes:
+    type: string
+    maxLength: 1000
+    nullable: true
+    description: Дополнительные заметки
+    example: "Потребовалось больше времени из-за изменений в требованиях"
+
+example:
+  title: "Разработка модуля авторизации (обновлено)"
+  description: "Реализованы методы входа через email и телефон, добавлена двухфакторная аутентификация, исправлены замечания"
+  status: "submitted"
+  end_time: "18:00:00"
+  notes: "Доработана валидация email адресов"
