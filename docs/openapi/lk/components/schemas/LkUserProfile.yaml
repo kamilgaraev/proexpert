@@ -1,0 +1,57 @@
+allOf:
+  - $ref: './ApiResponse.yaml'
+  - type: object
+    properties:
+      data:
+        type: object
+        properties:
+          id:
+            type: integer
+            description: ID пользователя
+            example: 1
+          name:
+            type: string
+            description: Имя пользователя
+            example: "Иван Иванов"
+          email:
+            type: string
+            format: email
+            description: Email пользователя
+            example: "user@example.com"
+          phone:
+            type: string
+            nullable: true
+            description: Телефон пользователя
+            example: "+79001234567"
+          position:
+            type: string
+            nullable: true
+            description: Должность пользователя
+            example: "Руководитель проекта"
+          avatar_url:
+            type: string
+            nullable: true
+            format: uri
+            description: URL аватара пользователя
+            example: "https://example.com/storage/avatars/user1.jpg"
+          current_organization_id:
+            type: integer
+            nullable: true
+            description: ID текущей организации
+            example: 5
+          email_verified_at:
+            type: string
+            format: date-time
+            nullable: true
+            description: Время верификации email
+            example: "2024-01-15T10:30:00Z"
+          created_at:
+            type: string
+            format: date-time
+            description: Время создания аккаунта
+            example: "2024-01-10T09:00:00Z"
+          updated_at:
+            type: string
+            format: date-time
+            description: Время последнего обновления
+            example: "2024-01-15T14:20:00Z"

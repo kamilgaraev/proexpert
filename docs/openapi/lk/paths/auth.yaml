@@ -1,7 +1,10 @@
 /auth/register:
   post:
     tags: [Auth]
-    summary: Регистрация пользователя ЛК
+    summary: Регистрация пользователя и создание организации
+    description: |
+      Регистрирует нового пользователя, создает организацию и возвращает JWT токен.
+      Пользователь автоматически становится владельцем созданной организации.
     requestBody:
       required: true
       content:
@@ -13,49 +16,76 @@
             $ref: '../components/schemas/RegisterRequest.yaml'
     responses:
       "201":
-        description: Успешная регистрация
+        description: Успешная регистрация пользователя и организации
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/LoginResponse.yaml'
+              $ref: '../components/schemas/LkLoginResponse.yaml'
+      "422":
+        description: Ошибки валидации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
 /auth/login:
   post:
     tags: [Auth]
-    summary: Авторизация пользователя ЛК
+    summary: Авторизация пользователя в личном кабинете
+    description: |
+      Аутентифицирует пользователя по email/паролю и возвращает JWT токен.
+      Токен используется для доступа ко всем защищенным эндпоинтам.
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/LoginRequest.yaml'
+            $ref: '../components/schemas/LkLoginRequest.yaml'
     responses:
       "200":
-        description: Успешный вход
+        description: Успешная авторизация
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/LoginResponse.yaml'
+              $ref: '../components/schemas/LkLoginResponse.yaml'
+      "401":
+        description: Неверные учетные данные
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Неверный email или пароль"
 /auth/me:
   get:
     tags: [Auth]
-    summary: Получить профиль
+    summary: Получить профиль текущего пользователя
+    description: Возвращает детальную информацию о профиле аутентифицированного пользователя
     security:
       - bearerAuth: []
     responses:
       "200":
-        description: Профиль
+        description: Профиль пользователя получен успешно
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/UserProfile.yaml'
+              $ref: '../components/schemas/LkUserProfile.yaml'
+      "401":
+        description: Пользователь не аутентифицирован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
   patch:
-    tags: [Auth]
-    summary: Обновить профиль
+    tags: [Auth, Profile]
+    summary: Обновить профиль пользователя
+    description: |
+      Обновляет профиль текущего пользователя. Поддерживает загрузку аватара.
+      **Обрабатывается**: ProfileController::update
     security:
       - bearerAuth: []
     requestBody:
@@ -63,42 +93,115 @@
       content:
         multipart/form-data:
           schema:
-            $ref: '../components/schemas/UpdateProfileRequest.yaml'
+            $ref: '../components/schemas/LkUpdateProfileRequest.yaml'
           example:
-            name: "Антон Сидоров"
-            avatar: "(binary)"
+            name: "Иван Петров"
+            email: "ivan.petrov@example.com"
+            phone: "+79001234567"
+            position: "Главный инженер"
+            avatar: "(binary file)"
         application/json:
           schema:
-            $ref: '../components/schemas/UpdateProfileRequest.yaml'
+            $ref: '../components/schemas/LkUpdateProfileRequest.yaml'
+          example:
+            name: "Иван Петров"
+            email: "ivan.petrov@example.com"
+            phone: "+79001234567"
+            position: "Главный инженер"
+            remove_avatar: false
     responses:
       "200":
-        description: Профиль обновлён
+        description: Профиль успешно обновлен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/UserProfile.yaml'
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Профиль успешно обновлен"
+                user:
+                  $ref: '../components/schemas/LkUserProfile.yaml'
+      "422":
+        description: Ошибки валидации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "500":
+        description: Ошибка загрузки аватара или сохранения
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Не удалось загрузить аватар"
 /auth/refresh:
   post:
     tags: [Auth]
-    summary: Обновить JWT
+    summary: Обновить JWT токен
+    description: |
+      Обновляет JWT токен используя текущий валидный токен.
+      Возвращает новый токен с продленным временем действия.
     security:
       - bearerAuth: []
     responses:
       "200":
-        description: Токен обновлён
+        description: Токен успешно обновлен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/LoginResponse.yaml'
+              type: object
+              properties:
+                token:
+                  type: string
+                  description: Новый JWT токен
+                  example: "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9..."
+      "401":
+        description: Токен недействителен или истек
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Токен недействителен"
 /auth/logout:
   post:
     tags: [Auth]
-    summary: Выход
+    summary: Выход из системы
+    description: |
+      Аннулирует JWT токен пользователя. После вызова токен становится недействительным.
     security:
       - bearerAuth: []
     responses:
       "200":
-        description: Успешный выход
+        description: Успешный выход из системы
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Выход выполнен успешно"
+      "401":
+        description: Пользователь не аутентифицирован
         content:
           application/json:
             schema:

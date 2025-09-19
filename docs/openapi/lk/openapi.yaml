@@ -17,6 +17,15 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-  schemas: {}
+  schemas:
+    # Авторизация (обновлено)
+    LkLoginRequest:
+      $ref: './components/schemas/LkLoginRequest.yaml'
+    LkLoginResponse:
+      $ref: './components/schemas/LkLoginResponse.yaml'
+    LkUpdateProfileRequest:
+      $ref: './components/schemas/LkUpdateProfileRequest.yaml'
+    LkUserProfile:
+      $ref: './components/schemas/LkUserProfile.yaml'
   responses: {}
   parameters: {}

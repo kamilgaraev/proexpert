@@ -1,0 +1,36 @@
+type: object
+properties:
+  name:
+    type: string
+    maxLength: 255
+    description: Имя пользователя
+    example: "Иван Петров"
+  email:
+    type: string
+    format: email
+    maxLength: 255
+    description: Email пользователя (должен быть уникальным)
+    example: "ivan.petrov@example.com"
+  phone:
+    type: string
+    maxLength: 20
+    nullable: true
+    pattern: '^(\+7|8)[- ]?\(?[0-9]{3}\)?[- ]?\(?[0-9]{3}[- ]?[0-9]{2}[- ]?[0-9]{2}$'
+    description: Телефон в российском формате
+    example: "+79001234567"
+  position:
+    type: string
+    maxLength: 100
+    nullable: true
+    description: Должность пользователя
+    example: "Главный инженер"
+  avatar:
+    type: string
+    format: binary
+    nullable: true
+    description: Файл аватара (jpeg, png, jpg, gif, max 2MB)
+  remove_avatar:
+    type: boolean
+    nullable: true
+    description: Флаг для удаления текущего аватара
+    example: false
