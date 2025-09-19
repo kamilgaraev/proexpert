@@ -21,10 +21,50 @@ Route::get('/login', function () {
 
 Route::get('/metrics', [App\Http\Controllers\MetricsController::class, 'metrics']);
 
-Route::get('/docs/{type?}', function (string $type = 'lk') {
+Route::get('/docs', function () {
+    // Главная страница документации - список всех доступных API
+    $apis = [
+        'lk' => [
+            'title' => 'ProHelper LK API',
+            'description' => 'API личного кабинета. Управление организацией, пользователями, модулями и биллингом.',
+            'version' => '1.0.0',
+            'baseUrl' => '/api/v1/landing',
+            'icon' => '🏢',
+            'status' => 'stable'
+        ],
+        'admin' => [
+            'title' => 'ProHelper Admin API',
+            'description' => 'Административное API. Управление проектами, договорами, подрядчиками, отчетами и аналитикой.',
+            'version' => '1.0.0',
+            'baseUrl' => '/api/v1/admin',
+            'icon' => '⚙️',
+            'status' => 'stable'
+        ],
+        'mobile' => [
+            'title' => 'ProHelper Mobile API',
+            'description' => 'API мобильного приложения. Выполнение работ, запросы на персонал, управление материалами.',
+            'version' => '1.0.0',
+            'baseUrl' => '/api/v1/mobile',
+            'icon' => '📱',
+            'status' => 'beta'
+        ],
+        'landing_admin' => [
+            'title' => 'ProHelper Landing Admin API',
+            'description' => 'API админ-панели лендингов. Управление блогом, статьями, категориями и комментариями.',
+            'version' => '1.0.0',
+            'baseUrl' => '/api/v1/landing',
+            'icon' => '📝',
+            'status' => 'stable'
+        ]
+    ];
+
+    return view('docs.index', compact('apis'));
+});
+
+Route::get('/docs/{type}', function (string $type) {
     $allowed = ['lk', 'admin', 'mobile', 'landing_admin'];
     if (!in_array($type, $allowed)) {
-        $type = 'lk';
+        abort(404, 'Документация не найдена');
     }
 
     // 1) Сначала пробуем отдать готовый статический HTML из public/docs
