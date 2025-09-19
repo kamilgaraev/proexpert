@@ -1,0 +1,34 @@
+allOf:
+  - $ref: './LkModule.yaml'
+  - type: object
+    properties:
+      is_active:
+        type: boolean
+        description: Активен ли модуль для организации
+        example: true
+      activation:
+        type: object
+        nullable: true
+        description: Информация об активации (если модуль активен)
+        properties:
+          activated_at:
+            type: string
+            format: date-time
+            description: Дата активации
+            example: "2024-01-15T10:00:00Z"
+          expires_at:
+            type: string
+            format: date-time
+            nullable: true
+            description: Дата истечения (для временных модулей)
+            example: "2024-02-15T10:00:00Z"
+          status:
+            type: string
+            description: Статус активации
+            enum: [active, expired, suspended]
+            example: "active"
+          days_until_expiration:
+            type: integer
+            nullable: true
+            description: Дней до истечения
+            example: 15

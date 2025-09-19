@@ -41,5 +41,29 @@ components:
       $ref: './components/schemas/DaDataSuggestRequest.yaml'
     DaDataSuggestResponse:
       $ref: './components/schemas/DaDataSuggestResponse.yaml'
+    
+    # Модули (обновлено)
+    LkModule:
+      $ref: './components/schemas/LkModule.yaml'
+    LkModuleWithStatus:
+      $ref: './components/schemas/LkModuleWithStatus.yaml'
+    LkExpiringModule:
+      $ref: './components/schemas/LkExpiringModule.yaml'
+    LkModuleActivationPreview:
+      $ref: './components/schemas/LkModuleActivationPreview.yaml'
+    LkModuleDeactivationPreview:
+      $ref: './components/schemas/LkModuleDeactivationPreview.yaml'
+    LkModuleActivationResult:
+      $ref: './components/schemas/LkModuleActivationResult.yaml'
+    LkModuleDeactivationResult:
+      $ref: './components/schemas/LkModuleDeactivationResult.yaml'
+    LkModuleRenewalResult:
+      $ref: './components/schemas/LkModuleRenewalResult.yaml'
+    LkModuleBillingStats:
+      $ref: './components/schemas/LkModuleBillingStats.yaml'
+    LkModuleUpcomingBilling:
+      $ref: './components/schemas/LkModuleUpcomingBilling.yaml'
+    LkModuleBillingHistoryEntry:
+      $ref: './components/schemas/LkModuleBillingHistoryEntry.yaml'
   responses: {}
   parameters: {}

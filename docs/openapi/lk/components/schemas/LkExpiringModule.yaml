@@ -1,0 +1,28 @@
+type: object
+properties:
+  slug:
+    type: string
+    description: Идентификатор модуля
+    example: "analytics"
+  name:
+    type: string
+    description: Название модуля
+    example: "Продвинутая аналитика"
+  expires_at:
+    type: string
+    format: date-time
+    description: Дата истечения
+    example: "2024-02-15T10:00:00Z"
+  days_until_expiration:
+    type: integer
+    description: Дней до истечения
+    example: 3
+  renewal_cost:
+    type: number
+    format: float
+    description: Стоимость продления
+    example: 2500.00
+  renewal_period_days:
+    type: integer
+    description: Период продления в днях
+    example: 30

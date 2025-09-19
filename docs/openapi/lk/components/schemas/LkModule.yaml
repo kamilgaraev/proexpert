@@ -1,0 +1,63 @@
+type: object
+properties:
+  slug:
+    type: string
+    description: Уникальный идентификатор модуля
+    example: "analytics"
+  name:
+    type: string
+    description: Название модуля
+    example: "Продвинутая аналитика"
+  description:
+    type: string
+    description: Описание функций модуля
+    example: "Углубленная аналитика проектов и финансов"
+  type:
+    type: string
+    description: Тип модуля
+    enum: [core, addon, feature, enterprise]
+    example: "addon"
+  category:
+    type: string
+    description: Категория модуля
+    example: "Аналитика"
+  billing_model:
+    type: string
+    description: Модель биллинга
+    enum: [free, monthly, yearly, one_time, usage_based]
+    example: "monthly"
+  price:
+    type: number
+    format: float
+    description: Стоимость модуля
+    example: 2500.00
+  currency:
+    type: string
+    description: Валюта
+    example: "RUB"
+  duration_days:
+    type: integer
+    nullable: true
+    description: Длительность в днях (для временных модулей)
+    example: 30
+  features:
+    type: array
+    description: Список возможностей модуля
+    items:
+      type: string
+    example: ["Дашборды", "Отчеты", "Экспорт в Excel"]
+  permissions:
+    type: array
+    description: Список разрешений модуля
+    items:
+      type: string
+    example: ["analytics.view", "analytics.reports", "analytics.export"]
+  icon:
+    type: string
+    nullable: true
+    description: Иконка модуля
+    example: "📊"
+  can_deactivate:
+    type: boolean
+    description: Можно ли деактивировать модуль
+    example: true

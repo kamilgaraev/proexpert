@@ -1,0 +1,58 @@
+type: object
+properties:
+  success:
+    type: boolean
+    example: true
+  module:
+    $ref: './LkModule.yaml'
+  cost_details:
+    type: object
+    properties:
+      base_cost:
+        type: number
+        format: float
+        description: Базовая стоимость
+        example: 2500.00
+      discounts:
+        type: number
+        format: float
+        description: Скидки
+        example: 250.00
+      final_cost:
+        type: number
+        format: float
+        description: Итоговая стоимость
+        example: 2250.00
+      currency:
+        type: string
+        example: "RUB"
+  dependencies:
+    type: array
+    description: Зависимые модули, которые будут активированы
+    items:
+      type: object
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        required:
+          type: boolean
+  features_preview:
+    type: array
+    description: Возможности, которые получит организация
+    items:
+      type: string
+    example: ["Дашборды аналитики", "Отчеты по проектам", "Экспорт данных"]
+  billing_info:
+    type: object
+    properties:
+      next_charge_date:
+        type: string
+        format: date
+        description: Дата следующего списания
+        example: "2024-02-15"
+      billing_period:
+        type: string
+        description: Период биллинга
+        example: "monthly"

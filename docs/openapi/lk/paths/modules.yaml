@@ -1,11 +1,57 @@
 /modules:
   get:
     tags: [Modules]
-    summary: Список активных модулей организации
-    security: [{ bearerAuth: [] }]
+    summary: Получить список всех доступных модулей с их статусами
+    description: |
+      Возвращает все доступные модули системы с указанием их активности для текущей организации.
+      Модули группируются по категориям и включают информацию о статусе активации.
+    security: 
+      - bearerAuth: []
     responses:
       "200":
-        description: Модули
+        description: Список модулей получен успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      description: Модули, сгруппированные по категориям
+                      additionalProperties:
+                        type: array
+                        items:
+                          $ref: '../components/schemas/LkModuleWithStatus.yaml'
+                      example:
+                        "Базовые функции":
+                          - slug: "projects"
+                            name: "Управление проектами"
+                            description: "Создание и управление строительными проектами"
+                            is_active: true
+                        "Аналитика":
+                          - slug: "analytics"
+                            name: "Продвинутая аналитика"
+                            is_active: false
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/modules/active:
+  get:
+    tags: [Modules]
+    summary: Получить список только активных модулей
+    description: |
+      Возвращает только те модули, которые активированы для текущей организации.
+    security: 
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Активные модули получены успешно
         content:
           application/json:
             schema:
@@ -16,94 +62,544 @@
                     data:
                       type: array
                       items:
-                        $ref: '../components/schemas/Module.yaml'
-/modules/available:
-  get:
-    tags: [Modules]
-    summary: Доступные для активации модули
-    security: [{ bearerAuth: [] }]
-    responses:
-      "200":
-        description: Список
+                        $ref: '../components/schemas/LkModule.yaml'
+      "404":
+        description: Организация не найдена
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
+
 /modules/expiring:
   get:
     tags: [Modules]
-    summary: Модули с ближайшим окончанием действия
-    security: [{ bearerAuth: [] }]
+    summary: Получить модули с истекающим сроком действия
+    description: |
+      Возвращает модули, срок действия которых истекает в ближайшее время.
+      Полезно для напоминаний о необходимости продления.
+    security: 
+      - bearerAuth: []
+    parameters:
+      - name: days_ahead
+        in: query
+        description: Количество дней вперед для поиска истекающих модулей
+        required: false
+        schema:
+          type: integer
+          default: 7
+          minimum: 1
+          maximum: 90
     responses:
       "200":
-        description: Список
+        description: Список истекающих модулей получен успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/LkExpiringModule.yaml'
+      "404":
+        description: Организация не найдена
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
+
+/modules/{moduleSlug}/preview:
+  get:
+    tags: [Modules, Activation]
+    summary: Предпросмотр активации модуля
+    description: |
+      Показывает детали того, что произойдет при активации модуля:
+      стоимость, необходимые ресурсы, получаемые возможности.
+    security: 
+      - bearerAuth: []
+    parameters:
+      - name: moduleSlug
+        in: path
+        required: true
+        description: Уникальный идентификатор модуля
+        schema:
+          type: string
+          example: "analytics"
+    responses:
+      "200":
+        description: Предпросмотр активации получен успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/LkModuleActivationPreview.yaml'
+      "404":
+        description: Модуль не найден или организация не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/modules/{moduleSlug}/deactivation-preview:
+  get:
+    tags: [Modules, Deactivation]
+    summary: Предпросмотр деактивации модуля
+    description: |
+      Показывает что потеряет организация при деактивации модуля:
+      функции, данные, возможные возвраты средств.
+    security: 
+      - bearerAuth: []
+    parameters:
+      - name: moduleSlug
+        in: path
+        required: true
+        description: Уникальный идентификатор модуля
+        schema:
+          type: string
+          example: "analytics"
+    responses:
+      "200":
+        description: Предпросмотр деактивации получен успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/LkModuleDeactivationPreview.yaml'
+      "404":
+        description: Модуль не найден
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "400":
+        description: Ошибка получения предпросмотра
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
 /modules/check-access:
   post:
-    tags: [Modules]
+    tags: [Modules, Access]
     summary: Проверить доступ к модулю
-    security: [{ bearerAuth: [] }]
+    description: |
+      Проверяет, имеет ли текущая организация доступ к указанному модулю.
+      Используется для условного отображения функций в интерфейсе.
+    security: 
+      - bearerAuth: []
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/ModuleCheckAccessRequest.yaml'
+            type: object
+            required:
+              - module_slug
+            properties:
+              module_slug:
+                type: string
+                description: Уникальный идентификатор модуля
+                example: "analytics"
     responses:
       "200":
-        description: Доступ
+        description: Проверка доступа выполнена успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        module_slug:
+                          type: string
+                          example: "analytics"
+                        has_access:
+                          type: boolean
+                          description: Есть ли доступ к модулю
+                          example: true
+      "404":
+        description: Организация не найдена
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
+      "422":
+        description: Ошибки валидации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/modules/permissions:
+  get:
+    tags: [Modules, Permissions]
+    summary: Получить права доступа пользователя
+    description: |
+      Возвращает права доступа текущего пользователя, активные модули
+      и матрицу разрешений модулей.
+    security: 
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Права доступа получены успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        permissions:
+                          type: array
+                          description: Список разрешений пользователя
+                          items:
+                            type: string
+                            example: "projects.view"
+                        active_modules:
+                          type: array
+                          description: Активные модули пользователя
+                          items:
+                            type: string
+                            example: "projects"
+                        permission_matrix:
+                          type: object
+                          description: Матрица разрешений по модулям
+                          additionalProperties:
+                            type: array
+                            items:
+                              type: string
+
 /modules/activate:
   post:
-    tags: [Modules]
+    tags: [Modules, Activation]
     summary: Активировать модуль
-    security: [{ bearerAuth: [] }]
+    description: |
+      Активирует указанный модуль для организации. 
+      Требует права 'modules.manage'.
+    security: 
+      - bearerAuth: []
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/ModuleActivateRequest.yaml'
+            type: object
+            required:
+              - module_slug
+            properties:
+              module_slug:
+                type: string
+                description: Уникальный идентификатор модуля
+                example: "analytics"
+              settings:
+                type: object
+                description: Дополнительные настройки модуля
+                additionalProperties: true
+                example:
+                  auto_reports: true
+                  dashboard_widgets: ["chart", "table"]
     responses:
-      "201":
-        description: Активировано
+      "200":
+        description: Модуль активирован успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/LkModuleActivationResult.yaml'
+      "400":
+        description: Ошибка активации модуля
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ApiResponse.yaml'
-/modules/{moduleId}:
-  parameters:
-    - { name: moduleId, in: path, required: true, schema: { type: integer } }
-  delete:
-    tags: [Modules]
-    summary: Деактивировать модуль
-    security: [{ bearerAuth: [] }]
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "422":
+        description: Ошибки валидации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/modules/bulk-activate:
+  post:
+    tags: [Modules, Activation]
+    summary: Массовая активация модулей
+    description: |
+      Активирует несколько модулей одновременно для организации.
+      Требует права 'modules.manage'.
+    security: 
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - module_slugs
+            properties:
+              module_slugs:
+                type: array
+                description: Список идентификаторов модулей для активации
+                items:
+                  type: string
+                  example: "analytics"
+                minItems: 1
+                maxItems: 20
+                example: ["analytics", "reports", "integrations"]
     responses:
-      "204":
-        description: Удалено
-/modules/{moduleId}/renew:
-  patch:
-    tags: [Modules]
-    summary: Продлить модуль
-    security: [{ bearerAuth: [] }]
+      "200":
+        description: Массовая активация выполнена
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        successful:
+                          type: array
+                          description: Успешно активированные модули
+                          items:
+                            type: string
+                        failed:
+                          type: array
+                          description: Модули с ошибками активации
+                          items:
+                            type: object
+                            properties:
+                              module_slug:
+                                type: string
+                              error:
+                                type: string
+                        summary:
+                          type: object
+                          properties:
+                            total:
+                              type: integer
+                            successful_count:
+                              type: integer
+                            failed_count:
+                              type: integer
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "422":
+        description: Ошибки валидации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/modules/{moduleSlug}:
+  delete:
+    tags: [Modules, Deactivation]
+    summary: Деактивировать модуль
+    description: |
+      Деактивирует указанный модуль для организации.
+      Требует права 'modules.manage'.
+    security: 
+      - bearerAuth: []
     parameters:
-      - { name: moduleId, in: path, required: true, schema: { type: integer } }
+      - name: moduleSlug
+        in: path
+        required: true
+        description: Уникальный идентификатор модуля
+        schema:
+          type: string
+          example: "analytics"
+      - name: with_refund
+        in: query
+        description: Запросить возврат средств при деактивации
+        required: false
+        schema:
+          type: boolean
+          default: false
+    responses:
+      "200":
+        description: Модуль деактивирован успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/LkModuleDeactivationResult.yaml'
+      "400":
+        description: Ошибка деактивации модуля
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/modules/{moduleSlug}/renew:
+  patch:
+    tags: [Modules, Renewal]
+    summary: Продлить срок действия модуля
+    description: |
+      Продлевает срок действия указанного модуля на заданное количество дней.
+      Требует права 'modules.manage'.
+    security: 
+      - bearerAuth: []
+    parameters:
+      - name: moduleSlug
+        in: path
+        required: true
+        description: Уникальный идентификатор модуля
+        schema:
+          type: string
+          example: "analytics"
     requestBody:
       required: false
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/ModuleRenewRequest.yaml'
+            type: object
+            properties:
+              additional_days:
+                type: integer
+                minimum: 1
+                maximum: 365
+                default: 30
+                description: Количество дней для продления
+                example: 30
     responses:
       "200":
-        description: Продлено
+        description: Модуль продлен успешно
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ApiResponse.yaml' 
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/LkModuleRenewalResult.yaml'
+      "400":
+        description: Ошибка продления модуля
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "422":
+        description: Ошибки валидации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/modules/billing:
+  get:
+    tags: [Modules, Billing]
+    summary: Получить биллинг информацию по модулям
+    description: |
+      Возвращает статистику биллинга и предстоящие платежи по модулям организации.
+      Требует права 'modules.billing'.
+    security: 
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Биллинг информация получена успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: object
+                      properties:
+                        stats:
+                          $ref: '../components/schemas/LkModuleBillingStats.yaml'
+                        upcoming:
+                          $ref: '../components/schemas/LkModuleUpcomingBilling.yaml'
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/modules/billing/history:
+  get:
+    tags: [Modules, Billing]
+    summary: Получить историю биллинга по модулям
+    description: |
+      Возвращает историю платежей и транзакций по модулям организации.
+      Требует права 'modules.billing'.
+    security: 
+      - bearerAuth: []
+    parameters:
+      - name: module_slug
+        in: query
+        description: Фильтр по конкретному модулю (опционально)
+        required: false
+        schema:
+          type: string
+          example: "analytics"
+    responses:
+      "200":
+        description: История биллинга получена успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/LkModuleBillingHistoryEntry.yaml'
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'

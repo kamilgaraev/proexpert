@@ -1,0 +1,41 @@
+type: object
+properties:
+  success:
+    type: boolean
+    example: true
+  message:
+    type: string
+    example: "Модуль успешно деактивирован"
+  module_slug:
+    type: string
+    example: "analytics"
+  deactivated_at:
+    type: string
+    format: date-time
+    example: "2024-01-15T10:00:00Z"
+  refund_info:
+    type: object
+    nullable: true
+    properties:
+      amount:
+        type: number
+        format: float
+        example: 1250.00
+      currency:
+        type: string
+        example: "RUB"
+      method:
+        type: string
+        enum: [balance_credit, original_payment_method]
+        example: "balance_credit"
+      processed_at:
+        type: string
+        format: date-time
+        nullable: true
+        example: "2024-01-15T10:05:00Z"
+  removed_permissions:
+    type: array
+    description: Удаленные разрешения
+    items:
+      type: string
+    example: ["analytics.view", "analytics.reports"]

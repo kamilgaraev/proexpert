@@ -1,0 +1,63 @@
+type: object
+properties:
+  id:
+    type: integer
+    description: ID записи
+    example: 1001
+  date:
+    type: string
+    format: date-time
+    description: Дата операции
+    example: "2024-01-15T10:00:00Z"
+  type:
+    type: string
+    enum: [activation, renewal, deactivation, refund, discount]
+    description: Тип операции
+    example: "activation"
+  module_slug:
+    type: string
+    description: Идентификатор модуля
+    example: "analytics"
+  module_name:
+    type: string
+    description: Название модуля
+    example: "Продвинутая аналитика"
+  amount:
+    type: number
+    format: float
+    description: Сумма операции (положительная для списаний, отрицательная для возвратов)
+    example: 2500.00
+  currency:
+    type: string
+    example: "RUB"
+  payment_method:
+    type: string
+    enum: [organization_balance, credit_card, bank_transfer]
+    description: Способ оплаты
+    example: "organization_balance"
+  description:
+    type: string
+    description: Описание операции
+    example: "Активация модуля Продвинутая аналитика на 30 дней"
+  status:
+    type: string
+    enum: [completed, pending, failed, refunded]
+    description: Статус операции
+    example: "completed"
+  details:
+    type: object
+    nullable: true
+    description: Дополнительные детали операции
+    properties:
+      period_start:
+        type: string
+        format: date
+      period_end:
+        type: string
+        format: date
+      discount_applied:
+        type: number
+        format: float
+      original_amount:
+        type: number
+        format: float

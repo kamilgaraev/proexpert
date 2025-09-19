@@ -1,0 +1,64 @@
+type: object
+properties:
+  success:
+    type: boolean
+    example: true
+  module:
+    type: object
+    properties:
+      slug:
+        type: string
+        example: "analytics"
+      name:
+        type: string
+        example: "Продвинутая аналитика"
+  lost_features:
+    type: array
+    description: Возможности, которые будут потеряны
+    items:
+      type: string
+    example: ["Дашборды аналитики", "Отчеты по проектам", "Экспорт данных"]
+  affected_data:
+    type: array
+    description: Данные, которые могут быть затронуты
+    items:
+      type: object
+      properties:
+        type:
+          type: string
+          example: "reports"
+        description:
+          type: string
+          example: "Сохраненные отчеты аналитики"
+        action:
+          type: string
+          enum: [kept, archived, deleted]
+          example: "archived"
+  dependent_modules:
+    type: array
+    description: Модули, которые зависят от деактивируемого
+    items:
+      type: object
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        impact:
+          type: string
+          description: Влияние на зависимый модуль
+  refund_info:
+    type: object
+    nullable: true
+    description: Информация о возможном возврате средств
+    properties:
+      eligible:
+        type: boolean
+        description: Возможен ли возврат
+      amount:
+        type: number
+        format: float
+        description: Сумма возврата
+      reason:
+        type: string
+        description: Причина возврата/невозврата

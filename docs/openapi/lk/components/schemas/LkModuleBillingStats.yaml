@@ -1,0 +1,58 @@
+type: object
+properties:
+  total_monthly_cost:
+    type: number
+    format: float
+    description: Общая месячная стоимость всех модулей
+    example: 7500.00
+  active_modules_count:
+    type: integer
+    description: Количество активных модулей
+    example: 5
+  currency:
+    type: string
+    example: "RUB"
+  breakdown_by_category:
+    type: object
+    description: Разбивка по категориям
+    additionalProperties:
+      type: object
+      properties:
+        count:
+          type: integer
+        total_cost:
+          type: number
+          format: float
+    example:
+      "Аналитика":
+        count: 2
+        total_cost: 3500.00
+      "Интеграции":
+        count: 1
+        total_cost: 2000.00
+  payment_history_summary:
+    type: object
+    properties:
+      last_30_days:
+        type: number
+        format: float
+        description: Потрачено за последние 30 дней
+        example: 7500.00
+      last_90_days:
+        type: number
+        format: float
+        description: Потрачено за последние 90 дней
+        example: 22500.00
+  savings:
+    type: object
+    properties:
+      annual_discount:
+        type: number
+        format: float
+        description: Экономия при годовой оплате
+        example: 9000.00
+      bundle_discount:
+        type: number
+        format: float
+        description: Скидка за пакет модулей
+        example: 1500.00

@@ -1,0 +1,39 @@
+type: object
+properties:
+  success:
+    type: boolean
+    example: true
+  message:
+    type: string
+    example: "Модуль успешно продлен на 30 дней"
+  module_slug:
+    type: string
+    example: "analytics"
+  renewal_details:
+    type: object
+    properties:
+      additional_days:
+        type: integer
+        example: 30
+      old_expires_at:
+        type: string
+        format: date-time
+        example: "2024-02-15T10:00:00Z"
+      new_expires_at:
+        type: string
+        format: date-time
+        example: "2024-03-16T10:00:00Z"
+      cost:
+        type: number
+        format: float
+        example: 2500.00
+      currency:
+        type: string
+        example: "RUB"
+      payment_method:
+        type: string
+        example: "organization_balance"
+      renewed_at:
+        type: string
+        format: date-time
+        example: "2024-01-15T10:00:00Z"

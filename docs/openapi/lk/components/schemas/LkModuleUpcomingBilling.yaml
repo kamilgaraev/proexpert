@@ -1,0 +1,68 @@
+type: object
+properties:
+  next_billing_date:
+    type: string
+    format: date
+    description: Дата следующего списания
+    example: "2024-02-15"
+  total_amount:
+    type: number
+    format: float
+    description: Общая сумма к списанию
+    example: 7500.00
+  currency:
+    type: string
+    example: "RUB"
+  modules:
+    type: array
+    description: Модули для списания
+    items:
+      type: object
+      properties:
+        slug:
+          type: string
+          example: "analytics"
+        name:
+          type: string
+          example: "Продвинутая аналитика"
+        amount:
+          type: number
+          format: float
+          example: 2500.00
+        billing_period:
+          type: string
+          enum: [monthly, yearly]
+          example: "monthly"
+        expires_at:
+          type: string
+          format: date-time
+          example: "2024-02-15T10:00:00Z"
+  balance_status:
+    type: object
+    properties:
+      current_balance:
+        type: number
+        format: float
+        example: 15000.00
+      required_amount:
+        type: number
+        format: float
+        example: 7500.00
+      sufficient:
+        type: boolean
+        description: Достаточно ли средств на балансе
+        example: true
+  warnings:
+    type: array
+    description: Предупреждения о биллинге
+    items:
+      type: object
+      properties:
+        type:
+          type: string
+          enum: [insufficient_balance, module_expiring, payment_method_issue]
+        message:
+          type: string
+        severity:
+          type: string
+          enum: [info, warning, error]
