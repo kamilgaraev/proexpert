@@ -1,0 +1,25 @@
+type: object
+description: Проект, доступный для создания транзакций подотчетных средств.
+properties:
+  id:
+    type: integer
+    description: ID проекта
+    example: 8
+  name:
+    type: string
+    description: Название проекта
+    example: "ЖК Солнечный"
+  external_code:
+    type: string
+    nullable: true
+    description: Внешний код проекта
+    example: "PRJ-001"
+  status:
+    type: string
+    description: Статус проекта
+    example: "active"
+  address:
+    type: string
+    nullable: true
+    description: Адрес объекта
+    example: "г. Москва, ул. Солнечная, д. 15"

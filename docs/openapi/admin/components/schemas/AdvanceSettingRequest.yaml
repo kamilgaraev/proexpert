@@ -1,0 +1,61 @@
+type: object
+description: Запрос для создания или обновления настроек подотчетных средств организации.
+properties:
+  max_single_issue_amount:
+    type: number
+    format: decimal
+    minimum: 0
+    maximum: 999999999.99
+    nullable: true
+    description: Максимальная сумма одной транзакции на выдачу
+    example: 50000.00
+  report_submission_deadline_days:
+    type: integer
+    minimum: 0
+    maximum: 365
+    nullable: true
+    description: Срок предоставления отчета (дни)
+    example: 7
+  dual_authorization_threshold:
+    type: number
+    format: decimal
+    minimum: 0
+    maximum: 999999999.99
+    nullable: true
+    description: Порог двойной авторизации
+    example: 100000.00
+  require_project_for_expense:
+    type: boolean
+    description: Требовать проект для расходов
+    example: true
+  notify_admin_on_overdue_report:
+    type: boolean
+    description: Уведомлять администратора о просроченных отчетах
+    example: true
+  notify_admin_on_high_value_transaction:
+    type: boolean
+    description: Уведомлять администратора о крупных транзакциях
+    example: true
+  high_value_notification_threshold:
+    type: number
+    format: decimal
+    minimum: 0
+    maximum: 999999999.99
+    nullable: true
+    description: Порог для уведомления о крупной транзакции (обязательно если notify_admin_on_high_value_transaction = true)
+    example: 50000.00
+  notify_user_on_transaction_approval:
+    type: boolean
+    description: Уведомлять пользователя об утверждении транзакции
+    example: true
+  notify_user_on_transaction_rejection:
+    type: boolean
+    description: Уведомлять пользователя об отклонении транзакции
+    example: true
+  send_report_reminder_days_before:
+    type: integer
+    minimum: 0
+    maximum: 90
+    nullable: true
+    description: Отправлять напоминание об отчете за (дни)
+    example: 2

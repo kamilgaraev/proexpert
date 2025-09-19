@@ -1,0 +1,5 @@
+type: object
+description: Ответ с балансом подотчетных средств пользователя.
+properties:
+  data:
+    $ref: './UserAdvanceBalance.yaml'

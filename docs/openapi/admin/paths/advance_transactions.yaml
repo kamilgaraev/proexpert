@@ -1,284 +1,807 @@
 /advance-transactions/available-users:
   get:
     tags: [AdvanceTransactions]
-    summary: Получить пользователей для транзакций
+    summary: Получить список пользователей, доступных для транзакций
+    description: |
+      Возвращает список пользователей (прорабов, руководителей участков, менеджеров проектов)
+      организации, которым можно выдавать подотчетные средства.
     parameters:
       - in: query
         name: search
         schema:
           type: string
-        description: Поиск по имени
+        description: Поиск по имени или должности
+        example: "Иванов"
     responses:
       "200":
-        description: Список пользователей
+        description: Список пользователей успешно получен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/UserSimple.yaml'
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/AdvanceAvailableUser.yaml'
+            example:
+              data:
+                - id: 25
+                  name: "Иванов Иван Иванович"
+                  current_balance: 12500.00
+                  has_overdue_balance: false
+                  position: "Прораб"
+                  avatar_url: "https://example.com/storage/avatars/user_25.jpg"
+      "400":
+        description: Контекст организации не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Organization context not found for the user."
 
 /advance-transactions/available-projects:
   get:
     tags: [AdvanceTransactions]
-    summary: Получить проекты для транзакций
+    summary: Получить список проектов, доступных для транзакций
+    description: |
+      Возвращает список активных проектов организации.
+      Если указан user_id, возвращает только проекты, назначенные этому пользователю.
     parameters:
       - in: query
         name: user_id
         schema:
           type: integer
-        description: Фильтрация по пользователю
+        description: ID пользователя для фильтрации проектов
+        example: 25
       - in: query
         name: search
         schema:
           type: string
+        description: Поиск по названию, адресу или внешнему коду
+        example: "Солнечный"
     responses:
       "200":
-        description: Список проектов
+        description: Список проектов успешно получен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/Project.yaml'
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/AdvanceAvailableProject.yaml'
+            example:
+              data:
+                - id: 8
+                  name: "ЖК Солнечный"
+                  external_code: "PRJ-001"
+                  status: "active"
+                  address: "г. Москва, ул. Солнечная, д. 15"
+      "400":
+        description: Контекст организации не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Organization context not found for the user."
 
 /advance-transactions:
   get:
     tags: [AdvanceTransactions]
-    summary: Получить список транзакций
+    summary: Получить список транзакций подотчетных средств
+    description: |
+      Возвращает пагинированный список транзакций подотчетных средств организации
+      с возможностью детальной фильтрации по пользователю, проекту, типу, статусу и периоду.
     parameters:
-      - in: query
-        name: page
-        schema:
-          type: integer
-      - in: query
-        name: per_page
-        schema:
-          type: integer
       - in: query
         name: user_id
         schema:
           type: integer
+        description: Фильтр по ID пользователя
+        example: 25
       - in: query
         name: project_id
         schema:
           type: integer
+        description: Фильтр по ID проекта
+        example: 8
       - in: query
         name: type
         schema:
           type: string
           enum: [issue, expense, return]
+        description: Фильтр по типу транзакции
+        example: "issue"
       - in: query
         name: reporting_status
         schema:
           type: string
           enum: [pending, reported, approved]
+        description: Фильтр по статусу отчетности
+        example: "pending"
       - in: query
         name: date_from
         schema:
           type: string
           format: date
+        description: Начало периода фильтрации
+        example: "2024-12-01"
       - in: query
         name: date_to
         schema:
           type: string
           format: date
+        description: Конец периода фильтрации
+        example: "2024-12-31"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 25
     responses:
       "200":
-        description: Список транзакций
+        description: Список транзакций успешно получен
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/AdvanceTransaction.yaml'
+              $ref: '../components/schemas/AdvanceTransactionCollection.yaml'
   post:
     tags: [AdvanceTransactions]
-    summary: Создать транзакцию
+    summary: Создать новую транзакцию подотчетных средств
+    description: |
+      Создает новую транзакцию подотчетных средств с автоматическим пересчетом
+      баланса пользователя. Проверяет настройки организации и лимиты.
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/AdvanceTransactionCreateRequest.yaml'
+          examples:
+            issue_funds:
+              summary: "Выдача средств"
+              value:
+                user_id: 25
+                project_id: 8
+                type: "issue"
+                amount: 15000.00
+                description: "Закупка материалов для строительства"
+                document_number: "АВ-001234"
+                document_date: "2024-12-20"
+            expense_report:
+              summary: "Списание средств"
+              value:
+                user_id: 25
+                project_id: 8
+                type: "expense"
+                amount: 5000.00
+                description: "Расход на транспортные услуги"
     responses:
       "201":
-        description: Создано
+        description: Транзакция успешно создана
         content:
           application/json:
             schema:
               $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+            example:
+              success: true
+              message: "Transaction created successfully"
+              data:
+                id: 125
+                user_id: 25
+                amount: 15000.00
+                type: "issue"
+                balance_after: 27500.00
+                reporting_status: "pending"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Amount exceeds maximum single issue limit"
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    user_id: ["Поле user_id обязательно для заполнения."]
+                    amount: ["Поле amount должно быть больше 0.01."]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Failed to create transaction: Database error"
 
-/advance-transactions/{transaction}:
+/advance-transactions/{id}:
   get:
     tags: [AdvanceTransactions]
-    summary: Получить транзакцию
+    summary: Получить детальную информацию о транзакции
+    description: |
+      Возвращает полную информацию о транзакции включая связанные данные
+      о пользователе, проекте, создателе и утверждающем.
     parameters:
       - in: path
-        name: transaction
+        name: id
         required: true
         schema:
           type: integer
+        description: ID транзакции
+        example: 125
     responses:
       "200":
-        description: Транзакция
+        description: Детальная информация о транзакции
         content:
           application/json:
             schema:
               $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+            example:
+              success: true
+              data:
+                id: 125
+                user_id: 25
+                amount: 15000.00
+                type: "issue"
+                balance_after: 27500.00
+                reporting_status: "pending"
+                user:
+                  id: 25
+                  name: "Иванов И.И."
+                project:
+                  id: 8
+                  name: "ЖК Солнечный"
+                  external_code: "PRJ-001"
+      "404":
+        description: Транзакция не найдена или доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Transaction not found or access denied"
   put:
     tags: [AdvanceTransactions]
-    summary: Обновить транзакцию
+    summary: Обновить транзакцию подотчетных средств
+    description: |
+      Обновляет транзакцию подотчетных средств. Ключевые поля (сумма, тип, пользователь)
+      можно изменять только для транзакций со статусом "pending".
     parameters:
       - in: path
-        name: transaction
+        name: id
         required: true
         schema:
           type: integer
+        description: ID транзакции для обновления
+        example: 125
     requestBody:
       required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/AdvanceTransactionUpdateRequest.yaml'
+          examples:
+            update_description:
+              summary: "Обновление описания"
+              value:
+                description: "Обновленное описание закупки материалов"
+                document_number: "АВ-001234-UPD"
+            add_accounting_data:
+              summary: "Добавление данных для бухгалтерии"
+              value:
+                external_code: "1C_DOC_12345"
+                accounting_data:
+                  account_code: "71.01"
+                  cost_center: "ЦФО-001"
     responses:
       "200":
-        description: Обновлено
+        description: Транзакция успешно обновлена
         content:
           application/json:
             schema:
               $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+            example:
+              success: true
+              message: "Transaction updated successfully"
+              data:
+                id: 125
+                description: "Обновленное описание закупки материалов"
+                document_number: "АВ-001234-UPD"
+      "404":
+        description: Транзакция не найдена или доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Transaction not found or access denied"
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    description: ["Поле description не должно превышать 255 символов."]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Failed to update transaction: Database error"
   delete:
     tags: [AdvanceTransactions]
-    summary: Удалить транзакцию
+    summary: Удалить транзакцию подотчетных средств
+    description: |
+      Удаляет транзакцию подотчетных средств с восстановлением предыдущего баланса.
+      Можно удалять только транзакции со статусом "pending".
     parameters:
       - in: path
-        name: transaction
+        name: id
         required: true
         schema:
           type: integer
+        description: ID транзакции для удаления
+        example: 125
     responses:
-      "204":
-        description: Успешно удалено
+      "200":
+        description: Транзакция успешно удалена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceGenericResponse.yaml'
+            example:
+              success: true
+              message: "Transaction deleted successfully"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Нельзя удалить транзакцию, по которой уже создан отчет или которая утверждена"
+      "404":
+        description: Транзакция не найдена или доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Transaction not found or access denied"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Failed to delete transaction: Database error"
 
-/advance-transactions/{transaction}/report:
+/advance-transactions/{id}/report:
   post:
     tags: [AdvanceTransactions]
-    summary: Отчитаться по транзакции
+    summary: Отметить транзакцию как отчитанную
+    description: |
+      Создает отчет по транзакции подотчетных средств с возможностью
+      прикрепления файлов. Изменяет статус на "reported".
     parameters:
       - in: path
-        name: transaction
+        name: id
         required: true
         schema:
           type: integer
+        description: ID транзакции для отчета
+        example: 125
     requestBody:
       required: true
       content:
         multipart/form-data:
           schema:
             $ref: '../components/schemas/AdvanceTransactionReportRequest.yaml'
+          examples:
+            report_with_files:
+              summary: "Отчет с прикрепленными файлами"
+              value:
+                description: "Отчет о закупке строительных материалов"
+                document_number: "ОТЧ-001234"
+                document_date: "2024-12-20"
+                files: ["receipt1.pdf", "receipt2.jpg"]
     responses:
       "200":
-        description: Транзакция отмечена как отчитанная
+        description: Отчет по транзакции успешно создан
         content:
           application/json:
             schema:
               $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+            example:
+              success: true
+              message: "Transaction reported successfully"
+              data:
+                id: 125
+                reporting_status: "reported"
+                reported_at: "2024-12-21T14:30:00Z"
+                description: "Отчет о закупке строительных материалов"
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "По этой транзакции уже был создан отчет"
+      "404":
+        description: Транзакция не найдена или доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Transaction not found or access denied"
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    description: ["Поле description обязательно для заполнения."]
+                    document_number: ["Поле document_number обязательно для заполнения."]
+                    files: ["Размер файла не должен превышать 10MB."]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Failed to report transaction: File upload error"
 
-/advance-transactions/{transaction}/approve:
+/advance-transactions/{id}/approve:
   post:
     tags: [AdvanceTransactions]
-    summary: Утвердить транзакцию
+    summary: Утвердить отчет по транзакции
+    description: |
+      Утверждает отчет по транзакции подотчетных средств.
+      Возможно только для транзакций со статусом "reported".
     parameters:
       - in: path
-        name: transaction
+        name: id
         required: true
         schema:
           type: integer
+        description: ID транзакции для утверждения
+        example: 125
     requestBody:
-      required: false
+      required: true
       content:
         application/json:
           schema:
             $ref: '../components/schemas/AdvanceTransactionApprovalRequest.yaml'
+          examples:
+            simple_approval:
+              summary: "Простое утверждение"
+              value:
+                accounting_data:
+                  approved_amount: 14500.00
+                  approval_notes: "Утверждено с замечаниями"
     responses:
       "200":
-        description: Транзакция утверждена
+        description: Отчет успешно утвержден
         content:
           application/json:
             schema:
               $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+            example:
+              success: true
+              message: "Transaction approved successfully"
+              data:
+                id: 125
+                reporting_status: "approved"
+                approved_at: "2024-12-22T09:15:00Z"
+                approved_by_user_id: 12
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Утвердить можно только транзакции со статусом \"Отчитана\""
+      "404":
+        description: Транзакция не найдена или доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Transaction not found or access denied"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Failed to approve transaction: Database error"
 
-/advance-transactions/{transaction}/attachments:
+/advance-transactions/{id}/attachments:
   post:
     tags: [AdvanceTransactions]
     summary: Прикрепить файлы к транзакции
+    description: |
+      Прикрепляет дополнительные файлы к транзакции подотчетных средств.
+      Нельзя добавлять файлы к утвержденным транзакциям.
     parameters:
       - in: path
-        name: transaction
+        name: id
         required: true
         schema:
           type: integer
+        description: ID транзакции
+        example: 125
     requestBody:
       required: true
       content:
         multipart/form-data:
           schema:
             type: object
+            required: [files]
             properties:
               files:
                 type: array
                 items:
                   type: string
                   format: binary
+                description: Массив файлов для прикрепления (максимум 10MB на файл)
     responses:
       "200":
-        description: Файлы прикреплены
+        description: Файлы успешно прикреплены
         content:
           application/json:
             schema:
               $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+            example:
+              success: true
+              message: "Files attached successfully"
+              data:
+                id: 125
+                attachment_ids: "15,16,17"
+      "400":
+        description: Ошибка прикрепления файлов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Нельзя добавить файлы к утвержденной транзакции"
+      "404":
+        description: Транзакция не найдена или доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Transaction not found or access denied"
+      "422":
+        description: Ошибка валидации файлов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    files: ["Поле files обязательно для заполнения."]
+                    "files.0": ["Размер файла не должен превышать 10240 килобайт."]
 
-/advance-transactions/{transaction}/attachments/{fileId}:
+/advance-transactions/{id}/attachments/{fileId}:
   delete:
     tags: [AdvanceTransactions]
-    summary: Удалить файл транзакции
+    summary: Открепить файл от транзакции
+    description: |
+      Открепляет файл от транзакции подотчетных средств.
+      Нельзя удалять файлы из утвержденных транзакций.
     parameters:
       - in: path
-        name: transaction
+        name: id
         required: true
         schema:
           type: integer
+        description: ID транзакции
+        example: 125
       - in: path
         name: fileId
         required: true
         schema:
           type: integer
+        description: ID файла для открепления
+        example: 16
     responses:
       "200":
-        description: Файл удален
+        description: Файл успешно откреплен
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/AdvanceTransactionResponse.yaml' 
+              $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+            example:
+              success: true
+              message: "File detached successfully"
+              data:
+                id: 125
+                attachment_ids: "15,17"
+      "400":
+        description: Ошибка открепления файла
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Нельзя удалить файлы из утвержденной транзакции"
+      "404":
+        description: Транзакция или файл не найдены
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Transaction not found or access denied"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Failed to detach file: Database error"

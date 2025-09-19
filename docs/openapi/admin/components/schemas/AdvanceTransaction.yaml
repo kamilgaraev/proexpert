@@ -1,66 +1,157 @@
 type: object
+description: Транзакция подотчетных средств.
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор транзакции
+    example: 125
+  user_id:
+    type: integer
+    description: ID пользователя (прораба)
+    example: 25
   organization_id:
     type: integer
+    description: ID организации
+    example: 10
+  project_id:
+    type: integer
+    nullable: true
+    description: ID проекта
+    example: 8
   type:
     type: string
     enum: [issue, expense, return]
+    description: Тип транзакции
+    example: "issue"
   amount:
     type: number
-    format: float
+    format: decimal
+    description: Сумма транзакции
+    example: 15000.00
   description:
     type: string
     nullable: true
+    description: Описание транзакции
+    example: "Закупка материалов для строительства"
   document_number:
     type: string
     nullable: true
+    description: Номер документа
+    example: "АВ-001234"
   document_date:
     type: string
     format: date
     nullable: true
+    description: Дата документа
+    example: "2024-12-20"
   balance_after:
     type: number
-    format: float
+    format: decimal
+    description: Баланс пользователя после транзакции
+    example: 27500.00
   reporting_status:
     type: string
     enum: [pending, reported, approved]
-    nullable: true
+    description: |
+      Статус отчетности:
+      - pending - в ожидании отчета
+      - reported - отчет предоставлен
+      - approved - отчет утвержден
+    example: "pending"
   reported_at:
     type: string
     format: date-time
     nullable: true
+    description: Дата предоставления отчета
+    example: "2024-12-21T14:30:00Z"
   approved_at:
     type: string
     format: date-time
     nullable: true
+    description: Дата утверждения отчета
+    example: "2024-12-22T09:15:00Z"
+  created_by_user_id:
+    type: integer
+    nullable: true
+    description: ID пользователя, создавшего транзакцию
+    example: 12
+  approved_by_user_id:
+    type: integer
+    nullable: true
+    description: ID пользователя, утвердившего отчет
+    example: 12
   external_code:
     type: string
     nullable: true
+    description: Внешний код для интеграции
+    example: "1C_DOC_12345"
   accounting_data:
     type: object
     nullable: true
+    description: Данные для бухгалтерской интеграции
+    example:
+      account_code: "71.01"
+      cost_center: "ЦФО-001"
+  attachment_ids:
+    type: string
+    nullable: true
+    description: ID прикрепленных файлов (через запятую)
+    example: "15,16,17"
   created_at:
     type: string
     format: date-time
+    description: Дата создания транзакции
+    example: "2024-12-20T10:00:00Z"
   updated_at:
     type: string
     format: date-time
+    description: Дата последнего обновления
+    example: "2024-12-20T10:00:00Z"
   user:
-    $ref: './UserSimple.yaml'
+    type: object
     nullable: true
+    description: Информация о пользователе (загружается при необходимости)
+    properties:
+      id:
+        type: integer
+        example: 25
+      name:
+        type: string
+        example: "Иванов И.И."
   project:
-    $ref: './Project.yaml'
+    type: object
     nullable: true
+    description: Информация о проекте (загружается при необходимости)
+    properties:
+      id:
+        type: integer
+        example: 8
+      name:
+        type: string
+        example: "ЖК Солнечный"
+      external_code:
+        type: string
+        nullable: true
+        example: "PRJ-001"
   created_by:
-    $ref: './UserSimple.yaml'
+    type: object
     nullable: true
+    description: Пользователь, создавший транзакцию
+    properties:
+      id:
+        type: integer
+        example: 12
+      name:
+        type: string
+        example: "Администратор А.А."
   approved_by:
-    $ref: './UserSimple.yaml'
+    type: object
     nullable: true
-  attachments:
-    type: array
-    items:
-      $ref: './File.yaml'
-    nullable: true 
+    description: Пользователь, утвердивший отчет
+    properties:
+      id:
+        type: integer
+        example: 12
+      name:
+        type: string
+        example: "Администратор А.А."

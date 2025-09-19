@@ -1,21 +1,27 @@
 type: object
-required:
-  - description
-  - document_number
-  - document_date
+required: [description, document_number, document_date]
+description: Запрос для отчета по транзакции подотчетных средств.
 properties:
   description:
     type: string
     maxLength: 255
+    description: Описание отчета по транзакции
+    example: "Отчет о закупке строительных материалов"
   document_number:
     type: string
     maxLength: 100
+    description: Номер отчетного документа
+    example: "ОТЧ-001234"
   document_date:
     type: string
     format: date
+    description: Дата отчетного документа
+    example: "2024-12-20"
   files:
     type: array
     items:
       type: string
       format: binary
-    nullable: true 
+    nullable: true
+    description: Прикрепляемые файлы к отчету (максимум 10MB на файл)
+    example: []

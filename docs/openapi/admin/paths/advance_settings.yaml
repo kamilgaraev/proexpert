@@ -1,29 +1,142 @@
 /advance-settings:
   get:
     tags: [AdvanceSettings]
-    summary: Получить текущие настройки подотчетных средств
+    summary: Получить текущие настройки подотчетных средств организации
+    description: |
+      Возвращает настройки подотчетных средств для текущей организации.
+      Если настройки еще не созданы, возвращает значения по умолчанию.
     responses:
       "200":
-        description: Настройки
+        description: Настройки успешно получены
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/AdvanceAccountSettingResponse.yaml'
+              $ref: '../components/schemas/AdvanceSettingResponse.yaml'
+            example:
+              success: true
+              data:
+                id: 5
+                organization_id: 10
+                max_single_issue_amount: 50000.00
+                report_submission_deadline_days: 7
+                require_project_for_expense: true
+                notify_admin_on_overdue_report: true
+      "400":
+        description: Контекст организации не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Organization context not found."
+      "500":
+        description: Ошибка получения настроек
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Failed to retrieve settings."
   post:
     tags: [AdvanceSettings]
     summary: Создать или обновить настройки подотчетных средств
+    description: |
+      Создает новые или обновляет существующие настройки подотчетных средств
+      для текущей организации. Поддерживает частичное обновление полей.
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/AdvanceAccountSettingRequest.yaml'
+            $ref: '../components/schemas/AdvanceSettingRequest.yaml'
+          examples:
+            complete_settings:
+              summary: "Полные настройки"
+              value:
+                max_single_issue_amount: 50000.00
+                report_submission_deadline_days: 7
+                dual_authorization_threshold: 100000.00
+                require_project_for_expense: true
+                notify_admin_on_overdue_report: true
+                notify_admin_on_high_value_transaction: true
+                high_value_notification_threshold: 50000.00
+                notify_user_on_transaction_approval: true
+                notify_user_on_transaction_rejection: true
+                send_report_reminder_days_before: 2
+            minimal_settings:
+              summary: "Минимальные настройки"
+              value:
+                require_project_for_expense: false
+                notify_admin_on_overdue_report: false
+                notify_admin_on_high_value_transaction: false
+                notify_user_on_transaction_approval: true
+                notify_user_on_transaction_rejection: true
     responses:
       "200":
-        description: Настройки обновлены
+        description: Настройки успешно обновлены
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/AdvanceAccountSettingResponse.yaml'
+              $ref: '../components/schemas/AdvanceSettingResponse.yaml'
+            example:
+              success: true
+              message: "Advance account settings updated successfully."
+              data:
+                id: 5
+                organization_id: 10
+                max_single_issue_amount: 50000.00
+                report_submission_deadline_days: 7
+      "400":
+        description: Контекст организации не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Organization context not found."
       "422":
-        description: Неверный запрос 
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    high_value_notification_threshold: ["Поле high_value_notification_threshold обязательно для заполнения, когда notify_admin_on_high_value_transaction равно true."]
+                    report_submission_deadline_days: ["Поле report_submission_deadline_days не должно превышать 365."]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Failed to update settings: Database connection error"

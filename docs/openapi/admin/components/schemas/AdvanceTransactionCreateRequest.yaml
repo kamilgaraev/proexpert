@@ -1,30 +1,46 @@
 type: object
-required:
-  - user_id
-  - type
-  - amount
+required: [user_id, type, amount]
+description: Запрос для создания новой транзакции подотчетных средств.
 properties:
   user_id:
     type: integer
+    description: ID пользователя (прораба) для транзакции
+    example: 25
   project_id:
     type: integer
     nullable: true
+    description: ID проекта (опционально)
+    example: 8
   type:
     type: string
     enum: [issue, expense, return]
+    description: |
+      Тип транзакции:
+      - issue - выдача средств
+      - expense - списание средств (расход)
+      - return - возврат неиспользованных средств
+    example: "issue"
   amount:
     type: number
-    format: float
+    format: decimal
     minimum: 0.01
+    description: Сумма транзакции
+    example: 15000.00
   description:
     type: string
     maxLength: 255
     nullable: true
+    description: Описание/назначение транзакции
+    example: "Закупка материалов для строительства"
   document_number:
     type: string
     maxLength: 100
     nullable: true
+    description: Номер документа
+    example: "АВ-001234"
   document_date:
     type: string
     format: date
-    nullable: true 
+    nullable: true
+    description: Дата документа
+    example: "2024-12-20"

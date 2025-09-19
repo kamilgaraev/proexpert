@@ -1,0 +1,396 @@
+/users/{user_id}/advance-balance:
+  get:
+    tags: [AdvanceUsers]
+    summary: Получить баланс подотчетных средств пользователя
+    description: |
+      Возвращает детальную информацию о балансе подотчетных средств конкретного пользователя
+      включая текущий баланс, общие суммы выданных и отчитанных средств.
+    parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          type: integer
+        description: ID пользователя
+        example: 25
+    responses:
+      "200":
+        description: Баланс пользователя успешно получен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/UserAdvanceBalanceResponse.yaml'
+            example:
+              data:
+                user_id: 25
+                name: "Иванов И.И."
+                current_balance: 12500.00
+                total_issued: 75000.00
+                total_reported: 62500.00
+                has_overdue_balance: false
+                last_transaction_at: "2024-12-20T10:00:00Z"
+      "404":
+        description: Пользователь не найден или доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "User not found or access denied"
+
+/users/{user_id}/advance-transactions:
+  get:
+    tags: [AdvanceUsers]
+    summary: Получить транзакции подотчетных средств пользователя
+    description: |
+      Возвращает пагинированный список транзакций подотчетных средств
+      конкретного пользователя с возможностью фильтрации.
+    parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          type: integer
+        description: ID пользователя
+        example: 25
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+        description: Начало периода фильтрации
+        example: "2024-12-01"
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+        description: Конец периода фильтрации
+        example: "2024-12-31"
+      - in: query
+        name: type
+        schema:
+          type: string
+          enum: [issue, expense, return]
+        description: Фильтр по типу транзакции
+        example: "issue"
+      - in: query
+        name: reporting_status
+        schema:
+          type: string
+          enum: [pending, reported, approved]
+        description: Фильтр по статусу отчетности
+        example: "pending"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 25
+    responses:
+      "200":
+        description: Транзакции пользователя успешно получены
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceTransactionCollection.yaml'
+      "404":
+        description: Пользователь не найден или доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "User not found or access denied"
+
+/users/{user_id}/issue-funds:
+  post:
+    tags: [AdvanceUsers]
+    summary: Выдать подотчетные средства пользователю
+    description: |
+      Создает транзакцию типа "issue" для выдачи подотчетных средств
+      конкретному пользователю с автоматическим обновлением баланса.
+    parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          type: integer
+        description: ID пользователя для выдачи средств
+        example: 25
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [amount]
+            properties:
+              amount:
+                type: number
+                format: decimal
+                minimum: 0.01
+                description: Сумма для выдачи
+                example: 15000.00
+              project_id:
+                type: integer
+                nullable: true
+                description: ID проекта (опционально)
+                example: 8
+              description:
+                type: string
+                maxLength: 255
+                nullable: true
+                description: Описание/назначение выдачи
+                example: "Закупка материалов для строительства"
+              document_number:
+                type: string
+                maxLength: 100
+                nullable: true
+                description: Номер документа
+                example: "АВ-001234"
+              document_date:
+                type: string
+                format: date
+                nullable: true
+                description: Дата документа
+                example: "2024-12-20"
+          examples:
+            simple_issue:
+              summary: "Простая выдача"
+              value:
+                amount: 15000.00
+                description: "Закупка материалов"
+            project_issue:
+              summary: "Выдача на проект"
+              value:
+                amount: 25000.00
+                project_id: 8
+                description: "Материалы для ЖК Солнечный"
+                document_number: "АВ-001234"
+                document_date: "2024-12-20"
+    responses:
+      "201":
+        description: Средства успешно выданы
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+            example:
+              success: true
+              message: "Funds issued successfully"
+              data:
+                id: 125
+                user_id: 25
+                type: "issue"
+                amount: 15000.00
+                balance_after: 27500.00
+      "400":
+        description: Ошибка бизнес-логики
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Amount exceeds maximum single issue limit"
+      "404":
+        description: Пользователь не найден или доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "User not found or access denied"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    amount: ["Поле amount обязательно для заполнения."]
+                    project_id: ["Выбранное значение для project_id некорректно."]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Failed to issue funds: Database error"
+
+/users/{user_id}/return-funds:
+  post:
+    tags: [AdvanceUsers]
+    summary: Оформить возврат подотчетных средств от пользователя
+    description: |
+      Создает транзакцию типа "return" для возврата неиспользованных
+      подотчетных средств с проверкой достаточности баланса.
+    parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          type: integer
+        description: ID пользователя для возврата средств
+        example: 25
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [amount]
+            properties:
+              amount:
+                type: number
+                format: decimal
+                minimum: 0.01
+                description: Сумма для возврата
+                example: 5000.00
+              project_id:
+                type: integer
+                nullable: true
+                description: ID проекта (опционально)
+                example: 8
+              description:
+                type: string
+                maxLength: 255
+                nullable: true
+                description: Описание/причина возврата
+                example: "Возврат неиспользованных средств"
+              document_number:
+                type: string
+                maxLength: 100
+                nullable: true
+                description: Номер документа
+                example: "ВЗ-001234"
+              document_date:
+                type: string
+                format: date
+                nullable: true
+                description: Дата документа
+                example: "2024-12-21"
+          examples:
+            simple_return:
+              summary: "Простой возврат"
+              value:
+                amount: 5000.00
+                description: "Возврат неиспользованных средств"
+            documented_return:
+              summary: "Документированный возврат"
+              value:
+                amount: 3500.00
+                project_id: 8
+                description: "Возврат остатка по проекту ЖК Солнечный"
+                document_number: "ВЗ-001234"
+                document_date: "2024-12-21"
+    responses:
+      "201":
+        description: Средства успешно возвращены
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AdvanceTransactionResponse.yaml'
+            example:
+              success: true
+              message: "Funds returned successfully"
+              data:
+                id: 126
+                user_id: 25
+                type: "return"
+                amount: 5000.00
+                balance_after: 7500.00
+      "400":
+        description: Недостаточно средств для возврата
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Insufficient funds for return"
+      "404":
+        description: Пользователь не найден или доступ запрещен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "User not found or access denied"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    amount: ["Поле amount должно быть больше 0.01."]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Failed to return funds: Database error"

@@ -1,0 +1,72 @@
+type: object
+description: Настройки подотчетных средств организации.
+properties:
+  id:
+    type: integer
+    nullable: true
+    description: ID настроек (null если настройки еще не созданы)
+    example: 5
+  organization_id:
+    type: integer
+    description: ID организации
+    example: 10
+  max_single_issue_amount:
+    type: number
+    format: decimal
+    nullable: true
+    description: Максимальная сумма одной транзакции на выдачу
+    example: 50000.00
+  report_submission_deadline_days:
+    type: integer
+    nullable: true
+    description: Срок предоставления отчета (дни)
+    example: 7
+  dual_authorization_threshold:
+    type: number
+    format: decimal
+    nullable: true
+    description: Порог двойной авторизации
+    example: 100000.00
+  require_project_for_expense:
+    type: boolean
+    description: Требовать проект для расходов
+    example: true
+  notify_admin_on_overdue_report:
+    type: boolean
+    description: Уведомлять администратора о просроченных отчетах
+    example: true
+  notify_admin_on_high_value_transaction:
+    type: boolean
+    description: Уведомлять администратора о крупных транзакциях
+    example: true
+  high_value_notification_threshold:
+    type: number
+    format: decimal
+    nullable: true
+    description: Порог для уведомления о крупной транзакции
+    example: 50000.00
+  notify_user_on_transaction_approval:
+    type: boolean
+    description: Уведомлять пользователя об утверждении транзакции
+    example: true
+  notify_user_on_transaction_rejection:
+    type: boolean
+    description: Уведомлять пользователя об отклонении транзакции
+    example: true
+  send_report_reminder_days_before:
+    type: integer
+    nullable: true
+    description: Отправлять напоминание об отчете за (дни)
+    example: 2
+  created_at:
+    type: string
+    format: date-time
+    nullable: true
+    description: Дата создания настроек
+    example: "2024-12-20T10:30:00Z"
+  updated_at:
+    type: string
+    format: date-time
+    nullable: true
+    description: Дата последнего обновления настроек
+    example: "2024-12-20T15:45:00Z"

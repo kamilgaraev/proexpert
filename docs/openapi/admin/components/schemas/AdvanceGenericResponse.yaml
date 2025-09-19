@@ -1,5 +1,5 @@
 type: object
-description: Ответ с транзакцией подотчетных средств.
+description: Универсальный ответ для операций с подотчетными средствами.
 properties:
   success:
     type: boolean
@@ -7,8 +7,5 @@ properties:
     example: true
   message:
     type: string
-    nullable: true
     description: Сообщение о результате операции
-    example: "Transaction created successfully"
-  data:
-    $ref: './AdvanceTransaction.yaml'
+    example: "Transaction deleted successfully"

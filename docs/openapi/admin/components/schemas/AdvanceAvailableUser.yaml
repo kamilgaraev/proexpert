@@ -1,0 +1,35 @@
+type: object
+description: Пользователь, доступный для создания транзакций подотчетных средств.
+properties:
+  id:
+    type: integer
+    description: ID пользователя
+    example: 25
+  name:
+    type: string
+    description: Полное имя пользователя
+    example: "Иванов Иван Иванович"
+  current_balance:
+    type: number
+    format: decimal
+    description: Текущий баланс подотчетных средств
+    example: 12500.00
+  has_overdue_balance:
+    type: boolean
+    description: Есть ли просроченная задолженность
+    example: false
+  position:
+    type: string
+    nullable: true
+    description: Должность пользователя
+    example: "Прораб"
+  avatar_path:
+    type: string
+    nullable: true
+    description: Путь к файлу аватара
+    example: "avatars/user_25.jpg"
+  avatar_url:
+    type: string
+    nullable: true
+    description: URL аватара пользователя
+    example: "https://example.com/storage/avatars/user_25.jpg"

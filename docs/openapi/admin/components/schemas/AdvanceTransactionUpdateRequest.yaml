@@ -1,21 +1,34 @@
 type: object
+description: Запрос для обновления транзакции подотчетных средств (только редактируемые поля).
 properties:
   description:
     type: string
     maxLength: 255
     nullable: true
+    description: Описание/назначение транзакции
+    example: "Обновленное описание закупки материалов"
   document_number:
     type: string
     maxLength: 100
     nullable: true
+    description: Номер документа
+    example: "АВ-001234-UPD"
   document_date:
     type: string
     format: date
     nullable: true
+    description: Дата документа
+    example: "2024-12-21"
   external_code:
     type: string
     maxLength: 100
     nullable: true
+    description: Внешний код для интеграции с бухгалтерией
+    example: "1C_DOC_12345"
   accounting_data:
     type: object
-    nullable: true 
+    nullable: true
+    description: Дополнительные данные для бухгалтерской интеграции
+    example:
+      account_code: "71.01"
+      cost_center: "ЦФО-001"

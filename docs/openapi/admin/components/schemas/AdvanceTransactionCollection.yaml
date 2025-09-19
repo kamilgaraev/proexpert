@@ -1,3 +1,66 @@
-type: array
-items:
-  $ref: './AdvanceTransaction.yaml' 
+type: object
+description: Пагинированная коллекция транзакций подотчетных средств.
+properties:
+  data:
+    type: array
+    items:
+      $ref: './AdvanceTransaction.yaml'
+    description: Массив транзакций
+  links:
+    type: object
+    description: Ссылки для навигации по страницам
+    properties:
+      first:
+        type: string
+        nullable: true
+        description: Ссылка на первую страницу
+        example: "http://example.com/api/v1/admin/advance-transactions?page=1"
+      last:
+        type: string
+        nullable: true
+        description: Ссылка на последнюю страницу
+        example: "http://example.com/api/v1/admin/advance-transactions?page=5"
+      prev:
+        type: string
+        nullable: true
+        description: Ссылка на предыдущую страницу
+        example: "http://example.com/api/v1/admin/advance-transactions?page=1"
+      next:
+        type: string
+        nullable: true
+        description: Ссылка на следующую страницу
+        example: "http://example.com/api/v1/admin/advance-transactions?page=3"
+  meta:
+    type: object
+    description: Метаданные пагинации
+    properties:
+      current_page:
+        type: integer
+        description: Текущая страница
+        example: 2
+      from:
+        type: integer
+        nullable: true
+        description: Номер первого элемента на странице
+        example: 16
+      last_page:
+        type: integer
+        description: Номер последней страницы
+        example: 5
+      path:
+        type: string
+        description: Базовый путь для пагинации
+        example: "http://example.com/api/v1/admin/advance-transactions"
+      per_page:
+        type: integer
+        description: Количество элементов на странице
+        example: 15
+      to:
+        type: integer
+        nullable: true
+        description: Номер последнего элемента на странице
+        example: 30
+      total:
+        type: integer
+        description: Общее количество элементов
+        example: 67

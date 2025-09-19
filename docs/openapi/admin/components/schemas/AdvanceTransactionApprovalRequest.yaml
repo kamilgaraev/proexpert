@@ -1,5 +1,11 @@
 type: object
+description: Запрос для утверждения отчета по транзакции подотчетных средств.
 properties:
   accounting_data:
     type: object
-    nullable: true 
+    nullable: true
+    description: Дополнительные данные для бухгалтерской обработки
+    example:
+      approved_amount: 14500.00
+      account_code: "71.01"
+      approval_notes: "Утверждено с замечаниями"

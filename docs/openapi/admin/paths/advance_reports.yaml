@@ -1,0 +1,558 @@
+/reports/advance-accounts/summary:
+  get:
+    tags: [AdvanceReports]
+    summary: Получить сводный отчет по подотчетным средствам
+    description: |
+      Возвращает агрегированную статистику по транзакциям подотчетных средств организации
+      с группировкой по типам и статусам, а также топ пользователей по балансу.
+    parameters:
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+        description: Начало периода отчета (по умолчанию 30 дней назад)
+        example: "2024-12-01"
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+        description: Конец периода отчета (по умолчанию текущая дата)
+        example: "2024-12-31"
+    responses:
+      "200":
+        description: Сводный отчет успешно сформирован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  description: Название отчета
+                  example: "Сводный отчет по подотчетным средствам"
+                period:
+                  type: object
+                  description: Период отчета
+                  properties:
+                    from:
+                      type: string
+                      format: date
+                      example: "2024-12-01"
+                    to:
+                      type: string
+                      format: date
+                      example: "2024-12-31"
+                transaction_summary:
+                  type: object
+                  description: Сводка транзакций по типам и статусам
+                  example:
+                    issue:
+                      pending:
+                        count: 15
+                        total_amount: 375000.00
+                      reported:
+                        count: 8
+                        total_amount: 195000.00
+                      approved:
+                        count: 22
+                        total_amount: 580000.00
+                    expense:
+                      approved:
+                        count: 18
+                        total_amount: 325000.00
+                top_users:
+                  type: array
+                  description: Топ-10 пользователей по балансу
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                        example: 25
+                      name:
+                        type: string
+                        example: "Иванов И.И."
+                      current_balance:
+                        type: number
+                        format: decimal
+                        example: 12500.00
+                      total_issued:
+                        type: number
+                        format: decimal
+                        example: 75000.00
+                      total_reported:
+                        type: number
+                        format: decimal
+                        example: 62500.00
+                      has_overdue_balance:
+                        type: boolean
+                        example: false
+                generated_at:
+                  type: string
+                  format: date-time
+                  description: Время формирования отчета
+                  example: "2024-12-20T15:30:00Z"
+      "500":
+        description: Ошибка формирования отчета
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Failed to generate report"
+                message:
+                  type: string
+                  example: "Organization ID is required for report generation"
+
+/reports/advance-accounts/users/{userId}:
+  get:
+    tags: [AdvanceReports]
+    summary: Получить отчет по подотчетным средствам пользователя
+    description: |
+      Возвращает детальный отчет по всем транзакциям конкретного пользователя
+      с группировкой по проектам и типам транзакций.
+    parameters:
+      - in: path
+        name: userId
+        required: true
+        schema:
+          type: integer
+        description: ID пользователя для отчета
+        example: 25
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+        description: Начало периода отчета (по умолчанию 30 дней назад)
+        example: "2024-12-01"
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+        description: Конец периода отчета (по умолчанию текущая дата)
+        example: "2024-12-31"
+    responses:
+      "200":
+        description: Отчет по пользователю успешно сформирован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  example: "Отчет по подотчетным средствам пользователя"
+                user:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                      example: 25
+                    name:
+                      type: string
+                      example: "Иванов И.И."
+                    current_balance:
+                      type: number
+                      format: decimal
+                      example: 12500.00
+                    total_issued:
+                      type: number
+                      format: decimal
+                      example: 75000.00
+                    total_reported:
+                      type: number
+                      format: decimal
+                      example: 62500.00
+                period:
+                  type: object
+                  properties:
+                    from:
+                      type: string
+                      format: date
+                      example: "2024-12-01"
+                    to:
+                      type: string
+                      format: date
+                      example: "2024-12-31"
+                summary:
+                  type: object
+                  description: Сводка по типам транзакций
+                  properties:
+                    total_issued:
+                      type: number
+                      format: decimal
+                      example: 45000.00
+                    total_expense:
+                      type: number
+                      format: decimal
+                      example: 32500.00
+                    total_returned:
+                      type: number
+                      format: decimal
+                      example: 0.00
+                    current_balance:
+                      type: number
+                      format: decimal
+                      example: 12500.00
+                transactions:
+                  type: array
+                  description: Все транзакции пользователя в периоде
+                  items:
+                    $ref: '../components/schemas/AdvanceTransaction.yaml'
+                project_summary:
+                  type: array
+                  description: Сводка по проектам
+                  items:
+                    type: object
+                    properties:
+                      project_id:
+                        type: integer
+                        nullable: true
+                        example: 8
+                      project_name:
+                        type: string
+                        example: "ЖК Солнечный"
+                      total_amount:
+                        type: number
+                        format: decimal
+                        example: 25000.00
+                      transaction_count:
+                        type: integer
+                        example: 3
+                generated_at:
+                  type: string
+                  format: date-time
+                  example: "2024-12-20T15:30:00Z"
+      "400":
+        description: Ошибка параметров запроса
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Failed to generate report"
+                message:
+                  type: string
+                  example: "User ID and Organization ID are required for report generation"
+      "500":
+        description: Ошибка формирования отчета
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Failed to generate report"
+                message:
+                  type: string
+                  example: "Database connection error"
+
+/reports/advance-accounts/projects/{projectId}:
+  get:
+    tags: [AdvanceReports]
+    summary: Получить отчет по подотчетным средствам проекта
+    description: |
+      Возвращает детальный отчет по всем транзакциям конкретного проекта
+      с группировкой по пользователям и типам транзакций.
+    parameters:
+      - in: path
+        name: projectId
+        required: true
+        schema:
+          type: integer
+        description: ID проекта для отчета
+        example: 8
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+        description: Начало периода отчета (по умолчанию 30 дней назад)
+        example: "2024-12-01"
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+        description: Конец периода отчета (по умолчанию текущая дата)
+        example: "2024-12-31"
+    responses:
+      "200":
+        description: Отчет по проекту успешно сформирован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  example: "Отчет по подотчетным средствам проекта"
+                project:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                      example: 8
+                    name:
+                      type: string
+                      example: "ЖК Солнечный"
+                    external_code:
+                      type: string
+                      nullable: true
+                      example: "PRJ-001"
+                period:
+                  type: object
+                  properties:
+                    from:
+                      type: string
+                      format: date
+                      example: "2024-12-01"
+                    to:
+                      type: string
+                      format: date
+                      example: "2024-12-31"
+                summary:
+                  type: object
+                  description: Сводка по типам транзакций
+                  properties:
+                    total_issued:
+                      type: number
+                      format: decimal
+                      example: 125000.00
+                    total_expense:
+                      type: number
+                      format: decimal
+                      example: 98500.00
+                    total_returned:
+                      type: number
+                      format: decimal
+                      example: 3500.00
+                transactions:
+                  type: array
+                  description: Все транзакции проекта в периоде
+                  items:
+                    $ref: '../components/schemas/AdvanceTransaction.yaml'
+                user_summary:
+                  type: array
+                  description: Сводка по пользователям
+                  items:
+                    type: object
+                    properties:
+                      user_id:
+                        type: integer
+                        example: 25
+                      user_name:
+                        type: string
+                        example: "Иванов И.И."
+                      total_amount:
+                        type: number
+                        format: decimal
+                        example: 45000.00
+                      transaction_count:
+                        type: integer
+                        example: 5
+                generated_at:
+                  type: string
+                  format: date-time
+                  example: "2024-12-20T15:30:00Z"
+
+/reports/advance-accounts/overdue:
+  get:
+    tags: [AdvanceReports]
+    summary: Получить отчет по просроченным подотчетным средствам
+    description: |
+      Возвращает отчет по пользователям с просроченными задолженностями
+      и транзакциям, требующим отчета сверх установленного срока.
+    parameters:
+      - in: query
+        name: overdue_days
+        schema:
+          type: integer
+          default: 30
+          minimum: 1
+          maximum: 365
+        description: Количество дней для определения просрочки
+        example: 30
+    responses:
+      "200":
+        description: Отчет по просроченным средствам успешно сформирован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  example: "Отчет по просроченным подотчетным средствам"
+                cutoff_date:
+                  type: string
+                  format: date
+                  description: Дата отсечения для определения просрочки
+                  example: "2024-11-20"
+                overdue_days:
+                  type: integer
+                  description: Количество дней просрочки
+                  example: 30
+                users_with_overdue_balance:
+                  type: array
+                  description: Пользователи с просроченными балансами
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: integer
+                        example: 25
+                      name:
+                        type: string
+                        example: "Иванов И.И."
+                      current_balance:
+                        type: number
+                        format: decimal
+                        example: 12500.00
+                      last_transaction_at:
+                        type: string
+                        format: date-time
+                        nullable: true
+                        example: "2024-11-15T10:00:00Z"
+                overdue_transactions:
+                  type: array
+                  description: Просроченные транзакции, требующие отчета
+                  items:
+                    $ref: '../components/schemas/AdvanceTransaction.yaml'
+                summary:
+                  type: object
+                  description: Сводная статистика
+                  properties:
+                    user_count:
+                      type: integer
+                      description: Количество пользователей с просрочкой
+                      example: 5
+                    transaction_count:
+                      type: integer
+                      description: Количество просроченных транзакций
+                      example: 12
+                    total_overdue_amount:
+                      type: number
+                      format: decimal
+                      description: Общая сумма просроченных средств
+                      example: 67500.00
+                generated_at:
+                  type: string
+                  format: date-time
+                  example: "2024-12-20T15:30:00Z"
+
+/reports/advance-accounts/export/{format}:
+  get:
+    tags: [AdvanceReports]
+    summary: Экспортировать отчет по подотчетным средствам
+    description: |
+      Экспортирует отчет по подотчетным средствам в указанном формате.
+      Поддерживает различные типы отчетов и форматы экспорта.
+    parameters:
+      - in: path
+        name: format
+        required: true
+        schema:
+          type: string
+          enum: [json, xlsx, csv]
+        description: Формат экспорта отчета
+        example: "xlsx"
+      - in: query
+        name: report_type
+        schema:
+          type: string
+          enum: [summary, user, project, overdue]
+          default: "summary"
+        description: Тип отчета для экспорта
+        example: "summary"
+      - in: query
+        name: user_id
+        schema:
+          type: integer
+        description: ID пользователя (для отчета типа "user")
+        example: 25
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+        description: ID проекта (для отчета типа "project")
+        example: 8
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+        description: Начало периода отчета
+        example: "2024-12-01"
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+        description: Конец периода отчета
+        example: "2024-12-31"
+      - in: query
+        name: overdue_days
+        schema:
+          type: integer
+        description: Количество дней просрочки (для отчета типа "overdue")
+        example: 30
+    responses:
+      "200":
+        description: Отчет успешно экспортирован
+        content:
+          application/json:
+            description: JSON формат отчета
+            schema:
+              type: object
+              description: Структура зависит от типа отчета
+          application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+            description: Excel файл отчета
+            schema:
+              type: string
+              format: binary
+          text/csv:
+            description: CSV файл отчета
+            schema:
+              type: string
+        headers:
+          Content-Disposition:
+            description: Заголовок для скачивания файла
+            schema:
+              type: string
+              example: 'attachment; filename="advance_account_report_summary_2024-12-20_15-30-00.xlsx"'
+      "400":
+        description: Ошибка параметров экспорта
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Экспорт в формате pdf временно недоступен. Для экспорта в Excel или CSV используйте JSON формат и конвертируйте его."
+                data:
+                  type: object
+                  description: Данные отчета в JSON формате
+      "500":
+        description: Ошибка экспорта отчета
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                error:
+                  type: string
+                  example: "Failed to export report"
+                message:
+                  type: string
+                  example: "File generation error"
