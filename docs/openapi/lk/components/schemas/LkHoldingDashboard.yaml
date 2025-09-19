@@ -1,0 +1,94 @@
+type: object
+properties:
+  holding_info:
+    type: object
+    properties:
+      id:
+        type: integer
+        example: 10
+      name:
+        type: string
+        example: "Строительный холдинг Монолит"
+      total_organizations:
+        type: integer
+        example: 5
+      active_organizations:
+        type: integer
+        example: 4
+  aggregated_stats:
+    type: object
+    properties:
+      total_users:
+        type: integer
+        description: Общее количество пользователей во всех организациях
+        example: 125
+      total_projects:
+        type: integer
+        description: Общее количество проектов
+        example: 45
+      active_projects:
+        type: integer
+        description: Количество активных проектов
+        example: 28
+      total_contracts:
+        type: integer
+        description: Общее количество договоров
+        example: 67
+      total_contract_amount:
+        type: number
+        format: float
+        description: Общая сумма договоров
+        example: 125000000.00
+      completed_works_amount:
+        type: number
+        format: float
+        description: Сумма выполненных работ
+        example: 85000000.00
+  organizations_summary:
+    type: array
+    description: Краткая сводка по каждой дочерней организации
+    items:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 123
+        name:
+          type: string
+          example: "ООО Монолит-Строй"
+        is_active:
+          type: boolean
+          example: true
+        users_count:
+          type: integer
+          example: 25
+        projects_count:
+          type: integer
+          example: 8
+        contracts_amount:
+          type: number
+          format: float
+          example: 15000000.00
+        last_activity:
+          type: string
+          format: date-time
+          example: "2024-09-19T14:30:00Z"
+  financial_overview:
+    type: object
+    properties:
+      total_revenue:
+        type: number
+        format: float
+        description: Общая выручка холдинга
+        example: 125000000.00
+      pending_payments:
+        type: number
+        format: float
+        description: Ожидающие оплаты
+        example: 8500000.00
+      overdue_payments:
+        type: number
+        format: float
+        description: Просроченные платежи
+        example: 2100000.00
+required: [holding_info, aggregated_stats, organizations_summary, financial_overview]

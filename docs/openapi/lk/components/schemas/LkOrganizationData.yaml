@@ -1,0 +1,89 @@
+type: object
+properties:
+  id:
+    type: integer
+    description: ID организации
+    example: 123
+  name:
+    type: string
+    description: Название организации
+    example: "ООО Строймонтаж"
+  description:
+    type: string
+    nullable: true
+    description: Описание организации
+    example: "Строительная компания"
+  inn:
+    type: string
+    nullable: true
+    description: ИНН организации
+    example: "7707083893"
+  kpp:
+    type: string
+    nullable: true
+    description: КПП организации
+    example: "770701001"
+  address:
+    type: string
+    nullable: true
+    description: Адрес организации
+    example: "г. Москва, ул. Строителей, д. 10"
+  phone:
+    type: string
+    nullable: true
+    description: Телефон организации
+    example: "+7 (495) 123-45-67"
+  email:
+    type: string
+    nullable: true
+    format: email
+    description: Email организации
+    example: "info@stroycompany.ru"
+  type:
+    type: string
+    enum: [single, holding, child]
+    description: Тип организации
+    example: "child"
+  is_active:
+    type: boolean
+    description: Активна ли организация
+    example: true
+  users_count:
+    type: integer
+    description: Количество пользователей в организации
+    example: 25
+  projects_count:
+    type: integer
+    description: Количество проектов
+    example: 12
+  contracts_count:
+    type: integer
+    description: Количество договоров
+    example: 8
+  parent_organization:
+    type: object
+    nullable: true
+    description: Родительская организация (если это дочерняя)
+    properties:
+      id:
+        type: integer
+        example: 10
+      name:
+        type: string
+        example: "Строительный холдинг Монолит"
+  settings:
+    type: object
+    nullable: true
+    description: Дополнительные настройки организации
+    additionalProperties: true
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания организации
+    example: "2024-03-20T16:45:00Z"
+  updated_at:
+    type: string
+    format: date-time
+    description: Дата последнего обновления
+    example: "2024-09-19T11:30:00Z"
+required: [id, name, type, is_active, users_count, projects_count, contracts_count, created_at, updated_at]

@@ -1,0 +1,41 @@
+type: object
+properties:
+  id:
+    type: integer
+    description: ID организации
+    example: 123
+  name:
+    type: string
+    description: Название организации
+    example: "ООО Строймонтаж"
+  inn:
+    type: string
+    nullable: true
+    description: ИНН организации
+    example: "7707083893"
+  type:
+    type: string
+    enum: [single, holding, child]
+    description: Тип организации
+    example: "child"
+  is_active:
+    type: boolean
+    description: Активна ли организация
+    example: true
+  role:
+    type: string
+    description: Роль пользователя в этой организации
+    example: "organization_admin"
+  permissions:
+    type: array
+    items:
+      type: string
+    description: Разрешения пользователя в этой организации
+    example: ["projects.view", "users.manage"]
+  last_activity:
+    type: string
+    format: date-time
+    nullable: true
+    description: Дата последней активности пользователя в организации
+    example: "2024-09-19T14:30:00Z"
+required: [id, name, type, is_active, role]

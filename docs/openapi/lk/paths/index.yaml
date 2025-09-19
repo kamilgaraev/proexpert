@@ -22,36 +22,30 @@
   $ref: './organization.yaml#/~1dadata~1suggest~1addresses'
 /dadata/clean/address:
   $ref: './organization.yaml#/~1dadata~1clean~1address'
-/roles:
-  $ref: './organization_roles.yaml#/~1roles'
-/roles/{roleId}:
-  $ref: './organization_roles.yaml#/~1roles~1{roleId}'
-/roles/permissions/available:
-  $ref: './organization_roles.yaml#/~1roles~1permissions~1available'
-/roles/{roleId}/duplicate:
-  $ref: './organization_roles.yaml#/~1roles~1{roleId}~1duplicate'
+/custom-roles:
+  $ref: './organization_roles.yaml#/~1custom-roles'
+/custom-roles/{roleId}:
+  $ref: './organization_roles.yaml#/~1custom-roles~1{roleId}'
+/custom-roles/permissions/available:
+  $ref: './organization_roles.yaml#/~1custom-roles~1permissions~1available'
+/custom-roles/{roleId}/clone:
+  $ref: './organization_roles.yaml#/~1custom-roles~1{roleId}~1clone'
 /invitations:
   $ref: './user_invitations.yaml#/~1invitations'
-/invitations/{invitationId}:
-  $ref: './user_invitations.yaml#/~1invitations~1{invitationId}'
 /invitations/{invitationId}/resend:
   $ref: './user_invitations.yaml#/~1invitations~1{invitationId}~1resend'
-/invitations/stats/overview:
-  $ref: './user_invitations.yaml#/~1invitations~1stats~1overview'
-/invitation/{token}:
-  $ref: './user_invitations.yaml#/~1invitation~1{token}'
-/invitation/{token}/accept:
-  $ref: './user_invitations.yaml#/~1invitation~1{token}~1accept'
-/organization-users:
-  $ref: './organization_users.yaml#/~1organization-users'
-/organization-users/{userId}:
-  $ref: './organization_users.yaml#/~1organization-users~1{userId}'
-/organization-users/{userId}/toggle-status:
-  $ref: './organization_users.yaml#/~1organization-users~1{userId}~1toggle-status'
 /organization-users/{userId}/roles:
   $ref: './organization_users.yaml#/~1organization-users~1{userId}~1roles'
+/organization-users/{userId}/assign-role/{roleId}:
+  $ref: './organization_users.yaml#/~1organization-users~1{userId}~1assign-role~1{roleId}'
+/organization-users/{userId}/unassign-role/{roleId}:
+  $ref: './organization_users.yaml#/~1organization-users~1{userId}~1unassign-role~1{roleId}'
 /user-limits:
   $ref: './organization_users.yaml#/~1user-limits'
+/create-user-with-custom-roles:
+  $ref: './organization_users.yaml#/~1create-user-with-custom-roles'
+/available-roles:
+  $ref: './organization_users.yaml#/~1available-roles'
 /billing/plans:
   $ref: './billing.yaml#/~1billing~1plans'
 /billing/subscription:
@@ -124,12 +118,14 @@
   $ref: './support.yaml#/~1support'
 /adminPanelUsers:
   $ref: './admin_panel_users.yaml#/~1adminPanelUsers'
-/adminPanelUsers/{userId}:
-  $ref: './admin_panel_users.yaml#/~1adminPanelUsers~1{userId}'
-/roles/{roleId}/assign-user:
-  $ref: './organization_roles.yaml#/~1roles~1{roleId}~1assign-user'
-/roles/{roleId}/remove-user:
-  $ref: './organization_roles.yaml#/~1roles~1{roleId}~1remove-user'
+/adminPanelUsers/{user}:
+  $ref: './admin_panel_users.yaml#/~1adminPanelUsers~1{user}'
+/custom-roles/{roleId}/users:
+  $ref: './organization_roles.yaml#/~1custom-roles~1{roleId}~1users'
+/custom-roles/{roleId}/assign:
+  $ref: './organization_roles.yaml#/~1custom-roles~1{roleId}~1assign'
+/custom-roles/{roleId}/unassign:
+  $ref: './organization_roles.yaml#/~1custom-roles~1{roleId}~1unassign'
 /dashboard:
   $ref: './dashboard.yaml#/~1dashboard'
 /multi-organization/summary:

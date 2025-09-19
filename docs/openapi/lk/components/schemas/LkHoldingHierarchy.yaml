@@ -1,0 +1,48 @@
+type: object
+properties:
+  holding:
+    type: object
+    properties:
+      id:
+        type: integer
+        example: 10
+      name:
+        type: string
+        example: "Строительный холдинг Монолит"
+      description:
+        type: string
+        nullable: true
+        example: "Объединение строительных компаний"
+      created_at:
+        type: string
+        format: date-time
+        example: "2024-01-15T10:30:00Z"
+  child_organizations:
+    type: array
+    items:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 123
+        name:
+          type: string
+          example: "ООО Монолит-Строй"
+        is_active:
+          type: boolean
+          example: true
+        users_count:
+          type: integer
+          example: 15
+        projects_count:
+          type: integer
+          example: 8
+        created_at:
+          type: string
+          format: date-time
+          example: "2024-03-20T16:45:00Z"
+  total_organizations:
+    type: integer
+    description: Общее количество дочерних организаций
+    example: 5
+required: [holding, child_organizations, total_organizations]

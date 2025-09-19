@@ -26,7 +26,7 @@
           application/json:
             schema:
               type: object
-              properties:
+                  properties:
                 message:
                   type: string
                   example: "Метод не реализован"
@@ -51,12 +51,12 @@
       Требует права `users.manage_roles` в организации.
     security:
       - bearerAuth: []
-    parameters:
-      - name: userId
-        in: path
-        required: true
+  parameters:
+    - name: userId
+      in: path
+      required: true
         description: ID пользователя для обновления ролей
-        schema:
+            schema:
           type: integer
           example: 123
     requestBody:
@@ -285,7 +285,7 @@
           application/json:
             schema:
               type: object
-              properties:
+                  properties:
                 success:
                   type: boolean
                   example: false

@@ -1,0 +1,82 @@
+type: object
+properties:
+  id:
+    type: integer
+    description: ID группы организаций (холдинга)
+    example: 10
+  name:
+    type: string
+    description: Название холдинга
+    example: "Строительный холдинг Монолит"
+  description:
+    type: string
+    nullable: true
+    description: Описание холдинга
+    example: "Объединение строительных компаний специализирующихся на жилых и коммерческих объектах"
+  slug:
+    type: string
+    description: Уникальный слаг холдинга
+    example: "monolith-holding"
+  max_child_organizations:
+    type: integer
+    description: Максимальное количество дочерних организаций
+    example: 10
+  current_child_organizations:
+    type: integer
+    description: Текущее количество дочерних организаций
+    example: 3
+  parent_organization:
+    type: object
+    description: Родительская организация (головная компания холдинга)
+    properties:
+      id:
+        type: integer
+        example: 5
+      name:
+        type: string
+        example: "ООО Монолит Групп"
+      inn:
+        type: string
+        example: "7707083893"
+  settings:
+    type: object
+    nullable: true
+    description: Настройки холдинга
+    additionalProperties: true
+    example:
+      centralized_billing: true
+      shared_users: false
+      cross_organization_reports: true
+  permissions_config:
+    type: object
+    nullable: true
+    description: Конфигурация разрешений для дочерних организаций
+    additionalProperties: true
+    example:
+      default_role_template: "standard_child_org"
+      allow_custom_roles: true
+  created_by:
+    type: object
+    description: Создатель холдинга
+    properties:
+      id:
+        type: integer
+        example: 1
+      name:
+        type: string
+        example: "Администратор Система"
+      email:
+        type: string
+        format: email
+        example: "admin@monolith-group.ru"
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания холдинга
+    example: "2024-01-15T10:30:00Z"
+  updated_at:
+    type: string
+    format: date-time
+    description: Дата последнего обновления
+    example: "2024-09-19T11:30:00Z"
+required: [id, name, slug, max_child_organizations, current_child_organizations, parent_organization, created_by, created_at, updated_at]

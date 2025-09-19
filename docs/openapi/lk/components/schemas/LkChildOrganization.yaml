@@ -1,0 +1,88 @@
+type: object
+properties:
+  id:
+    type: integer
+    description: ID дочерней организации
+    example: 123
+  name:
+    type: string
+    description: Название организации
+    example: "ООО Монолит-Строй"
+  description:
+    type: string
+    nullable: true
+    description: Описание организации
+    example: "Строительная компания специализирующаяся на жилых домах"
+  inn:
+    type: string
+    nullable: true
+    description: ИНН организации
+    example: "7707083893"
+  kpp:
+    type: string
+    nullable: true
+    description: КПП организации
+    example: "770701001"
+  address:
+    type: string
+    nullable: true
+    description: Адрес организации
+    example: "г. Москва, ул. Строителей, д. 10"
+  phone:
+    type: string
+    nullable: true
+    description: Телефон организации
+    example: "+7 (495) 123-45-67"
+  email:
+    type: string
+    nullable: true
+    format: email
+    description: Email организации
+    example: "info@monolith-stroy.ru"
+  is_active:
+    type: boolean
+    description: Активна ли организация
+    example: true
+  users_count:
+    type: integer
+    description: Количество пользователей
+    example: 25
+  projects_count:
+    type: integer
+    description: Количество проектов
+    example: 8
+  contracts_count:
+    type: integer
+    description: Количество договоров
+    example: 12
+  owner:
+    type: object
+    description: Владелец организации
+    properties:
+      id:
+        type: integer
+        example: 45
+      name:
+        type: string
+        example: "Иван Петров"
+      email:
+        type: string
+        format: email
+        example: "i.petrov@monolith-stroy.ru"
+  settings:
+    type: object
+    nullable: true
+    description: Настройки организации
+    additionalProperties: true
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания
+    example: "2024-03-20T16:45:00Z"
+  last_activity:
+    type: string
+    format: date-time
+    nullable: true
+    description: Дата последней активности
+    example: "2024-09-19T14:30:00Z"
+required: [id, name, is_active, users_count, projects_count, contracts_count, owner, created_at]

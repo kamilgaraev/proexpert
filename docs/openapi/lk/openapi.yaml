@@ -65,5 +65,21 @@ components:
       $ref: './components/schemas/LkModuleUpcomingBilling.yaml'
     LkModuleBillingHistoryEntry:
       $ref: './components/schemas/LkModuleBillingHistoryEntry.yaml'
+    
+    # Мультиорганизация (новые схемы)
+    LkHoldingHierarchy:
+      $ref: './components/schemas/LkHoldingHierarchy.yaml'
+    LkOrganizationSummary:
+      $ref: './components/schemas/LkOrganizationSummary.yaml'
+    LkOrganizationData:
+      $ref: './components/schemas/LkOrganizationData.yaml'
+    LkHoldingDashboard:
+      $ref: './components/schemas/LkHoldingDashboard.yaml'
+    LkChildOrganization:
+      $ref: './components/schemas/LkChildOrganization.yaml'
+    LkOrganizationGroup:
+      $ref: './components/schemas/LkOrganizationGroup.yaml'
+    LkChildOrganizationCreated:
+      $ref: './components/schemas/LkChildOrganizationCreated.yaml'
   responses: {}
   parameters: {}

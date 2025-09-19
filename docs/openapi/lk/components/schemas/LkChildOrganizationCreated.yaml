@@ -1,0 +1,93 @@
+type: object
+properties:
+  organization:
+    type: object
+    description: Созданная дочерняя организация
+    properties:
+      id:
+        type: integer
+        description: ID созданной организации
+        example: 123
+      name:
+        type: string
+        description: Название организации
+        example: "ООО Монолит-Строй"
+      inn:
+        type: string
+        nullable: true
+        description: ИНН организации
+        example: "7707083893"
+      kpp:
+        type: string
+        nullable: true
+        description: КПП организации
+        example: "770701001"
+      is_active:
+        type: boolean
+        description: Активна ли организация
+        example: true
+      created_at:
+        type: string
+        format: date-time
+        description: Дата создания
+        example: "2024-09-19T15:30:00Z"
+  owner:
+    type: object
+    description: Созданный владелец организации
+    properties:
+      id:
+        type: integer
+        description: ID пользователя-владельца
+        example: 45
+      name:
+        type: string
+        description: Имя владельца
+        example: "Петр Иванов"
+      email:
+        type: string
+        format: email
+        description: Email владельца
+        example: "p.ivanov@monolith-stroy.ru"
+      temporary_password:
+        type: string
+        nullable: true
+        description: Временный пароль (если был сгенерирован)
+        example: "TempPass123"
+      created_at:
+        type: string
+        format: date-time
+        description: Дата создания пользователя
+        example: "2024-09-19T15:30:00Z"
+  group_info:
+    type: object
+    description: Информация о холдинге
+    properties:
+      id:
+        type: integer
+        description: ID группы организаций
+        example: 10
+      name:
+        type: string
+        description: Название холдинга
+        example: "Строительный холдинг Монолит"
+      current_child_organizations:
+        type: integer
+        description: Текущее количество дочерних организаций после добавления
+        example: 4
+      max_child_organizations:
+        type: integer
+        description: Максимальное количество дочерних организаций
+        example: 10
+  notifications:
+    type: object
+    description: Информация об отправленных уведомлениях
+    properties:
+      owner_email_sent:
+        type: boolean
+        description: Отправлено ли письмо владельцу с учетными данными
+        example: true
+      welcome_email_sent:
+        type: boolean
+        description: Отправлено ли приветственное письмо
+        example: true
+required: [organization, owner, group_info, notifications]
