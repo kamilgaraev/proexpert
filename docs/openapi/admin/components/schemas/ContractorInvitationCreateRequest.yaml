@@ -1,0 +1,30 @@
+ContractorInvitationCreateRequest:
+  type: object
+  properties:
+    invited_organization_id:
+      type: integer
+      description: ID организации для приглашения
+      example: 456
+    message:
+      type: string
+      nullable: true
+      maxLength: 1000
+      description: Персональное сообщение приглашения
+      example: "Приглашаем к сотрудничеству в рамках строительных проектов. У нас есть интересные возможности для совместной работы."
+    metadata:
+      type: object
+      nullable: true
+      maxProperties: 10
+      description: Дополнительные метаданные приглашения
+      additionalProperties:
+        type: string
+        maxLength: 255
+      example:
+        source: "manual"
+        priority: "high"
+        project_types: "construction,renovation"
+        expected_volume: "large"
+        deadline: "Q2 2024"
+  required:
+    - invited_organization_id
+  additionalProperties: false

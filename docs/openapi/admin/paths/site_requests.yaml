@@ -203,16 +203,16 @@
                   example: "Проект не найден или не принадлежит организации"
       "422":
         description: Ошибка валидации данных
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
                   example: false
-                  message:
-                    type: string
+                message:
+                  type: string
                 errors:
                   type: object
             examples:

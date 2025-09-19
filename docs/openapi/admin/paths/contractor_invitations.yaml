@@ -1,0 +1,936 @@
+/contractor-invitations:
+  get:
+    tags: [Contractor Invitations]
+    summary: Получить список приглашений подрядчиков
+    description: |
+      Возвращает пагинированный список приглашений подрядчиков для организации.
+      Поддерживает фильтрацию по статусу и типу приглашений (отправленные/полученные).
+    parameters:
+      - in: query
+        name: type
+        schema:
+          type: string
+          enum: [sent, received]
+          default: sent
+        description: Тип приглашений (отправленные или полученные)
+        example: "sent"
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum: [pending, accepted, declined, expired]
+        description: Фильтр по статусу приглашения
+        example: "pending"
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+        description: Начальная дата фильтрации (включительно)
+        example: "2024-01-01"
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+        description: Конечная дата фильтрации (включительно)
+        example: "2024-12-31"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 15
+        description: Количество записей на странице
+        example: 15
+    responses:
+      "200":
+        description: Список приглашений успешно получен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/ContractorInvitation.yaml#/ContractorInvitation'
+                    links:
+                      type: object
+                      properties:
+                        first:
+                          type: string
+                          nullable: true
+                        last:
+                          type: string
+                          nullable: true
+                        prev:
+                          type: string
+                          nullable: true
+                        next:
+                          type: string
+                          nullable: true
+                    meta:
+                      type: object
+                      properties:
+                        current_page:
+                          type: integer
+                        from:
+                          type: integer
+                          nullable: true
+                        last_page:
+                          type: integer
+                        per_page:
+                          type: integer
+                        to:
+                          type: integer
+                          nullable: true
+                        total:
+                          type: integer
+                meta:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                      example: "sent"
+                    filters:
+                      type: object
+            examples:
+              sent_invitations:
+                summary: "Отправленные приглашения"
+                value:
+                  success: true
+                  data:
+                    data:
+                      - id: 123
+                        status: "pending"
+                        invitation_message: "Приглашаем к сотрудничеству"
+                        expires_at: "2024-02-01T12:00:00Z"
+                        created_at: "2024-01-25T10:00:00Z"
+                        accepted_at: null
+                        is_expired: false
+                        can_be_accepted: true
+                        invited_organization:
+                          id: 456
+                          name: "Строительная компания"
+                          legal_name: "ООО 'Строительная компания'"
+                          city: "Москва"
+                          is_verified: true
+                    meta:
+                      current_page: 1
+                      per_page: 15
+                      total: 1
+                  meta:
+                    type: "sent"
+                    filters: {}
+      "400":
+        description: Некорректные параметры запроса
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Не определён контекст организации"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+  post:
+    tags: [Contractor Invitations]
+    summary: Создать приглашение подрядчика
+    description: |
+      Отправляет приглашение указанной организации стать подрядчиком.
+      Создается уникальный токен для принятия приглашения.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ContractorInvitationCreateRequest.yaml#/ContractorInvitationCreateRequest'
+          examples:
+            create_invitation:
+              summary: "Создание приглашения"
+              value:
+                invited_organization_id: 456
+                message: "Приглашаем к сотрудничеству в рамках строительных проектов"
+                metadata:
+                  source: "manual"
+                  priority: "high"
+    responses:
+      "201":
+        description: Приглашение успешно создано
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Приглашение успешно отправлено"
+                data:
+                  $ref: '../components/schemas/ContractorInvitation.yaml#/ContractorInvitation'
+            examples:
+              invitation_created:
+                summary: "Приглашение создано"
+                value:
+                  success: true
+                  message: "Приглашение успешно отправлено"
+                  data:
+                    id: 123
+                    status: "pending"
+                    invitation_message: "Приглашаем к сотрудничеству в рамках строительных проектов"
+                    expires_at: "2024-02-01T12:00:00Z"
+                    created_at: "2024-01-25T10:00:00Z"
+                    is_expired: false
+                    can_be_accepted: true
+                    invited_organization:
+                      id: 456
+                      name: "Строительная компания"
+                      legal_name: "ООО 'Строительная компания'"
+                      city: "Москва"
+                      is_verified: true
+      "400":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  properties:
+                    invited_organization_id:
+                      type: array
+                      items:
+                        type: string
+                      example: ["Активное приглашение для данной организации уже существует."]
+            examples:
+              validation_error:
+                summary: "Ошибка валидации"
+                value:
+                  success: false
+                  message: "The given data was invalid."
+                  errors:
+                    invited_organization_id:
+                      - "Активное приглашение для данной организации уже существует."
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/contractor-invitations/stats:
+  get:
+    tags: [Contractor Invitations]
+    summary: Получить статистику по приглашениям
+    description: |
+      Возвращает агрегированную статистику по приглашениям подрядчиков
+      для текущей организации.
+    responses:
+      "200":
+        description: Статистика успешно получена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  properties:
+                    sent:
+                      type: object
+                      properties:
+                        total:
+                          type: integer
+                          description: Общее количество отправленных приглашений
+                        pending:
+                          type: integer
+                          description: Количество ожидающих ответа
+                        accepted:
+                          type: integer
+                          description: Количество принятых приглашений
+                        declined:
+                          type: integer
+                          description: Количество отклоненных приглашений
+                        expired:
+                          type: integer
+                          description: Количество истекших приглашений
+                    received:
+                      type: object
+                      properties:
+                        total:
+                          type: integer
+                          description: Общее количество полученных приглашений
+                        pending:
+                          type: integer
+                          description: Количество ожидающих ответа
+                        accepted:
+                          type: integer
+                          description: Количество принятых приглашений
+                        declined:
+                          type: integer
+                          description: Количество отклоненных приглашений
+                        expired:
+                          type: integer
+                          description: Количество истекших приглашений
+            examples:
+              statistics:
+                summary: "Статистика приглашений"
+                value:
+                  success: true
+                  data:
+                    sent:
+                      total: 25
+                      pending: 10
+                      accepted: 12
+                      declined: 2
+                      expired: 1
+                    received:
+                      total: 8
+                      pending: 3
+                      accepted: 4
+                      declined: 1
+                      expired: 0
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/contractor-invitations/{id}:
+  get:
+    tags: [Contractor Invitations]
+    summary: Получить детали приглашения
+    description: |
+      Возвращает подробную информацию о конкретном приглашении подрядчика.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID приглашения
+        example: 123
+    responses:
+      "200":
+        description: Детали приглашения успешно получены
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  $ref: '../components/schemas/ContractorInvitation.yaml#/ContractorInvitation'
+            examples:
+              invitation_details:
+                summary: "Детали приглашения"
+                value:
+                  success: true
+                  data:
+                    id: 123
+                    status: "pending"
+                    invitation_message: "Приглашаем к сотрудничеству"
+                    expires_at: "2024-02-01T12:00:00Z"
+                    created_at: "2024-01-25T10:00:00Z"
+                    accepted_at: null
+                    is_expired: false
+                    can_be_accepted: true
+                    organization:
+                      id: 789
+                      name: "Наша организация"
+                      legal_name: "ООО 'Наша организация'"
+                      city: "Москва"
+                      is_verified: true
+                    invited_organization:
+                      id: 456
+                      name: "Строительная компания"
+                      legal_name: "ООО 'Строительная компания'"
+                      city: "Москва"
+                      is_verified: true
+                    invited_by:
+                      id: 1
+                      name: "Иван Иванов"
+                      email: "admin@company.com"
+      "404":
+        description: Приглашение не найдено
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Приглашение не найдено"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/contractor-invitations/{id}/cancel:
+  patch:
+    tags: [Contractor Invitations]
+    summary: Отменить приглашение
+    description: |
+      Отменяет ранее отправленное приглашение подрядчика.
+      Возможна отмена только приглашений в статусе "pending".
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID приглашения
+        example: 123
+    responses:
+      "200":
+        description: Приглашение успешно отменено
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Приглашение отменено"
+                data:
+                  $ref: '../components/schemas/ContractorInvitation.yaml#/ContractorInvitation'
+            examples:
+              invitation_cancelled:
+                summary: "Приглашение отменено"
+                value:
+                  success: true
+                  message: "Приглашение отменено"
+                  data:
+                    id: 123
+                    status: "declined"
+                    invitation_message: "Приглашаем к сотрудничеству"
+                    expires_at: "2024-02-01T12:00:00Z"
+                    created_at: "2024-01-25T10:00:00Z"
+                    accepted_at: null
+                    is_expired: false
+                    can_be_accepted: false
+      "400":
+        description: Невозможно отменить приглашение
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Невозможно отменить приглашение в текущем статусе"
+      "404":
+        description: Приглашение не найдено
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Приглашение не найдено"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/organizations/search:
+  get:
+    tags: [Organization Search]
+    summary: Поиск организаций для приглашения
+    description: |
+      Поиск организаций в системе для отправки приглашений на сотрудничество.
+      Поддерживает фильтрацию по различным критериям и исключение уже приглашенных.
+    parameters:
+      - in: query
+        name: search
+        schema:
+          type: string
+          maxLength: 255
+        description: Поисковый запрос по названию организации
+        example: "Строительная"
+      - in: query
+        name: city
+        schema:
+          type: string
+          maxLength: 100
+        description: Фильтр по городу
+        example: "Москва"
+      - in: query
+        name: country
+        schema:
+          type: string
+          maxLength: 100
+        description: Фильтр по стране
+        example: "Россия"
+      - in: query
+        name: verified
+        schema:
+          type: boolean
+        description: Фильтр по статусу верификации
+        example: true
+      - in: query
+        name: exclude_invited
+        schema:
+          type: boolean
+          default: true
+        description: Исключить уже приглашенные организации
+        example: true
+      - in: query
+        name: exclude_existing_contractors
+        schema:
+          type: boolean
+          default: true
+        description: Исключить организации, которые уже являются подрядчиками
+        example: true
+      - in: query
+        name: sort_by
+        schema:
+          type: string
+          enum: [relevance, name, city, connections, verified]
+          default: relevance
+        description: Поле для сортировки результатов
+        example: "relevance"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 20
+        description: Количество результатов на странице
+        example: 20
+    responses:
+      "200":
+        description: Результаты поиска успешно получены
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/OrganizationSearchResult.yaml#/OrganizationSearchResult'
+                    meta:
+                      type: object
+                      properties:
+                        current_page:
+                          type: integer
+                        per_page:
+                          type: integer
+                        total:
+                          type: integer
+                        total_pages:
+                          type: integer
+                        has_next_page:
+                          type: boolean
+                meta:
+                  type: object
+                  properties:
+                    search_query:
+                      type: string
+                      nullable: true
+                    filters_applied:
+                      type: object
+                    sort_by:
+                      type: string
+            examples:
+              search_results:
+                summary: "Результаты поиска организаций"
+                value:
+                  success: true
+                  data:
+                    data:
+                      - id: 456
+                        name: "Строительная компания Альфа"
+                        legal_name: "ООО 'Строительная компания Альфа'"
+                        city: "Москва"
+                        country: "Россия"
+                        is_verified: true
+                        connections_count: 15
+                        last_activity_at: "2024-01-20T15:30:00Z"
+                        relevance_score: 85.5
+                        already_invited: false
+                        is_contractor: false
+                      - id: 789
+                        name: "Строймонтаж Сервис"
+                        legal_name: "ИП Строймонтаж Сервис"
+                        city: "Санкт-Петербург"
+                        country: "Россия"
+                        is_verified: false
+                        connections_count: 8
+                        last_activity_at: "2024-01-15T09:15:00Z"
+                        relevance_score: 72.3
+                        already_invited: false
+                        is_contractor: false
+                    meta:
+                      current_page: 1
+                      per_page: 20
+                      total: 2
+                      total_pages: 1
+                      has_next_page: false
+                  meta:
+                    search_query: "Строительная"
+                    filters_applied:
+                      verified: true
+                      exclude_invited: true
+                    sort_by: "relevance"
+      "400":
+        description: Некорректные параметры поиска
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/organizations/suggestions:
+  get:
+    tags: [Organization Search]
+    summary: Получить предложения организаций
+    description: |
+      Возвращает список рекомендуемых организаций для приглашения
+      на основе анализа деятельности и связей.
+    parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 10
+        description: Максимальное количество предложений
+        example: 10
+    responses:
+      "200":
+        description: Предложения успешно получены
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: array
+                  items:
+                    allOf:
+                      - $ref: '../components/schemas/OrganizationSearchResult.yaml#/OrganizationSearchResult'
+                      - type: object
+                        properties:
+                          suggestion_reason:
+                            type: string
+                            description: Причина предложения
+                          compatibility_score:
+                            type: number
+                            description: Оценка совместимости (0-100)
+            examples:
+              suggestions:
+                summary: "Предложения организаций"
+                value:
+                  success: true
+                  data:
+                    - id: 456
+                      name: "Строительная компания Альфа"
+                      legal_name: "ООО 'Строительная компания Альфа'"
+                      city: "Москва"
+                      is_verified: true
+                      connections_count: 15
+                      suggestion_reason: "Активно работает в вашем регионе"
+                      compatibility_score: 92.5
+                    - id: 789
+                      name: "Проектно-строительная группа"
+                      legal_name: "ООО 'ПСГ'"
+                      city: "Москва"
+                      is_verified: true
+                      connections_count: 23
+                      suggestion_reason: "Имеет опыт в похожих проектах"
+                      compatibility_score: 87.3
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/organizations/recommendations:
+  get:
+    tags: [Organization Search]
+    summary: Получить персональные рекомендации
+    description: |
+      Возвращает персонализированные рекомендации организаций
+      на основе истории взаимодействий и предпочтений пользователя.
+    parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 15
+          default: 8
+        description: Максимальное количество рекомендаций
+        example: 8
+      - in: query
+        name: category
+        schema:
+          type: string
+          enum: [similar_projects, geographic, industry_leaders, new_market]
+        description: Категория рекомендаций
+        example: "similar_projects"
+    responses:
+      "200":
+        description: Рекомендации успешно получены
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  properties:
+                    recommendations:
+                      type: array
+                      items:
+                        allOf:
+                          - $ref: '../components/schemas/OrganizationSearchResult.yaml#/OrganizationSearchResult'
+                          - type: object
+                            properties:
+                              recommendation_type:
+                                type: string
+                                description: Тип рекомендации
+                              confidence_score:
+                                type: number
+                                description: Уверенность в рекомендации (0-100)
+                              match_reasons:
+                                type: array
+                                items:
+                                  type: string
+                                description: Причины совпадения
+                    algorithm_version:
+                      type: string
+                      description: Версия алгоритма рекомендаций
+                    generated_at:
+                      type: string
+                      format: date-time
+                      description: Время генерации рекомендаций
+            examples:
+              recommendations:
+                summary: "Персональные рекомендации"
+                value:
+                  success: true
+                  data:
+                    recommendations:
+                      - id: 456
+                        name: "Строительная компания Альфа"
+                        legal_name: "ООО 'Строительная компания Альфа'"
+                        city: "Москва"
+                        is_verified: true
+                        connections_count: 15
+                        recommendation_type: "similar_projects"
+                        confidence_score: 95.2
+                        match_reasons:
+                          - "Работает с аналогичными проектами"
+                          - "Высокий рейтинг надежности"
+                          - "Географическая близость"
+                    algorithm_version: "v2.1"
+                    generated_at: "2024-01-25T10:30:00Z"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/organizations/{id}/availability:
+  get:
+    tags: [Organization Search]
+    summary: Проверить доступность организации для приглашения
+    description: |
+      Проверяет возможность отправки приглашения указанной организации.
+      Проверяет существующие приглашения, статус подрядчика и другие ограничения.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID организации
+        example: 456
+    responses:
+      "200":
+        description: Информация о доступности получена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  properties:
+                    organization_id:
+                      type: integer
+                      description: ID проверяемой организации
+                    available_for_invitation:
+                      type: boolean
+                      description: Доступна ли для приглашения
+                    status:
+                      type: string
+                      enum: [available, already_invited, already_contractor, inactive, self_organization]
+                      description: Статус доступности
+                    existing_invitation:
+                      type: object
+                      nullable: true
+                      properties:
+                        id:
+                          type: integer
+                        status:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+                      description: Существующее приглашение (если есть)
+                    existing_contractor:
+                      type: object
+                      nullable: true
+                      properties:
+                        id:
+                          type: integer
+                        name:
+                          type: string
+                        connected_at:
+                          type: string
+                          format: date-time
+                      description: Существующий подрядчик (если есть)
+                    message:
+                      type: string
+                      description: Пояснительное сообщение
+                    recommendations:
+                      type: array
+                      items:
+                        type: string
+                      description: Рекомендации по действиям
+            examples:
+              available_organization:
+                summary: "Организация доступна для приглашения"
+                value:
+                  success: true
+                  data:
+                    organization_id: 456
+                    available_for_invitation: true
+                    status: "available"
+                    existing_invitation: null
+                    existing_contractor: null
+                    message: "Организация доступна для отправки приглашения"
+                    recommendations:
+                      - "Рекомендуется отправить персонализированное приглашение"
+                      - "Укажите конкретные проекты для сотрудничества"
+              already_invited:
+                summary: "Организация уже приглашена"
+                value:
+                  success: true
+                  data:
+                    organization_id: 456
+                    available_for_invitation: false
+                    status: "already_invited"
+                    existing_invitation:
+                      id: 123
+                      status: "pending"
+                      created_at: "2024-01-20T10:00:00Z"
+                    existing_contractor: null
+                    message: "Активное приглашение уже отправлено"
+                    recommendations:
+                      - "Дождитесь ответа на существующее приглашение"
+                      - "Свяжитесь с организацией напрямую"
+              already_contractor:
+                summary: "Организация уже является подрядчиком"
+                value:
+                  success: true
+                  data:
+                    organization_id: 456
+                    available_for_invitation: false
+                    status: "already_contractor"
+                    existing_invitation: null
+                    existing_contractor:
+                      id: 789
+                      name: "Строительная компания Альфа"
+                      connected_at: "2024-01-15T14:30:00Z"
+                    message: "Организация уже является вашим подрядчиком"
+                    recommendations:
+                      - "Перейдите к управлению существующими отношениями"
+                      - "Создайте новый проект для совместной работы"
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Организация не найдена"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'

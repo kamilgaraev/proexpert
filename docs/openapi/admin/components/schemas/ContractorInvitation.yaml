@@ -1,0 +1,158 @@
+ContractorInvitation:
+  type: object
+  properties:
+    id:
+      type: integer
+      description: Уникальный идентификатор приглашения
+      example: 123
+    token:
+      type: string
+      nullable: true
+      description: Токен для принятия приглашения (только для активных приглашений)
+      example: "abc123xyz789token"
+    status:
+      type: string
+      enum: [pending, accepted, declined, expired]
+      description: Статус приглашения
+      example: "pending"
+    invitation_message:
+      type: string
+      nullable: true
+      description: Сообщение приглашения
+      example: "Приглашаем к сотрудничеству в рамках строительных проектов"
+    expires_at:
+      type: string
+      format: date-time
+      nullable: true
+      description: Дата и время истечения приглашения
+      example: "2024-02-01T12:00:00Z"
+    created_at:
+      type: string
+      format: date-time
+      description: Дата и время создания приглашения
+      example: "2024-01-25T10:00:00Z"
+    accepted_at:
+      type: string
+      format: date-time
+      nullable: true
+      description: Дата и время принятия приглашения
+      example: null
+    is_expired:
+      type: boolean
+      description: Истекло ли приглашение
+      example: false
+    can_be_accepted:
+      type: boolean
+      description: Может ли приглашение быть принято
+      example: true
+    invitation_url:
+      type: string
+      nullable: true
+      description: URL для принятия приглашения (только для активных приглашений)
+      example: "https://app.example.com/invitations/accept/abc123xyz789token"
+    organization:
+      type: object
+      nullable: true
+      description: Организация, отправившая приглашение
+      properties:
+        id:
+          type: integer
+          example: 789
+        name:
+          type: string
+          example: "Наша организация"
+        legal_name:
+          type: string
+          example: "ООО 'Наша организация'"
+        city:
+          type: string
+          nullable: true
+          example: "Москва"
+        is_verified:
+          type: boolean
+          example: true
+    invited_organization:
+      type: object
+      nullable: true
+      description: Приглашенная организация
+      properties:
+        id:
+          type: integer
+          example: 456
+        name:
+          type: string
+          example: "Строительная компания"
+        legal_name:
+          type: string
+          example: "ООО 'Строительная компания'"
+        city:
+          type: string
+          nullable: true
+          example: "Москва"
+        is_verified:
+          type: boolean
+          example: true
+    invited_by:
+      type: object
+      nullable: true
+      description: Пользователь, отправивший приглашение
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: "Иван Иванов"
+        email:
+          type: string
+          example: "admin@company.com"
+    accepted_by:
+      type: object
+      nullable: true
+      description: Пользователь, принявший приглашение
+      properties:
+        id:
+          type: integer
+          example: 2
+        name:
+          type: string
+          example: "Петр Петров"
+        email:
+          type: string
+          example: "manager@contractor.com"
+    contractor:
+      type: object
+      nullable: true
+      description: Связанный подрядчик (если приглашение принято)
+      properties:
+        id:
+          type: integer
+          example: 456
+        name:
+          type: string
+          example: "Строительная компания"
+        connected_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2024-01-26T15:30:00Z"
+        last_sync_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2024-01-26T16:00:00Z"
+    metadata:
+      type: object
+      nullable: true
+      description: Дополнительные метаданные приглашения
+      additionalProperties: true
+      example:
+        source: "manual"
+        priority: "high"
+        project_types: ["construction", "renovation"]
+  required:
+    - id
+    - status
+    - created_at
+    - is_expired
+    - can_be_accepted

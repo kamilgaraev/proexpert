@@ -1,0 +1,118 @@
+OrganizationSearchResult:
+  type: object
+  properties:
+    id:
+      type: integer
+      description: Уникальный идентификатор организации
+      example: 456
+    name:
+      type: string
+      description: Название организации
+      example: "Строительная компания Альфа"
+    legal_name:
+      type: string
+      description: Юридическое наименование организации
+      example: "ООО 'Строительная компания Альфа'"
+    city:
+      type: string
+      nullable: true
+      description: Город расположения организации
+      example: "Москва"
+    country:
+      type: string
+      nullable: true
+      description: Страна расположения организации
+      example: "Россия"
+    is_verified:
+      type: boolean
+      description: Верифицирована ли организация
+      example: true
+    connections_count:
+      type: integer
+      description: Количество связей/партнеров организации
+      example: 15
+    last_activity_at:
+      type: string
+      format: date-time
+      nullable: true
+      description: Дата последней активности организации
+      example: "2024-01-20T15:30:00Z"
+    relevance_score:
+      type: number
+      format: float
+      nullable: true
+      description: Оценка релевантности результата поиска (0-100)
+      example: 85.5
+    already_invited:
+      type: boolean
+      description: Была ли организация уже приглашена
+      example: false
+    is_contractor:
+      type: boolean
+      description: Является ли организация уже подрядчиком
+      example: false
+    industry:
+      type: string
+      nullable: true
+      description: Отрасль деятельности организации
+      example: "Строительство"
+    specializations:
+      type: array
+      nullable: true
+      description: Специализации организации
+      items:
+        type: string
+      example: ["Жилищное строительство", "Коммерческие объекты", "Реконструкция"]
+    rating:
+      type: number
+      format: float
+      nullable: true
+      minimum: 0
+      maximum: 5
+      description: Рейтинг организации (0-5)
+      example: 4.5
+    reviews_count:
+      type: integer
+      nullable: true
+      description: Количество отзывов об организации
+      example: 28
+    contact_info:
+      type: object
+      nullable: true
+      description: Контактная информация организации
+      properties:
+        phone:
+          type: string
+          nullable: true
+          example: "+7 (495) 123-45-67"
+        email:
+          type: string
+          nullable: true
+          example: "info@company.com"
+        website:
+          type: string
+          nullable: true
+          example: "https://company.com"
+    established_year:
+      type: integer
+      nullable: true
+      description: Год основания организации
+      example: 2015
+    employees_count:
+      type: string
+      nullable: true
+      description: Количество сотрудников (диапазон)
+      example: "50-100"
+    annual_revenue:
+      type: string
+      nullable: true
+      description: Годовой оборот (диапазон)
+      example: "100-500 млн руб"
+  required:
+    - id
+    - name
+    - legal_name
+    - is_verified
+    - connections_count
+    - already_invited
+    - is_contractor

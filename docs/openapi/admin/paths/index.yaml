@@ -168,6 +168,24 @@
 /site-requests/{siteRequest}/files/{file}:
   $ref: './site_requests.yaml#/~1site-requests~1{siteRequest}~1files~1{file}'
 
+/contractor-invitations:
+  $ref: './contractor_invitations.yaml#/~1contractor-invitations'
+/contractor-invitations/stats:
+  $ref: './contractor_invitations.yaml#/~1contractor-invitations~1stats'
+/contractor-invitations/{id}:
+  $ref: './contractor_invitations.yaml#/~1contractor-invitations~1{id}'
+/contractor-invitations/{id}/cancel:
+  $ref: './contractor_invitations.yaml#/~1contractor-invitations~1{id}~1cancel'
+
+/organizations/search:
+  $ref: './contractor_invitations.yaml#/~1organizations~1search'
+/organizations/suggestions:
+  $ref: './contractor_invitations.yaml#/~1organizations~1suggestions'
+/organizations/recommendations:
+  $ref: './contractor_invitations.yaml#/~1organizations~1recommendations'
+/organizations/{id}/availability:
+  $ref: './contractor_invitations.yaml#/~1organizations~1{id}~1availability'
+
 /filters/contracts:
   $ref: './filters.yaml#/~1filters~1contracts'
 /filters/completed-works:
