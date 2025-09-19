@@ -1,0 +1,1550 @@
+/schedules:
+  get:
+    tags: [Project Schedules]
+    summary: Получить список графиков проектов
+    description: |
+      Возвращает пагинированный список графиков проектов для организации
+      с возможностью фильтрации и сортировки. Поддерживает поиск по названию,
+      фильтрацию по статусу, проекту и другим параметрам.
+    parameters:
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum: [draft, active, paused, completed, cancelled]
+        description: Фильтр по статусу графика
+        example: "active"
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+        description: Фильтр по ID проекта
+        example: 123
+      - in: query
+        name: is_template
+        schema:
+          type: boolean
+        description: Фильтр по типу (шаблон или обычный график)
+        example: false
+      - in: query
+        name: search
+        schema:
+          type: string
+        description: Поиск по названию графика
+        example: "Строительство торгового центра"
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+        description: Начальная дата фильтрации по плановой дате начала
+        example: "2024-01-01"
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+        description: Конечная дата фильтрации по плановой дате окончания
+        example: "2024-12-31"
+      - in: query
+        name: critical_path_calculated
+        schema:
+          type: boolean
+        description: Фильтр по наличию рассчитанного критического пути
+        example: true
+      - in: query
+        name: sort_by
+        schema:
+          type: string
+          enum: [name, planned_start_date, planned_end_date, status, progress_percent, created_at]
+          default: created_at
+        description: Поле для сортировки
+        example: "planned_start_date"
+      - in: query
+        name: sort_order
+        schema:
+          type: string
+          enum: [asc, desc]
+          default: desc
+        description: Направление сортировки
+        example: "asc"
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 15
+        description: Количество записей на странице
+        example: 15
+    responses:
+      "200":
+        description: Список графиков успешно получен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/ProjectSchedule.yaml#/ProjectSchedule'
+                links:
+                  type: object
+                  properties:
+                    first:
+                      type: string
+                      nullable: true
+                    last:
+                      type: string
+                      nullable: true
+                    prev:
+                      type: string
+                      nullable: true
+                    next:
+                      type: string
+                      nullable: true
+                meta:
+                  type: object
+                  properties:
+                    current_page:
+                      type: integer
+                    from:
+                      type: integer
+                      nullable: true
+                    last_page:
+                      type: integer
+                    per_page:
+                      type: integer
+                    to:
+                      type: integer
+                      nullable: true
+                    total:
+                      type: integer
+            examples:
+              schedules_list:
+                summary: "Список графиков проектов"
+                value:
+                  data:
+                    - id: 123
+                      project_id: 456
+                      name: "График строительства ТРЦ"
+                      description: "Основной график строительства торгового центра"
+                      status: "active"
+                      status_label: "Активный"
+                      planned_start_date: "2024-02-01"
+                      planned_end_date: "2024-08-31"
+                      overall_progress_percent: 35.5
+                      critical_path_calculated: true
+                      is_template: false
+                      project:
+                        id: 456
+                        name: "Торговый центр 'Галерея'"
+                        status: "active"
+                  meta:
+                    current_page: 1
+                    per_page: 15
+                    total: 1
+      "400":
+        description: Некорректные параметры запроса
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Не определена организация пользователя"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+  post:
+    tags: [Project Schedules]
+    summary: Создать новый график проекта
+    description: |
+      Создает новый график для указанного проекта. Может быть создан как обычный график
+      или как шаблон для повторного использования.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ProjectScheduleCreateRequest.yaml#/ProjectScheduleCreateRequest'
+          examples:
+            create_schedule:
+              summary: "Создание графика проекта"
+              value:
+                project_id: 456
+                name: "График строительства ТРЦ"
+                description: "Основной график строительства торгового центра с детализацией по этапам"
+                planned_start_date: "2024-02-01"
+                planned_end_date: "2024-08-31"
+                status: "draft"
+                is_template: false
+                total_estimated_cost: 15000000.00
+                calculation_settings:
+                  auto_schedule: true
+                  level_resources: false
+                  working_days_per_week: 5
+                  working_hours_per_day: 8
+                display_settings:
+                  show_critical_path: true
+                  show_float: false
+                  show_baseline: false
+            create_template:
+              summary: "Создание шаблона графика"
+              value:
+                project_id: null
+                name: "Шаблон: Строительство жилого дома"
+                description: "Типовой график для строительства жилых домов"
+                planned_start_date: "2024-01-01"
+                planned_end_date: "2024-12-31"
+                is_template: true
+                template_name: "Жилое строительство (стандарт)"
+                template_description: "Шаблон для проектов жилого строительства до 20 этажей"
+    responses:
+      "201":
+        description: График успешно создан
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График проекта успешно создан"
+                data:
+                  $ref: '../components/schemas/ProjectSchedule.yaml#/ProjectSchedule'
+            examples:
+              schedule_created:
+                summary: "График создан"
+                value:
+                  message: "График проекта успешно создан"
+                  data:
+                    id: 123
+                    project_id: 456
+                    name: "График строительства ТРЦ"
+                    description: "Основной график строительства торгового центра с детализацией по этапам"
+                    status: "draft"
+                    status_label: "Черновик"
+                    planned_start_date: "2024-02-01"
+                    planned_end_date: "2024-08-31"
+                    overall_progress_percent: 0
+                    critical_path_calculated: false
+                    is_template: false
+                    created_at: "2024-01-25T10:00:00Z"
+      "400":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+            examples:
+              validation_error:
+                summary: "Ошибка валидации"
+                value:
+                  message: "The given data was invalid."
+                  errors:
+                    project_id:
+                      - "Указанный проект не существует"
+                    planned_end_date:
+                      - "Дата окончания должна быть позже даты начала"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/schedules/{id}:
+  get:
+    tags: [Project Schedules]
+    summary: Получить детали графика проекта
+    description: |
+      Возвращает подробную информацию о графике проекта, включая
+      связанные данные (проект, создатель, задачи, зависимости, ресурсы).
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID графика проекта
+        example: 123
+    responses:
+      "200":
+        description: Детали графика успешно получены
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  $ref: '../components/schemas/ProjectSchedule.yaml#/ProjectSchedule'
+            examples:
+              schedule_details:
+                summary: "Детали графика проекта"
+                value:
+                  data:
+                    id: 123
+                    project_id: 456
+                    name: "График строительства ТРЦ"
+                    description: "Основной график строительства торгового центра"
+                    status: "active"
+                    status_label: "Активный"
+                    planned_start_date: "2024-02-01"
+                    planned_end_date: "2024-08-31"
+                    planned_duration_days: 212
+                    baseline_start_date: "2024-02-01"
+                    baseline_end_date: "2024-08-31"
+                    baseline_saved_at: "2024-01-30 15:30:00"
+                    actual_start_date: "2024-02-01"
+                    actual_end_date: null
+                    overall_progress_percent: 35.5
+                    health_status: "on_track"
+                    critical_path_calculated: true
+                    critical_path_duration_days: 195
+                    total_estimated_cost: 15000000.00
+                    total_actual_cost: 5250000.00
+                    is_template: false
+                    project:
+                      id: 456
+                      name: "Торговый центр 'Галерея'"
+                      status: "active"
+                    created_by:
+                      id: 1
+                      name: "Иван Иванов"
+                      email: "manager@company.com"
+                    tasks_count: 45
+                    dependencies_count: 58
+                    resources_count: 12
+      "404":
+        description: График не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График не найден"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+  put:
+    tags: [Project Schedules]
+    summary: Обновить график проекта
+    description: |
+      Обновляет параметры графика проекта. Некоторые поля (например, organization_id)
+      не могут быть изменены через данный эндпоинт.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID графика проекта
+        example: 123
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ProjectScheduleUpdateRequest.yaml#/ProjectScheduleUpdateRequest'
+          examples:
+            update_schedule:
+              summary: "Обновление графика"
+              value:
+                name: "График строительства ТРЦ (обновленный)"
+                description: "Обновленный график с учетом изменений в проекте"
+                planned_end_date: "2024-09-15"
+                status: "active"
+                total_estimated_cost: 16500000.00
+    responses:
+      "200":
+        description: График успешно обновлен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График проекта обновлен"
+                data:
+                  $ref: '../components/schemas/ProjectSchedule.yaml#/ProjectSchedule'
+      "400":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+      "404":
+        description: График не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График не найден"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+  delete:
+    tags: [Project Schedules]
+    summary: Удалить график проекта
+    description: |
+      Удаляет график проекта. Удаление возможно только для графиков
+      в статусе "черновик" или неначатых активных графиков.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID графика проекта
+        example: 123
+    responses:
+      "200":
+        description: График успешно удален
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График проекта удален"
+      "400":
+        description: Невозможно удалить график
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Невозможно удалить активный график с выполненными задачами"
+      "404":
+        description: График не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График не найден"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/schedules/{id}/critical-path:
+  post:
+    tags: [Project Schedules]
+    summary: Рассчитать критический путь
+    description: |
+      Рассчитывает критический путь для графика проекта с использованием 
+      метода критического пути (CPM). Обновляет поля задач, связанные с критическим путем.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID графика проекта
+        example: 123
+    responses:
+      "200":
+        description: Критический путь успешно рассчитан
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Критический путь рассчитан"
+                data:
+                  type: object
+                  properties:
+                    duration:
+                      type: integer
+                      description: Продолжительность критического пути в днях
+                      example: 195
+                    critical_tasks:
+                      type: array
+                      description: Список задач на критическом пути
+                      items:
+                        type: object
+                        properties:
+                          id:
+                            type: integer
+                          name:
+                            type: string
+                          planned_start_date:
+                            type: string
+                            format: date
+                          planned_end_date:
+                            type: string
+                            format: date
+                          total_float_days:
+                            type: integer
+                      example:
+                        - id: 101
+                          name: "Подготовка участка"
+                          planned_start_date: "2024-02-01"
+                          planned_end_date: "2024-02-15"
+                          total_float_days: 0
+                        - id: 102
+                          name: "Фундаментные работы"
+                          planned_start_date: "2024-02-16"
+                          planned_end_date: "2024-03-31"
+                          total_float_days: 0
+                    project_duration:
+                      type: integer
+                      description: Общая продолжительность проекта
+                      example: 212
+                    calculation_metadata:
+                      type: object
+                      description: Метаданные расчета
+                      properties:
+                        calculated_at:
+                          type: string
+                          format: date-time
+                        algorithm_version:
+                          type: string
+                        tasks_analyzed:
+                          type: integer
+                        dependencies_analyzed:
+                          type: integer
+            examples:
+              critical_path_calculated:
+                summary: "Критический путь рассчитан"
+                value:
+                  message: "Критический путь рассчитан"
+                  data:
+                    duration: 195
+                    critical_tasks:
+                      - id: 101
+                        name: "Подготовка участка"
+                        planned_start_date: "2024-02-01"
+                        planned_end_date: "2024-02-15"
+                        total_float_days: 0
+                      - id: 102
+                        name: "Фундаментные работы"
+                        planned_start_date: "2024-02-16"
+                        planned_end_date: "2024-03-31"
+                        total_float_days: 0
+                    project_duration: 212
+                    calculation_metadata:
+                      calculated_at: "2024-01-25T10:30:00Z"
+                      algorithm_version: "CPM v2.1"
+                      tasks_analyzed: 45
+                      dependencies_analyzed: 58
+      "500":
+        description: Ошибка при расчете критического пути
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Ошибка при расчете критического пути: Обнаружена циклическая зависимость между задачами"
+      "404":
+        description: График не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График не найден"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/schedules/{id}/baseline:
+  post:
+    tags: [Project Schedules]
+    summary: Сохранить базовый план
+    description: |
+      Сохраняет текущее состояние графика как базовый план для дальнейшего
+      сравнения фактического выполнения с запланированным.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID графика проекта
+        example: 123
+    responses:
+      "200":
+        description: Базовый план успешно сохранен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Базовый план сохранен"
+            examples:
+              baseline_saved:
+                summary: "Базовый план сохранен"
+                value:
+                  message: "Базовый план сохранен"
+      "500":
+        description: Ошибка при сохранении базового плана
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Ошибка при сохранении базового плана: Недостаточно данных для создания базового плана"
+      "404":
+        description: График не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График не найден"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+  delete:
+    tags: [Project Schedules]
+    summary: Очистить базовый план
+    description: |
+      Удаляет сохраненный базовый план графика проекта.
+      После очистки базовые даты будут сброшены для всех задач.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID графика проекта
+        example: 123
+    responses:
+      "200":
+        description: Базовый план успешно очищен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Базовый план очищен"
+            examples:
+              baseline_cleared:
+                summary: "Базовый план очищен"
+                value:
+                  message: "Базовый план очищен"
+      "500":
+        description: Ошибка при очистке базового плана
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Ошибка при очистке базового плана: Базовый план не найден"
+      "404":
+        description: График не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График не найден"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/schedules/{id}/tasks:
+  get:
+    tags: [Project Schedules]
+    summary: Получить задачи графика
+    description: |
+      Возвращает список задач для указанного графика проекта.
+      Поддерживает иерархическое представление с группировкой подзадач.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID графика проекта
+        example: 123
+      - in: query
+        name: include_subtasks
+        schema:
+          type: boolean
+          default: true
+        description: Включать ли подзадачи в ответ
+        example: true
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum: [not_started, in_progress, completed, cancelled]
+        description: Фильтр по статусу задач
+        example: "in_progress"
+      - in: query
+        name: critical_only
+        schema:
+          type: boolean
+        description: Показать только задачи на критическом пути
+        example: false
+    responses:
+      "200":
+        description: Список задач успешно получен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/ScheduleTask.yaml#/ScheduleTask'
+            examples:
+              schedule_tasks:
+                summary: "Задачи графика"
+                value:
+                  data:
+                    - id: 101
+                      name: "Подготовительные работы"
+                      description: "Подготовка участка к началу строительства"
+                      status: "completed"
+                      task_type: "summary"
+                      planned_start_date: "2024-02-01"
+                      planned_end_date: "2024-02-15"
+                      actual_start_date: "2024-02-01"
+                      actual_end_date: "2024-02-14"
+                      progress_percent: 100.0
+                      is_critical: true
+                      priority: "high"
+                      estimated_cost: 500000.00
+                      actual_cost: 485000.00
+      "404":
+        description: График не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График не найден"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+  post:
+    tags: [Project Schedules]
+    summary: Создать задачу в графике
+    description: |
+      Создает новую задачу в указанном графике проекта.
+      Можно создавать как обычные задачи, так и вехи.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID графика проекта
+        example: 123
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/ScheduleTaskCreateRequest.yaml#/ScheduleTaskCreateRequest'
+          examples:
+            create_task:
+              summary: "Создание задачи"
+              value:
+                name: "Земляные работы"
+                description: "Выкопка котлована под фундамент"
+                task_type: "task"
+                planned_start_date: "2024-02-16"
+                planned_end_date: "2024-02-25"
+                planned_duration_days: 7
+                priority: "high"
+                estimated_cost: 750000.00
+                assigned_user_id: 15
+                work_type_id: 25
+    responses:
+      "201":
+        description: Задача успешно создана
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Задача успешно создана"
+                data:
+                  $ref: '../components/schemas/ScheduleTask.yaml#/ScheduleTask'
+      "400":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+      "404":
+        description: График не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График не найден"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/schedules/{id}/dependencies:
+  get:
+    tags: [Project Schedules]
+    summary: Получить зависимости между задачами
+    description: |
+      Возвращает список зависимостей между задачами в графике проекта.
+      Показывает связи типа "финиш-старт", "старт-старт" и другие.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID графика проекта
+        example: 123
+      - in: query
+        name: critical_only
+        schema:
+          type: boolean
+        description: Показать только зависимости на критическом пути
+        example: false
+      - in: query
+        name: dependency_type
+        schema:
+          type: string
+          enum: [finish_to_start, start_to_start, finish_to_finish, start_to_finish]
+        description: Фильтр по типу зависимости
+        example: "finish_to_start"
+    responses:
+      "200":
+        description: Список зависимостей успешно получен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/TaskDependency.yaml#/TaskDependency'
+            examples:
+              task_dependencies:
+                summary: "Зависимости между задачами"
+                value:
+                  data:
+                    - id: 201
+                      predecessor_task_id: 101
+                      successor_task_id: 102
+                      dependency_type: "finish_to_start"
+                      lag_days: 0
+                      is_critical: true
+                      predecessor_task:
+                        id: 101
+                        name: "Подготовительные работы"
+                      successor_task:
+                        id: 102
+                        name: "Земляные работы"
+      "404":
+        description: График не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График не найден"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+  post:
+    tags: [Project Schedules]
+    summary: Создать зависимость между задачами
+    description: |
+      Создает новую зависимость между двумя задачами в графике проекта.
+      Поддерживает различные типы зависимостей и задержки.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID графика проекта
+        example: 123
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/TaskDependencyCreateRequest.yaml#/TaskDependencyCreateRequest'
+          examples:
+            create_dependency:
+              summary: "Создание зависимости"
+              value:
+                predecessor_task_id: 101
+                successor_task_id: 102
+                dependency_type: "finish_to_start"
+                lag_days: 0
+    responses:
+      "201":
+        description: Зависимость успешно создана
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Зависимость успешно создана"
+                data:
+                  $ref: '../components/schemas/TaskDependency.yaml#/TaskDependency'
+      "400":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+      "404":
+        description: График не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График не найден"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/schedules/{id}/resource-conflicts:
+  get:
+    tags: [Project Schedules]
+    summary: Получить конфликты ресурсов в графике
+    description: |
+      Возвращает список конфликтов ресурсов в указанном графике проекта.
+      Показывает случаи перегрузки ресурсов и временные пересечения.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID графика проекта
+        example: 123
+      - in: query
+        name: severity
+        schema:
+          type: string
+          enum: [low, medium, high, critical]
+        description: Фильтр по критичности конфликта
+        example: "high"
+    responses:
+      "200":
+        description: Список конфликтов успешно получен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    $ref: '../components/schemas/ResourceConflict.yaml#/ResourceConflict'
+            examples:
+              resource_conflicts:
+                summary: "Конфликты ресурсов"
+                value:
+                  data:
+                    - id: 301
+                      resource_type: "human"
+                      resource_name: "Бригада каменщиков №1"
+                      conflict_type: "overallocation"
+                      severity: "high"
+                      start_date: "2024-03-15"
+                      end_date: "2024-03-20"
+                      overallocation_percent: 150.0
+                      conflicting_tasks:
+                        - id: 105
+                          name: "Кладка стен секции А"
+                        - id: 106
+                          name: "Кладка стен секции Б"
+      "404":
+        description: График не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График не найден"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/schedules/templates:
+  get:
+    tags: [Project Schedules]
+    summary: Получить шаблоны графиков
+    description: |
+      Возвращает список доступных шаблонов графиков проектов
+      для создания новых графиков на их основе.
+    parameters:
+      - in: query
+        name: category
+        schema:
+          type: string
+          enum: [construction, renovation, infrastructure, residential, commercial]
+        description: Фильтр по категории шаблона
+        example: "construction"
+      - in: query
+        name: search
+        schema:
+          type: string
+        description: Поиск по названию шаблона
+        example: "жилое строительство"
+    responses:
+      "200":
+        description: Список шаблонов успешно получен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    allOf:
+                      - $ref: '../components/schemas/ProjectSchedule.yaml#/ProjectSchedule'
+                      - type: object
+                        properties:
+                          usage_count:
+                            type: integer
+                            description: Количество использований шаблона
+                          last_used_at:
+                            type: string
+                            format: date-time
+                            description: Дата последнего использования
+            examples:
+              schedule_templates:
+                summary: "Шаблоны графиков"
+                value:
+                  data:
+                    - id: 501
+                      name: "Жилое строительство (стандарт)"
+                      template_name: "Жилое строительство (стандарт)"
+                      template_description: "Типовой график для строительства жилых домов до 20 этажей"
+                      is_template: true
+                      tasks_count: 35
+                      usage_count: 15
+                      last_used_at: "2024-01-20T10:30:00Z"
+                      created_at: "2023-05-15T14:00:00Z"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/schedules/from-template:
+  post:
+    tags: [Project Schedules]
+    summary: Создать график из шаблона
+    description: |
+      Создает новый график проекта на основе существующего шаблона.
+      Копирует структуру задач, зависимости и настройки из шаблона.
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              template_id:
+                type: integer
+                description: ID шаблона для копирования
+                example: 501
+              project_id:
+                type: integer
+                description: ID проекта для нового графика
+                example: 456
+              name:
+                type: string
+                description: Название нового графика
+                example: "График ТРЦ на основе стандартного шаблона"
+              planned_start_date:
+                type: string
+                format: date
+                description: Новая дата начала проекта
+                example: "2024-03-01"
+              scale_factor:
+                type: number
+                format: float
+                description: Коэффициент масштабирования времени (по умолчанию 1.0)
+                example: 1.2
+            required:
+              - template_id
+              - project_id
+              - name
+              - planned_start_date
+          examples:
+            create_from_template:
+              summary: "Создание из шаблона"
+              value:
+                template_id: 501
+                project_id: 456
+                name: "График ТРЦ на основе стандартного шаблона"
+                planned_start_date: "2024-03-01"
+                scale_factor: 1.2
+    responses:
+      "201":
+        description: График успешно создан из шаблона
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "График успешно создан из шаблона"
+                data:
+                  $ref: '../components/schemas/ProjectSchedule.yaml#/ProjectSchedule'
+            examples:
+              schedule_from_template:
+                summary: "График создан из шаблона"
+                value:
+                  message: "График успешно создан из шаблона"
+                  data:
+                    id: 124
+                    project_id: 456
+                    name: "График ТРЦ на основе стандартного шаблона"
+                    status: "draft"
+                    planned_start_date: "2024-03-01"
+                    planned_end_date: "2024-10-15"
+                    tasks_count: 35
+                    is_template: false
+      "400":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+      "404":
+        description: Шаблон не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Шаблон не найден"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/schedules/statistics:
+  get:
+    tags: [Project Schedules]
+    summary: Получить статистику по графикам
+    description: |
+      Возвращает агрегированную статистику по всем графикам организации.
+      Включает информацию о статусах, прогрессе и производительности.
+    parameters:
+      - in: query
+        name: period
+        schema:
+          type: string
+          enum: [week, month, quarter, year]
+          default: month
+        description: Период для статистики
+        example: "month"
+      - in: query
+        name: project_id
+        schema:
+          type: integer
+        description: Фильтр по конкретному проекту
+        example: 456
+    responses:
+      "200":
+        description: Статистика успешно получена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  $ref: '../components/schemas/ScheduleStatistics.yaml#/ScheduleStatistics'
+            examples:
+              schedule_statistics:
+                summary: "Статистика по графикам"
+                value:
+                  data:
+                    total_schedules: 25
+                    by_status:
+                      draft: 5
+                      active: 15
+                      paused: 2
+                      completed: 3
+                      cancelled: 0
+                    average_progress: 67.5
+                    on_schedule_count: 18
+                    delayed_count: 4
+                    ahead_of_schedule_count: 3
+                    total_estimated_cost: 125000000.00
+                    total_actual_cost: 85000000.00
+                    cost_variance_percent: -32.0
+                    schedule_performance_index: 0.95
+                    critical_schedules: 2
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/schedules/overdue:
+  get:
+    tags: [Project Schedules]
+    summary: Получить просроченные графики
+    description: |
+      Возвращает список графиков с просроченными задачами или сроками.
+      Помогает выявить проблемные проекты, требующие внимания.
+    parameters:
+      - in: query
+        name: severity
+        schema:
+          type: string
+          enum: [minor, moderate, severe, critical]
+        description: Фильтр по критичности просрочки
+        example: "severe"
+      - in: query
+        name: overdue_days_min
+        schema:
+          type: integer
+          minimum: 1
+        description: Минимальное количество дней просрочки
+        example: 7
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 15
+        description: Количество записей на странице
+        example: 15
+    responses:
+      "200":
+        description: Список просроченных графиков получен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    allOf:
+                      - $ref: '../components/schemas/ProjectSchedule.yaml#/ProjectSchedule'
+                      - type: object
+                        properties:
+                          overdue_tasks_count:
+                            type: integer
+                            description: Количество просроченных задач
+                          max_delay_days:
+                            type: integer
+                            description: Максимальная задержка в днях
+                          delay_impact:
+                            type: string
+                            enum: [low, medium, high, critical]
+                            description: Влияние задержки на проект
+            examples:
+              overdue_schedules:
+                summary: "Просроченные графики"
+                value:
+                  data:
+                    - id: 125
+                      name: "График реконструкции офисного здания"
+                      status: "active"
+                      planned_end_date: "2024-01-15"
+                      overall_progress_percent: 45.5
+                      overdue_tasks_count: 3
+                      max_delay_days: 12
+                      delay_impact: "high"
+                      project:
+                        id: 789
+                        name: "Реконструкция офисного здания"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/schedules/recent:
+  get:
+    tags: [Project Schedules]
+    summary: Получить недавно измененные графики
+    description: |
+      Возвращает список графиков, которые были недавно созданы или изменены.
+      Полезно для отслеживания активности в проектах.
+    parameters:
+      - in: query
+        name: days
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 30
+          default: 7
+        description: Количество дней для поиска изменений
+        example: 7
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 15
+        description: Количество записей на странице
+        example: 15
+    responses:
+      "200":
+        description: Список недавних графиков получен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    allOf:
+                      - $ref: '../components/schemas/ProjectSchedule.yaml#/ProjectSchedule'
+                      - type: object
+                        properties:
+                          change_type:
+                            type: string
+                            enum: [created, updated, tasks_modified, progress_updated]
+                            description: Тип последнего изменения
+                          last_activity_at:
+                            type: string
+                            format: date-time
+                            description: Время последней активности
+            examples:
+              recent_schedules:
+                summary: "Недавно измененные графики"
+                value:
+                  data:
+                    - id: 126
+                      name: "График строительства склада"
+                      status: "active"
+                      overall_progress_percent: 23.5
+                      change_type: "progress_updated"
+                      last_activity_at: "2024-01-24T16:45:00Z"
+                      updated_at: "2024-01-24T16:45:00Z"
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'
+
+/schedules/all-resource-conflicts:
+  get:
+    tags: [Project Schedules]
+    summary: Получить все конфликты ресурсов
+    description: |
+      Возвращает агрегированный список конфликтов ресурсов по всем графикам организации.
+      Помогает выявить системные проблемы с планированием ресурсов.
+    parameters:
+      - in: query
+        name: severity
+        schema:
+          type: string
+          enum: [low, medium, high, critical]
+        description: Фильтр по критичности конфликта
+        example: "high"
+      - in: query
+        name: resource_type
+        schema:
+          type: string
+          enum: [human, equipment, material, financial]
+        description: Фильтр по типу ресурса
+        example: "human"
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+        description: Начальная дата для поиска конфликтов
+        example: "2024-02-01"
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+        description: Конечная дата для поиска конфликтов
+        example: "2024-12-31"
+    responses:
+      "200":
+        description: Список конфликтов успешно получен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    allOf:
+                      - $ref: '../components/schemas/ResourceConflict.yaml#/ResourceConflict'
+                      - type: object
+                        properties:
+                          schedule:
+                            type: object
+                            description: График проекта, где обнаружен конфликт
+                            properties:
+                              id:
+                                type: integer
+                              name:
+                                type: string
+                              project_name:
+                                type: string
+                summary:
+                  type: object
+                  description: Сводная информация по конфликтам
+                  properties:
+                    total_conflicts:
+                      type: integer
+                    by_severity:
+                      type: object
+                      properties:
+                        low:
+                          type: integer
+                        medium:
+                          type: integer
+                        high:
+                          type: integer
+                        critical:
+                          type: integer
+                    by_resource_type:
+                      type: object
+                      properties:
+                        human:
+                          type: integer
+                        equipment:
+                          type: integer
+                        material:
+                          type: integer
+                        financial:
+                          type: integer
+            examples:
+              all_resource_conflicts:
+                summary: "Все конфликты ресурсов"
+                value:
+                  data:
+                    - id: 301
+                      resource_type: "human"
+                      resource_name: "Бригада каменщиков №1"
+                      conflict_type: "overallocation"
+                      severity: "high"
+                      start_date: "2024-03-15"
+                      end_date: "2024-03-20"
+                      overallocation_percent: 150.0
+                      schedule:
+                        id: 123
+                        name: "График строительства ТРЦ"
+                        project_name: "Торговый центр 'Галерея'"
+                  summary:
+                    total_conflicts: 12
+                    by_severity:
+                      low: 3
+                      medium: 5
+                      high: 3
+                      critical: 1
+                    by_resource_type:
+                      human: 8
+                      equipment: 3
+                      material: 1
+                      financial: 0
+      "401":
+        $ref: '../components/responses/Unauthorized.yaml'
+      "403":
+        $ref: '../components/responses/Forbidden.yaml'

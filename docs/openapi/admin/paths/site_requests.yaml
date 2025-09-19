@@ -65,7 +65,7 @@
       responses:
         "200":
           description: Список заявок успешно получен
-          content:
+        content:
             application/json:
               schema:
                 type: object
@@ -102,7 +102,7 @@
                   overdue_count: 2
         "400":
           description: Контекст организации не определен
-          content:
+        content:
             application/json:
               schema:
                 type: object
@@ -115,7 +115,7 @@
                     example: "Organization context is required."
         "500":
           description: Внутренняя ошибка сервера
-          content:
+        content:
             application/json:
               schema:
                 type: object
@@ -227,16 +227,16 @@
                     required_date: ["Требуемая дата не может быть в прошлом"]
       "500":
         description: Внутренняя ошибка сервера
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
                   example: false
-                  message:
-                    type: string
+                message:
+                  type: string
                   example: "Произошла ошибка при создании заявки"
 
 /site-requests-stats:
@@ -301,10 +301,10 @@
                   example: "Organization context is required."
       "500":
         description: Внутренняя ошибка сервера
-          content:
-            application/json:
-              schema:
-                type: object
+        content:
+          application/json:
+            schema:
+              type: object
                 properties:
                   success:
                     type: boolean
@@ -393,7 +393,7 @@
                   example: "Заявка не найдена"
       "500":
         description: Внутренняя ошибка сервера
-          content:
+        content:
             application/json:
               schema:
                 type: object
@@ -498,7 +498,7 @@
                   type: object
       "500":
         description: Внутренняя ошибка сервера
-          content:
+        content:
             application/json:
               schema:
                 type: object
@@ -528,7 +528,7 @@
       responses:
       "200":
           description: Заявка успешно удалена
-          content:
+        content:
             application/json:
               schema:
                 type: object
@@ -604,7 +604,7 @@
       responses:
       "201":
         description: Файл успешно загружен
-          content:
+        content:
             application/json:
               schema:
                 type: object
