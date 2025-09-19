@@ -1,211 +1,15 @@
 /multi-organization/check-availability:
   get:
-    tags: [MultiOrganization]
-    summary: Проверить, доступен ли модуль Multi-Organization
-    security: [{ bearerAuth: [] }]
-    responses:
-      "200":
-        description: Доступность
-        content:
-          application/json:
-            schema:
-              $ref: '../components/schemas/ModuleAvailabilityResponse.yaml'
-/multi-organization/hierarchy:
-  get:
-    tags: [MultiOrganization]
-    summary: Получить иерархию холдинга
-    security: [{ bearerAuth: [] }]
-    responses:
-      "200":
-        description: Иерархия
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/HoldingHierarchy.yaml'
-/multi-organization/accessible:
-  get:
-    tags: [MultiOrganization]
-    summary: Список доступных организаций
-    security: [{ bearerAuth: [] }]
-    responses:
-      "200":
-        description: Организации
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: array
-                      items:
-                        $ref: '../components/schemas/OrganizationSummary.yaml'
-/multi-organization/organization/{organizationId}:
-  parameters:
-    - { name: organizationId, in: path, required: true, schema: { type: integer } }
-  get:
-    tags: [MultiOrganization]
-    summary: Данные организации
-    security: [{ bearerAuth: [] }]
-    responses:
-      "200":
-        description: Организация
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationData.yaml'
-/multi-organization/switch-context:
-  post:
-    tags: [MultiOrganization]
-    summary: Переключить контекст организации
-    security: [{ bearerAuth: [] }]
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/SwitchContextRequest.yaml'
-    responses:
-      "200":
-        description: Переключено
-        content:
-          application/json:
-            schema:
-              $ref: '../components/schemas/SwitchContextResponse.yaml'
-/multi-organization/dashboard:
-  get:
-    tags: [MultiOrganization]
-    summary: Дашборд холдинга
-    security: [{ bearerAuth: [] }]
-    responses:
-      "200":
-        description: Дашборд
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/HoldingDashboard.yaml'
-/multi-organization/child-organizations:
-  get:
-    tags: [MultiOrganization]
-    summary: Список дочерних организаций
-    security: [{ bearerAuth: [] }]
-    responses:
-      "200":
-        description: Список
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/ChildOrganizationsList.yaml'
-/multi-organization/create-holding:
-  post:
-    tags: [MultiOrganization]
-    summary: Создать холдинг
-    security: [{ bearerAuth: [] }]
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/CreateHoldingRequest.yaml'
-    responses:
-      "201":
-        description: Создано
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/OrganizationGroup.yaml'
-/multi-organization/add-child:
-  post:
-    tags: [MultiOrganization]
-    summary: Добавить дочернюю организацию
-    security: [{ bearerAuth: [] }]
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '../components/schemas/AddChildOrganizationRequest.yaml'
-    responses:
-      "201":
-        description: Добавлено
-        content:
-          application/json:
-            schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      $ref: '../components/schemas/ChildOrganizationCreated.yaml'
-/multi-organization/summary:
-  get:
-    tags: [MultiOrganization]
-    summary: Сводная информация по холдингу (все организации, проекты, договоры, акты, выполненные работы, статистика)
+    tags: [MultiOrganization, Access]
+    summary: Проверить доступность модуля мультиорганизации
     description: |
-      Возвращает агрегированную сводку по всем организациям холдинга. Поддерживает экспорт CSV по секциям (projects, contracts, acts, completed_works).
-      
-      Пример: `/multi-organization/summary?export=csv&section=projects`
-    security: [{ bearerAuth: [] }]
-    parameters:
-      - in: query
-        name: date_from
-        schema: { type: string, format: date }
-        required: false
-        description: Начальная дата фильтра
-      - in: query
-        name: date_to
-        schema: { type: string, format: date }
-        required: false
-        description: Конечная дата фильтра
-      - in: query
-        name: status
-        schema: { type: string }
-        required: false
-        description: Фильтр по статусу
-      - in: query
-        name: is_approved
-        schema: { type: boolean }
-        required: false
-        description: Фильтр по утверждённости акта
-      - in: query
-        name: export
-        schema: { type: string, enum: [csv] }
-        required: false
-        description: Если указан, возвращает CSV-файл
-      - in: query
-        name: section
-        schema: { type: string, enum: [projects, contracts, acts, completed_works] }
-        required: false
-        description: Секция для экспорта CSV
+      Проверяет, активирован ли модуль "Мультиорганизация" для текущей организации
+      и возвращает информацию о возможностях пользователя.
+    security: 
+      - bearerAuth: []
     responses:
       "200":
-        description: Сводная информация по холдингу
+        description: Информация о доступности получена успешно
         content:
           application/json:
             schema:
@@ -213,52 +17,559 @@
               properties:
                 success:
                   type: boolean
+                  example: true
+                available:
+                  type: boolean
+                  description: Доступен ли модуль
+                  example: true
+                can_create_holding:
+                  type: boolean
+                  description: Может ли создать холдинг
+                  example: true
+                current_type:
+                  type: string
+                  enum: [single, holding, child]
+                  description: Тип текущей организации
+                  example: "single"
+                is_holding:
+                  type: boolean
+                  description: Является ли организация холдингом
+                  example: false
+      "403":
+        description: Модуль не активирован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                available:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Модуль \"Мультиорганизация\" не активирован"
+                required_module:
+                  type: string
+                  example: "multi-organization"
+
+/multi-organization/hierarchy:
+  get:
+    tags: [MultiOrganization, Structure]
+    summary: Получить иерархию организаций холдинга
+    description: |
+      Возвращает древовидную структуру организаций в холдинге с их статусами и связями.
+    security: 
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Иерархия получена успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/LkHoldingHierarchy.yaml'
+
+/multi-organization/accessible:
+  get:
+    tags: [MultiOrganization, Access]
+    summary: Получить список доступных организаций
+    description: |
+      Возвращает все организации, к которым у пользователя есть доступ.
+      Включает родительские, дочерние и связанные организации.
+    security: 
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Список доступных организаций получен успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/LkOrganizationSummary.yaml'
+
+/multi-organization/organization/{organizationId}:
+  get:
+    tags: [MultiOrganization, Organizations]
+    summary: Получить детальные данные организации
+    description: |
+      Возвращает подробную информацию об указанной организации,
+      включая статистику и настройки.
+    security: 
+      - bearerAuth: []
+    parameters:
+      - name: organizationId
+        in: path
+        required: true
+        description: ID организации
+        schema:
+          type: integer
+          example: 123
+    responses:
+      "200":
+        description: Данные организации получены успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/LkOrganizationData.yaml'
+      "404":
+        description: Организация не найдена или нет доступа
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/multi-organization/switch-context:
+  post:
+    tags: [MultiOrganization, Context]
+    summary: Переключить контекст организации
+    description: |
+      Переключает текущую рабочую организацию пользователя.
+      Влияет на все последующие запросы в рамках сессии.
+    security: 
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - organization_id
+            properties:
+              organization_id:
+                type: integer
+                description: ID организации для переключения
+                example: 123
+    responses:
+      "200":
+        description: Контекст успешно переключен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Контекст переключен на организацию \"ООО Строймонтаж\""
+                data:
+                  type: object
+                  properties:
+                    current_organization_id:
+                      type: integer
+                      example: 123
+                    organization_name:
+                      type: string
+                      example: "ООО Строймонтаж"
+                    organization_type:
+                      type: string
+                      enum: [single, holding, child]
+                      example: "child"
+      "404":
+        description: Организация не найдена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+      "403":
+        description: Нет доступа к организации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/multi-organization/dashboard:
+  get:
+    tags: [MultiOrganization, Dashboard]
+    summary: Получить дашборд холдинга
+    description: |
+      Возвращает агрегированную информацию по всему холдингу:
+      статистику по организациям, проектам, финансам.
+    security: 
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Дашборд холдинга получен успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      $ref: '../components/schemas/LkHoldingDashboard.yaml'
+
+/multi-organization/child-organizations:
+  get:
+    tags: [MultiOrganization, ChildOrganizations]
+    summary: Получить список дочерних организаций
+    description: |
+      Возвращает все дочерние организации текущего холдинга
+      с их статусами и базовой информацией.
+    security: 
+      - bearerAuth: []
+    responses:
+      "200":
+        description: Список дочерних организаций получен успешно
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    data:
+                      type: array
+                      items:
+                        $ref: '../components/schemas/LkChildOrganization.yaml'
+
+/multi-organization/create-holding:
+  post:
+    tags: [MultiOrganization, Holdings]
+    summary: Создать новый холдинг
+    description: |
+      Преобразует текущую организацию в холдинг и создает группу организаций.
+      Требует права 'multi-organization.manage'.
+    security: 
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - name
+            properties:
+              name:
+                type: string
+                maxLength: 255
+                description: Название холдинга
+                example: "Строительный холдинг \"Монолит\""
+              description:
+                type: string
+                maxLength: 1000
+                nullable: true
+                description: Описание холдинга
+                example: "Объединение строительных компаний"
+              max_child_organizations:
+                type: integer
+                minimum: 1
+                maximum: 50
+                description: Максимальное количество дочерних организаций
+                example: 10
+              settings:
+                type: object
+                nullable: true
+                description: Дополнительные настройки холдинга
+                additionalProperties: true
+              permissions_config:
+                type: object
+                nullable: true
+                description: Конфигурация разрешений
+                additionalProperties: true
+    responses:
+      "200":
+        description: Холдинг успешно создан
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Холдинг успешно создан"
+                data:
+                  $ref: '../components/schemas/LkOrganizationGroup.yaml'
+      "400":
+        description: Ошибка создания холдинга
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/multi-organization/add-child:
+  post:
+    tags: [MultiOrganization, ChildOrganizations]
+    summary: Добавить дочернюю организацию в холдинг
+    description: |
+      Создает новую дочернюю организацию и добавляет ее в холдинг.
+      Автоматически создает владельца организации.
+      Требует права 'multi-organization.manage'.
+    security: 
+      - bearerAuth: []
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - group_id
+              - name
+              - owner
+            properties:
+              group_id:
+                type: integer
+                description: ID группы организаций (холдинга)
+                example: 5
+              name:
+                type: string
+                maxLength: 255
+                description: Название дочерней организации
+                example: "ООО Монолит-Строй"
+              description:
+                type: string
+                maxLength: 1000
+                nullable: true
+                description: Описание организации
+              inn:
+                type: string
+                maxLength: 12
+                nullable: true
+                description: ИНН организации
+                example: "7707083893"
+              kpp:
+                type: string
+                maxLength: 9
+                nullable: true
+                description: КПП организации
+                example: "770701001"
+              address:
+                type: string
+                maxLength: 500
+                nullable: true
+                description: Адрес организации
+              phone:
+                type: string
+                maxLength: 20
+                nullable: true
+                description: Телефон организации
+              email:
+                type: string
+                format: email
+                maxLength: 255
+                nullable: true
+                description: Email организации
+              owner:
+                type: object
+                required:
+                  - name
+                  - email
+                description: Данные владельца организации
+                properties:
+                  name:
+                    type: string
+                    maxLength: 255
+                    description: Имя владельца
+                    example: "Петр Иванов"
+                  email:
+                    type: string
+                    format: email
+                    maxLength: 255
+                    description: Email владельца
+                    example: "p.ivanov@monolith.ru"
+                  password:
+                    type: string
+                    minLength: 8
+                    nullable: true
+                    description: Пароль (если не указан, будет сгенерирован)
+    responses:
+      "200":
+        description: Дочерняя организация успешно добавлена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Дочерняя организация добавлена"
+                data:
+                  $ref: '../components/schemas/LkChildOrganizationCreated.yaml'
+      "400":
+        description: Ошибка добавления организации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ApiResponse.yaml'
+
+/multi-organization/summary:
+  get:
+    tags: [MultiOrganization, Reports]
+    summary: Получить сводную информацию по холдингу
+    description: |
+      Возвращает агрегированную сводку по всем организациям холдинга:
+      организации, проекты, договоры, акты, выполненные работы, статистика.
+      Поддерживает экспорт в CSV по секциям.
+    security: 
+      - bearerAuth: []
+    parameters:
+      - name: date_from
+        in: query
+        description: Начальная дата фильтра
+        required: false
+        schema:
+          type: string
+          format: date
+          example: "2024-01-01"
+      - name: date_to
+        in: query
+        description: Конечная дата фильтра
+        required: false
+        schema:
+          type: string
+          format: date
+          example: "2024-12-31"
+      - name: status
+        in: query
+        description: Фильтр по статусу
+        required: false
+        schema:
+          type: string
+      - name: is_approved
+        in: query
+        description: Фильтр по утверждённости актов
+        required: false
+        schema:
+          type: boolean
+      - name: export
+        in: query
+        description: Формат экспорта (если нужен файл)
+        required: false
+        schema:
+          type: string
+          enum: [csv]
+          example: "csv"
+      - name: section
+        in: query
+        description: Секция для экспорта CSV
+        required: false
+        schema:
+          type: string
+          enum: [projects, contracts, acts, completed_works]
+          example: "projects"
+    responses:
+      "200":
+        description: Сводная информация получена успешно
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
                 data:
                   type: object
                   properties:
                     organizations:
                       type: array
+                      description: Список организаций холдинга
                       items:
                         type: object
                         properties:
-                          id: { type: integer }
-                          name: { type: string }
-                          is_active: { type: boolean }
-                          projects_count: { type: integer }
-                          contracts_count: { type: integer }
+                          id:
+                            type: integer
+                            example: 123
+                          name:
+                            type: string
+                            example: "ООО Монолит-Строй"
+                          is_active:
+                            type: boolean
+                            example: true
+                          projects_count:
+                            type: integer
+                            example: 5
+                          contracts_count:
+                            type: integer
+                            example: 8
                     projects:
                       type: array
+                      description: Консолидированные проекты
                       items:
                         $ref: '../components/schemas/ProjectDTO.yaml'
                     contracts:
                       type: array
+                      description: Консолидированные договоры
                       items:
                         $ref: '../components/schemas/ContractDTO.yaml'
                     acts:
                       type: array
+                      description: Консолидированные акты
                       items:
                         $ref: '../components/schemas/ContractPerformanceActDTO.yaml'
                     completed_works:
                       type: array
+                      description: Консолидированные выполненные работы
                       items:
                         $ref: '../components/schemas/CompletedWorkDTO.yaml'
                     stats:
                       type: object
+                      description: Агрегированная статистика
                       properties:
                         contracts:
                           type: object
                           properties:
-                            count: { type: integer }
-                            total_amount: { type: number, format: float }
+                            count:
+                              type: integer
+                              description: Общее количество договоров
+                              example: 25
+                            total_amount:
+                              type: number
+                              format: float
+                              description: Общая сумма договоров
+                              example: 15000000.00
                         acts:
                           type: object
                           properties:
-                            count: { type: integer }
-                            total_amount: { type: number, format: float }
+                            count:
+                              type: integer
+                              description: Общее количество актов
+                              example: 45
+                            total_amount:
+                              type: number
+                              format: float
+                              description: Общая сумма актов
+                              example: 12500000.00
                         projects:
                           type: object
                           properties:
-                            count: { type: integer }
+                            count:
+                              type: integer
+                              description: Общее количество проектов
+                              example: 15
+          text/csv:
+            schema:
+              type: string
+              description: CSV файл с данными указанной секции
       "400":
         description: Ошибка запроса (например, неверная секция для экспорта)
         content:
@@ -266,4 +577,6 @@
             schema:
               type: object
               properties:
-                message: { type: string } 
+                message:
+                  type: string
+                  example: "Неверная секция для экспорта"
