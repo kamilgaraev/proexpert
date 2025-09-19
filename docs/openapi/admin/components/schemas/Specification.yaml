@@ -1,26 +1,58 @@
 type: object
-required: [id, number, spec_date, total_amount, scope_items, status]
+description: Спецификация с полной информацией и связанными данными.
 properties:
   id:
     type: integer
+    description: Уникальный идентификатор спецификации
+    example: 25
   number:
     type: string
+    description: Уникальный номер спецификации
+    example: "SPEC-2024-001"
   spec_date:
     type: string
     format: date
+    description: Дата спецификации
+    example: "2024-12-20"
   total_amount:
     type: number
-    format: double
-  scope_items:
-    type: array
-    items:
-      type: string
+    format: decimal
+    description: Общая сумма спецификации
+    example: 150000.50
   status:
     type: string
     enum: [draft, approved, archived]
+    description: Статус спецификации
+    example: "approved"
+  scope_items:
+    type: array
+    description: Перечень работ/услуг в спецификации
+    items:
+      type: string
+    example: 
+      - "Кирпичная кладка стен 1-го этажа"
+      - "Устройство монолитного перекрытия"
+      - "Штукатурные работы внутренние"
+  attached_at:
+    type: string
+    format: date-time
+    nullable: true
+    description: Дата прикрепления к контракту (если используется в контексте связи)
+    example: "2024-12-15T10:00:00Z"
   created_at:
     type: string
     format: date-time
+    description: Дата создания
+    example: "2024-12-15T09:30:00Z"
   updated_at:
     type: string
-    format: date-time 
+    format: date-time
+    description: Дата последнего обновления
+    example: "2024-12-20T14:15:00Z"
+required:
+  - id
+  - number
+  - spec_date
+  - total_amount
+  - status
+  - scope_items

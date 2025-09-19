@@ -1,0 +1,121 @@
+type: object
+description: Статистика для быстрых фильтров и дашборда административной панели.
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: object
+    properties:
+      contracts:
+        type: object
+        description: Статистика по контрактам с группировкой по статусам
+        properties:
+          draft:
+            type: object
+            description: Статистика по черновикам контрактов
+            properties:
+              count:
+                type: integer
+                description: Количество контрактов в статусе "черновик"
+                example: 5
+              amount:
+                type: number
+                format: decimal
+                description: Общая сумма контрактов в статусе "черновик"
+                example: 125000.50
+          active:
+            type: object
+            description: Статистика по активным контрактам
+            properties:
+              count:
+                type: integer
+                description: Количество активных контрактов
+                example: 12
+              amount:
+                type: number
+                format: decimal
+                description: Общая сумма активных контрактов
+                example: 1850000.75
+          completed:
+            type: object
+            description: Статистика по завершенным контрактам
+            properties:
+              count:
+                type: integer
+                description: Количество завершенных контрактов
+                example: 8
+              amount:
+                type: number
+                format: decimal
+                description: Общая сумма завершенных контрактов
+                example: 950000.00
+          on_hold:
+            type: object
+            description: Статистика по приостановленным контрактам
+            properties:
+              count:
+                type: integer
+                description: Количество контрактов на паузе
+                example: 2
+              amount:
+                type: number
+                format: decimal
+                description: Общая сумма контрактов на паузе
+                example: 300000.00
+          terminated:
+            type: object
+            description: Статистика по расторгнутым контрактам
+            properties:
+              count:
+                type: integer
+                description: Количество расторгнутых контрактов
+                example: 1
+              amount:
+                type: number
+                format: decimal
+                description: Общая сумма расторгнутых контрактов
+                example: 75000.00
+      completed_works:
+        type: object
+        description: Статистика по выполненным работам с группировкой по статусам
+        properties:
+          pending:
+            type: object
+            description: Статистика по работам, ожидающим подтверждения
+            properties:
+              count:
+                type: integer
+                description: Количество работ, ожидающих подтверждения
+                example: 15
+              amount:
+                type: number
+                format: decimal
+                description: Общая сумма работ, ожидающих подтверждения
+                example: 85000.25
+          confirmed:
+            type: object
+            description: Статистика по подтвержденным работам
+            properties:
+              count:
+                type: integer
+                description: Количество подтвержденных работ
+                example: 48
+              amount:
+                type: number
+                format: decimal
+                description: Общая сумма подтвержденных работ
+                example: 520000.80
+          rejected:
+            type: object
+            description: Статистика по отклоненным работам
+            properties:
+              count:
+                type: integer
+                description: Количество отклоненных работ
+                example: 3
+              amount:
+                type: number
+                format: decimal
+                description: Общая сумма отклоненных работ
+                example: 12000.00

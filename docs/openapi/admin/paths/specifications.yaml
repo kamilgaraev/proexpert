@@ -1,58 +1,345 @@
 /specifications:
   get:
     tags: [Specifications]
-    summary: Список спецификаций
+    summary: Получить список спецификаций
+    description: |
+      Возвращает пагинированный список всех спецификаций в системе.
+      Спецификации содержат детализацию работ и услуг с общей стоимостью.
+    parameters:
+      - in: query
+        name: per_page
+        schema:
+          type: integer
+          default: 15
+          minimum: 1
+          maximum: 100
+        description: Количество записей на страницу
+        example: 15
     responses:
-      '200': { description: OK }
+      "200":
+        description: Список спецификаций успешно получен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SpecificationCollection.yaml'
+            example:
+              data:
+                - id: 25
+                  number: "SPEC-2024-001"
+                  spec_date: "2024-12-20"
+                  total_amount: 150000.50
+                  status: "approved"
+                  scope_items:
+                    - "Кирпичная кладка стен 1-го этажа"
+                    - "Устройство монолитного перекрытия"
+                  created_at: "2024-12-15T09:30:00Z"
+              links:
+                first: "http://example.com/api/v1/admin/specifications?page=1"
+                last: "http://example.com/api/v1/admin/specifications?page=4"
+                prev: null
+                next: "http://example.com/api/v1/admin/specifications?page=2"
+              meta:
+                current_page: 1
+                per_page: 15
+                total: 52
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Произошла ошибка при получении списка спецификаций"
   post:
     tags: [Specifications]
-    summary: Создать спецификацию
+    summary: Создать новую спецификацию
+    description: |
+      Создает новую спецификацию с уникальным номером,
+      детализацией работ и общей стоимостью.
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/Specification.yaml'
+            $ref: '../components/schemas/SpecificationCreateRequest.yaml'
+          examples:
+            construction_spec:
+              summary: "Спецификация строительных работ"
+              value:
+                number: "SPEC-2024-001"
+                spec_date: "2024-12-20"
+                total_amount: 150000.50
+                scope_items:
+                  - "Кирпичная кладка стен 1-го этажа"
+                  - "Устройство монолитного перекрытия"
+                  - "Штукатурные работы внутренние"
+                status: "draft"
+            finishing_spec:
+              summary: "Спецификация отделочных работ"
+              value:
+                number: "SPEC-2024-002"
+                spec_date: "2024-12-22"
+                total_amount: 75000.00
+                scope_items:
+                  - "Укладка керамической плитки"
+                  - "Покраска стен и потолков"
+                  - "Установка сантехники"
     responses:
-      '201': { description: Created }
+      "201":
+        description: Спецификация успешно создана
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SpecificationResponse.yaml'
+            example:
+              id: 25
+              number: "SPEC-2024-001"
+              spec_date: "2024-12-20"
+              total_amount: 150000.50
+              status: "draft"
+              scope_items:
+                - "Кирпичная кладка стен 1-го этажа"
+                - "Устройство монолитного перекрытия"
+                - "Штукатурные работы внутренние"
+              created_at: "2024-12-20T10:00:00Z"
+              updated_at: "2024-12-20T10:00:00Z"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                errors:
+                  type: object
+            examples:
+              validation_error:
+                summary: "Ошибки валидации"
+                value:
+                  message: "The given data was invalid."
+                  errors:
+                    number: ["Спецификация с таким номером уже существует."]
+                    spec_date: ["Поле spec_date должно быть датой в формате Y-m-d."]
+                    scope_items: ["Поле scope_items обязательно для заполнения."]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Произошла ошибка при создании спецификации"
 
-/specifications/{specificationId}:
+/specifications/{id}:
   get:
     tags: [Specifications]
-    summary: Получить спецификацию
+    summary: Получить детальную информацию о спецификации
+    description: |
+      Возвращает полную информацию о спецификации
+      включая все детали работ и связанные данные.
     parameters:
-      - name: specificationId
-        in: path
+      - in: path
+        name: id
         required: true
         schema:
           type: integer
+        description: ID спецификации
+        example: 25
     responses:
-      '200': { description: OK }
+      "200":
+        description: Детальная информация о спецификации
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SpecificationResponse.yaml'
+            example:
+              id: 25
+              number: "SPEC-2024-001"
+              spec_date: "2024-12-20"
+              total_amount: 150000.50
+              status: "approved"
+              scope_items:
+                - "Кирпичная кладка стен 1-го этажа"
+                - "Устройство монолитного перекрытия"
+                - "Штукатурные работы внутренние"
+                - "Электромонтажные работы"
+              attached_at: null
+              created_at: "2024-12-15T09:30:00Z"
+              updated_at: "2024-12-20T14:15:00Z"
+      "404":
+        description: Спецификация не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Not found"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Произошла ошибка при получении спецификации"
   put:
     tags: [Specifications]
     summary: Обновить спецификацию
+    description: |
+      Обновляет спецификацию с проверкой уникальности номера
+      (игнорирует текущую запись). Позволяет частичное обновление.
     parameters:
-      - name: specificationId
-        in: path
+      - in: path
+        name: id
         required: true
         schema:
           type: integer
+        description: ID спецификации для обновления
+        example: 25
     requestBody:
       required: true
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/Specification.yaml'
+            $ref: '../components/schemas/SpecificationUpdateRequest.yaml'
+          examples:
+            status_update:
+              summary: "Обновление статуса"
+              value:
+                status: "approved"
+            content_update:
+              summary: "Обновление содержимого"
+              value:
+                total_amount: 175000.75
+                scope_items:
+                  - "Кирпичная кладка стен 1-го этажа"
+                  - "Устройство монолитного перекрытия"
+                  - "Штукатурные работы внутренние"
+                  - "Электромонтажные работы"
+                  - "Сантехнические работы"
+            full_update:
+              summary: "Полное обновление"
+              value:
+                number: "SPEC-2024-001-REV2"
+                spec_date: "2024-12-22"
+                total_amount: 185000.00
+                scope_items:
+                  - "Кирпичная кладка стен (исправленный объем)"
+                  - "Устройство монолитного перекрытия"
+                  - "Штукатурные работы внутренние и внешние"
+                  - "Полный комплекс электромонтажных работ"
+                status: "approved"
     responses:
-      '200': { description: Updated }
+      "200":
+        description: Спецификация успешно обновлена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/SpecificationResponse.yaml'
+            example:
+              id: 25
+              number: "SPEC-2024-001-REV2"
+              spec_date: "2024-12-22"
+              total_amount: 185000.00
+              status: "approved"
+              scope_items:
+                - "Кирпичная кладка стен (исправленный объем)"
+                - "Устройство монолитного перекрытия"
+                - "Штукатурные работы внутренние и внешние"
+              updated_at: "2024-12-22T16:45:00Z"
+      "404":
+        description: Спецификация не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Спецификация не найдена"
+      "422":
+        description: Ошибка валидации данных
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                errors:
+                  type: object
+            examples:
+              unique_number_error:
+                summary: "Номер уже существует"
+                value:
+                  message: "The given data was invalid."
+                  errors:
+                    number: ["Спецификация с таким номером уже существует."]
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Произошла ошибка при обновлении спецификации"
   delete:
     tags: [Specifications]
     summary: Удалить спецификацию
+    description: |
+      Удаляет спецификацию из системы (soft delete).
+      Удаленная спецификация не будет отображаться в списках,
+      но сохранится в базе данных для целостности данных.
     parameters:
-      - name: specificationId
-        in: path
+      - in: path
+        name: id
         required: true
         schema:
           type: integer
+        description: ID спецификации для удаления
+        example: 25
     responses:
-      '204': { description: Deleted } 
+      "204":
+        description: Спецификация успешно удалена
+      "404":
+        description: Спецификация не найдена
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Спецификация не найдена"
+      "409":
+        description: Конфликт - спецификация используется
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Невозможно удалить спецификацию, так как она используется в контрактах"
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Произошла ошибка при удалении спецификации"

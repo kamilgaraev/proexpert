@@ -1,0 +1,35 @@
+type: object
+required: [number, spec_date, total_amount, scope_items]
+description: Запрос для создания новой спецификации.
+properties:
+  number:
+    type: string
+    maxLength: 255
+    description: Уникальный номер спецификации
+    example: "SPEC-2024-001"
+  spec_date:
+    type: string
+    format: date
+    description: Дата спецификации в формате Y-m-d
+    example: "2024-12-20"
+  total_amount:
+    type: number
+    format: decimal
+    description: Общая сумма спецификации
+    example: 150000.50
+  scope_items:
+    type: array
+    description: Перечень работ/услуг в спецификации
+    items:
+      type: string
+    minItems: 1
+    example: 
+      - "Кирпичная кладка стен 1-го этажа"
+      - "Устройство монолитного перекрытия"
+      - "Штукатурные работы внутренние"
+  status:
+    type: string
+    enum: [draft, approved, archived]
+    default: "draft"
+    description: Статус спецификации
+    example: "draft"

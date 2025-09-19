@@ -2,174 +2,209 @@
   get:
     tags: [Filters]
     summary: Получить данные для фильтров контрактов
+    description: |
+      Возвращает данные для построения фильтров на странице контрактов.
+      Включает доступные статусы, типы контрактов, проекты и подрядчиков
+      для текущей организации пользователя.
     responses:
       "200":
-        description: Набор опций для фильтрации контрактов
+        description: Данные для фильтров успешно получены
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: object
-                      properties:
-                        statuses:
-                          type: array
-                          items:
-                            type: object
-                            properties:
-                              value:
-                                type: string
-                              label:
-                                type: string
-                        types:
-                          type: array
-                          items:
-                            type: object
-                            properties:
-                              value:
-                                type: string
-                              label:
-                                type: string
-                        projects:
-                          type: array
-                          items:
-                            type: object
-                            properties:
-                              value:
-                                type: integer
-                              label:
-                                type: string
-                        contractors:
-                          type: array
-                          items:
-                            type: object
-                            properties:
-                              value:
-                                type: integer
-                              label:
-                                type: string
+              $ref: '../components/schemas/ContractFiltersResponse.yaml'
+            example:
+              success: true
+              data:
+                statuses:
+                  - value: "draft"
+                    label: "Черновик"
+                  - value: "active"
+                    label: "Активный"
+                  - value: "completed"
+                    label: "Завершен"
+                  - value: "on_hold"
+                    label: "На паузе"
+                  - value: "terminated"
+                    label: "Расторгнут"
+                types:
+                  - value: "contract"
+                    label: "Контракт"
+                  - value: "agreement"
+                    label: "Соглашение"
+                  - value: "specification"
+                    label: "Спецификация"
+                projects:
+                  - value: 25
+                    label: "Жилой комплекс Солнечный"
+                  - value: 48
+                    label: "Офисный центр Премиум"
+                  - value: 73
+                    label: "Реконструкция здания"
+                contractors:
+                  - value: 12
+                    label: "ООО Стройсервис"
+                  - value: 34
+                    label: "ИП Петров С.А."
+                  - value: 56
+                    label: "ЗАО Профстрой"
+      "401":
+        description: Не авторизован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Unauthenticated."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Произошла ошибка при получении данных для фильтров"
 
 /filters/completed-works:
   get:
     tags: [Filters]
     summary: Получить данные для фильтров выполненных работ
+    description: |
+      Возвращает данные для построения фильтров на странице выполненных работ.
+      Включает доступные статусы работ, проекты, контракты, виды работ,
+      пользователей (прорабов) и подрядчиков для текущей организации.
     responses:
       "200":
-        description: Набор опций для фильтрации выполненных работ
+        description: Данные для фильтров успешно получены
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: object
-                      properties:
-                        statuses:
-                          type: array
-                          items:
-                            type: object
-                            properties:
-                              value:
-                                type: string
-                              label:
-                                type: string
-                        projects:
-                          type: array
-                          items:
-                            type: object
-                            properties:
-                              value:
-                                type: integer
-                              label:
-                                type: string
-                        contracts:
-                          type: array
-                          items:
-                            type: object
-                            properties:
-                              value:
-                                type: integer
-                              label:
-                                type: string
-                        work_types:
-                          type: array
-                          items:
-                            type: object
-                            properties:
-                              value:
-                                type: integer
-                              label:
-                                type: string
-                        users:
-                          type: array
-                          items:
-                            type: object
-                            properties:
-                              value:
-                                type: integer
-                              label:
-                                type: string
-                        contractors:
-                          type: array
-                          items:
-                            type: object
-                            properties:
-                              value:
-                                type: integer
-                              label:
-                                type: string
+              $ref: '../components/schemas/CompletedWorkFiltersResponse.yaml'
+            example:
+              success: true
+              data:
+                statuses:
+                  - value: "pending"
+                    label: "Ожидает подтверждения"
+                  - value: "confirmed"
+                    label: "Подтверждено"
+                  - value: "rejected"
+                    label: "Отклонено"
+                projects:
+                  - value: 25
+                    label: "Жилой комплекс Солнечный"
+                  - value: 48
+                    label: "Офисный центр Премиум"
+                contracts:
+                  - value: 87
+                    label: "КТР-2024-001 (Жилой комплекс Солнечный)"
+                  - value: 102
+                    label: "КТР-2024-015 (Офисный центр Премиум)"
+                work_types:
+                  - value: 15
+                    label: "Кирпичная кладка"
+                  - value: 28
+                    label: "Штукатурные работы"
+                  - value: 45
+                    label: "Электромонтажные работы"
+                users:
+                  - value: 15
+                    label: "Иванов Иван Иванович"
+                  - value: 28
+                    label: "Петров Петр Петрович"
+                  - value: 42
+                    label: "Сидоров Сидор Сидорович"
+                contractors:
+                  - value: 12
+                    label: "ООО Стройсервис"
+                  - value: 34
+                    label: "ИП Петров С.А."
+      "401":
+        description: Не авторизован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Unauthenticated."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Произошла ошибка при получении данных для фильтров"
 
 /filters/quick-stats:
   get:
     tags: [Filters]
-    summary: Получить быстрые статистики для дашборда фильтров
+    summary: Получить статистику для быстрых фильтров
+    description: |
+      Возвращает агрегированную статистику по контрактам и выполненным работам
+      для отображения на дашборде и в быстрых фильтрах.
+      Данные группируются по статусам с подсчетом количества и общих сумм.
     responses:
       "200":
-        description: Статистики по контрактам и выполненным работам
+        description: Статистика успешно получена
         content:
           application/json:
             schema:
-              allOf:
-                - $ref: '../components/schemas/ApiResponse.yaml'
-                - type: object
-                  properties:
-                    data:
-                      type: object
-                      properties:
-                        contracts:
-                          type: object
-                          properties:
-                            draft:
-                              $ref: '#/components/schemas/CountAmount'
-                            active:
-                              $ref: '#/components/schemas/CountAmount'
-                            completed:
-                              $ref: '#/components/schemas/CountAmount'
-                            on_hold:
-                              $ref: '#/components/schemas/CountAmount'
-                            terminated:
-                              $ref: '#/components/schemas/CountAmount'
-                        completed_works:
-                          type: object
-                          properties:
-                            pending:
-                              $ref: '#/components/schemas/CountAmount'
-                            confirmed:
-                              $ref: '#/components/schemas/CountAmount'
-                            rejected:
-                              $ref: '#/components/schemas/CountAmount'
-components:
-  schemas:
-    CountAmount:
-      type: object
-      properties:
-        count:
-          type: integer
-        amount:
-          type: number
-          format: float 
+              $ref: '../components/schemas/QuickStatsResponse.yaml'
+            example:
+              success: true
+              data:
+                contracts:
+                  draft:
+                    count: 5
+                    amount: 125000.50
+                  active:
+                    count: 12
+                    amount: 1850000.75
+                  completed:
+                    count: 8
+                    amount: 950000.00
+                  on_hold:
+                    count: 2
+                    amount: 300000.00
+                  terminated:
+                    count: 1
+                    amount: 75000.00
+                completed_works:
+                  pending:
+                    count: 15
+                    amount: 85000.25
+                  confirmed:
+                    count: 48
+                    amount: 520000.80
+                  rejected:
+                    count: 3
+                    amount: 12000.00
+      "401":
+        description: Не авторизован
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Unauthenticated."
+      "500":
+        description: Внутренняя ошибка сервера
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Произошла ошибка при получении статистики"

@@ -1,0 +1,55 @@
+type: object
+description: Пагинированная коллекция спецификаций.
+properties:
+  data:
+    type: array
+    description: Массив спецификаций
+    items:
+      $ref: './Specification.yaml'
+  links:
+    type: object
+    description: Ссылки для навигации по страницам
+    properties:
+      first:
+        type: string
+        nullable: true
+        example: "http://example.com/api/v1/admin/specifications?page=1"
+      last:
+        type: string
+        nullable: true
+        example: "http://example.com/api/v1/admin/specifications?page=4"
+      prev:
+        type: string
+        nullable: true
+        example: null
+      next:
+        type: string
+        nullable: true
+        example: "http://example.com/api/v1/admin/specifications?page=2"
+  meta:
+    type: object
+    description: Метаданные пагинации
+    properties:
+      current_page:
+        type: integer
+        example: 1
+      from:
+        type: integer
+        nullable: true
+        example: 1
+      last_page:
+        type: integer
+        example: 4
+      path:
+        type: string
+        example: "http://example.com/api/v1/admin/specifications"
+      per_page:
+        type: integer
+        example: 15
+      to:
+        type: integer
+        nullable: true
+        example: 15
+      total:
+        type: integer
+        example: 52

@@ -1,0 +1,127 @@
+type: object
+description: Данные для фильтров выполненных работ в административной панели.
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: object
+    properties:
+      statuses:
+        type: array
+        description: Доступные статусы выполненных работ
+        items:
+          type: object
+          properties:
+            value:
+              type: string
+              description: Значение статуса
+              example: "confirmed"
+            label:
+              type: string
+              description: Человекочитаемое название статуса
+              example: "Подтверждено"
+        example:
+          - value: "pending"
+            label: "Ожидает подтверждения"
+          - value: "confirmed"
+            label: "Подтверждено"
+          - value: "rejected"
+            label: "Отклонено"
+      projects:
+        type: array
+        description: Доступные проекты организации
+        items:
+          type: object
+          properties:
+            value:
+              type: integer
+              description: ID проекта
+              example: 25
+            label:
+              type: string
+              description: Название проекта
+              example: "Жилой комплекс Солнечный"
+        example:
+          - value: 25
+            label: "Жилой комплекс Солнечный"
+          - value: 48
+            label: "Офисный центр Премиум"
+      contracts:
+        type: array
+        description: Доступные контракты организации с привязкой к проектам
+        items:
+          type: object
+          properties:
+            value:
+              type: integer
+              description: ID контракта
+              example: 87
+            label:
+              type: string
+              description: Номер контракта с названием проекта
+              example: "КТР-2024-001 (Жилой комплекс Солнечный)"
+        example:
+          - value: 87
+            label: "КТР-2024-001 (Жилой комплекс Солнечный)"
+          - value: 102
+            label: "КТР-2024-015 (Офисный центр Премиум)"
+      work_types:
+        type: array
+        description: Доступные виды работ организации
+        items:
+          type: object
+          properties:
+            value:
+              type: integer
+              description: ID вида работ
+              example: 15
+            label:
+              type: string
+              description: Название вида работ
+              example: "Кирпичная кладка"
+        example:
+          - value: 15
+            label: "Кирпичная кладка"
+          - value: 28
+            label: "Штукатурные работы"
+          - value: 45
+            label: "Электромонтажные работы"
+      users:
+        type: array
+        description: Доступные пользователи (прорабы) организации
+        items:
+          type: object
+          properties:
+            value:
+              type: integer
+              description: ID пользователя
+              example: 15
+            label:
+              type: string
+              description: ФИО пользователя
+              example: "Иванов Иван Иванович"
+        example:
+          - value: 15
+            label: "Иванов Иван Иванович"
+          - value: 28
+            label: "Петров Петр Петрович"
+      contractors:
+        type: array
+        description: Доступные подрядчики организации
+        items:
+          type: object
+          properties:
+            value:
+              type: integer
+              description: ID подрядчика
+              example: 12
+            label:
+              type: string
+              description: Название подрядчика
+              example: "ООО Стройсервис"
+        example:
+          - value: 12
+            label: "ООО Стройсервис"
+          - value: 34
+            label: "ИП Петров С.А."

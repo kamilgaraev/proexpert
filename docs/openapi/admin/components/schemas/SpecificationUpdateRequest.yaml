@@ -1,0 +1,33 @@
+type: object
+description: Запрос для обновления спецификации (все поля опциональны для частичного обновления).
+properties:
+  number:
+    type: string
+    maxLength: 255
+    description: Уникальный номер спецификации (игнорирует текущую запись при проверке уникальности)
+    example: "SPEC-2024-001-UPD"
+  spec_date:
+    type: string
+    format: date
+    description: Дата спецификации в формате Y-m-d
+    example: "2024-12-22"
+  total_amount:
+    type: number
+    format: decimal
+    description: Общая сумма спецификации
+    example: 175000.75
+  scope_items:
+    type: array
+    description: Перечень работ/услуг в спецификации
+    items:
+      type: string
+    example: 
+      - "Кирпичная кладка стен 1-го этажа"
+      - "Устройство монолитного перекрытия"
+      - "Штукатурные работы внутренние"
+      - "Электромонтажные работы"
+  status:
+    type: string
+    enum: [draft, approved, archived]
+    description: Статус спецификации
+    example: "approved"

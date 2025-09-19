@@ -1,0 +1,93 @@
+type: object
+description: Данные для фильтров контрактов в административной панели.
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: object
+    properties:
+      statuses:
+        type: array
+        description: Доступные статусы контрактов
+        items:
+          type: object
+          properties:
+            value:
+              type: string
+              description: Значение статуса
+              example: "active"
+            label:
+              type: string
+              description: Человекочитаемое название статуса
+              example: "Активный"
+        example:
+          - value: "draft"
+            label: "Черновик"
+          - value: "active"
+            label: "Активный"
+          - value: "completed"
+            label: "Завершен"
+          - value: "on_hold"
+            label: "На паузе"
+          - value: "terminated"
+            label: "Расторгнут"
+      types:
+        type: array
+        description: Доступные типы контрактов
+        items:
+          type: object
+          properties:
+            value:
+              type: string
+              description: Значение типа
+              example: "contract"
+            label:
+              type: string
+              description: Человекочитаемое название типа
+              example: "Контракт"
+        example:
+          - value: "contract"
+            label: "Контракт"
+          - value: "agreement"
+            label: "Соглашение"
+          - value: "specification"
+            label: "Спецификация"
+      projects:
+        type: array
+        description: Доступные проекты организации
+        items:
+          type: object
+          properties:
+            value:
+              type: integer
+              description: ID проекта
+              example: 25
+            label:
+              type: string
+              description: Название проекта
+              example: "Жилой комплекс Солнечный"
+        example:
+          - value: 25
+            label: "Жилой комплекс Солнечный"
+          - value: 48
+            label: "Офисный центр Премиум"
+      contractors:
+        type: array
+        description: Доступные подрядчики организации
+        items:
+          type: object
+          properties:
+            value:
+              type: integer
+              description: ID подрядчика
+              example: 12
+            label:
+              type: string
+              description: Название подрядчика
+              example: "ООО Стройсервис"
+        example:
+          - value: 12
+            label: "ООО Стройсервис"
+          - value: 34
+            label: "ИП Петров С.А."

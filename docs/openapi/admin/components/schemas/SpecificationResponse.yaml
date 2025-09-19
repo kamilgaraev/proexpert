@@ -1,0 +1,40 @@
+type: object
+description: Ответ с одной спецификацией.
+properties:
+  id:
+    type: integer
+    example: 25
+  number:
+    type: string
+    example: "SPEC-2024-001"
+  spec_date:
+    type: string
+    format: date
+    example: "2024-12-20"
+  total_amount:
+    type: number
+    format: decimal
+    example: 150000.50
+  status:
+    type: string
+    example: "approved"
+  scope_items:
+    type: array
+    items:
+      type: string
+    example: 
+      - "Кирпичная кладка стен 1-го этажа"
+      - "Устройство монолитного перекрытия"
+  attached_at:
+    type: string
+    format: date-time
+    nullable: true
+    example: null
+  created_at:
+    type: string
+    format: date-time
+    example: "2024-12-15T09:30:00Z"
+  updated_at:
+    type: string
+    format: date-time
+    example: "2024-12-20T14:15:00Z"
