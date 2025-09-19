@@ -301,10 +301,10 @@
   $ref: './personal_files.yaml#/~1personal-files~1{id}' 
 /agreements:
   $ref: './agreements.yaml#/~1agreements'
-/agreements/{agreementId}:
-  $ref: './agreements.yaml#/~1agreements~1{agreementId}'
-/contracts/{contractId}/agreements:
-  $ref: './agreements.yaml#/~1contracts~1{contractId}~1agreements'
+/agreements/{agreement}:
+  $ref: './agreements.yaml#/~1agreements~1{agreement}'
+/contracts/{contract}/agreements:
+  $ref: './agreements.yaml#/~1contracts~1{contract}~1agreements'
 /specifications:
   $ref: './specifications.yaml#/~1specifications'
 /specifications/{id}:

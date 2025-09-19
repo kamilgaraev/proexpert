@@ -126,17 +126,17 @@
                 message:
                   type: string
                   example: "Произошла ошибка при получении заявок"
-    post:
-    tags: [SiteRequests]
+  post:
+    tags: [Site Requests]
     summary: Создать новую заявку с сайта
     description: |
       Создает новую заявку с сайта с поддержкой различных типов заявок.
       Для заявок на персонал требуются дополнительные поля.
       Поддерживает загрузку файлов.
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
+    requestBody:
+      required: true
+      content:
+        multipart/form-data:
           schema:
             $ref: '../components/schemas/SiteRequestCreateRequest.yaml'
           examples:
