@@ -78,7 +78,7 @@ class UserService
         }
 
         // Проверяем права через новую систему авторизации
-        $canManage = $this->authorizationService->can($user, 'organization.manage', ['context_type' => 'organization', 'context_id' => $organizationId]);
+        $canManage = $this->authorizationService->can($user, 'organization.manage', ['organization_id' => $organizationId]);
         $isSystemAdmin = $this->authorizationService->hasRole($user, 'system_admin');
         $isOrgOwner = $this->authorizationService->hasRole($user, 'organization_owner', $organizationId);
         $isOrgAdmin = $this->authorizationService->hasRole($user, 'organization_admin', $organizationId);
