@@ -78,11 +78,25 @@ class UserService
         }
 
         // Проверяем права через новую систему авторизации
-        if (!($this->authorizationService->can($user, 'organization.manage', ['context_type' => 'organization', 'context_id' => $organizationId]) ||
-              $this->authorizationService->hasRole($user, 'system_admin') ||
-              $this->authorizationService->hasRole($user, 'organization_owner', $organizationId) ||
-              $this->authorizationService->hasRole($user, 'organization_admin', $organizationId) ||
-              $this->authorizationService->hasRole($user, 'web_admin', $organizationId))) {
+        $canManage = $this->authorizationService->can($user, 'organization.manage', ['context_type' => 'organization', 'context_id' => $organizationId]);
+        $isSystemAdmin = $this->authorizationService->hasRole($user, 'system_admin');
+        $isOrgOwner = $this->authorizationService->hasRole($user, 'organization_owner', $organizationId);
+        $isOrgAdmin = $this->authorizationService->hasRole($user, 'organization_admin', $organizationId);
+        $isWebAdmin = $this->authorizationService->hasRole($user, 'web_admin', $organizationId);
+        
+        \Illuminate\Support\Facades\Log::info('[UserService::ensureUserIsAdmin] Checking permissions', [
+            'user_id' => $user->id,
+            'organization_id' => $organizationId,
+            'can_manage' => $canManage,
+            'is_system_admin' => $isSystemAdmin,
+            'is_org_owner' => $isOrgOwner,
+            'is_org_admin' => $isOrgAdmin,
+            'is_web_admin' => $isWebAdmin,
+            'user_roles' => $user->roles()->pluck('role_slug'),
+            'user_current_org' => $user->current_organization_id
+        ]);
+        
+        if (!($canManage || $isSystemAdmin || $isOrgOwner || $isOrgAdmin || $isWebAdmin)) {
             throw new BusinessLogicException('Действие доступно только администратору организации или веб-администратору.', 403);
         }
     }
