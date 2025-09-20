@@ -35,6 +35,14 @@ class StoreAdminPanelUserRequest extends FormRequest
     {
         $organizationId = $this->route('organization_id') ?? $this->user()?->current_organization_id;
         $allowedRoles = $this->adminPanelHelper->getAdminPanelRoles($organizationId);
+        
+        \Illuminate\Support\Facades\Log::info('[StoreAdminPanelUserRequest] Validating role', [
+            'organization_id' => $organizationId,
+            'current_user_id' => $this->user()?->id,
+            'requested_role' => $this->input('role_slug'),
+            'allowed_roles' => $allowedRoles,
+            'request_data' => $this->all()
+        ]);
 
         return [
             'name' => 'required|string|max:255',

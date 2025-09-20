@@ -48,7 +48,16 @@ class AdminPanelAccessHelper
             $roles = array_merge($roles, $customRoles);
         }
 
-        return array_unique($roles);
+        $finalRoles = array_unique($roles);
+        
+        \Illuminate\Support\Facades\Log::info('[AdminPanelAccessHelper] Getting admin panel roles', [
+            'organization_id' => $organizationId,
+            'system_roles' => $systemRoles,
+            'custom_roles' => $organizationId ? $this->getCustomAdminRoles($organizationId) : [],
+            'final_roles' => $finalRoles
+        ]);
+
+        return $finalRoles;
     }
 
     /**
@@ -119,14 +128,40 @@ class AdminPanelAccessHelper
      */
     protected function getCustomAdminRoles(int $organizationId): array
     {
-        return OrganizationCustomRole::where('organization_id', $organizationId)
+        $customRoles = OrganizationCustomRole::where('organization_id', $organizationId)
             ->where('is_active', true)
-            ->where(function ($query) {
-                $query->whereJsonContains('system_permissions', 'admin.access')
-                      ->orWhereJsonContains('system_permissions', '*')
-                      ->orWhereJsonContains('interface_access', 'admin');
-            })
-            ->pluck('slug')
-            ->toArray();
+            ->get();
+            
+        \Illuminate\Support\Facades\Log::info('[AdminPanelAccessHelper] Checking custom roles', [
+            'organization_id' => $organizationId,
+            'total_custom_roles' => $customRoles->count(),
+            'custom_roles_details' => $customRoles->map(function ($role) {
+                return [
+                    'slug' => $role->slug,
+                    'name' => $role->name,
+                    'system_permissions' => $role->system_permissions,
+                    'interface_access' => $role->interface_access,
+                    'has_admin_access' => in_array('admin.access', $role->system_permissions ?? []),
+                    'has_wildcard' => in_array('*', $role->system_permissions ?? []),
+                    'has_admin_interface' => in_array('admin', $role->interface_access ?? [])
+                ];
+            })->toArray()
+        ]);
+        
+        $filteredRoles = $customRoles->filter(function ($role) {
+            $systemPermissions = $role->system_permissions ?? [];
+            $interfaceAccess = $role->interface_access ?? [];
+            
+            return in_array('admin.access', $systemPermissions) ||
+                   in_array('*', $systemPermissions) ||
+                   in_array('admin', $interfaceAccess);
+        })->pluck('slug')->toArray();
+        
+        \Illuminate\Support\Facades\Log::info('[AdminPanelAccessHelper] Filtered custom admin roles', [
+            'organization_id' => $organizationId,
+            'filtered_roles' => $filteredRoles
+        ]);
+        
+        return $filteredRoles;
     }
 }
