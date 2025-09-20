@@ -92,7 +92,6 @@ class UserService
             'is_org_owner' => $isOrgOwner,
             'is_org_admin' => $isOrgAdmin,
             'is_web_admin' => $isWebAdmin,
-            'user_roles' => $user->roles()->pluck('role_slug'),
             'user_current_org' => $user->current_organization_id
         ]);
         
