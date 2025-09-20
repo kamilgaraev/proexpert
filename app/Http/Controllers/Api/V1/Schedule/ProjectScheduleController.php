@@ -16,6 +16,7 @@ use App\Models\TaskDependency;
 use App\Enums\Schedule\PriorityEnum;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
 
 class ProjectScheduleController extends Controller
 {
@@ -300,11 +301,34 @@ class ProjectScheduleController extends Controller
      */
     public function statistics(Request $request): JsonResponse
     {
-        $stats = $this->scheduleRepository->getOrganizationStats(
-            $this->getOrganizationId($request)
-        );
+        Log::info('[ProjectScheduleController] statistics called', [
+            'user_id' => $request->user()?->id,
+            'organization_id' => $request->user()?->current_organization_id,
+            'url' => $request->fullUrl(),
+            'method' => $request->method(),
+        ]);
 
-        return response()->json(['data' => $stats]);
+        try {
+            $organizationId = $this->getOrganizationId($request);
+            
+            Log::info('[ProjectScheduleController] getting stats for organization', [
+                'organization_id' => $organizationId
+            ]);
+            
+            $stats = $this->scheduleRepository->getOrganizationStats($organizationId);
+            
+            Log::info('[ProjectScheduleController] stats retrieved successfully', [
+                'stats' => $stats
+            ]);
+
+            return response()->json(['data' => $stats]);
+        } catch (\Exception $e) {
+            Log::error('[ProjectScheduleController] error in statistics', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
     }
 
     /**
@@ -312,13 +336,35 @@ class ProjectScheduleController extends Controller
      */
     public function overdue(Request $request): JsonResponse
     {
-        $overdue = $this->scheduleRepository->getWithOverdueTasks(
-            $this->getOrganizationId($request)
-        );
-
-        return response()->json([
-            'data' => ProjectScheduleResource::collection($overdue)
+        Log::info('[ProjectScheduleController] overdue called', [
+            'user_id' => $request->user()?->id,
+            'organization_id' => $request->user()?->current_organization_id,
+            'url' => $request->fullUrl(),
         ]);
+
+        try {
+            $organizationId = $this->getOrganizationId($request);
+            
+            Log::info('[ProjectScheduleController] getting overdue for organization', [
+                'organization_id' => $organizationId
+            ]);
+            
+            $overdue = $this->scheduleRepository->getWithOverdueTasks($organizationId);
+            
+            Log::info('[ProjectScheduleController] overdue retrieved successfully', [
+                'count' => $overdue->count()
+            ]);
+
+            return response()->json([
+                'data' => ProjectScheduleResource::collection($overdue)
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[ProjectScheduleController] error in overdue', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
     }
 
     /**
@@ -326,14 +372,38 @@ class ProjectScheduleController extends Controller
      */
     public function recent(Request $request): JsonResponse
     {
-        $recent = $this->scheduleRepository->getRecentlyUpdated(
-            $this->getOrganizationId($request),
-            $request->get('limit', 10)
-        );
-
-        return response()->json([
-            'data' => ProjectScheduleResource::collection($recent)
+        Log::info('[ProjectScheduleController] recent called', [
+            'user_id' => $request->user()?->id,
+            'organization_id' => $request->user()?->current_organization_id,
+            'url' => $request->fullUrl(),
+            'limit' => $request->get('limit', 10),
         ]);
+
+        try {
+            $organizationId = $this->getOrganizationId($request);
+            $limit = $request->get('limit', 10);
+            
+            Log::info('[ProjectScheduleController] getting recent for organization', [
+                'organization_id' => $organizationId,
+                'limit' => $limit
+            ]);
+            
+            $recent = $this->scheduleRepository->getRecentlyUpdated($organizationId, $limit);
+            
+            Log::info('[ProjectScheduleController] recent retrieved successfully', [
+                'count' => $recent->count()
+            ]);
+
+            return response()->json([
+                'data' => ProjectScheduleResource::collection($recent)
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[ProjectScheduleController] error in recent', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
     }
 
     /**
