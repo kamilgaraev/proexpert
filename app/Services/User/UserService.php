@@ -712,15 +712,9 @@ class UserService
         }
         $intOrganizationId = (int) $organizationId;
 
-        // Новый набор ролей для админ-панели
-        $adminPanelRoles = [
-            'super_admin',
-            'admin',
-            'content_admin',
-            'support_admin',
-            'web_admin',
-            'accountant',
-        ];
+        // Получаем роли с помощью AdminPanelAccessHelper
+        $currentInterface = $request->input('current_interface', 'lk');
+        $adminPanelRoles = $this->adminPanelHelper->getAdminPanelRoles($intOrganizationId, $currentInterface);
         $rolesToFetch = $rolesToFetch ?? $adminPanelRoles;
 
         Log::debug('[UserService@getAdminPanelUsersForCurrentOrg] Calling userRepository->findByRolesInOrganization.', ['org_id' => $intOrganizationId, 'roles' => $rolesToFetch]);
@@ -979,7 +973,8 @@ class UserService
         }
         $intOrganizationId = (int) $organizationId;
 
-        $adminPanelRoles = $this->adminPanelHelper->getAdminPanelRoles($intOrganizationId);
+        $currentInterface = $request->input('current_interface', 'lk');
+        $adminPanelRoles = $this->adminPanelHelper->getAdminPanelRoles($intOrganizationId, $currentInterface);
 
         $users = $this->userRepository->findByRolesInOrganization($intOrganizationId, $adminPanelRoles);
 
