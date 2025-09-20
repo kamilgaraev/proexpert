@@ -6,7 +6,8 @@ use App\Domain\Authorization\Services\RoleScanner;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 
 /**
- * Хелпер для проверки доступа к админ-панели
+ * Хелпер для проверки доступа пользователей к интерфейсам
+ * (используется для создания пользователей из ЛК)
  */
 class AdminPanelAccessHelper
 {
@@ -34,26 +35,27 @@ class AdminPanelAccessHelper
     }
 
     /**
-     * Получить все роли, которые могут дать доступ к админ-панели в организации
+     * Получить все роли, которые могут быть созданы из текущего интерфейса
      */
-    public function getAdminPanelRoles(?int $organizationId = null): array
+    public function getAdminPanelRoles(?int $organizationId = null, ?string $currentInterface = 'lk'): array
     {
         $roles = [];
 
-        $systemRoles = $this->getSystemAdminRoles();
+        $systemRoles = $this->getSystemRolesByInterface($currentInterface);
         $roles = array_merge($roles, $systemRoles);
 
         if ($organizationId) {
-            $customRoles = $this->getCustomAdminRoles($organizationId);
+            $customRoles = $this->getCustomRolesByInterface($organizationId, $currentInterface);
             $roles = array_merge($roles, $customRoles);
         }
 
         $finalRoles = array_unique($roles);
         
-        \Illuminate\Support\Facades\Log::info('[AdminPanelAccessHelper] Getting admin panel roles', [
+        \Illuminate\Support\Facades\Log::info('[AdminPanelAccessHelper] Getting roles for interface', [
+            'current_interface' => $currentInterface,
             'organization_id' => $organizationId,
             'system_roles' => $systemRoles,
-            'custom_roles' => $organizationId ? $this->getCustomAdminRoles($organizationId) : [],
+            'custom_roles' => $organizationId ? $this->getCustomRolesByInterface($organizationId, $currentInterface) : [],
             'final_roles' => $finalRoles
         ]);
 
@@ -75,7 +77,8 @@ class AdminPanelAccessHelper
         }
 
         $interfaceAccess = $this->roleScanner->getInterfaceAccess($roleSlug);
-        return in_array('admin', $interfaceAccess);
+        // Принимаем роли с доступом к админ-панели ИЛИ к личному кабинету
+        return in_array('admin', $interfaceAccess) || in_array('lk', $interfaceAccess);
     }
 
     /**
@@ -98,42 +101,87 @@ class AdminPanelAccessHelper
         }
 
         $interfaceAccess = $customRole->interface_access ?? [];
-        return in_array('admin', $interfaceAccess);
+        // Принимаем роли с доступом к админ-панели ИЛИ к личному кабинету
+        return in_array('admin', $interfaceAccess) || in_array('lk', $interfaceAccess);
     }
 
     /**
-     * Получить все системные роли с доступом к админ-панели
+     * Получить разрешенные интерфейсы в зависимости от текущего интерфейса
      */
-    protected function getSystemAdminRoles(): array
+    protected function getAllowedInterfaces(string $currentInterface): array
     {
-        $adminRoles = [];
+        return match($currentInterface) {
+            'lk' => ['lk', 'mobile', 'admin'],      // ЛК может создавать для всех интерфейсов
+            'admin' => ['admin', 'mobile'],         // Админка может создавать для админки и мобилки
+            'mobile' => [],                         // Мобилка не может создавать пользователей
+            default => ['lk']                       // По умолчанию только ЛК
+        };
+    }
+
+    /**
+     * Получить системные роли для указанного интерфейса
+     */
+    protected function getSystemRolesByInterface(string $currentInterface): array
+    {
+        $allowedInterfaces = $this->getAllowedInterfaces($currentInterface);
+        
+        if (empty($allowedInterfaces)) {
+            return []; // Мобилка не может создавать пользователей
+        }
+
+        $roles = [];
         $allRoles = $this->roleScanner->getAllRoles();
 
         foreach ($allRoles as $slug => $role) {
             $systemPermissions = $role['system_permissions'] ?? [];
             $interfaceAccess = $role['interface_access'] ?? [];
 
-            if (in_array('admin.access', $systemPermissions) || 
-                in_array('*', $systemPermissions) ||
-                in_array('admin', $interfaceAccess)) {
-                $adminRoles[] = $slug;
+            // Проверяем глобальные права
+            if (in_array('admin.access', $systemPermissions) || in_array('*', $systemPermissions)) {
+                $roles[] = $slug;
+                continue;
+            }
+
+            // Проверяем доступ к разрешенным интерфейсам
+            foreach ($allowedInterfaces as $allowedInterface) {
+                if (in_array($allowedInterface, $interfaceAccess)) {
+                    $roles[] = $slug;
+                    break;
+                }
             }
         }
 
-        return $adminRoles;
+        return array_unique($roles);
     }
 
     /**
-     * Получить все кастомные роли с доступом к админ-панели в организации
+     * Получить все системные роли с доступом к админ-панели (устаревший метод)
+     * @deprecated Используйте getSystemRolesByInterface
      */
-    protected function getCustomAdminRoles(int $organizationId): array
+    protected function getSystemAdminRoles(): array
     {
+        return $this->getSystemRolesByInterface('lk');
+    }
+
+    /**
+     * Получить кастомные роли для указанного интерфейса
+     */
+    protected function getCustomRolesByInterface(int $organizationId, string $currentInterface): array
+    {
+        $allowedInterfaces = $this->getAllowedInterfaces($currentInterface);
+        
+        if (empty($allowedInterfaces)) {
+            return []; // Мобилка не может создавать пользователей
+        }
+
         $customRoles = OrganizationCustomRole::where('organization_id', $organizationId)
             ->where('is_active', true)
             ->get();
             
-        \Illuminate\Support\Facades\Log::info('[AdminPanelAccessHelper] Checking custom roles', [
+        \Illuminate\Support\Facades\Log::info('[AdminPanelAccessHelper] Checking custom roles for interface', [
             'organization_id' => $organizationId,
+            'current_interface' => $currentInterface,
+            'allowed_interfaces' => $allowedInterfaces,
             'total_custom_roles' => $customRoles->count(),
             'custom_roles_details' => $customRoles->map(function ($role) {
                 return [
@@ -143,25 +191,44 @@ class AdminPanelAccessHelper
                     'interface_access' => $role->interface_access,
                     'has_admin_access' => in_array('admin.access', $role->system_permissions ?? []),
                     'has_wildcard' => in_array('*', $role->system_permissions ?? []),
-                    'has_admin_interface' => in_array('admin', $role->interface_access ?? [])
                 ];
             })->toArray()
         ]);
         
-        $filteredRoles = $customRoles->filter(function ($role) {
+        $filteredRoles = $customRoles->filter(function ($role) use ($allowedInterfaces) {
             $systemPermissions = $role->system_permissions ?? [];
             $interfaceAccess = $role->interface_access ?? [];
             
-            return in_array('admin.access', $systemPermissions) ||
-                   in_array('*', $systemPermissions) ||
-                   in_array('admin', $interfaceAccess);
+            // Проверяем глобальные права
+            if (in_array('admin.access', $systemPermissions) || in_array('*', $systemPermissions)) {
+                return true;
+            }
+            
+            // Проверяем доступ к разрешенным интерфейсам
+            foreach ($allowedInterfaces as $allowedInterface) {
+                if (in_array($allowedInterface, $interfaceAccess)) {
+                    return true;
+                }
+            }
+            
+            return false;
         })->pluck('slug')->toArray();
         
-        \Illuminate\Support\Facades\Log::info('[AdminPanelAccessHelper] Filtered custom admin roles', [
+        \Illuminate\Support\Facades\Log::info('[AdminPanelAccessHelper] Filtered custom roles for interface', [
             'organization_id' => $organizationId,
+            'current_interface' => $currentInterface,
             'filtered_roles' => $filteredRoles
         ]);
         
         return $filteredRoles;
+    }
+
+    /**
+     * Получить все кастомные роли с доступом к админ-панели в организации (устаревший метод)
+     * @deprecated Используйте getCustomRolesByInterface
+     */
+    protected function getCustomAdminRoles(int $organizationId): array
+    {
+        return $this->getCustomRolesByInterface($organizationId, 'lk');
     }
 }

@@ -41,7 +41,7 @@ class UpdateCustomRoleRequest extends FormRequest
             'module_permissions.*' => 'array',
             'module_permissions.*.*' => 'string|max:100',
             'interface_access' => 'sometimes|required|array|min:1',
-            'interface_access.*' => 'string|in:lk,mobile',
+            'interface_access.*' => 'string|in:lk,mobile,admin',
             'conditions' => 'sometimes|nullable|array',
             'conditions.time' => 'nullable|array',
             'conditions.time.working_hours' => 'nullable|string|regex:/^\d{2}:\d{2}-\d{2}:\d{2}$/',

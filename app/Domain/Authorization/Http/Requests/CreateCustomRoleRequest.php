@@ -39,7 +39,7 @@ class CreateCustomRoleRequest extends FormRequest
             'module_permissions.*' => 'array',
             'module_permissions.*.*' => 'string|max:100',
             'interface_access' => 'required|array|min:1',
-            'interface_access.*' => 'string|in:lk,mobile',
+            'interface_access.*' => 'string|in:lk,mobile,admin',
             'conditions' => 'nullable|array',
             'conditions.time' => 'nullable|array',
             'conditions.time.working_hours' => 'nullable|string|regex:/^\d{2}:\d{2}-\d{2}:\d{2}$/',

@@ -34,10 +34,12 @@ class StoreAdminPanelUserRequest extends FormRequest
     public function rules(): array
     {
         $organizationId = $this->route('organization_id') ?? $this->user()?->current_organization_id;
-        $allowedRoles = $this->adminPanelHelper->getAdminPanelRoles($organizationId);
+        $currentInterface = $this->input('current_interface', 'lk'); // Из middleware или параметра
+        $allowedRoles = $this->adminPanelHelper->getAdminPanelRoles($organizationId, $currentInterface);
         
         \Illuminate\Support\Facades\Log::info('[StoreAdminPanelUserRequest] Validating role', [
             'organization_id' => $organizationId,
+            'current_interface' => $currentInterface,
             'current_user_id' => $this->user()?->id,
             'requested_role' => $this->input('role_slug'),
             'allowed_roles' => $allowedRoles,
@@ -64,7 +66,8 @@ class StoreAdminPanelUserRequest extends FormRequest
     public function messages(): array
     {
         $organizationId = $this->route('organization_id') ?? $this->user()?->current_organization_id;
-        $allowedRoles = $this->adminPanelHelper->getAdminPanelRoles($organizationId);
+        $currentInterface = $this->input('current_interface', 'lk');
+        $allowedRoles = $this->adminPanelHelper->getAdminPanelRoles($organizationId, $currentInterface);
 
         return [
             'role_slug.required' => 'Необходимо указать роль пользователя.',
