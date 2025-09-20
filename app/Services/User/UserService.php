@@ -90,18 +90,35 @@ class UserService
 
     /**
      * Проверяет, существует ли роль в новой системе авторизации
+     * Проверяет как системные роли, так и кастомные роли организации
      *
      * @param string $roleSlug
+     * @param int|null $organizationId Опционально - для проверки кастомных ролей
      * @throws BusinessLogicException
      */
-    protected function validateRoleExists(string $roleSlug): void
+    protected function validateRoleExists(string $roleSlug, ?int $organizationId = null): void
     {
         $roleScanner = app(\App\Domain\Authorization\Services\RoleScanner::class);
         $allRoles = $roleScanner->getAllRoles();
         
-        if (!isset($allRoles[$roleSlug])) {
-            throw new BusinessLogicException("Роль '{$roleSlug}' не найдена в системе.", 422);
+        // Сначала проверяем системные роли
+        if (isset($allRoles[$roleSlug])) {
+            return;
         }
+        
+        // Если системной роли нет и есть контекст организации, проверяем кастомные роли
+        if ($organizationId) {
+            $customRole = \App\Domain\Authorization\Models\OrganizationCustomRole::where('slug', $roleSlug)
+                ->where('organization_id', $organizationId)
+                ->where('is_active', true)
+                ->exists();
+                
+            if ($customRole) {
+                return;
+            }
+        }
+        
+        throw new BusinessLogicException("Роль '{$roleSlug}' не найдена в системе.", 422);
     }
 
 
@@ -155,7 +172,7 @@ class UserService
         }
         $intOrganizationId = (int) $organizationId; // Приводим к int
         $adminRoleSlug = 'organization_admin';
-        $this->validateRoleExists($adminRoleSlug);
+        $this->validateRoleExists($adminRoleSlug, $intOrganizationId);
 
         $data['password'] = Hash::make($data['password']);
         // $data['user_type'] = 'organization_admin'; // Удалена в новой системе авторизации
@@ -440,7 +457,7 @@ class UserService
             throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
         $foremanRoleSlug = 'foreman';
-        $this->validateRoleExists($foremanRoleSlug);
+        $this->validateRoleExists($foremanRoleSlug, $organizationId);
 
         $data['password'] = Hash::make($data['password']);
         // user_type колонка удалена в новой системе авторизации - роли управляются через UserRoleAssignment
@@ -615,10 +632,8 @@ class UserService
         }
         $intOrganizationId = (int) $organizationId;
 
-        // Проверяем существование роли
-        $this->validateRoleExists($roleSlug);
-        // В новой системе все роли определяются в JSON файлах
-        // Дополнительная проверка не требуется
+        // Проверяем существование роли (системной или кастомной в организации)
+        $this->validateRoleExists($roleSlug, $intOrganizationId);
 
 
         $userData['password'] = Hash::make($userData['password']);
