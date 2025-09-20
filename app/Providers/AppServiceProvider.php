@@ -55,7 +55,8 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(\App\Services\User\UserService::class, function ($app) {
             return new \App\Services\User\UserService(
                 $app->make(\App\Repositories\Interfaces\UserRepositoryInterface::class),
-                $app->make(\App\Domain\Authorization\Services\AuthorizationService::class)
+                $app->make(\App\Domain\Authorization\Services\AuthorizationService::class),
+                $app->make(\App\Helpers\AdminPanelAccessHelper::class)
             );
         });
         

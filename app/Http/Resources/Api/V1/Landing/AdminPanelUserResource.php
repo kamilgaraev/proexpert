@@ -2,6 +2,7 @@
 
 namespace App\Http\Resources\Api\V1\Landing;
 
+use App\Helpers\AdminPanelAccessHelper;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 use Carbon\Carbon;
@@ -25,12 +26,11 @@ class AdminPanelUserResource extends JsonResource
             // Используем новую систему авторизации для получения ролей
             try {
                 $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+                $adminPanelHelper = app(AdminPanelAccessHelper::class);
                 $roles = $authService->getUserRoleSlugs($this->resource, ['organization_id' => $organizationId]);
                 
                 // Ищем первую роль, которая дает доступ к админ панели
-                $adminPanelRoles = [
-                    'super_admin', 'admin', 'content_admin', 'support_admin', 'web_admin', 'accountant'
-                ];
+                $adminPanelRoles = $adminPanelHelper->getAdminPanelRoles($organizationId);
                 foreach ($roles as $role) {
                     if (in_array($role, $adminPanelRoles)) {
                         $roleSlug = $role;

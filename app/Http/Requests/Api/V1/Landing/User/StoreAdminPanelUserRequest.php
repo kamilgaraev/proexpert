@@ -2,22 +2,20 @@
 
 namespace App\Http\Requests\Api\V1\Landing\User;
 
+use App\Helpers\AdminPanelAccessHelper;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\Rule;
 
 class StoreAdminPanelUserRequest extends FormRequest
 {
-    // Определяем разрешенные роли для создания через этот запрос
-    protected array $allowedRoles = [
-        'super_admin',
-        'admin',
-        'content_admin',
-        'support_admin',
-        'web_admin',
-        'accountant',
-    ];
+    protected AdminPanelAccessHelper $adminPanelHelper;
+
+    public function __construct(AdminPanelAccessHelper $adminPanelHelper)
+    {
+        parent::__construct();
+        $this->adminPanelHelper = $adminPanelHelper;
+    }
 
     /**
      * Determine if the user is authorized to make this request.
@@ -25,7 +23,6 @@ class StoreAdminPanelUserRequest extends FormRequest
      */
     public function authorize(): bool
     {
-        // Middleware уже проверил права, здесь только базовая проверка на аутентификацию
         return Auth::check();
     }
 
@@ -36,6 +33,9 @@ class StoreAdminPanelUserRequest extends FormRequest
      */
     public function rules(): array
     {
+        $organizationId = $this->route('organization_id') ?? $this->user()?->current_organization_id;
+        $allowedRoles = $this->adminPanelHelper->getAdminPanelRoles($organizationId);
+
         return [
             'name' => 'required|string|max:255',
             'email' => 'required|string|email|max:255|unique:users,email,NULL,id,deleted_at,NULL',
@@ -43,23 +43,24 @@ class StoreAdminPanelUserRequest extends FormRequest
             'role_slug' => [
                 'required',
                 'string',
-                Rule::in($this->allowedRoles), // Роль должна быть из списка разрешенных
+                Rule::in($allowedRoles),
             ],
-            // Можно добавить другие поля при необходимости
         ];
     }
 
-     /**
+    /**
      * Get custom messages for validator errors.
      *
      * @return array
      */
     public function messages(): array
     {
+        $organizationId = $this->route('organization_id') ?? $this->user()?->current_organization_id;
+        $allowedRoles = $this->adminPanelHelper->getAdminPanelRoles($organizationId);
+
         return [
             'role_slug.required' => 'Необходимо указать роль пользователя.',
-            'role_slug.in' => 'Выбрана недопустимая роль. Разрешенные роли: ' . implode(', ', $this->allowedRoles) . '.',
-            'role_slug.exists' => 'Указанная роль не найдена в системе.',
+            'role_slug.in' => 'Выбрана недопустимая роль. Разрешенные роли: ' . implode(', ', $allowedRoles) . '.',
         ];
     }
 } 

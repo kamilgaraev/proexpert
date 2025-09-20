@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 // Интеграция с новой системой авторизации
 use App\Domain\Authorization\Services\AuthorizationService;
+use App\Helpers\AdminPanelAccessHelper;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\Request;
@@ -23,14 +24,17 @@ class UserService
 {
     protected UserRepositoryInterface $userRepository;
     protected AuthorizationService $authorizationService;
+    protected AdminPanelAccessHelper $adminPanelHelper;
 
     public function __construct(
         UserRepositoryInterface $userRepository,
-        AuthorizationService $authorizationService
+        AuthorizationService $authorizationService,
+        AdminPanelAccessHelper $adminPanelHelper
     )
     {
         $this->userRepository = $userRepository;
         $this->authorizationService = $authorizationService;
+        $this->adminPanelHelper = $adminPanelHelper;
     }
 
     // --- Helper Methods ---
@@ -827,9 +831,7 @@ class UserService
         $requestingUser = $request->user();
 
         // Используем findAdminPanelUserById для проверки
-        $rolesToDelete = $rolesToDelete ?? [
-            'super_admin', 'admin', 'content_admin', 'support_admin', 'web_admin', 'accountant'
-        ];
+        $rolesToDelete = $rolesToDelete ?? $this->adminPanelHelper->getAdminPanelRoles($intOrganizationId);
         $targetUser = $this->findAdminPanelUserById($targetUserId, $request, $rolesToDelete);
         if (!$targetUser) {
             throw new BusinessLogicException('Пользователь админ-панели не найден или нет прав на его просмотр/удаление.', 404);
@@ -949,9 +951,7 @@ class UserService
         }
         $intOrganizationId = (int) $organizationId;
 
-        $adminPanelRoles = [
-            'super_admin', 'admin', 'content_admin', 'support_admin', 'web_admin', 'accountant'
-        ]; // Роли для доступа к админ-панели
+        $adminPanelRoles = $this->adminPanelHelper->getAdminPanelRoles($intOrganizationId);
 
         $users = $this->userRepository->findByRolesInOrganization($intOrganizationId, $adminPanelRoles);
 
