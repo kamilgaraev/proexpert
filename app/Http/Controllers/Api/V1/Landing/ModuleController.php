@@ -54,11 +54,16 @@ class ModuleController extends Controller
             $activeModuleSlugs = $activeModules->pluck('slug')->toArray();
             
             // КРИТИЧНО: Предзагружаем ВСЕ активации сразу одним запросом вместо N+1
+            // Сначала получаем ID модулей по их slug'ам, затем активации
+            $moduleIds = \App\Models\Module::whereIn('slug', $activeModuleSlugs)->pluck('id', 'slug');
+            
             $activations = \App\Models\OrganizationModuleActivation::where('organization_id', $organizationId)
-                ->whereIn('module_slug', $activeModuleSlugs)
+                ->whereIn('module_id', $moduleIds->values())
                 ->with('module')
                 ->get()
-                ->keyBy('module_slug');
+                ->keyBy(function($activation) {
+                    return $activation->module->slug;
+                });
 
             return $allModules->map(function ($module) use ($activeModuleSlugs, $organizationId, $activations) {
                 // Системные модули (can_deactivate: false) всегда активны
