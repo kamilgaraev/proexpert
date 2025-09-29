@@ -22,6 +22,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'role' => \App\Domain\Authorization\Http\Middleware\RoleMiddleware::class,
             'interface' => \App\Domain\Authorization\Http\Middleware\InterfaceMiddleware::class,
             
+            // === СИСТЕМА ЛОГИРОВАНИЯ PHASE 2 ===
+            'correlation.id' => \App\Http\Middleware\CorrelationIdMiddleware::class,
+            'request.logging' => \App\Http\Middleware\RequestLoggingMiddleware::class,
             
             // === ОСТАЛЬНЫЕ MIDDLEWARE ===
             'auth.jwt' => JwtMiddleware::class,
@@ -36,14 +39,16 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Глобальные middleware
         $middleware->prepend(\App\Http\Middleware\CorsMiddleware::class);
+        // PHASE 2: Correlation ID для всех запросов - в самом начале цепочки
+        $middleware->prepend(\App\Http\Middleware\CorrelationIdMiddleware::class);
         $middleware->append(\App\Http\Middleware\PrometheusMiddleware::class);
 
         // Группы middleware (например, для API)
         $middleware->api([
              'throttle:api',
              \Illuminate\Routing\Middleware\SubstituteBindings::class,
-             // Временно отключаем логирование для диагностики ошибки 500 при 403
-             // \App\Http\Middleware\ApiLoggingMiddleware::class,
+             // PHASE 2: Новое структурированное логирование для всех API запросов
+             \App\Http\Middleware\RequestLoggingMiddleware::class,
              \App\Http\Middleware\SetOrganizationContext::class,
         ]);
 

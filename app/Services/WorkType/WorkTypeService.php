@@ -28,11 +28,9 @@ class WorkTypeService
     {
         $user = $request->user(); 
         $organizationId = $request->attributes->get('current_organization_id');
-        Log::debug('[WorkTypeService@getCurrentOrgId] Attempting to get org ID from request attributes.', ['attr_org_id' => $organizationId]);
         
         if (!$organizationId && $user) {
             $organizationId = $user->current_organization_id;
-            Log::debug('[WorkTypeService@getCurrentOrgId] Org ID from user object.', ['user_org_id' => $organizationId]);
         }
         
         if (!$organizationId) {
@@ -80,7 +78,6 @@ class WorkTypeService
                 'category' => $request->query('category'),
                 'is_active' => $request->query('is_active'),
             ];
-            Log::debug('[WorkTypeService@getWorkTypesPaginated] Raw filters.', $filters);
 
             if (array_key_exists('is_active', $filters) && !is_null($filters['is_active'])) {
                 $filters['is_active'] = filter_var($filters['is_active'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
@@ -88,11 +85,9 @@ class WorkTypeService
                  unset($filters['is_active']); 
             }
             $processedFilters = array_filter($filters, fn($value) => !is_null($value) && $value !== '');
-            Log::debug('[WorkTypeService@getWorkTypesPaginated] Processed filters.', $processedFilters);
 
             $sortBy = $request->query('sort_by', 'name');
             $sortDirection = $request->query('sort_direction', 'asc');
-            Log::debug('[WorkTypeService@getWorkTypesPaginated] Sort params.', ['sortBy' => $sortBy, 'sortDirection' => $sortDirection]);
 
             $allowedSortBy = ['name', 'category', 'created_at', 'updated_at'];
             if (!in_array(strtolower($sortBy), $allowedSortBy)) {

@@ -11,6 +11,7 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 use Symfony\Component\Routing\Exception\RouteNotFoundException;
 use App\Services\Monitoring\PrometheusService;
+use App\Services\Logging\LoggingService;
 use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Exceptions\BusinessLogicException;
 
@@ -151,12 +152,129 @@ class Handler extends ExceptionHandler
 
     public function report(Throwable $exception)
     {
+        // Интеграция с PrometheusService
         if (app()->bound(PrometheusService::class)) {
             $prometheus = app(PrometheusService::class);
             $prometheus->incrementExceptions(get_class($exception));
         }
 
+        // Structured Logging для исключений
+        if (app()->bound(LoggingService::class)) {
+            $logging = app(LoggingService::class);
+            $this->logStructuredException($exception, $logging);
+        }
+
         parent::report($exception);
+    }
+
+    /**
+     * Структурированное логирование исключений для анализа и мониторинга
+     */
+    protected function logStructuredException(Throwable $exception, LoggingService $logging): void
+    {
+        $request = request();
+        $user = $request->user();
+        
+        $exceptionContext = [
+            'exception_class' => get_class($exception),
+            'exception_message' => $exception->getMessage(),
+            'exception_file' => $exception->getFile(),
+            'exception_line' => $exception->getLine(),
+            'exception_code' => $exception->getCode(),
+            'request_method' => $request->method(),
+            'request_uri' => $request->getRequestUri(),
+            'user_id' => $user?->id,
+            'organization_id' => $request->attributes->get('current_organization_id'),
+            'user_agent' => $request->header('User-Agent'),
+            'ip_address' => $request->ip(),
+            'stack_trace_hash' => md5($exception->getTraceAsString())
+        ];
+
+        // Категоризация исключений по типам
+        if ($exception instanceof ValidationException) {
+            // TECHNICAL: Ошибки валидации - важны для UX
+            $logging->technical('exception.validation', array_merge($exceptionContext, [
+                'validation_errors' => $exception->errors(),
+                'failed_rules' => array_keys($exception->errors())
+            ]), 'warning');
+            
+        } elseif ($exception instanceof BusinessLogicException) {
+            // BUSINESS: Ошибки бизнес-логики - важны для понимания проблем процессов
+            $logging->business('exception.business_logic', $exceptionContext, 'warning');
+            
+        } elseif ($exception instanceof AuthenticationException) {
+            // SECURITY: Проблемы аутентификации - критичны для безопасности
+            $logging->security('exception.authentication', array_merge($exceptionContext, [
+                'attempted_route' => $request->route()?->getName(),
+                'auth_guard' => $exception->guards()
+            ]), 'warning');
+            
+        } elseif ($exception instanceof AuthorizationException) {
+            // SECURITY: Нарушения авторизации - важны для безопасности
+            $logging->security('exception.authorization', array_merge($exceptionContext, [
+                'attempted_action' => $request->route()?->getActionName(),
+                'required_permission' => $this->extractPermissionFromMessage($exception->getMessage())
+            ]), 'warning');
+            
+        } elseif ($exception instanceof InsufficientBalanceException) {
+            // BUSINESS: Проблемы с балансом - критично для биллинга
+            $logging->business('exception.insufficient_balance', array_merge($exceptionContext, [
+                'billing_context' => true
+            ]), 'warning');
+            
+        } elseif ($exception instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
+            // TECHNICAL: Модель не найдена - может указывать на проблемы данных
+            $logging->technical('exception.model_not_found', array_merge($exceptionContext, [
+                'model_type' => $this->extractModelFromException($exception)
+            ]), 'info');
+            
+        } elseif ($exception instanceof \Illuminate\Database\QueryException) {
+            // TECHNICAL: Ошибки базы данных - критичны для стабильности
+            $logging->technical('exception.database_query', array_merge($exceptionContext, [
+                'sql_error_code' => $exception->errorInfo[1] ?? null,
+                'sql_error_message' => $exception->errorInfo[2] ?? null,
+                'is_connection_error' => str_contains($exception->getMessage(), 'Connection')
+            ]), 'error');
+            
+        } elseif ($exception instanceof HttpExceptionInterface) {
+            $statusCode = $exception->getStatusCode();
+            
+            if ($statusCode >= 500) {
+                // TECHNICAL: 5xx ошибки - серверные проблемы
+                $logging->technical('exception.server_error', array_merge($exceptionContext, [
+                    'http_status' => $statusCode,
+                    'is_server_error' => true
+                ]), 'error');
+            } elseif ($statusCode >= 400) {
+                // TECHNICAL: 4xx ошибки - клиентские проблемы
+                $logging->technical('exception.client_error', array_merge($exceptionContext, [
+                    'http_status' => $statusCode,
+                    'is_client_error' => true
+                ]), 'warning');
+            }
+        } else {
+            // TECHNICAL: Прочие исключения
+            $logging->technical('exception.general', $exceptionContext, 'error');
+        }
+    }
+
+    /**
+     * Извлечение информации о разрешении из сообщения об исключении
+     */
+    protected function extractPermissionFromMessage(string $message): ?string
+    {
+        if (preg_match('/permission[:\s]*([a-zA-Z0-9_.-]+)/i', $message, $matches)) {
+            return $matches[1];
+        }
+        return null;
+    }
+
+    /**
+     * Извлечение типа модели из исключения
+     */
+    protected function extractModelFromException(\Illuminate\Database\Eloquent\ModelNotFoundException $exception): ?string
+    {
+        return $exception->getModel();
     }
 
     public function render($request, Throwable $e)

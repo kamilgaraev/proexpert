@@ -33,7 +33,6 @@ class OrganizationContext
     public static function setOrganizationId(?int $id): void 
     {
         self::$organizationId = $id;
-        Log::debug("[OrganizationContext] ID организации установлен", ['id' => $id]);
     }
     
     /**
@@ -42,9 +41,6 @@ class OrganizationContext
     public static function setOrganization($organization): void 
     {
         self::$organization = $organization;
-        Log::debug("[OrganizationContext] Объект организации установлен", [
-            'id' => $organization ? $organization->id : null
-        ]);
     }
     
     /**
@@ -70,6 +66,5 @@ class OrganizationContext
     {
         self::$organizationId = null;
         self::$organization = null;
-        Log::debug("[OrganizationContext] Контекст очищен");
     }
 }

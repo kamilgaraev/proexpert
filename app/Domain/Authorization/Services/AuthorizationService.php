@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Services\Logging\LoggingService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 
@@ -16,13 +17,16 @@ class AuthorizationService
 {
     protected RoleScanner $roleScanner;
     protected PermissionResolver $permissionResolver;
+    protected LoggingService $logging;
 
     public function __construct(
         RoleScanner $roleScanner,
-        PermissionResolver $permissionResolver
+        PermissionResolver $permissionResolver,
+        LoggingService $logging
     ) {
         $this->roleScanner = $roleScanner;
         $this->permissionResolver = $permissionResolver;
+        $this->logging = $logging;
     }
 
     /**
@@ -30,12 +34,33 @@ class AuthorizationService
      */
     public function can(User $user, string $permission, ?array $context = null): bool
     {
+        // Контекст пользователя передается в параметрах логирования
+
         // Кешируем результат проверки на время запроса
         $cacheKey = "user_permission_{$user->id}_{$permission}_" . md5(serialize($context));
         
-        return Cache::driver('array')->remember($cacheKey, 300, function () use ($user, $permission, $context) {
+        $result = Cache::driver('array')->remember($cacheKey, 300, function () use ($user, $permission, $context) {
             return $this->checkPermission($user, $permission, $context);
         });
+
+        // Логируем результат проверки разрешений
+        if ($result) {
+            $this->logging->security('auth.permission.granted', [
+                'permission' => $permission,
+                'user_id' => $user->id,
+                'context' => $context
+            ]);
+        } else {
+            // Неудачные проверки разрешений - важная security информация
+            $this->logging->security('auth.permission.denied', [
+                'permission' => $permission,
+                'user_id' => $user->id,
+                'context' => $context,
+                'email' => $user->email
+            ], 'warning');
+        }
+
+        return $result;
     }
 
     /**
@@ -131,18 +156,56 @@ class AuthorizationService
         ?User $assignedBy = null,
         ?\Carbon\Carbon $expiresAt = null
     ): UserRoleAssignment {
+        // Контекст назначающего передается в параметрах audit логирования
+
         // Проверяем существование роли
         if ($roleType === UserRoleAssignment::TYPE_SYSTEM) {
             if (!$this->roleScanner->roleExists($roleSlug)) {
+                $this->logging->security('auth.role.assign.failed', [
+                    'target_user_id' => $user->id,
+                    'target_email' => $user->email,
+                    'role_slug' => $roleSlug,
+                    'role_type' => $roleType,
+                    'assigned_by' => $assignedBy?->id,
+                    'context_type' => $context->type,
+                    'context_id' => $context->id,
+                    'error' => 'System role does not exist'
+                ], 'error');
                 throw new \InvalidArgumentException("Системная роль '$roleSlug' не существует");
             }
         } else {
             if (!OrganizationCustomRole::where('slug', $roleSlug)->exists()) {
+                $this->logging->security('auth.role.assign.failed', [
+                    'target_user_id' => $user->id,
+                    'target_email' => $user->email,
+                    'role_slug' => $roleSlug,
+                    'role_type' => $roleType,
+                    'assigned_by' => $assignedBy?->id,
+                    'context_type' => $context->type,
+                    'context_id' => $context->id,
+                    'error' => 'Custom role does not exist'
+                ], 'error');
                 throw new \InvalidArgumentException("Кастомная роль '$roleSlug' не существует");
             }
         }
 
-        return UserRoleAssignment::assignRole($user, $roleSlug, $context, $roleType, $assignedBy, $expiresAt);
+        $assignment = UserRoleAssignment::assignRole($user, $roleSlug, $context, $roleType, $assignedBy, $expiresAt);
+
+        // AUDIT: Назначение роли - критически важное событие
+        $this->logging->audit('auth.role.assigned', [
+            'target_user_id' => $user->id,
+            'target_email' => $user->email,
+            'role_slug' => $roleSlug,
+            'role_type' => $roleType,
+            'assigned_by' => $assignedBy?->id,
+            'assigned_by_email' => $assignedBy?->email,
+            'context_type' => $context->type,
+            'context_id' => $context->id,
+            'expires_at' => $expiresAt?->toISOString(),
+            'assignment_id' => $assignment->id
+        ]);
+
+        return $assignment;
     }
 
     /**
@@ -155,7 +218,41 @@ class AuthorizationService
             ->where('context_id', $context->id)
             ->first();
 
-        return $assignment ? $assignment->revoke() : false;
+        if ($assignment) {
+            $result = $assignment->revoke();
+            
+            if ($result) {
+                // AUDIT: Отзыв роли - критически важное событие
+                $this->logging->audit('auth.role.revoked', [
+                    'target_user_id' => $user->id,
+                    'target_email' => $user->email,
+                    'role_slug' => $roleSlug,
+                    'role_type' => $assignment->role_type,
+                    'revoked_by' => 'system', // TODO: добавить определение текущего пользователя
+                    'context_type' => $context->type,
+                    'context_id' => $context->id,
+                    'assignment_id' => $assignment->id,
+                    'was_active' => $assignment->is_active
+                ]);
+            } else {
+                $this->logging->security('auth.role.revoke.failed', [
+                    'target_user_id' => $user->id,
+                    'role_slug' => $roleSlug,
+                    'assignment_id' => $assignment->id,
+                    'error' => 'Failed to revoke assignment'
+                ], 'error');
+            }
+            
+            return $result;
+        }
+
+        $this->logging->security('auth.role.revoke.notfound', [
+            'target_user_id' => $user->id,
+            'role_slug' => $roleSlug,
+            'context_id' => $context->id
+        ], 'warning');
+
+        return false;
     }
 
     /**
@@ -209,39 +306,49 @@ class AuthorizationService
      */
     protected function checkPermission(User $user, string $permission, ?array $context = null): bool
     {
-        \Illuminate\Support\Facades\Log::info('[AuthorizationService] DEBUG: checkPermission called', [
-            'user_id' => $user->id,
-            'permission' => $permission,
-            'context' => $context
-        ]);
-
         // Определяем контекст авторизации
         $authContext = $this->resolveAuthContext($context);
-        
-        \Illuminate\Support\Facades\Log::info('[AuthorizationService] DEBUG: Context resolved', [
-            'auth_context_id' => $authContext ? $authContext->id : null,
-            'auth_context_type' => $authContext ? $authContext->type : null,
-            'auth_context_resource_id' => $authContext ? $authContext->resource_id : null
-        ]);
         
         // Получаем роли пользователя
         $roles = $this->getUserRoles($user, $authContext);
         
-        \Illuminate\Support\Facades\Log::info('[AuthorizationService] DEBUG: User roles in context', [
-            'roles_count' => $roles->count(),
-            'role_slugs' => $roles->pluck('role_slug')->toArray()
-        ]);
-        
         if ($roles->isEmpty()) {
+            $this->logging->security('auth.no_roles_found', [
+                'user_id' => $user->id,
+                'permission_requested' => $permission,
+                'context' => $context
+            ], 'info');
             return false;
         }
+
+        $userRoles = $roles->pluck('role_slug')->toArray();
+        $this->logging->security('auth.checking_permission', [
+            'user_id' => $user->id,
+            'permission' => $permission,
+            'user_roles' => $userRoles,
+            'roles_count' => $roles->count(),
+            'auth_context_type' => $authContext ? $authContext->type : null
+        ], 'info');
 
         // Проверяем права через PermissionResolver
         foreach ($roles as $assignment) {
             if ($this->permissionResolver->hasPermission($assignment, $permission, $context)) {
                 // Дополнительно проверяем условия (ABAC)
                 if ($this->evaluateConditions($assignment, $context ?? [])) {
+                    $this->logging->security('auth.permission.resolved', [
+                        'user_id' => $user->id,
+                        'permission' => $permission,
+                        'granted_by_role' => $assignment->role_slug,
+                        'role_type' => $assignment->role_type
+                    ], 'info');
                     return true;
+                } else {
+                    $this->logging->security('auth.conditions.failed', [
+                        'user_id' => $user->id,
+                        'permission' => $permission,
+                        'role' => $assignment->role_slug,
+                        'conditions_count' => $assignment->conditions()->active()->count()
+                    ], 'warning');
                 }
             }
         }

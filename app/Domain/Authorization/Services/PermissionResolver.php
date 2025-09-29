@@ -6,6 +6,7 @@ use App\Models\Module;
 use App\Models\OrganizationModuleActivation;
 use App\Domain\Authorization\Models\UserRoleAssignment;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Cache;
 
 /**
@@ -15,13 +16,16 @@ class PermissionResolver
 {
     protected RoleScanner $roleScanner;
     protected ModulePermissionChecker $moduleChecker;
+    protected LoggingService $logging;
 
     public function __construct(
         RoleScanner $roleScanner,
-        ModulePermissionChecker $moduleChecker
+        ModulePermissionChecker $moduleChecker,
+        LoggingService $logging
     ) {
         $this->roleScanner = $roleScanner;
         $this->moduleChecker = $moduleChecker;
+        $this->logging = $logging;
     }
 
     /**
@@ -29,7 +33,10 @@ class PermissionResolver
      */
     public function hasPermission(UserRoleAssignment $assignment, string $permission, ?array $context = null): bool
     {
-        \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: Checking permission', [
+        $startTime = microtime(true);
+        
+        $this->logging->security('permission.resolve.start', [
+            'user_id' => $assignment->user_id,
             'role_slug' => $assignment->role_slug,
             'role_type' => $assignment->role_type,
             'permission' => $permission,
@@ -38,27 +45,41 @@ class PermissionResolver
 
         // Сначала проверяем системные права
         $hasSystemPerm = $this->hasSystemPermission($assignment, $permission);
-        \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: System permission check', [
-            'role_slug' => $assignment->role_slug,
-            'permission' => $permission,
-            'has_system_permission' => $hasSystemPerm
-        ]);
         
         if ($hasSystemPerm) {
+            $this->logging->security('permission.granted.system', [
+                'user_id' => $assignment->user_id,
+                'role_slug' => $assignment->role_slug,
+                'permission' => $permission,
+                'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+            ]);
             return true;
         }
 
         // Затем модульные права (если есть контекст организации)
         $hasModulePerm = $this->hasModulePermission($assignment, $permission, $context);
-        \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: Module permission check', [
-            'role_slug' => $assignment->role_slug,
-            'permission' => $permission,
-            'has_module_permission' => $hasModulePerm
-        ]);
         
         if ($hasModulePerm) {
+            $this->logging->security('permission.granted.module', [
+                'user_id' => $assignment->user_id,
+                'role_slug' => $assignment->role_slug,
+                'permission' => $permission,
+                'context' => $context,
+                'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+            ]);
             return true;
         }
+
+        $this->logging->security('permission.denied.complete', [
+            'user_id' => $assignment->user_id,
+            'role_slug' => $assignment->role_slug,
+            'role_type' => $assignment->role_type,
+            'permission' => $permission,
+            'context' => $context,
+            'checked_system' => true,
+            'checked_modules' => true,
+            'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+        ], 'info');
 
         return false;
     }
@@ -128,21 +149,10 @@ class PermissionResolver
     {
         if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
             $permissions = $this->roleScanner->getSystemPermissions($assignment->role_slug);
-            \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: System role permissions from RoleScanner', [
-                'role_slug' => $assignment->role_slug,
-                'permissions_count' => count($permissions),
-                'permissions' => $permissions
-            ]);
             return $permissions;
         } else {
             $customRole = $this->getCustomRole($assignment->role_slug);
             $permissions = $customRole ? $customRole->system_permissions : [];
-            \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: Custom role permissions', [
-                'role_slug' => $assignment->role_slug,
-                'custom_role_found' => $customRole !== null,
-                'permissions_count' => count($permissions),
-                'permissions' => $permissions
-            ]);
             return $permissions;
         }
     }
@@ -312,16 +322,6 @@ class PermissionResolver
         $regexPattern = '/^' . str_replace($placeholder, '.*', $escaped) . '$/';
         
         $result = preg_match($regexPattern, $permission) === 1;
-        
-        // DEBUG логирование с полными деталями
-        \Illuminate\Support\Facades\Log::info('[PermissionResolver] DEBUG: Wildcard match DETAILED', [
-            'permission' => $permission,
-            'pattern' => $pattern,
-            'step1_placeholder' => $withPlaceholder,
-            'step2_escaped' => $escaped,
-            'step3_final_regex' => $regexPattern,
-            'result' => $result
-        ]);
         
         return $result;
     }

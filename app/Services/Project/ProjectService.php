@@ -9,6 +9,7 @@ use App\Repositories\Interfaces\WorkTypeRepositoryInterface;
 use App\Models\Project;
 use App\Models\User;
 use App\Models\Role;
+use App\Services\Logging\LoggingService;
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\Collection;
 use App\Exceptions\BusinessLogicException;
@@ -23,17 +24,20 @@ class ProjectService
     protected UserRepositoryInterface $userRepository;
     protected MaterialRepositoryInterface $materialRepository;
     protected WorkTypeRepositoryInterface $workTypeRepository;
+    protected LoggingService $logging;
 
     public function __construct(
         ProjectRepositoryInterface $projectRepository,
         UserRepositoryInterface $userRepository,
         MaterialRepositoryInterface $materialRepository,
-        WorkTypeRepositoryInterface $workTypeRepository
+        WorkTypeRepositoryInterface $workTypeRepository,
+        LoggingService $logging
     ) {
         $this->projectRepository = $projectRepository;
         $this->userRepository = $userRepository;
         $this->materialRepository = $materialRepository;
         $this->workTypeRepository = $workTypeRepository;
+        $this->logging = $logging;
     }
 
     /**
@@ -110,12 +114,46 @@ class ProjectService
     public function createProject(ProjectDTO $projectDTO, Request $request): Project
     {
         $organizationId = $this->getCurrentOrgId($request);
+        $user = $request->user();
+        
+        // BUSINESS: Начало создания проекта - ключевая бизнес-метрика
+        $this->logging->business('project.creation.started', [
+            'project_name' => $projectDTO->name,
+            'project_description' => $projectDTO->description ?? null,
+            'organization_id' => $organizationId,
+            'created_by_user_id' => $user?->id,
+            'created_by_email' => $user?->email,
+            'project_address' => $projectDTO->address ?? null
+        ]);
         
         $dataToCreate = $projectDTO->toArray();
         $dataToCreate['organization_id'] = $organizationId;
         $dataToCreate['is_head'] = true;
         
-        return $this->projectRepository->create($dataToCreate);
+        $project = $this->projectRepository->create($dataToCreate);
+        
+        // AUDIT: Создание проекта - важно для compliance и отслеживания изменений
+        $this->logging->audit('project.created', [
+            'project_id' => $project->id,
+            'project_name' => $project->name,
+            'project_description' => $project->description,
+            'organization_id' => $organizationId,
+            'created_by' => $user?->id,
+            'created_by_email' => $user?->email,
+            'is_head_project' => true,
+            'creation_date' => $project->created_at?->toISOString()
+        ]);
+        
+        // BUSINESS: Успешное создание проекта - ключевая метрика роста
+        $this->logging->business('project.created', [
+            'project_id' => $project->id,
+            'project_name' => $project->name,
+            'organization_id' => $organizationId,
+            'created_by' => $user?->id,
+            'timestamp' => now()->toISOString()
+        ]);
+        
+        return $project;
     }
 
     public function findProjectByIdForCurrentOrg(int $id, Request $request): ?Project
@@ -160,7 +198,60 @@ class ProjectService
         if (!$project) {
             throw new BusinessLogicException('Project not found in your organization', 404);
         }
-        return $this->projectRepository->delete($id);
+        
+        $user = $request->user();
+        $organizationId = $this->getCurrentOrgId($request);
+        
+        // SECURITY: Попытка удаления проекта - важное security событие
+        $this->logging->security('project.deletion.attempt', [
+            'project_id' => $project->id,
+            'project_name' => $project->name,
+            'organization_id' => $organizationId,
+            'requested_by' => $user?->id,
+            'requested_by_email' => $user?->email
+        ]);
+        
+        // Сохраняем данные проекта для логирования до удаления
+        $projectData = [
+            'project_id' => $project->id,
+            'project_name' => $project->name,
+            'project_description' => $project->description,
+            'project_address' => $project->address,
+            'organization_id' => $organizationId,
+            'was_head_project' => $project->is_head,
+            'created_at' => $project->created_at?->toISOString()
+        ];
+        
+        $result = $this->projectRepository->delete($id);
+        
+        if ($result) {
+            // AUDIT: Успешное удаление проекта - критически важно для compliance
+            $this->logging->audit('project.deleted', array_merge($projectData, [
+                'deleted_by' => $user?->id,
+                'deleted_by_email' => $user?->email,
+                'deleted_at' => now()->toISOString()
+            ]));
+            
+            // BUSINESS: Удаление проекта - важная бизнес-метрика (может указывать на проблемы)
+            $this->logging->business('project.deleted', [
+                'project_id' => $projectData['project_id'],
+                'project_name' => $projectData['project_name'],
+                'organization_id' => $organizationId,
+                'deleted_by' => $user?->id,
+                'project_lifetime_days' => $project->created_at ? $project->created_at->diffInDays(now()) : null
+            ]);
+        } else {
+            // TECHNICAL: Неудачное удаление проекта
+            $this->logging->technical('project.deletion.failed', [
+                'project_id' => $project->id,
+                'project_name' => $project->name,
+                'organization_id' => $organizationId,
+                'attempted_by' => $user?->id,
+                'error' => 'Repository delete returned false'
+            ], 'error');
+        }
+        
+        return $result;
     }
 
     public function assignForemanToProject(int $projectId, int $userId, Request $request): bool

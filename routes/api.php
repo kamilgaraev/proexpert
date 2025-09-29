@@ -62,24 +62,6 @@ use App\Http\Controllers\Api\V1\HoldingApiController;
             });
         });
 
-        // --- Debug Route ---
-        Route::get('/debug-user', function () {
-            try {
-                $userInstance = app()->make(App\Models\User::class);
-                return response()->json([
-                    'message' => 'Successfully resolved App\\Models\\User',
-                    'class' => get_class($userInstance),
-                    'instance_details' => $userInstance->toArray() // Покажет пустой массив, т.к. это новый экземпляр
-                ]);
-            } catch (\Throwable $e) {
-                return response()->json([
-                    'message' => 'Failed to resolve App\\Models\\User',
-                    'error_class' => get_class($e),
-                    'error_message' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ], 500);
-            }
-        });
 
     });
 

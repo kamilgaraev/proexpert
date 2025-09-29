@@ -47,10 +47,6 @@ class ProjectChildWorksController extends Controller
 
             $perPage = (int)($request->get('per_page', 50));
 
-            Log::debug('[ProjectChildWorksController] applying filters', [
-                'filters' => $filters,
-                'per_page' => $perPage,
-            ]);
 
             $worksPaginator = $this->service->paginateByProject($projectId, $filters, $perPage);
 

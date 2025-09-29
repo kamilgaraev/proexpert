@@ -5,6 +5,7 @@ namespace App\Services\Material;
 use App\Repositories\Interfaces\MaterialRepositoryInterface;
 use App\Repositories\Interfaces\MeasurementUnitRepositoryInterface;
 use App\Repositories\Interfaces\Log\MaterialUsageLogRepositoryInterface;
+use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Database\Eloquent\Collection;
 use App\Exceptions\BusinessLogicException;
@@ -23,15 +24,18 @@ class MaterialService
     protected MaterialRepositoryInterface $materialRepository;
     protected MeasurementUnitRepositoryInterface $measurementUnitRepository;
     protected MaterialUsageLogRepositoryInterface $materialUsageLogRepository;
+    protected LoggingService $logging;
 
     public function __construct(
         MaterialRepositoryInterface $materialRepository,
         MeasurementUnitRepositoryInterface $measurementUnitRepository,
-        MaterialUsageLogRepositoryInterface $materialUsageLogRepository
+        MaterialUsageLogRepositoryInterface $materialUsageLogRepository,
+        LoggingService $logging
     ) {
         $this->materialRepository = $materialRepository;
         $this->measurementUnitRepository = $measurementUnitRepository;
         $this->materialUsageLogRepository = $materialUsageLogRepository;
+        $this->logging = $logging;
     }
 
     /**
@@ -67,17 +71,58 @@ class MaterialService
     public function createMaterial(array $data, Request $request): \App\Models\Material
     {
         $organizationId = $this->getCurrentOrgId($request);
+        $user = $request->user();
         $data['organization_id'] = $organizationId;
+
+        // BUSINESS: Начало создания материала - важная метрика склада
+        $this->logging->business('material.creation.started', [
+            'material_name' => $data['name'] ?? null,
+            'material_category' => $data['category'] ?? null,
+            'unit_id' => $data['measurement_unit_id'] ?? null,
+            'organization_id' => $organizationId,
+            'created_by' => $user?->id,
+            'created_by_email' => $user?->email
+        ]);
 
         // Проверяем measurement_unit_id, если репозиторий доступен
         if (isset($data['measurement_unit_id'])) {
             if (!$this->measurementUnitRepository->find($data['measurement_unit_id'])) {
+                // TECHNICAL: Ошибка валидации единицы измерения
+                $this->logging->technical('material.creation.validation.failed', [
+                    'material_name' => $data['name'] ?? null,
+                    'invalid_unit_id' => $data['measurement_unit_id'],
+                    'organization_id' => $organizationId,
+                    'attempted_by' => $user?->id,
+                    'error' => 'Measurement unit not found'
+                ], 'error');
                 throw new BusinessLogicException('Указанная единица измерения не найдена', 400);
             }
         }
-        // TODO: Возможно, добавить проверку доступности ед.изм для организации
 
-        return $this->materialRepository->create($data);
+        $material = $this->materialRepository->create($data);
+
+        // AUDIT: Создание материала - важно для отслеживания склада
+        $this->logging->audit('material.created', [
+            'material_id' => $material->id,
+            'material_name' => $material->name,
+            'material_code' => $material->code ?? null,
+            'material_category' => $material->category,
+            'unit_id' => $material->measurement_unit_id,
+            'organization_id' => $organizationId,
+            'created_by' => $user?->id,
+            'created_by_email' => $user?->email,
+            'creation_date' => $material->created_at?->toISOString()
+        ]);
+
+        // BUSINESS: Успешное создание материала - метрика роста каталога
+        $this->logging->business('material.created', [
+            'material_id' => $material->id,
+            'material_name' => $material->name,
+            'organization_id' => $organizationId,
+            'created_by' => $user?->id
+        ]);
+
+        return $material;
     }
 
     public function findMaterialById(int $id, Request $request): ?\App\Models\Material
@@ -337,6 +382,17 @@ class MaterialService
         $errors = [];
         $rows = [];
         $ext = strtolower($file->getClientOriginalExtension());
+        
+        // BUSINESS: Начало импорта материалов - критическая функция управления складом
+        $this->logging->business('material.import.started', [
+            'filename' => $file->getClientOriginalName(),
+            'file_size_bytes' => $file->getSize(),
+            'file_extension' => $ext,
+            'format' => $format,
+            'organization_id' => $orgId,
+            'is_dry_run' => $dryRun,
+            'user_id' => null
+        ]);
         try {
             if (in_array($ext, ['xlsx', 'xls'])) {
                 $spreadsheet = IOFactory::load($file->getPathname());
@@ -408,11 +464,9 @@ class MaterialService
                 $row = is_array($row) ? array_values($row) : $row;
                 $data = array_combine($headers, array_map('trim', $row));
                 $line = $i + 2;
-                Log::debug('[MaterialImport] Обработка строки', ['line' => $line, 'data' => $data]);
                 // Валидация
                 if (empty($data['name'])) {
                     $errors[] = "Строка $line: не указано имя материала";
-                    Log::debug('[MaterialImport] Пропуск: не указано имя', ['line' => $line]);
                     continue;
                 }
                 // Единица измерения
@@ -432,22 +486,18 @@ class MaterialService
                 }
                 if (!$unitId) {
                     $errors[] = "Строка $line: не найдена единица измерения";
-                    Log::debug('[MaterialImport] Пропуск: не найдена единица измерения', ['line' => $line, 'unit' => $data['measurement_unit'] ?? null]);
                     continue;
                 }
                 // Поиск существующего материала
                 $material = null;
                 if (!empty($data['external_code'])) {
                     $material = $this->materialRepository->findByExternalCode($data['external_code'], $orgId);
-                    Log::debug('[MaterialImport] Поиск по external_code', ['line' => $line, 'external_code' => $data['external_code'], 'found' => (bool)$material]);
                 }
                 if (!$material && !empty($data['code'])) {
                     $material = $this->materialRepository->findByNameAndOrganization($data['code'], $orgId);
-                    Log::debug('[MaterialImport] Поиск по code', ['line' => $line, 'code' => $data['code'], 'found' => (bool)$material]);
                 }
                 if (!$material && !empty($data['name'])) {
                     $material = $this->materialRepository->findByNameAndOrganization($data['name'], $orgId);
-                    Log::debug('[MaterialImport] Поиск по name', ['line' => $line, 'name' => $data['name'], 'found' => (bool)$material]);
                 }
                 // Подготовка данных
                 $materialData = [
@@ -466,17 +516,14 @@ class MaterialService
                 ];
                 try {
                     if ($dryRun) {
-                        Log::debug('[MaterialImport] Dry-run, материал не создаётся/не обновляется', ['line' => $line, 'data' => $materialData]);
                         continue;
                     }
                     if ($material) {
                         $material->update($materialData);
                         $updated++;
-                        Log::debug('[MaterialImport] Материал обновлён', ['line' => $line, 'id' => $material->id, 'data' => $materialData]);
                     } else {
                         $created = $this->materialRepository->create($materialData);
                         $imported++;
-                        Log::debug('[MaterialImport] Материал создан', ['line' => $line, 'id' => $created->id ?? null, 'data' => $materialData]);
                     }
                 } catch (\Throwable $e) {
                     $errors[] = "Строка $line: " . $e->getMessage();
@@ -490,6 +537,20 @@ class MaterialService
             }
         } catch (\Throwable $e) {
             DB::rollBack();
+            
+            // TECHNICAL: Критическая ошибка при импорте материалов
+            $this->logging->technical('material.import.critical_error', [
+                'filename' => $file->getClientOriginalName(),
+                'file_size_bytes' => $file->getSize(),
+                'organization_id' => $orgId,
+                'imported_count' => $imported,
+                'updated_count' => $updated,
+                'errors_count' => count($errors),
+                'exception_class' => get_class($e),
+                'exception_message' => $e->getMessage(),
+                'user_id' => null
+            ], 'critical');
+            
             Log::error('Критическая ошибка при импорте материалов', ['error' => $e->getMessage()]);
             return [
                 'success' => false,
@@ -499,9 +560,39 @@ class MaterialService
                 'errors' => $errors
             ];
         }
+        
+        $isSuccess = empty($errors);
+        $totalProcessed = $imported + $updated;
+        
+        // BUSINESS: Завершение импорта материалов - ключевая метрика
+        $this->logging->business('material.import.completed', [
+            'filename' => $file->getClientOriginalName(),
+            'organization_id' => $orgId,
+            'total_processed' => $totalProcessed,
+            'imported_count' => $imported,
+            'updated_count' => $updated,
+            'errors_count' => count($errors),
+            'success_rate' => $totalProcessed > 0 ? round((($totalProcessed - count($errors)) / $totalProcessed) * 100, 2) : 0,
+            'is_success' => $isSuccess,
+            'is_dry_run' => $dryRun,
+            'user_id' => null
+        ], $isSuccess ? 'info' : 'warning');
+        
+        // AUDIT: Массовое изменение каталога материалов - важно для compliance
+        if (!$dryRun && ($imported > 0 || $updated > 0)) {
+            $this->logging->audit('material.bulk.import', [
+                'filename' => $file->getClientOriginalName(),
+                'organization_id' => $orgId,
+                'materials_imported' => $imported,
+                'materials_updated' => $updated,
+                'performed_by' => null,
+                'import_date' => now()->toISOString()
+            ]);
+        }
+        
         return [
-            'success' => empty($errors),
-            'message' => empty($errors) ? 'Импорт завершён успешно' : 'Импорт завершён с ошибками',
+            'success' => $isSuccess,
+            'message' => $isSuccess ? 'Импорт завершён успешно' : 'Импорт завершён с ошибками',
             'imported' => $imported,
             'updated' => $updated,
             'errors' => $errors

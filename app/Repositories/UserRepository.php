@@ -106,10 +106,6 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
                     'is_active' => $isActive
                 ]);
             } else {
-                Log::debug("[UserRepository] attachToOrganization: User already attached to org", [
-                    'user_id' => $userId,
-                    'organization_id' => $organizationId
-                ]);
             }
             // Присваиваем роль владельца (Owner) только если $isOwner = true - новая система авторизации
             if ($isOwner) {
@@ -187,11 +183,6 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
                     'context_id' => $context->id
                 ]);
             } else {
-                Log::debug("[UserRepository] assignRoleToUser: Role already assigned", [
-                    'user_id' => $userId,
-                    'role_slug' => $roleSlug,
-                    'organization_id' => $organizationId
-                ]);
             }
         } catch (\Exception $e) {
             // Таблицы новой системы авторизации еще не созданы - это нормально

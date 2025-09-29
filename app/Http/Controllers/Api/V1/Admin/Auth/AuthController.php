@@ -10,6 +10,7 @@ use App\Http\Responses\Auth\ProfileResponse;
 use App\Http\Responses\Auth\TokenResponse;
 use App\Services\Auth\JwtAuthService;
 use App\Services\LogService;
+use App\Services\Logging\LoggingService;
 use App\Services\PerformanceMonitor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -19,16 +20,19 @@ use Illuminate\Support\Facades\Gate;
 class AuthController extends Controller
 {
     protected $authService;
+    protected $logging;
     protected $guard = 'api_admin';
 
     /**
      * Создание нового экземпляра контроллера.
      *
      * @param JwtAuthService $authService
+     * @param LoggingService $logging
      */
-    public function __construct(JwtAuthService $authService)
+    public function __construct(JwtAuthService $authService, LoggingService $logging)
     {
         $this->authService = $authService;
+        $this->logging = $logging;
     }
 
     /**
@@ -39,22 +43,20 @@ class AuthController extends Controller
      */
     public function login(LoginRequest $request)
     {
-        // Логируем попытку входа
-        Log::info('[AuthController] Admin panel login attempt', [
+        // Логируем попытку входа в админ-панель - критическое security событие
+        $this->logging->security('auth.admin.login.attempt', [
             'email' => $request->input('email'),
-            'ip_address' => $request->ip()
-        ]);
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'interface' => 'admin_panel'
+        ], 'info');
 
-        // Временно убираем PerformanceMonitor для отладки
-        // return PerformanceMonitor::measure('admin.login', function() use ($request) {
-            Log::info('[AuthController] Before calling authService->authenticate');
-            try {
-                // Создаем DTO из запроса
-                $loginDTO = LoginDTO::fromRequest($request->only('email', 'password'));
-                
-                // Аутентифицируем пользователя через сервис
-                $result = $this->authService->authenticate($loginDTO, $this->guard);
-                Log::info('[AuthController] After calling authService->authenticate', ['result_success' => $result['success'] ?? 'N/A']);
+        try {
+            // Создаем DTO из запроса
+            $loginDTO = LoginDTO::fromRequest($request->only('email', 'password'));
+            
+            // Аутентифицируем пользователя через сервис
+            $result = $this->authService->authenticate($loginDTO, $this->guard);
 
                 // Проверяем, имеет ли пользователь необходимые права для веб-админки
                 if ($result['success']) {
@@ -62,91 +64,98 @@ class AuthController extends Controller
                     $user = $result['user'];
                     $organizationId = $user->current_organization_id;
                     
-                    Log::info('[AuthController] Auth successful, checking Admin Panel access via Gate...');
-
-                    // Используем новую систему авторизации
-                    $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+                    // Контекст пользователя передается в параметрах security логирования
                     
-                    // Добавляем детальное логирование для диагностики
-                    Log::info('[AuthController] DEBUG: Checking admin access', [
+                    $this->logging->security('auth.admin.credentials.success', [
                         'user_id' => $user->id,
                         'email' => $user->email,
                         'organization_id' => $organizationId
                     ]);
+
+                    // Используем новую систему авторизации
+                    $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
                     
                     // Проверяем роли пользователя
                     try {
                         $userRoles = $authService->getUserRoles($user);
-                        $roleDetails = $userRoles->map(function ($assignment) {
-                            return [
-                                'role_slug' => $assignment->role_slug,
-                                'role_type' => $assignment->role_type,
-                                'context_id' => $assignment->context_id,
-                                'is_active' => $assignment->is_active
-                            ];
-                        });
-                        
-                        Log::info('[AuthController] DEBUG: User roles', [
-                            'roles_count' => $userRoles->count(),
-                            'roles' => $userRoles->pluck('role_slug')->toArray(),
-                            'role_details' => $roleDetails->toArray()
-                        ]);
                     } catch (\Exception $e) {
-                        Log::error('[AuthController] DEBUG: Error getting user roles', [
+                        $this->logging->security('auth.admin.roles.error', [
+                            'user_id' => $user->id,
                             'error' => $e->getMessage(),
-                            'trace' => $e->getTraceAsString()
-                        ]);
+                            'exception_class' => get_class($e)
+                        ], 'error');
                     }
                     
                     $systemAccess = $authService->can($user, 'admin.access', ['context_type' => 'system']);
                     $orgAccess = $authService->can($user, 'admin.access', ['context_type' => 'organization', 'organization_id' => $organizationId]);
                     
-                    Log::info('[AuthController] DEBUG: Access check results', [
-                        'system_access' => $systemAccess,
-                        'organization_access' => $orgAccess
-                    ]);
-                    
                     $canAccess = $systemAccess || $orgAccess;
                     
                     if (!$canAccess) {
-                        LogService::authLog('admin_login_forbidden', [
+                        // SECURITY: Попытка доступа в админ-панель без разрешений - критическое событие
+                        $this->logging->security('auth.admin.access.denied', [
                             'user_id' => $user->id,
                             'email' => $user->email,
                             'organization_id' => $organizationId,
-                            'ip' => request()->ip(),
+                            'system_access' => $systemAccess,
+                            'org_access' => $orgAccess,
                             'reason' => 'insufficient_permissions'
+                        ], 'warning');
+                        
+                        // AUDIT: Отказ в доступе нужно записать в audit trail
+                        $this->logging->audit('auth.admin.access.denied', [
+                            'user_id' => $user->id,
+                            'email' => $user->email,
+                            'organization_id' => $organizationId,
+                            'interface' => 'admin_panel'
                         ]);
-                        Log::warning('[AuthController] Новая система авторизации denied access.', ['user_id' => $user->id, 'org_id' => $organizationId]);
+                        
                         return LoginResponse::forbidden('У вас нет доступа к панели администратора');
                     }
 
-                    Log::info('[AuthController] Новая система авторизации allowed access.');
-                    LogService::authLog('admin_login_success', [
+                    // SECURITY & AUDIT: Успешный вход в админ-панель - критическое событие для compliance
+                    $this->logging->security('auth.admin.login.success', [
                         'user_id' => $user->id,
                         'email' => $user->email,
                         'organization_id' => $organizationId,
-                        'ip' => $request->ip()
+                        'system_access' => $systemAccess,
+                        'org_access' => $orgAccess,
+                        'interface' => 'admin_panel'
                     ]);
-                    return LoginResponse::loginSuccess($result['user'], $result['token']); // <-- Возвращаем здесь
+                    
+                    $this->logging->audit('auth.admin.login.success', [
+                        'user_id' => $user->id,
+                        'email' => $user->email,
+                        'organization_id' => $organizationId,
+                        'interface' => 'admin_panel',
+                        'token_generated' => true
+                    ]);
+                    
+                    return LoginResponse::loginSuccess($result['user'], $result['token']);
                 } else {
-                    Log::warning('[AuthController] Authentication failed.');
-                    // Логируем неудачную попытку из-за неверных данных
-                    LogService::authLog('admin_login_failed', [
-                        'email' => $request->input('email'), // Логируем email при неверных данных
-                        'ip' => $request->ip(),
-                        'reason' => 'invalid_credentials'
-                    ]);
+                    // SECURITY: Неуспешная аутентификация - потенциальная атака
+                    $this->logging->security('auth.admin.login.failed', [
+                        'email' => $request->input('email'),
+                        'reason' => 'invalid_credentials',
+                        'error_message' => $result['message'] ?? 'Authentication failed'
+                    ], 'warning');
+                    
                     return LoginResponse::unauthorized($result['message']);
                 }
                 // Эта строка больше не нужна, так как возвраты происходят внутри if/else
                 // return LoginResponse::loginSuccess($result['user'], $result['token']);
-            } catch (\Throwable $e) {
-                Log::error('[AuthController] Unexpected exception in login method', [
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-                return response()->json(['success' => false, 'message' => 'Internal Server Error in Controller'], 500);
-            }
+        } catch (\Throwable $e) {
+            // TECHNICAL: Системная ошибка при аутентификации
+            $this->logging->technical('auth.admin.login.exception', [
+                'email' => $request->input('email'),
+                'exception_class' => get_class($e),
+                'exception_message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 'error');
+            
+            return response()->json(['success' => false, 'message' => 'Internal Server Error in Controller'], 500);
+        }
         // }); // Конец PerformanceMonitor
     }
 

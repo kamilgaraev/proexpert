@@ -35,13 +35,6 @@ class RoleScanner
         $roles = $this->getAllRoles();
         $role = $roles->get($slug);
         
-        Log::info('[RoleScanner] DEBUG: Getting role', [
-            'slug' => $slug,
-            'role_found' => $role !== null,
-            'total_roles' => $roles->count(),
-            'available_roles' => $roles->keys()->toArray()
-        ]);
-        
         return $role;
     }
 
@@ -80,14 +73,6 @@ class RoleScanner
     {
         $role = $this->getRole($roleSlug);
         $permissions = $role['system_permissions'] ?? [];
-        
-        Log::info('[RoleScanner] DEBUG: Getting system permissions', [
-            'role_slug' => $roleSlug,
-            'role_found' => $role !== null,
-            'permissions_count' => count($permissions),
-            'permissions' => $permissions,
-            'role_data_keys' => $role ? array_keys($role) : []
-        ]);
         
         return $permissions;
     }

@@ -7,6 +7,7 @@ use App\Repositories\Interfaces\UserRepositoryInterface;
 // Интеграция с новой системой авторизации
 use App\Domain\Authorization\Services\AuthorizationService;
 use App\Helpers\AdminPanelAccessHelper;
+use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Http\Request;
@@ -25,16 +26,19 @@ class UserService
     protected UserRepositoryInterface $userRepository;
     protected AuthorizationService $authorizationService;
     protected AdminPanelAccessHelper $adminPanelHelper;
+    protected LoggingService $logging;
 
     public function __construct(
         UserRepositoryInterface $userRepository,
         AuthorizationService $authorizationService,
-        AdminPanelAccessHelper $adminPanelHelper
+        AdminPanelAccessHelper $adminPanelHelper,
+        LoggingService $logging
     )
     {
         $this->userRepository = $userRepository;
         $this->authorizationService = $authorizationService;
         $this->adminPanelHelper = $adminPanelHelper;
+        $this->logging = $logging;
     }
 
     // --- Helper Methods ---
@@ -183,8 +187,18 @@ class UserService
         if(!$organizationId) {
             throw new BusinessLogicException('Контекст организации не определен.', 400);
         }
-        $intOrganizationId = (int) $organizationId; // Приводим к int
+        $intOrganizationId = (int) $organizationId;
         $adminRoleSlug = 'organization_admin';
+        
+        // BUSINESS: Начало процесса создания администратора - важная бизнес-метрика
+        $this->logging->business('user.admin.creation.started', [
+            'target_email' => $data['email'],
+            'target_name' => $data['name'],
+            'organization_id' => $intOrganizationId,
+            'created_by_user_id' => $request->user()?->id,
+            'role_slug' => $adminRoleSlug
+        ]);
+        
         $this->validateRoleExists($adminRoleSlug, $intOrganizationId);
 
         $data['password'] = Hash::make($data['password']);
@@ -196,20 +210,67 @@ class UserService
         if ($existingUser) {
             // Проверяем, есть ли уже роль администратора
             if ($this->authorizationService->hasRole($existingUser, $adminRoleSlug, $intOrganizationId)) {
-                 throw new BusinessLogicException('Пользователь с таким email уже является администратором в этой организации.', 409); // 409 Conflict
+                // BUSINESS: Попытка создать дублирующего админа
+                $this->logging->business('user.admin.creation.duplicate', [
+                    'existing_user_id' => $existingUser->id,
+                    'email' => $data['email'],
+                    'organization_id' => $intOrganizationId,
+                    'attempted_by_user_id' => $request->user()?->id
+                ], 'warning');
+                throw new BusinessLogicException('Пользователь с таким email уже является администратором в этой организации.', 409);
             }
-            // Используем $intOrganizationId
+            
+            // Назначаем роль существующему пользователю
             $this->userRepository->attachToOrganization($existingUser->id, $intOrganizationId);
             $this->userRepository->assignRoleToUser($existingUser->id, $adminRoleSlug, $intOrganizationId);
-             // Optionally update user data if provided (name, etc.)?
-            $this->userRepository->update($existingUser->id, ['name' => $data['name']]); // Update name if needed
-            return $this->userRepository->find($existingUser->id); // Return the existing user
+            $this->userRepository->update($existingUser->id, ['name' => $data['name']]);
+            
+            // AUDIT: Назначение роли администратора существующему пользователю
+            $this->logging->audit('user.admin.role.assigned.existing', [
+                'user_id' => $existingUser->id,
+                'email' => $existingUser->email,
+                'name' => $data['name'],
+                'organization_id' => $intOrganizationId,
+                'role_slug' => $adminRoleSlug,
+                'assigned_by' => $request->user()?->id,
+                'was_existing_user' => true
+            ]);
+            
+            // BUSINESS: Успешное назначение роли админа существующему пользователю
+            $this->logging->business('user.admin.assigned.existing', [
+                'user_id' => $existingUser->id,
+                'email' => $existingUser->email,
+                'organization_id' => $intOrganizationId,
+                'assigned_by' => $request->user()?->id
+            ]);
+            
+            return $this->userRepository->find($existingUser->id);
         } else {
-             // If user doesn't exist, create them and assign role/org
+            // Создаем нового пользователя
             $newUser = $this->userRepository->create($data);
-            // Используем $intOrganizationId
             $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId);
             $this->userRepository->assignRoleToUser($newUser->id, $adminRoleSlug, $intOrganizationId);
+            
+            // AUDIT: Создание нового пользователя с ролью администратора
+            $this->logging->audit('user.admin.created.new', [
+                'user_id' => $newUser->id,
+                'email' => $newUser->email,
+                'name' => $newUser->name,
+                'organization_id' => $intOrganizationId,
+                'role_slug' => $adminRoleSlug,
+                'created_by' => $request->user()?->id,
+                'was_new_user' => true
+            ]);
+            
+            // BUSINESS: Успешное создание нового администратора - ключевая метрика роста
+            $this->logging->business('user.admin.created.new', [
+                'user_id' => $newUser->id,
+                'email' => $newUser->email,
+                'organization_id' => $intOrganizationId,
+                'created_by' => $request->user()?->id,
+                'user_creation_date' => $newUser->created_at?->toISOString()
+            ]);
+            
             return $newUser;
         }
     }
@@ -343,6 +404,14 @@ class UserService
         }
         $intOrganizationId = (int) $organizationId;
         $requestingUser = $request->user();
+        
+        // SECURITY: Попытка удаления администратора - критическое security событие
+        $this->logging->security('user.admin.deletion.attempt', [
+            'target_user_id' => $adminUserId,
+            'organization_id' => $intOrganizationId,
+            'requested_by' => $requestingUser?->id,
+            'requested_by_email' => $requestingUser?->email
+        ]);
 
         // Используем findAdminById, чтобы убедиться, что пользователь существует, является админом/владельцем и в нужной организации
         $adminUser = $this->findAdminById($adminUserId, $request);
@@ -352,10 +421,25 @@ class UserService
 
         // Запрещаем удалять Владельца организации
         if ($this->authorizationService->hasRole($adminUser, 'organization_owner', $intOrganizationId)) {
+            // SECURITY: Попытка удалить владельца - критическая угроза безопасности
+            $this->logging->security('user.owner.deletion.blocked', [
+                'target_user_id' => $adminUserId,
+                'target_email' => $adminUser->email,
+                'organization_id' => $intOrganizationId,
+                'attempted_by' => $requestingUser?->id,
+                'attempted_by_email' => $requestingUser?->email,
+                'reason' => 'Cannot delete organization owner'
+            ], 'warning');
             throw new BusinessLogicException('Нельзя удалить владельца организации.', 403);
         }
         // Запрещаем удалять себя (даже если ты админ)
         if ($adminUserId === $requestingUser->id) {
+            // SECURITY: Попытка самоудаления админа
+            $this->logging->security('user.admin.self_deletion.blocked', [
+                'user_id' => $adminUserId,
+                'organization_id' => $intOrganizationId,
+                'reason' => 'Cannot delete self'
+            ], 'warning');
             throw new BusinessLogicException('Нельзя удалить самого себя.', 403);
         }
 
@@ -370,9 +454,33 @@ class UserService
             'context_id' => $context->id,
             'is_active' => true
         ])->count();
+        
+        $wasDetachedFromOrg = false;
         if ($otherRolesCount === 0) {
-             $this->userRepository->detachFromOrganization($adminUserId, $intOrganizationId);
+            $this->userRepository->detachFromOrganization($adminUserId, $intOrganizationId);
+            $wasDetachedFromOrg = true;
         }
+
+        // AUDIT: Успешное удаление роли администратора - критически важно для compliance
+        $this->logging->audit('user.admin.role.revoked', [
+            'target_user_id' => $adminUserId,
+            'target_email' => $adminUser->email,
+            'target_name' => $adminUser->name,
+            'organization_id' => $intOrganizationId,
+            'role_revoked' => $adminRoleSlug,
+            'revoked_by' => $requestingUser?->id,
+            'revoked_by_email' => $requestingUser?->email,
+            'was_detached_from_org' => $wasDetachedFromOrg,
+            'remaining_roles_count' => $otherRolesCount
+        ]);
+
+        // BUSINESS: Удаление администратора - важная бизнес-метрика
+        $this->logging->business('user.admin.removed', [
+            'target_user_id' => $adminUserId,
+            'organization_id' => $intOrganizationId,
+            'removed_by' => $requestingUser?->id,
+            'was_completely_removed' => $wasDetachedFromOrg
+        ]);
 
         return true;
     }
@@ -717,7 +825,6 @@ class UserService
         $adminPanelRoles = $this->adminPanelHelper->getAdminPanelRoles($intOrganizationId, $currentInterface);
         $rolesToFetch = $rolesToFetch ?? $adminPanelRoles;
 
-        Log::debug('[UserService@getAdminPanelUsersForCurrentOrg] Calling userRepository->findByRolesInOrganization.', ['org_id' => $intOrganizationId, 'roles' => $rolesToFetch]);
         try {
             $users = $this->userRepository->findByRolesInOrganization($intOrganizationId, $rolesToFetch);
             Log::info('[UserService@getAdminPanelUsersForCurrentOrg] Users received from repository.', ['count' => count($users)]);

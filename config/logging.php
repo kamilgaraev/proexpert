@@ -150,6 +150,68 @@ return [
             ],
         ],
 
+        // ProHelper Structured Logging Channels
+        'audit' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/audit/audit.log'),
+            'level' => 'info',
+            'days' => 365, // Keep for 1 year for compliance
+            'formatter' => JsonFormatter::class,
+            'formatter_with' => [
+                'dateFormat' => 'Y-m-d H:i:s.u',
+                'includeStacktraces' => false,
+            ],
+            'permission' => 0644,
+        ],
+
+        'business' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/business/business.log'),
+            'level' => 'info',
+            'days' => 90, // Keep for 3 months
+            'formatter' => JsonFormatter::class,
+            'formatter_with' => [
+                'dateFormat' => 'Y-m-d H:i:s.u',
+            ],
+            'permission' => 0644,
+        ],
+
+        'security' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/security/security.log'),
+            'level' => 'warning',
+            'days' => 180, // Keep for 6 months
+            'formatter' => JsonFormatter::class,
+            'formatter_with' => [
+                'dateFormat' => 'Y-m-d H:i:s.u',
+            ],
+            'permission' => 0640, // More restrictive permissions
+        ],
+
+        'technical' => [
+            'driver' => 'daily', 
+            'path' => storage_path('logs/technical/technical.log'),
+            'level' => env('LOG_LEVEL', 'info'),
+            'days' => 30,
+            'formatter' => JsonFormatter::class,
+            'formatter_with' => [
+                'dateFormat' => 'Y-m-d H:i:s.u',
+            ],
+            'permission' => 0644,
+        ],
+
+        'access' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/access/access.log'), 
+            'level' => 'info',
+            'days' => 30,
+            'formatter' => JsonFormatter::class,
+            'formatter_with' => [
+                'dateFormat' => 'Y-m-d H:i:s.u',
+            ],
+            'permission' => 0644,
+        ],
+
     ],
 
 ];

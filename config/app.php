@@ -180,6 +180,7 @@ return [
         App\Providers\ModuleServiceProvider::class,
         App\Domain\Authorization\Providers\AuthorizationServiceProvider::class,
         App\Providers\TelegramServiceProvider::class,
+        App\Providers\LoggingServiceProvider::class,
         // App\Providers\TelescopeServiceProvider::class,
         // App\Providers\FortifyServiceProvider::class,
         // App\Providers\JetstreamServiceProvider::class,

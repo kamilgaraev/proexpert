@@ -27,13 +27,11 @@ class SetOrganizationContext
         $user = Auth::user();
 
         if (!$user) {
-            Log::debug('[SetOrganizationContext] User not authenticated.');
             return $next($request);
         }
 
         // Если пользователь - LandingAdmin, то ему не нужен контекст организации
         if ($user instanceof LandingAdmin) {
-            Log::debug('[SetOrganizationContext] LandingAdmin detected, skipping organization context.');
             return $next($request);
         }
 
@@ -72,7 +70,6 @@ class SetOrganizationContext
             }
 
         } catch (JWTException $e) {
-            Log::debug('[SetOrganizationContext] JWT parsing failed: ' . $e->getMessage());
             $firstOrg = $user->organizations()->first();
             if ($firstOrg) {
                 $organization = $firstOrg;
@@ -98,7 +95,6 @@ class SetOrganizationContext
             $logContext['final_org_id'] = null;
         }
 
-        Log::debug('[SetOrganizationContext] Context set', $logContext);
 
         return $next($request);
     }
