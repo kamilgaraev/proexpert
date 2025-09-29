@@ -178,7 +178,7 @@ class RequestLoggingMiddleware
                     'query_params_count' => count($request->query()),
                     'has_files' => $request->hasFile('*'),
                     'content_length' => strlen($request->getContent()),
-                    'full_performance' => $performanceContext->getDetailedMetrics()
+                    'full_performance' => $performanceContext->getMetrics()
                 ], 'error');
             }
 
