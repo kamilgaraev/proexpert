@@ -3,16 +3,53 @@
 namespace App\Services;
 
 use App\Helpers\PermissionTranslator;
+use App\Services\Logging\LoggingService;
 
 class PermissionTranslationService
 {
+    protected LoggingService $logging;
+
+    public function __construct(LoggingService $logging)
+    {
+        $this->logging = $logging;
+    }
     public function processPermissionsForFrontend(array $permissionsData): array
     {
-        return PermissionTranslator::translatePermissionsData($permissionsData);
+        $startTime = microtime(true);
+        
+        $this->logging->technical('permission_translation.frontend.started', [
+            'permissions_count' => count($permissionsData)
+        ]);
+
+        try {
+            $result = PermissionTranslator::translatePermissionsData($permissionsData);
+            $duration = (microtime(true) - $startTime) * 1000;
+            
+            $this->logging->technical('permission_translation.frontend.completed', [
+                'permissions_count' => count($permissionsData),
+                'translated_count' => count($result),
+                'duration_ms' => $duration
+            ]);
+            
+            return $result;
+            
+        } catch (\Exception $e) {
+            $duration = (microtime(true) - $startTime) * 1000;
+            
+            $this->logging->technical('permission_translation.frontend.failed', [
+                'permissions_count' => count($permissionsData),
+                'error' => $e->getMessage(),
+                'duration_ms' => $duration
+            ], 'error');
+            
+            throw $e;
+        }
     }
 
     public function getSystemPermissionsWithTranslations(): array
     {
+        $this->logging->technical('permission_translation.system.requested');
+        
         $systemPermissions = [
             'profile.view',
             'profile.edit',
@@ -34,6 +71,11 @@ class PermissionTranslationService
         foreach ($systemPermissions as $permission) {
             $translations[$permission] = PermissionTranslator::getPermissionTranslation($permission);
         }
+
+        $this->logging->technical('permission_translation.system.completed', [
+            'system_permissions_count' => count($systemPermissions),
+            'translated_count' => count($translations)
+        ]);
 
         return $translations;
     }

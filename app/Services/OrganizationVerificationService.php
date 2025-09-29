@@ -4,19 +4,32 @@ namespace App\Services;
 
 use App\Models\Organization;
 use App\Services\DaDataService;
+use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Log;
 
 class OrganizationVerificationService
 {
     private DaDataService $daDataService;
+    private LoggingService $logging;
 
-    public function __construct(DaDataService $daDataService)
+    public function __construct(DaDataService $daDataService, LoggingService $logging)
     {
         $this->daDataService = $daDataService;
+        $this->logging = $logging;
     }
 
     public function verifyOrganization(Organization $organization): array
     {
+        $startTime = microtime(true);
+        
+        $this->logging->business('organization.verification.started', [
+            'organization_id' => $organization->id,
+            'organization_name' => $organization->name,
+            'has_tax_number' => !empty($organization->tax_number),
+            'has_address' => !empty($organization->address),
+            'current_verification_status' => $organization->verification_status
+        ]);
+
         $verificationResults = [
             'inn_verification' => null,
             'address_verification' => null,
@@ -33,12 +46,29 @@ class OrganizationVerificationService
             if ($innResult['success']) {
                 $verificationResults['verification_score'] += 70;
                 
+                $this->logging->business('organization.verification.inn.success', [
+                    'organization_id' => $organization->id,
+                    'tax_number' => $organization->tax_number,
+                    'found_organization' => $innResult['data']['name'] ?? 'unknown',
+                    'organization_status' => $innResult['data']['status'] ?? 'unknown'
+                ]);
+                
                 $this->updateOrganizationWithDaDataInfo($organization, $innResult['data']);
             } else {
+                $this->logging->business('organization.verification.inn.failed', [
+                    'organization_id' => $organization->id,
+                    'tax_number' => $organization->tax_number,
+                    'error_message' => $innResult['message']
+                ], 'warning');
+                
                 $verificationResults['errors'][] = $innResult['message'];
             }
         } else {
             $verificationResults['warnings'][] = 'ИНН не указан для проверки';
+            
+            $this->logging->business('organization.verification.inn.missing', [
+                'organization_id' => $organization->id
+            ], 'warning');
         }
 
         if ($organization->address) {
@@ -47,16 +77,58 @@ class OrganizationVerificationService
             
             if ($addressResult['success']) {
                 $verificationResults['verification_score'] += 30;
+                
+                $this->logging->business('organization.verification.address.success', [
+                    'organization_id' => $organization->id,
+                    'address' => $organization->address
+                ]);
             } else {
+                $this->logging->business('organization.verification.address.failed', [
+                    'organization_id' => $organization->id,
+                    'address' => $organization->address,
+                    'error_message' => $addressResult['message']
+                ], 'warning');
+                
                 $verificationResults['warnings'][] = $addressResult['message'];
             }
         } else {
             $verificationResults['warnings'][] = 'Адрес не указан для проверки';
+            
+            $this->logging->business('organization.verification.address.missing', [
+                'organization_id' => $organization->id
+            ], 'warning');
         }
 
         $verificationResults['overall_status'] = $this->determineOverallStatus($verificationResults['verification_score']);
 
         $this->updateOrganizationVerificationStatus($organization, $verificationResults);
+
+        $duration = (microtime(true) - $startTime) * 1000;
+        
+        $this->logging->business('organization.verification.completed', [
+            'organization_id' => $organization->id,
+            'verification_score' => $verificationResults['verification_score'],
+            'overall_status' => $verificationResults['overall_status'],
+            'errors_count' => count($verificationResults['errors']),
+            'warnings_count' => count($verificationResults['warnings']),
+            'duration_ms' => $duration
+        ]);
+        
+        $this->logging->audit('organization.verification.completed', [
+            'organization_id' => $organization->id,
+            'organization_name' => $organization->name,
+            'verification_score' => $verificationResults['verification_score'],
+            'overall_status' => $verificationResults['overall_status'],
+            'performed_by' => auth()->id() ?? 'system'
+        ]);
+        
+        // SECURITY: Логируем изменение статуса верификации
+        $this->logging->security('organization.verification.status_changed', [
+            'organization_id' => $organization->id,
+            'new_status' => $verificationResults['overall_status'],
+            'verification_score' => $verificationResults['verification_score'],
+            'is_fully_verified' => $verificationResults['overall_status'] === 'verified'
+        ]);
 
         return $verificationResults;
     }
@@ -85,6 +157,21 @@ class OrganizationVerificationService
 
         if (!empty($updates)) {
             $organization->update($updates);
+            
+            $this->logging->business('organization.updated_from_dadata', [
+                'organization_id' => $organization->id,
+                'organization_name' => $organization->name,
+                'updates' => $updates,
+                'dadata_source' => 'inn_verification'
+            ]);
+            
+            $this->logging->audit('organization.data.updated', [
+                'organization_id' => $organization->id,
+                'updated_fields' => array_keys($updates),
+                'data_source' => 'dadata',
+                'performed_by' => auth()->id() ?? 'system'
+            ]);
+            
             Log::info('Organization updated with DaData info', [
                 'organization_id' => $organization->id,
                 'updates' => $updates
