@@ -14,55 +14,75 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
 {
     public function getFinancialSummary(int $organizationId): array
     {
+        // ОПТИМИЗАЦИЯ: Используем JOIN вместо whereHas для лучшей производительности
+        $organizationBalanceId = DB::table('organization_balances')
+            ->where('organization_id', $organizationId)
+            ->value('id');
+            
+        if (!$organizationBalanceId) {
+            return ['balance' => 0, 'credits_this_month' => 0, 'debits_this_month' => 0];
+        }
+
         // Баланс — последнее значение balance_after из транзакций
-        $lastTx = BalanceTransaction::whereHas('organizationBalance', function ($q) use ($organizationId) {
-            $q->where('organization_id', $organizationId);
-        })->orderByDesc('id')->first();
+        $lastTx = BalanceTransaction::where('organization_balance_id', $organizationBalanceId)
+            ->orderByDesc('id')
+            ->first();
         $balance = $lastTx?->balance_after ?? 0;
 
-        // Пополнения и списания за текущий месяц
+        // Пополнения и списания за текущий месяц в одном запросе
         $startOfMonth = now()->startOfMonth();
-        $credits = BalanceTransaction::whereHas('organizationBalance', function ($q) use ($organizationId) {
-            $q->where('organization_id', $organizationId);
-        })->where('type', BalanceTransaction::TYPE_CREDIT)
-          ->whereDate('created_at', '>=', $startOfMonth)
-          ->sum('amount');
-        $debits = BalanceTransaction::whereHas('organizationBalance', function ($q) use ($organizationId) {
-            $q->where('organization_id', $organizationId);
-        })->where('type', BalanceTransaction::TYPE_DEBIT)
-          ->whereDate('created_at', '>=', $startOfMonth)
-          ->sum('amount');
+        $monthlyData = BalanceTransaction::where('organization_balance_id', $organizationBalanceId)
+            ->whereDate('created_at', '>=', $startOfMonth)
+            ->selectRaw("
+                SUM(CASE WHEN type = ? THEN amount ELSE 0 END) as credits,
+                SUM(CASE WHEN type = ? THEN amount ELSE 0 END) as debits
+            ", [BalanceTransaction::TYPE_CREDIT, BalanceTransaction::TYPE_DEBIT])
+            ->first();
 
         return [
             'balance' => $balance / 100,
-            'credits_this_month' => $credits / 100,
-            'debits_this_month' => $debits / 100,
+            'credits_this_month' => ($monthlyData->credits ?? 0) / 100,
+            'debits_this_month' => ($monthlyData->debits ?? 0) / 100,
         ];
     }
 
     public function getProjectSummary(int $organizationId): array
     {
-        $total = Project::where('organization_id', $organizationId)->count();
-        $active = Project::where('organization_id', $organizationId)->where('status', 'active')->count();
-        $completed = Project::where('organization_id', $organizationId)->where('status', 'completed')->count();
+        // ОПТИМИЗАЦИЯ: Один запрос вместо трех
+        $data = Project::where('organization_id', $organizationId)
+            ->selectRaw('
+                COUNT(*) as total,
+                COUNT(CASE WHEN status = "active" THEN 1 END) as active,
+                COUNT(CASE WHEN status = "completed" THEN 1 END) as completed
+            ')
+            ->first();
 
-        return compact('total', 'active', 'completed');
+        return [
+            'total' => (int)$data->total,
+            'active' => (int)$data->active,
+            'completed' => (int)$data->completed,
+        ];
     }
 
     public function getContractSummary(int $organizationId): array
     {
-        $query = Contract::where('organization_id', $organizationId);
-        $total = $query->count();
-        $active = (clone $query)->where('status', 'active')->count();
-        $draft = (clone $query)->where('status', 'draft')->count();
-        $completed = (clone $query)->where('status', 'completed')->count();
-        $totalAmount = (clone $query)->sum('total_amount');
+        // ОПТИМИЗАЦИЯ: Один запрос вместо пяти
+        $data = Contract::where('organization_id', $organizationId)
+            ->selectRaw('
+                COUNT(*) as total,
+                COUNT(CASE WHEN status = "active" THEN 1 END) as active,
+                COUNT(CASE WHEN status = "draft" THEN 1 END) as draft,
+                COUNT(CASE WHEN status = "completed" THEN 1 END) as completed,
+                SUM(total_amount) as total_amount
+            ')
+            ->first();
+
         return [
-            'total' => $total,
-            'active' => $active,
-            'draft' => $draft,
-            'completed' => $completed,
-            'total_amount' => (float)$totalAmount,
+            'total' => (int)$data->total,
+            'active' => (int)$data->active,
+            'draft' => (int)$data->draft,
+            'completed' => (int)$data->completed,
+            'total_amount' => (float)($data->total_amount ?? 0),
         ];
     }
 
@@ -133,29 +153,47 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
      */
     public function getTeamDetails(int $organizationId): array
     {
-        $users = \App\Models\User::whereHas('organizations', function ($q) use ($organizationId) {
-                $q->where('organization_id', $organizationId);
-            })
-            ->with(['roleAssignments' => function ($q) use ($organizationId) {
-                $q->whereHas('context', function($contextQuery) use ($organizationId) {
-                    $contextQuery->where('type', 'organization')
-                                 ->where('resource_id', $organizationId);
-                })->where('is_active', true);
-            }])
-            ->whereNull('deleted_at')
-            ->get();
+        // ОПТИМИЗАЦИЯ: Кэшируем результат детальной информации о команде на 10 минут
+        return cache()->remember("team_details_{$organizationId}", 600, function() use ($organizationId) {
+            // ОПТИМИЗАЦИЯ: Используем JOIN вместо whereHas для лучшей производительности
+            $contextId = DB::table('authorization_contexts')
+                ->where('type', 'organization')
+                ->where('resource_id', $organizationId)
+                ->value('id');
+                
+            if (!$contextId) {
+                return [];
+            }
 
-        $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+            $users = DB::table('users')
+                ->join('user_organization', 'users.id', '=', 'user_organization.user_id')
+                ->leftJoin('user_role_assignments', function($join) use ($contextId) {
+                    $join->on('users.id', '=', 'user_role_assignments.user_id')
+                         ->where('user_role_assignments.context_id', '=', $contextId)
+                         ->where('user_role_assignments.is_active', '=', true);
+                })
+                ->where('user_organization.organization_id', $organizationId)
+                ->whereNull('users.deleted_at')
+                ->select([
+                    'users.id',
+                    'users.name', 
+                    'users.email',
+                    'users.avatar_url',
+                    DB::raw('GROUP_CONCAT(user_role_assignments.role_slug) as roles')
+                ])
+                ->groupBy('users.id', 'users.name', 'users.email', 'users.avatar_url')
+                ->get();
 
-        return $users->map(function ($user) use ($organizationId, $authService) {
-            return [
-                'id' => $user->id,
-                'name' => $user->name,
-                'email' => $user->email,
-                'avatar_url' => $user->avatar_url,
-                'roles' => $authService->getUserRoleSlugs($user, ['organization_id' => $organizationId]),
-            ];
-        })->toArray();
+            return $users->map(function ($user) {
+                return [
+                    'id' => $user->id,
+                    'name' => $user->name,
+                    'email' => $user->email,
+                    'avatar_url' => $user->avatar_url,
+                    'roles' => $user->roles ? explode(',', $user->roles) : [],
+                ];
+            })->toArray();
+        });
     }
 
     public function getTimeseries(string $metric, string $period, int $organizationId): array

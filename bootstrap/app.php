@@ -31,6 +31,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'jwt.auth' => JwtMiddleware::class,
             'organization.context' => SetOrganizationContext::class,
             'organization_context' => SetOrganizationContext::class,
+            'request.dedup' => \App\Http\Middleware\RequestDedupMiddleware::class,
             'subscription.limit' => \App\Http\Middleware\CheckSubscriptionLimitsMiddleware::class,
             'module.access' => \App\Modules\Middleware\ModuleAccessMiddleware::class,
             'module.permission' => \App\Modules\Middleware\ModulePermissionMiddleware::class,
