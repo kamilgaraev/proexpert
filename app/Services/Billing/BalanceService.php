@@ -10,11 +10,19 @@ use App\Models\Payment;
 use App\Models\OrganizationSubscription;
 use App\Exceptions\Billing\BalanceException;
 use App\Exceptions\Billing\InsufficientBalanceException;
+use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class BalanceService implements BalanceServiceInterface
 {
+    protected LoggingService $logging;
+
+    public function __construct(LoggingService $logging)
+    {
+        $this->logging = $logging;
+    }
+
     public function getOrCreateOrganizationBalance(Organization $organization): OrganizationBalance
     {
         return OrganizationBalance::firstOrCreate(
@@ -41,7 +49,7 @@ class BalanceService implements BalanceServiceInterface
             $orgBalance->balance += $amount;
             $orgBalance->save();
 
-            BalanceTransaction::create([
+            $transaction = BalanceTransaction::create([
                 'organization_balance_id' => $orgBalance->id,
                 'payment_id' => $payment?->id,
                 'type' => BalanceTransaction::TYPE_CREDIT,
@@ -51,7 +59,34 @@ class BalanceService implements BalanceServiceInterface
                 'description' => $description,
                 'meta' => $meta,
             ]);
-            Log::info("Balance credited for organization {$organization->id}. Amount: {$amount}. New balance: {$orgBalance->balance}");
+
+            // BUSINESS: Пополнение баланса - критически важная SaaS метрика
+            $this->logging->business('billing.balance.credited', [
+                'organization_id' => $organization->id,
+                'transaction_id' => $transaction->id,
+                'payment_id' => $payment?->id,
+                'amount_cents' => $amount,
+                'amount_rubles' => round($amount / 100, 2),
+                'balance_before_cents' => $balanceBefore,
+                'balance_after_cents' => $orgBalance->balance,
+                'balance_after_rubles' => round($orgBalance->balance / 100, 2),
+                'description' => $description,
+                'currency' => $orgBalance->currency,
+                'meta' => $meta
+            ]);
+
+            // AUDIT: Финансовая операция для compliance и аудита
+            $this->logging->audit('billing.transaction.credit', [
+                'organization_id' => $organization->id,
+                'transaction_id' => $transaction->id,
+                'transaction_type' => 'credit',
+                'amount_cents' => $amount,
+                'balance_change_cents' => $amount,
+                'performed_by' => request()->user()?->id ?? 'system',
+                'description' => $description,
+                'payment_reference' => $payment?->id
+            ]);
+
             return $orgBalance->refresh();
         });
     }
@@ -74,6 +109,21 @@ class BalanceService implements BalanceServiceInterface
                 $amountRubles = number_format($amount / 100, 2, '.', '');
                 $balanceRubles = number_format($orgBalance->balance / 100, 2, '.', '');
                 
+                // SECURITY: Попытка списания при недостаточном балансе - критично для fraud detection
+                $this->logging->security('billing.insufficient_balance.attempt', [
+                    'organization_id' => $organization->id,
+                    'attempted_debit_cents' => $amount,
+                    'attempted_debit_rubles' => $amountRubles,
+                    'current_balance_cents' => $orgBalance->balance,
+                    'current_balance_rubles' => $balanceRubles,
+                    'deficit_cents' => $amount - $orgBalance->balance,
+                    'deficit_rubles' => round(($amount - $orgBalance->balance) / 100, 2),
+                    'description' => $description,
+                    'user_id' => request()->user()?->id,
+                    'subscription_id' => $subscription?->id,
+                    'potential_fraud' => $amount > ($orgBalance->balance * 10) // Флаг если попытка списать в 10+ раз больше баланса
+                ], 'warning');
+                
                 throw new InsufficientBalanceException(
                     "Недостаточно средств на балансе организации {$organization->id} для списания {$amountRubles} руб. Текущий баланс: {$balanceRubles} руб."
                 );
@@ -83,7 +133,7 @@ class BalanceService implements BalanceServiceInterface
             $orgBalance->balance -= $amount;
             $orgBalance->save();
 
-            BalanceTransaction::create([
+            $transaction = BalanceTransaction::create([
                 'organization_balance_id' => $orgBalance->id,
                 'organization_subscription_id' => $subscription?->id,
                 'type' => BalanceTransaction::TYPE_DEBIT,
@@ -93,7 +143,36 @@ class BalanceService implements BalanceServiceInterface
                 'description' => $description,
                 'meta' => $meta,
             ]);
-            Log::info("Balance debited for organization {$organization->id}. Amount: {$amount}. New balance: {$orgBalance->balance}");
+
+            // BUSINESS: Списание с баланса - критически важная SaaS метрика для revenue tracking
+            $this->logging->business('billing.balance.debited', [
+                'organization_id' => $organization->id,
+                'transaction_id' => $transaction->id,
+                'subscription_id' => $subscription?->id,
+                'amount_cents' => $amount,
+                'amount_rubles' => round($amount / 100, 2),
+                'balance_before_cents' => $balanceBefore,
+                'balance_after_cents' => $orgBalance->balance,
+                'balance_after_rubles' => round($orgBalance->balance / 100, 2),
+                'balance_change_cents' => -$amount,
+                'description' => $description,
+                'currency' => $orgBalance->currency,
+                'meta' => $meta,
+                'is_subscription_payment' => $subscription !== null
+            ]);
+
+            // AUDIT: Финансовая операция для compliance и аудита
+            $this->logging->audit('billing.transaction.debit', [
+                'organization_id' => $organization->id,
+                'transaction_id' => $transaction->id,
+                'transaction_type' => 'debit',
+                'amount_cents' => $amount,
+                'balance_change_cents' => -$amount,
+                'subscription_reference' => $subscription?->id,
+                'performed_by' => request()->user()?->id ?? 'system',
+                'description' => $description
+            ]);
+
             return $orgBalance->refresh();
         });
     }

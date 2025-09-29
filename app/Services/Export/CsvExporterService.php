@@ -3,12 +3,21 @@
 namespace App\Services\Export;
 
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection as SupportCollection;
 
 class CsvExporterService
 {
+    protected LoggingService $logging;
+
+    public function __construct(LoggingService $logging)
+    {
+        $this->logging = $logging;
+    }
+
     /**
      * Генерирует и возвращает StreamedResponse для скачивания CSV файла.
      *
@@ -26,22 +35,70 @@ class CsvExporterService
         string $delimiter = ';',
         bool $applyBom = true
     ): StreamedResponse {
-        $response = new StreamedResponse(function () use ($headers, $data, $delimiter, $applyBom) {
-            $handle = fopen('php://output', 'w');
+        // BUSINESS: Начало CSV экспорта - важная функциональность для пользователей
+        $this->logging->business('csv.export.started', [
+            'filename' => $filename,
+            'headers_count' => count($headers),
+            'data_count' => is_countable($data) ? count($data) : null,
+            'export_format' => 'csv',
+            'delimiter' => $delimiter,
+            'bom_enabled' => $applyBom,
+            'user_id' => Auth::id(),
+            'organization_id' => request()->attributes->get('current_organization_id')
+        ]);
 
-            if ($applyBom) {
-                fwrite($handle, "\xEF\xBB\xBF"); // UTF-8 BOM
+        $response = new StreamedResponse(function () use ($headers, $data, $delimiter, $applyBom, $filename) {
+            try {
+                $handle = fopen('php://output', 'w');
+
+                if ($applyBom) {
+                    fwrite($handle, "\xEF\xBB\xBF"); // UTF-8 BOM
+                }
+
+                // Записываем заголовки
+                fputcsv($handle, $headers, $delimiter);
+
+                // Записываем данные (уже подготовленные строки)
+                $rowCount = 0;
+                foreach ($data as $rowArray) {
+                    fputcsv($handle, $rowArray, $delimiter);
+                    $rowCount++;
+                }
+
+                fclose($handle);
+
+                // BUSINESS: CSV экспорт успешно завершён
+                $this->logging->business('csv.export.completed', [
+                    'filename' => $filename,
+                    'total_rows' => $rowCount,
+                    'total_columns' => count($headers),
+                    'export_format' => 'csv',
+                    'user_id' => Auth::id()
+                ]);
+
+            } catch (\Exception $e) {
+                // TECHNICAL: Ошибка при генерации CSV
+                $this->logging->technical('csv.generation.exception', [
+                    'filename' => $filename,
+                    'exception_class' => get_class($e),
+                    'exception_message' => $e->getMessage(),
+                    'headers_count' => count($headers),
+                    'data_count' => is_countable($data) ? count($data) : null
+                ], 'error');
+
+                // BUSINESS: Неудачный экспорт CSV
+                $this->logging->business('csv.export.failed', [
+                    'filename' => $filename,
+                    'export_format' => 'csv',
+                    'failure_reason' => 'generation_exception',
+                    'error_message' => $e->getMessage(),
+                    'user_id' => Auth::id()
+                ], 'error');
+                
+                // Записываем ошибку в CSV
+                fwrite($handle, "Error: " . $e->getMessage());
+                fclose($handle);
             }
-
-            // Записываем заголовки
-            fputcsv($handle, $headers, $delimiter);
-
-            // Записываем данные (уже подготовленные строки)
-            foreach ($data as $rowArray) {
-                fputcsv($handle, $rowArray, $delimiter);
-            }
-
-            fclose($handle);
         });
 
         $response->headers->set('Content-Type', 'text/csv; charset=utf-8');

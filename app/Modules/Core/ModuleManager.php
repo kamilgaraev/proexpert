@@ -29,7 +29,8 @@ class ModuleManager
     
     public function discoverModules(): Collection
     {
-        app(ModuleScanner::class)->scanAndRegister();
+        // Модули загружаются из кеша/БД без автоматического сканирования
+        // Для обновления модулей используйте: php artisan modules:scan
         return $this->registry->getAllModules();
     }
     

@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Carbon;
 use App\Services\Billing\BalanceService;
 use App\Interfaces\Billing\BalanceServiceInterface;
+use App\Services\Logging\LoggingService;
 use App\Models\Organization;
 use App\Exceptions\Billing\InsufficientBalanceException;
 
@@ -15,11 +16,13 @@ class OrganizationSubscriptionService
 {
     protected $repo;
     protected BalanceServiceInterface $balanceService;
+    protected LoggingService $logging;
 
-    public function __construct()
+    public function __construct(LoggingService $logging)
     {
         $this->repo = new OrganizationSubscriptionRepository();
         $this->balanceService = app(BalanceServiceInterface::class);
+        $this->logging = $logging;
     }
 
     public function getCurrentSubscription($organizationId)
@@ -39,22 +42,80 @@ class OrganizationSubscriptionService
             'is_auto_payment_enabled' => $isAutoPaymentEnabled,
         ];
 
-        // Списываем стоимость плана с баланса (в копейках/центах)
-        if (((float) $plan->price) > 0) {
-            $amountCents = (int) round(((float) $plan->price) * 100);
-            // Бросит InsufficientBalanceException, если средств нет
-            $this->balanceService->debitBalance(
-                $organization,
-                $amountCents,
-                "Оплата подписки на план '{$plan->name}'"
-            );
-        }
+        // BUSINESS: Начало подписки - критически важная SaaS метрика
+        $this->logging->business('subscription.creation.started', [
+            'organization_id' => $organizationId,
+            'plan_slug' => $planSlug,
+            'plan_id' => $plan->id,
+            'plan_name' => $plan->name,
+            'plan_price' => $plan->price,
+            'duration_days' => $plan->duration_in_days,
+            'auto_payment_enabled' => $isAutoPaymentEnabled,
+            'starts_at' => $now->toISOString(),
+            'ends_at' => $now->copy()->addDays($plan->duration_in_days)->toISOString(),
+            'user_id' => Auth::id()
+        ]);
 
-        return $this->repo->createOrUpdate($organizationId, $plan->id, $data);
+        try {
+            // Списываем стоимость плана с баланса (в копейках/центах)
+            if (((float) $plan->price) > 0) {
+                $amountCents = (int) round(((float) $plan->price) * 100);
+                // Бросит InsufficientBalanceException, если средств нет
+                $this->balanceService->debitBalance(
+                    $organization,
+                    $amountCents,
+                    "Оплата подписки на план '{$plan->name}'"
+                );
+            }
+
+            $subscription = $this->repo->createOrUpdate($organizationId, $plan->id, $data);
+
+            // BUSINESS: Подписка успешно создана
+            $this->logging->business('subscription.created', [
+                'organization_id' => $organizationId,
+                'subscription_id' => $subscription->id,
+                'plan_slug' => $planSlug,
+                'plan_id' => $plan->id,
+                'plan_name' => $plan->name,
+                'amount_charged_cents' => ((float) $plan->price) > 0 ? $amountCents : 0,
+                'amount_charged_rubles' => $plan->price,
+                'starts_at' => $subscription->starts_at,
+                'ends_at' => $subscription->ends_at,
+                'is_paid_plan' => ((float) $plan->price) > 0,
+                'user_id' => Auth::id()
+            ]);
+
+            // AUDIT: Создание подписки для compliance
+            $this->logging->audit('subscription.created', [
+                'organization_id' => $organizationId,
+                'subscription_id' => $subscription->id,
+                'plan_id' => $plan->id,
+                'transaction_type' => 'subscription_created',
+                'performed_by' => Auth::id() ?? 'system'
+            ]);
+
+            return $subscription;
+
+        } catch (InsufficientBalanceException $e) {
+            // BUSINESS: Неудачная попытка подписки из-за недостатка средств  
+            $this->logging->business('subscription.creation.failed.insufficient_balance', [
+                'organization_id' => $organizationId,
+                'plan_slug' => $planSlug,
+                'plan_price' => $plan->price,
+                'required_amount_cents' => (int) round(((float) $plan->price) * 100),
+                'failure_reason' => 'insufficient_balance',
+                'user_id' => Auth::id()
+            ], 'warning');
+            
+            throw $e;
+        }
     }
 
     public function updateSubscription($organizationId, $planSlug, bool $isAutoPaymentEnabled = true)
     {
+        // Получаем текущую подписку для сравнения
+        $currentSubscription = $this->repo->getByOrganizationId($organizationId);
+        
         // Апгрейд/даунгрейд: смена тарифа, перерасчёт дат
         $plan = SubscriptionPlan::where('slug', $planSlug)->where('is_active', true)->firstOrFail();
         $organization = Organization::findOrFail($organizationId);
@@ -67,16 +128,68 @@ class OrganizationSubscriptionService
             'is_auto_payment_enabled' => $isAutoPaymentEnabled,
         ];
 
-        if (((float) $plan->price) > 0) {
-            $amountCents = (int) round(((float) $plan->price) * 100);
-            $this->balanceService->debitBalance(
-                $organization,
-                $amountCents,
-                "Оплата смены подписки на план '{$plan->name}'"
-            );
-        }
+        // BUSINESS: Начало изменения подписки
+        $this->logging->business('subscription.update.started', [
+            'organization_id' => $organizationId,
+            'old_plan_id' => $currentSubscription?->subscription_plan_id,
+            'new_plan_slug' => $planSlug,
+            'new_plan_id' => $plan->id,
+            'new_plan_name' => $plan->name,
+            'new_plan_price' => $plan->price,
+            'change_type' => $this->getSubscriptionChangeType($currentSubscription, $plan),
+            'user_id' => Auth::id()
+        ]);
 
-        return $this->repo->createOrUpdate($organizationId, $plan->id, $data);
+        try {
+            if (((float) $plan->price) > 0) {
+                $amountCents = (int) round(((float) $plan->price) * 100);
+                $this->balanceService->debitBalance(
+                    $organization,
+                    $amountCents,
+                    "Оплата смены подписки на план '{$plan->name}'"
+                );
+            }
+
+            $subscription = $this->repo->createOrUpdate($organizationId, $plan->id, $data);
+
+            // BUSINESS: Подписка успешно обновлена
+            $this->logging->business('subscription.updated', [
+                'organization_id' => $organizationId,
+                'subscription_id' => $subscription->id,
+                'old_plan_id' => $currentSubscription?->subscription_plan_id,
+                'new_plan_id' => $plan->id,
+                'new_plan_slug' => $planSlug,
+                'amount_charged_cents' => ((float) $plan->price) > 0 ? $amountCents : 0,
+                'amount_charged_rubles' => $plan->price,
+                'change_type' => $this->getSubscriptionChangeType($currentSubscription, $plan),
+                'user_id' => Auth::id()
+            ]);
+
+            // AUDIT: Изменение подписки
+            $this->logging->audit('subscription.updated', [
+                'organization_id' => $organizationId,
+                'subscription_id' => $subscription->id,
+                'old_plan_id' => $currentSubscription?->subscription_plan_id,
+                'new_plan_id' => $plan->id,
+                'transaction_type' => 'subscription_updated',
+                'performed_by' => Auth::id() ?? 'system'
+            ]);
+
+            return $subscription;
+
+        } catch (InsufficientBalanceException $e) {
+            // BUSINESS: Неудачная попытка обновления подписки
+            $this->logging->business('subscription.update.failed.insufficient_balance', [
+                'organization_id' => $organizationId,
+                'new_plan_slug' => $planSlug,
+                'new_plan_price' => $plan->price,
+                'required_amount_cents' => (int) round(((float) $plan->price) * 100),
+                'failure_reason' => 'insufficient_balance',
+                'user_id' => Auth::id()
+            ], 'warning');
+            
+            throw $e;
+        }
     }
 
     public function cancelSubscription($organizationId): array
@@ -84,6 +197,13 @@ class OrganizationSubscriptionService
         $subscription = $this->repo->getByOrganizationId($organizationId);
         
         if (!$subscription) {
+            // BUSINESS: Попытка отменить несуществующую подписку
+            $this->logging->business('subscription.cancellation.failed.not_found', [
+                'organization_id' => $organizationId,
+                'failure_reason' => 'subscription_not_found',
+                'user_id' => Auth::id()
+            ], 'warning');
+            
             return [
                 'success' => false,
                 'message' => 'Активная подписка не найдена',
@@ -92,6 +212,15 @@ class OrganizationSubscriptionService
         }
 
         if ($subscription->canceled_at) {
+            // BUSINESS: Попытка отменить уже отменённую подписку
+            $this->logging->business('subscription.cancellation.failed.already_canceled', [
+                'organization_id' => $organizationId,
+                'subscription_id' => $subscription->id,
+                'canceled_at' => $subscription->canceled_at,
+                'failure_reason' => 'already_canceled',
+                'user_id' => Auth::id()
+            ], 'info');
+            
             return [
                 'success' => false,
                 'message' => 'Подписка уже отменена',
@@ -99,10 +228,40 @@ class OrganizationSubscriptionService
             ];
         }
 
+        // BUSINESS: Начало отмены подписки - важная SaaS метрика (churn)
+        $this->logging->business('subscription.cancellation.started', [
+            'organization_id' => $organizationId,
+            'subscription_id' => $subscription->id,
+            'plan_id' => $subscription->subscription_plan_id,
+            'ends_at' => $subscription->ends_at,
+            'days_remaining' => now()->diffInDays($subscription->ends_at),
+            'user_id' => Auth::id()
+        ]);
+
         // Отменяем подписку, но она продолжает работать до ends_at
         $subscription->update([
             'canceled_at' => Carbon::now(),
             'is_auto_payment_enabled' => false // Отключаем автопродление
+        ]);
+
+        // BUSINESS: Подписка успешно отменена - критично для churn анализа
+        $this->logging->business('subscription.canceled', [
+            'organization_id' => $organizationId,
+            'subscription_id' => $subscription->id,
+            'plan_id' => $subscription->subscription_plan_id,
+            'canceled_at' => $subscription->canceled_at,
+            'remains_active_until' => $subscription->ends_at,
+            'days_remaining' => now()->diffInDays($subscription->ends_at),
+            'user_id' => Auth::id(),
+            'churn_event' => true
+        ]);
+
+        // AUDIT: Отмена подписки
+        $this->logging->audit('subscription.canceled', [
+            'organization_id' => $organizationId,
+            'subscription_id' => $subscription->id,
+            'transaction_type' => 'subscription_canceled',
+            'performed_by' => Auth::id() ?? 'system'
         ]);
 
         return [
@@ -320,6 +479,27 @@ class OrganizationSubscriptionService
             return "Тарифный план изменен с '{$currentPlanName}' на '{$newPlanName}'. Возвращено на баланс: " . abs($billingInfo['difference']) . " руб.";
         } else {
             return "Тарифный план изменен с '{$currentPlanName}' на '{$newPlanName}'. Стоимость не изменилась.";
+        }
+    }
+
+    /**
+     * Определяет тип изменения подписки для логирования
+     */
+    private function getSubscriptionChangeType($currentSubscription, $newPlan): string
+    {
+        if (!$currentSubscription || !$currentSubscription->plan) {
+            return 'new_subscription';
+        }
+
+        $currentPrice = (float) $currentSubscription->plan->price;
+        $newPrice = (float) $newPlan->price;
+
+        if ($newPrice > $currentPrice) {
+            return 'upgrade';
+        } elseif ($newPrice < $currentPrice) {
+            return 'downgrade';
+        } else {
+            return 'same_price_change';
         }
     }
 } 

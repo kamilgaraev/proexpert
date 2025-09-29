@@ -3,6 +3,7 @@
 namespace App\Services\Notification;
 
 use App\Models\ContactForm;
+use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Config;
@@ -12,9 +13,11 @@ class TelegramService
     protected string $botToken;
     protected string $chatId;
     protected string $baseUrl;
+    protected LoggingService $logging;
 
-    public function __construct()
+    public function __construct(LoggingService $logging)
     {
+        $this->logging = $logging;
         $this->botToken = config('telegram.bot_token');
         $this->chatId = config('telegram.chat_id');
         $this->baseUrl = "https://api.telegram.org/bot{$this->botToken}";
@@ -23,9 +26,25 @@ class TelegramService
     public function sendContactFormNotification(ContactForm $contactForm): bool
     {
         if (empty($this->botToken) || empty($this->chatId)) {
-            Log::warning('Telegram credentials not configured');
+            // TECHNICAL: Конфигурация Telegram не настроена
+            $this->logging->technical('telegram.configuration.missing', [
+                'contact_form_id' => $contactForm->id,
+                'has_bot_token' => !empty($this->botToken),
+                'has_chat_id' => !empty($this->chatId),
+                'configuration_issue' => true
+            ], 'warning');
+            
             return false;
         }
+
+        // BUSINESS: Начало отправки Telegram уведомления
+        $this->logging->business('telegram.notification.started', [
+            'contact_form_id' => $contactForm->id,
+            'contact_email' => $contactForm->email,
+            'contact_name' => $contactForm->name,
+            'subject' => $contactForm->subject,
+            'notification_type' => 'contact_form'
+        ]);
 
         $message = $this->formatContactFormMessage($contactForm);
         
@@ -75,27 +94,63 @@ class TelegramService
                     ]
                 ]);
 
-                Log::info('Telegram notification sent successfully', [
+                // BUSINESS: Telegram уведомление успешно отправлено
+                $this->logging->business('telegram.notification.sent', [
                     'contact_form_id' => $contactForm->id,
                     'telegram_message_id' => $responseData['result']['message_id'] ?? null,
+                    'chat_id' => $this->chatId,
+                    'contact_email' => $contactForm->email,
+                    'notification_type' => 'contact_form'
+                ]);
+
+                // TECHNICAL: Telegram API успешный ответ для мониторинга интеграций
+                $this->logging->technical('telegram.api.success', [
+                    'contact_form_id' => $contactForm->id,
+                    'telegram_message_id' => $responseData['result']['message_id'] ?? null,
+                    'response_time_ms' => $response->transferStats?->getTransferTime() * 1000 ?? null,
+                    'api_endpoint' => 'sendMessage'
                 ]);
 
                 return true;
             }
 
-            Log::error('Failed to send Telegram notification', [
+            // TECHNICAL: Неудачная отправка Telegram уведомления - проблема интеграции
+            $this->logging->technical('telegram.api.failed', [
                 'contact_form_id' => $contactForm->id,
                 'response_status' => $response->status(),
                 'response_body' => $response->body(),
-            ]);
+                'api_endpoint' => 'sendMessage',
+                'integration_failure' => true
+            ], 'error');
+
+            // BUSINESS: Неудачная отправка уведомления - может влиять на бизнес-процесс
+            $this->logging->business('telegram.notification.failed', [
+                'contact_form_id' => $contactForm->id,
+                'contact_email' => $contactForm->email,
+                'failure_reason' => 'api_error',
+                'response_status' => $response->status()
+            ], 'warning');
 
             return false;
 
         } catch (\Exception $e) {
-            Log::error('Telegram API error', [
+            // TECHNICAL: Критическая ошибка Telegram API
+            $this->logging->technical('telegram.api.exception', [
                 'contact_form_id' => $contactForm->id,
-                'error' => $e->getMessage(),
-            ]);
+                'exception_class' => get_class($e),
+                'exception_message' => $e->getMessage(),
+                'exception_file' => $e->getFile(),
+                'exception_line' => $e->getLine(),
+                'api_endpoint' => 'sendMessage'
+            ], 'error');
+
+            // BUSINESS: Системная ошибка при отправке уведомления
+            $this->logging->business('telegram.notification.exception', [
+                'contact_form_id' => $contactForm->id,
+                'contact_email' => $contactForm->email,
+                'failure_reason' => 'system_exception',
+                'error_message' => $e->getMessage()
+            ], 'error');
 
             return false;
         }

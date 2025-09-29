@@ -5,7 +5,9 @@ namespace App\Services\Export;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection as SupportCollection;
 use Exception;
@@ -13,10 +15,16 @@ use PhpOffice\PhpSpreadsheet\Style\Border;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Auth;
 
 class ExcelExporterService
 {
+    protected LoggingService $logging;
+
+    public function __construct(LoggingService $logging)
+    {
+        $this->logging = $logging;
+    }
+
     /**
      * Генерирует и возвращает StreamedResponse для скачивания Excel файла.
      * В случае ошибки логирует и возвращает JSON-ответ с ошибкой.
@@ -31,18 +39,31 @@ class ExcelExporterService
         array $headers,
         $data
     ) {
-        Log::info('[ExcelExporterService] Начало экспорта в Excel', [
+        // BUSINESS: Начало экспорта Excel - важная функциональность для пользователей
+        $this->logging->business('excel.export.started', [
             'filename' => $filename,
             'headers_count' => count($headers),
+            'data_count' => is_countable($data) ? count($data) : null,
+            'export_format' => 'xlsx',
+            'user_id' => Auth::id(),
+            'organization_id' => request()->attributes->get('current_organization_id')
+        ]);
+
+        // TECHNICAL: Детали экспорта для диагностики
+        $this->logging->technical('excel.export.details', [
+            'filename' => $filename,
             'headers' => $headers,
             'data_type' => gettype($data),
-            'data_count' => is_countable($data) ? count($data) : null,
-            'first_row' => is_iterable($data) ? (is_array($data) ? ($data[0] ?? null) : (method_exists($data, 'first') ? $data->first() : null)) : null,
+            'first_row_sample' => is_iterable($data) ? (is_array($data) ? ($data[0] ?? null) : (method_exists($data, 'first') ? $data->first() : null)) : null,
         ]);
         try {
             $response = new StreamedResponse(function () use ($headers, $data, $filename) {
                 try {
-                    Log::info('[ExcelExporterService] Создание Spreadsheet');
+                    // TECHNICAL: Начало создания Excel документа
+                    $this->logging->technical('excel.spreadsheet.creation.started', [
+                        'filename' => $filename,
+                        'columns_count' => count($headers)
+                    ]);
                     $spreadsheet = new Spreadsheet();
                     $sheet = $spreadsheet->getActiveSheet();
 
@@ -117,20 +138,45 @@ class ExcelExporterService
                     // Заморозка заголовка
                     $sheet->freezePane('A2');
 
-                    Log::info('[ExcelExporterService] Создание Xlsx writer и сохранение в поток');
+                    // TECHNICAL: Запись Excel файла в поток
+                    $this->logging->technical('excel.writer.started', [
+                        'filename' => $filename,
+                        'total_rows' => $rowIndex - 2,
+                        'total_columns' => count($headers)
+                    ]);
+                    
                     $writer = new Xlsx($spreadsheet);
                     $writer->save('php://output');
-                    Log::info('[ExcelExporterService] Экспорт успешно завершён', [
+                    
+                    // BUSINESS: Excel экспорт успешно завершён
+                    $this->logging->business('excel.export.completed', [
                         'filename' => $filename,
-                        'total_rows' => $rowIndex - 2
+                        'total_rows' => $rowIndex - 2,
+                        'total_columns' => count($headers),
+                        'export_format' => 'xlsx',
+                        'user_id' => Auth::id()
                     ]);
                 } catch (Exception $e) {
-                    Log::error('[ExcelExporterService] Ошибка при генерации Excel:', [
-                        'exception' => $e,
-                        'headers' => $headers,
-                        'first_row' => is_iterable($data) ? (is_array($data) ? ($data[0] ?? null) : (method_exists($data, 'first') ? $data->first() : null)) : null,
-                        'data_count' => is_countable($data) ? count($data) : null,
-                    ]);
+                    // TECHNICAL: Критическая ошибка генерации Excel
+                    $this->logging->technical('excel.generation.exception', [
+                        'filename' => $filename,
+                        'exception_class' => get_class($e),
+                        'exception_message' => $e->getMessage(),
+                        'exception_file' => $e->getFile(),
+                        'exception_line' => $e->getLine(),
+                        'headers_count' => count($headers),
+                        'data_count' => is_countable($data) ? count($data) : null
+                    ], 'error');
+
+                    // BUSINESS: Неудачный экспорт Excel - влияет на пользовательский опыт
+                    $this->logging->business('excel.export.failed', [
+                        'filename' => $filename,
+                        'export_format' => 'xlsx',
+                        'failure_reason' => 'generation_exception',
+                        'error_message' => $e->getMessage(),
+                        'user_id' => Auth::id()
+                    ], 'error');
+                    
                     // Не выводим JSON в поток, так как это портит Excel файл
                     // Вместо этого создаем пустой Excel файл с сообщением об ошибке
                     $errorSpreadsheet = new Spreadsheet();

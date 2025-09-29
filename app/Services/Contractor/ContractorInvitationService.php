@@ -7,8 +7,10 @@ use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Billing\SubscriptionLimitsService;
+use App\Services\Logging\LoggingService;
 use App\Exceptions\BusinessLogicException;
 use App\Repositories\Interfaces\ContractorRepositoryInterface;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -21,13 +23,16 @@ class ContractorInvitationService
 {
     protected SubscriptionLimitsService $subscriptionLimitsService;
     protected ContractorRepositoryInterface $contractorRepository;
+    protected LoggingService $logging;
 
     public function __construct(
         SubscriptionLimitsService $subscriptionLimitsService,
-        ContractorRepositoryInterface $contractorRepository
+        ContractorRepositoryInterface $contractorRepository,
+        LoggingService $logging
     ) {
         $this->subscriptionLimitsService = $subscriptionLimitsService;
         $this->contractorRepository = $contractorRepository;
+        $this->logging = $logging;
     }
 
     public function createInvitation(
@@ -327,21 +332,57 @@ class ContractorInvitationService
             if ($organizationOwners->isNotEmpty()) {
                 Notification::send($organizationOwners, new ContractorInvitationNotification($invitation));
                 
-                Log::info('Contractor invitation notifications sent', [
-                    'invitation_id' => $invitation->id,
-                    'recipients_count' => $organizationOwners->count(),
-                ]);
-            } else {
-                Log::warning('No organization owners found for contractor invitation', [
+                // BUSINESS: Уведомления о приглашении подрядчика отправлены
+                $this->logging->business('contractor.invitation.notifications.sent', [
                     'invitation_id' => $invitation->id,
                     'invited_organization_id' => $invitation->invited_organization_id,
+                    'inviting_organization_id' => $invitation->organization_id,
+                    'recipients_count' => $organizationOwners->count(),
+                    'notification_channels' => ['mail', 'database']
                 ]);
+
+                // AUDIT: Отправка приглашения подрядчику
+                $this->logging->audit('contractor.invitation.sent', [
+                    'invitation_id' => $invitation->id,
+                    'invited_organization_id' => $invitation->invited_organization_id,
+                    'transaction_type' => 'contractor_invitation_sent',
+                    'performed_by' => Auth::id() ?? 'system',
+                    'recipients_count' => $organizationOwners->count()
+                ]);
+                
+            } else {
+                // TECHNICAL: Нет владельцев организации для отправки приглашения
+                $this->logging->technical('contractor.invitation.no_recipients', [
+                    'invitation_id' => $invitation->id,
+                    'invited_organization_id' => $invitation->invited_organization_id,
+                    'organization_owners_count' => 0,
+                    'notification_issue' => true
+                ], 'warning');
+
+                // BUSINESS: Приглашение не отправлено из-за отсутствия получателей
+                $this->logging->business('contractor.invitation.failed.no_recipients', [
+                    'invitation_id' => $invitation->id,
+                    'invited_organization_id' => $invitation->invited_organization_id,
+                    'failure_reason' => 'no_organization_owners'
+                ], 'warning');
             }
         } catch (\Exception $e) {
-            Log::error('Failed to send contractor invitation notifications', [
+            // TECHNICAL: Ошибка при отправке приглашения подрядчику
+            $this->logging->technical('contractor.invitation.notification.exception', [
                 'invitation_id' => $invitation->id,
-                'error' => $e->getMessage(),
-            ]);
+                'invited_organization_id' => $invitation->invited_organization_id,
+                'exception_class' => get_class($e),
+                'exception_message' => $e->getMessage(),
+                'notification_failure' => true
+            ], 'error');
+
+            // BUSINESS: Неудачная отправка приглашения - влияет на бизнес-процесс
+            $this->logging->business('contractor.invitation.failed.exception', [
+                'invitation_id' => $invitation->id,
+                'invited_organization_id' => $invitation->invited_organization_id,
+                'failure_reason' => 'system_exception',
+                'error_message' => $e->getMessage()
+            ], 'error');
         }
     }
 }

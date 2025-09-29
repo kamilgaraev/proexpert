@@ -83,8 +83,8 @@ class ModuleRegistry
         Cache::forget(self::CACHE_KEY);
         $this->modules = collect();
         
-        // Перезапускаем сканирование модулей
-        app(ModuleScanner::class)->scanAndRegister();
+        // Кеш очищен, модули перезагрузятся из БД при следующем обращении
+        // Для сканирования новых модулей используйте: php artisan modules:scan
     }
     
     public function getAllModules(): Collection

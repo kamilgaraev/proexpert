@@ -8,8 +8,10 @@ use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
 use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
 use App\DTOs\Contract\ContractDTO; // Создадим его позже
 use App\Models\Contract;
+use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Exception;
 
@@ -19,17 +21,20 @@ class ContractService
     protected ContractorRepositoryInterface $contractorRepository; 
     protected ContractPerformanceActRepositoryInterface $actRepository;
     protected ContractPaymentRepositoryInterface $paymentRepository;
+    protected LoggingService $logging;
 
     public function __construct(
         ContractRepositoryInterface $contractRepository,
         ContractorRepositoryInterface $contractorRepository,
         ContractPerformanceActRepositoryInterface $actRepository,
-        ContractPaymentRepositoryInterface $paymentRepository
+        ContractPaymentRepositoryInterface $paymentRepository,
+        LoggingService $logging
     ) {
         $this->contractRepository = $contractRepository;
         $this->contractorRepository = $contractorRepository;
         $this->actRepository = $actRepository;
         $this->paymentRepository = $paymentRepository;
+        $this->logging = $logging;
     }
 
     public function getAllContracts(int $organizationId, int $perPage = 15, array $filters = [], string $sortBy = 'date', string $sortDirection = 'desc'): LengthAwarePaginator
@@ -39,6 +44,15 @@ class ContractService
 
     public function createContract(int $organizationId, ContractDTO $contractDTO): Contract
     {
+        // BUSINESS: Начало создания договора - важная бизнес-операция
+        $this->logging->business('contract.creation.started', [
+            'organization_id' => $organizationId,
+            'contractor_id' => $contractDTO->contractor_id ?? null,
+            'total_amount' => $contractDTO->total_amount ?? null,
+            'contract_number' => $contractDTO->number ?? null,
+            'user_id' => Auth::id()
+        ]);
+
         // Убедимся, что подрядчик существует и принадлежит этой организации
         // $contractor = $this->contractorRepository->find($contractDTO->contractor_id);
         // if (!$contractor || $contractor->organization_id !== $organizationId) {
@@ -50,7 +64,45 @@ class ContractService
         $contractData = $contractDTO->toArray();
         $contractData['organization_id'] = $organizationId;
 
-        return $this->contractRepository->create($contractData);
+        try {
+            $contract = $this->contractRepository->create($contractData);
+
+            // BUSINESS: Договор успешно создан
+            $this->logging->business('contract.created', [
+                'organization_id' => $organizationId,
+                'contract_id' => $contract->id,
+                'contract_number' => $contract->number,
+                'contractor_id' => $contract->contractor_id,
+                'total_amount' => $contract->total_amount,
+                'start_date' => $contract->start_date,
+                'end_date' => $contract->end_date,
+                'status' => $contract->status->value ?? $contract->status,
+                'user_id' => Auth::id()
+            ]);
+
+            // AUDIT: Создание договора для compliance
+            $this->logging->audit('contract.created', [
+                'organization_id' => $organizationId,
+                'contract_id' => $contract->id,
+                'contract_number' => $contract->number,
+                'transaction_type' => 'contract_created',
+                'performed_by' => Auth::id() ?? 'system',
+                'contract_amount' => $contract->total_amount
+            ]);
+
+            return $contract;
+
+        } catch (Exception $e) {
+            // BUSINESS: Неудачное создание договора
+            $this->logging->business('contract.creation.failed', [
+                'organization_id' => $organizationId,
+                'contract_number' => $contractDTO->number ?? null,
+                'error_message' => $e->getMessage(),
+                'user_id' => Auth::id()
+            ], 'error');
+            
+            throw $e;
+        }
     }
 
     public function getContractById(int $contractId, int $organizationId): ?Contract
@@ -76,18 +128,85 @@ class ContractService
         if (!$contract) {
             throw new Exception('Contract not found.');
         }
+
+        // Сохраняем старые значения для аудита
+        $oldValues = [
+            'number' => $contract->number,
+            'total_amount' => $contract->total_amount,
+            'status' => $contract->status->value ?? $contract->status,
+            'contractor_id' => $contract->contractor_id,
+            'start_date' => $contract->start_date,
+            'end_date' => $contract->end_date
+        ];
         
+        // BUSINESS: Начало обновления договора
+        $this->logging->business('contract.update.started', [
+            'organization_id' => $organizationId,
+            'contract_id' => $contractId,
+            'contract_number' => $contract->number,
+            'old_total_amount' => $contract->total_amount,
+            'new_total_amount' => $contractDTO->total_amount ?? null,
+            'user_id' => Auth::id()
+        ]);
+
         // Дополнительные проверки перед обновлением
 
         $updateData = $contractDTO->toArray();
-        $updated = $this->contractRepository->update($contract->id, $updateData);
+        
+        try {
+            $updated = $this->contractRepository->update($contract->id, $updateData);
 
-        if (!$updated) {
-            // Можно добавить более специфичную ошибку или логирование
-            throw new Exception('Failed to update contract.');
+            if (!$updated) {
+                // Можно добавить более специфичную ошибку или логирование
+                throw new Exception('Failed to update contract.');
+            }
+
+            $updatedContract = $this->getContractById($contractId, $organizationId);
+
+            // BUSINESS: Договор успешно обновлён
+            $this->logging->business('contract.updated', [
+                'organization_id' => $organizationId,
+                'contract_id' => $contractId,
+                'contract_number' => $updatedContract->number,
+                'old_total_amount' => $oldValues['total_amount'],
+                'new_total_amount' => $updatedContract->total_amount,
+                'amount_changed' => $updatedContract->total_amount != $oldValues['total_amount'],
+                'status_changed' => ($updatedContract->status->value ?? $updatedContract->status) != $oldValues['status'],
+                'user_id' => Auth::id()
+            ]);
+
+            // AUDIT: Изменение договора для compliance
+            $this->logging->audit('contract.updated', [
+                'organization_id' => $organizationId,
+                'contract_id' => $contractId,
+                'contract_number' => $updatedContract->number,
+                'transaction_type' => 'contract_updated',
+                'performed_by' => Auth::id() ?? 'system',
+                'changes' => [
+                    'old_values' => $oldValues,
+                    'new_values' => [
+                        'number' => $updatedContract->number,
+                        'total_amount' => $updatedContract->total_amount,
+                        'status' => $updatedContract->status->value ?? $updatedContract->status,
+                        'contractor_id' => $updatedContract->contractor_id
+                    ]
+                ]
+            ]);
+
+            return $updatedContract; // Возвращаем свежую модель
+
+        } catch (Exception $e) {
+            // BUSINESS: Неудачное обновление договора
+            $this->logging->business('contract.update.failed', [
+                'organization_id' => $organizationId,
+                'contract_id' => $contractId,
+                'contract_number' => $contract->number,
+                'error_message' => $e->getMessage(),
+                'user_id' => Auth::id()
+            ], 'error');
+            
+            throw $e;
         }
-
-        return $this->getContractById($contractId, $organizationId); // Возвращаем свежую модель
     }
 
     public function deleteContract(int $contractId, int $organizationId): bool
@@ -96,9 +215,77 @@ class ContractService
         if (!$contract) {
             throw new Exception('Contract not found or does not belong to organization.');
         }
-        // Возможно, стоит проверить наличие связанных актов/платежей перед удалением
-        // или настроить каскадное удаление/soft deletes на уровне БД
-        return $this->contractRepository->delete($contract->id);
+
+        // SECURITY: Попытка удаления договора - критично для аудита
+        $this->logging->security('contract.deletion.attempt', [
+            'organization_id' => $organizationId,
+            'contract_id' => $contractId,
+            'contract_number' => $contract->number,
+            'contract_amount' => $contract->total_amount,
+            'contract_status' => $contract->status->value ?? $contract->status,
+            'has_performance_acts' => $contract->performanceActs->count() > 0,
+            'has_payments' => $contract->payments->count() > 0,
+            'user_id' => Auth::id(),
+            'user_ip' => request()->ip()
+        ], 'warning');
+
+        // BUSINESS: Начало удаления договора
+        $this->logging->business('contract.deletion.started', [
+            'organization_id' => $organizationId,
+            'contract_id' => $contractId,
+            'contract_number' => $contract->number,
+            'contract_amount' => $contract->total_amount,
+            'related_acts_count' => $contract->performanceActs->count(),
+            'related_payments_count' => $contract->payments->count(),
+            'user_id' => Auth::id()
+        ]);
+
+        try {
+            // Возможно, стоит проверить наличие связанных актов/платежей перед удалением
+            // или настроить каскадное удаление/soft deletes на уровне БД
+            $deleted = $this->contractRepository->delete($contract->id);
+
+            if ($deleted) {
+                // BUSINESS: Договор успешно удалён
+                $this->logging->business('contract.deleted', [
+                    'organization_id' => $organizationId,
+                    'contract_id' => $contractId,
+                    'contract_number' => $contract->number,
+                    'contract_amount' => $contract->total_amount,
+                    'user_id' => Auth::id()
+                ]);
+
+                // AUDIT: Удаление договора - критично для compliance
+                $this->logging->audit('contract.deleted', [
+                    'organization_id' => $organizationId,
+                    'contract_id' => $contractId,
+                    'contract_number' => $contract->number,
+                    'transaction_type' => 'contract_deleted',
+                    'performed_by' => Auth::id() ?? 'system',
+                    'contract_details' => [
+                        'total_amount' => $contract->total_amount,
+                        'contractor_id' => $contract->contractor_id,
+                        'status' => $contract->status->value ?? $contract->status,
+                        'start_date' => $contract->start_date,
+                        'end_date' => $contract->end_date
+                    ]
+                ]);
+            }
+
+            return $deleted;
+
+        } catch (Exception $e) {
+            // BUSINESS: Неудачное удаление договора
+            $this->logging->business('contract.deletion.failed', [
+                'organization_id' => $organizationId,
+                'contract_id' => $contractId,
+                'contract_number' => $contract->number,
+                'error_message' => $e->getMessage(),
+                'user_id' => Auth::id()
+            ], 'error');
+            
+            throw $e;
+        }
     }
     
     /**
@@ -138,9 +325,9 @@ class ContractService
                    ->get()
         );
 
-        // Временная диагностика дочерних контрактов
+        // TECHNICAL: Диагностика дочерних контрактов для системного анализа
         $dbChildren = \App\Models\Contract::where('parent_contract_id', $contract->id)->get();
-        Log::info('Contract child contracts check:', [
+        $this->logging->technical('contract.child_contracts.diagnostic', [
             'contract_id' => $contract->id,
             'contract_number' => $contract->number,
             'contract_org_id' => $contract->organization_id,
@@ -157,6 +344,7 @@ class ContractService
                     'deleted_at' => $child->deleted_at,
                 ];
             })->toArray(),
+            'user_id' => Auth::id()
         ]);
 
         // Аналитика на основе загруженных связей (не новых запросов!)
