@@ -8,6 +8,7 @@ use App\Models\OrganizationModuleActivation;
 use App\Modules\Contracts\ModuleInterface;
 use App\Modules\Events\ModuleActivated;
 use App\Modules\Events\ModuleDeactivated;
+use App\Services\Logging\LoggingService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
@@ -16,29 +17,90 @@ class ModuleManager
     protected ModuleRegistry $registry;
     protected AccessController $accessController;
     protected BillingEngine $billingEngine;
+    protected LoggingService $logging;
     
     public function __construct(
         ModuleRegistry $registry,
         AccessController $accessController,
-        BillingEngine $billingEngine
+        BillingEngine $billingEngine,
+        LoggingService $logging
     ) {
         $this->registry = $registry;
         $this->accessController = $accessController;
         $this->billingEngine = $billingEngine;
+        $this->logging = $logging;
     }
     
     public function discoverModules(): Collection
     {
-        // Модули загружаются из кеша/БД без автоматического сканирования
-        // Для обновления модулей используйте: php artisan modules:scan
-        return $this->registry->getAllModules();
+        $startTime = microtime(true);
+        
+        $this->logging->technical('modules.discovery.started');
+        
+        try {
+            // Модули загружаются из кеша/БД без автоматического сканирования
+            // Для обновления модулей используйте: php artisan modules:scan
+            $modules = $this->registry->getAllModules();
+            
+            $duration = (microtime(true) - $startTime) * 1000;
+            
+            $this->logging->business('modules.discovery.completed', [
+                'modules_count' => $modules->count(),
+                'duration_ms' => $duration,
+                'active_modules' => $modules->where('is_active', true)->count(),
+                'inactive_modules' => $modules->where('is_active', false)->count()
+            ]);
+            
+            if ($duration > 1000) {
+                $this->logging->technical('modules.discovery.slow', [
+                    'duration_ms' => $duration,
+                    'modules_count' => $modules->count()
+                ], 'warning');
+            }
+            
+            return $modules;
+            
+        } catch (\Exception $e) {
+            $duration = (microtime(true) - $startTime) * 1000;
+            
+            $this->logging->technical('modules.discovery.failed', [
+                'error' => $e->getMessage(),
+                'duration_ms' => $duration
+            ], 'error');
+            
+            throw $e;
+        }
     }
     
     public function activateModule(int $organizationId, string $moduleSlug, array $options = []): array
     {
+        $startTime = microtime(true);
+        
+        $this->logging->business('module.activation.started', [
+            'organization_id' => $organizationId,
+            'module_slug' => $moduleSlug,
+            'has_options' => !empty($options)
+        ]);
+        
+        // ДИАГНОСТИКА: Время получения модуля
+        $getModuleStart = microtime(true);
         $module = $this->registry->getModule($moduleSlug);
+        $getModuleDuration = (microtime(true) - $getModuleStart) * 1000;
+        
+        $this->logging->technical('module.registry.lookup', [
+            'module_slug' => $moduleSlug,
+            'found' => $module !== null,
+            'duration_ms' => $getModuleDuration
+        ]);
         
         if (!$module) {
+            $this->logging->business('module.activation.failed', [
+                'organization_id' => $organizationId,
+                'module_slug' => $moduleSlug,
+                'reason' => 'MODULE_NOT_FOUND',
+                'duration_ms' => (microtime(true) - $startTime) * 1000
+            ]);
+            
             return [
                 'success' => false,
                 'message' => 'Модуль не найден',
@@ -47,6 +109,14 @@ class ModuleManager
         }
         
         if (!$module->is_active) {
+            $this->logging->business('module.activation.failed', [
+                'organization_id' => $organizationId,
+                'module_slug' => $moduleSlug,
+                'module_id' => $module->id,
+                'reason' => 'MODULE_INACTIVE',
+                'duration_ms' => (microtime(true) - $startTime) * 1000
+            ]);
+            
             return [
                 'success' => false,
                 'message' => 'Модуль недоступен для активации',
@@ -54,8 +124,26 @@ class ModuleManager
             ];
         }
         
-        // Проверяем, не активирован ли уже
-        if ($this->accessController->hasModuleAccess($organizationId, $moduleSlug)) {
+        // ДИАГНОСТИКА: Проверяем, не активирован ли уже
+        $accessCheckStart = microtime(true);
+        $hasAccess = $this->accessController->hasModuleAccess($organizationId, $moduleSlug);
+        $accessCheckDuration = (microtime(true) - $accessCheckStart) * 1000;
+        
+        $this->logging->technical('module.access.check', [
+            'organization_id' => $organizationId,
+            'module_slug' => $moduleSlug,
+            'has_access' => $hasAccess,
+            'duration_ms' => $accessCheckDuration
+        ]);
+        
+        if ($hasAccess) {
+            $this->logging->business('module.activation.failed', [
+                'organization_id' => $organizationId,
+                'module_slug' => $moduleSlug,
+                'reason' => 'MODULE_ALREADY_ACTIVE',
+                'duration_ms' => (microtime(true) - $startTime) * 1000
+            ]);
+            
             return [
                 'success' => false,
                 'message' => 'Модуль уже активирован',
@@ -63,9 +151,28 @@ class ModuleManager
             ];
         }
         
-        // Проверяем зависимости
+        // ДИАГНОСТИКА: Проверяем зависимости
+        $dependenciesCheckStart = microtime(true);
         $missingDependencies = $this->accessController->checkDependencies($organizationId, $module);
+        $dependenciesCheckDuration = (microtime(true) - $dependenciesCheckStart) * 1000;
+        
+        $this->logging->technical('module.dependencies.check', [
+            'organization_id' => $organizationId,
+            'module_slug' => $moduleSlug,
+            'missing_dependencies' => $missingDependencies,
+            'has_missing_dependencies' => !empty($missingDependencies),
+            'duration_ms' => $dependenciesCheckDuration
+        ]);
+        
         if (!empty($missingDependencies)) {
+            $this->logging->business('module.activation.failed', [
+                'organization_id' => $organizationId,
+                'module_slug' => $moduleSlug,
+                'reason' => 'MISSING_DEPENDENCIES',
+                'missing_dependencies' => $missingDependencies,
+                'duration_ms' => (microtime(true) - $startTime) * 1000
+            ]);
+            
             return [
                 'success' => false,
                 'message' => 'Не хватает зависимых модулей: ' . implode(', ', $missingDependencies),
@@ -74,9 +181,28 @@ class ModuleManager
             ];
         }
         
-        // Проверяем конфликты
+        // ДИАГНОСТИКА: Проверяем конфликты
+        $conflictsCheckStart = microtime(true);
         $conflicts = $this->accessController->checkConflicts($organizationId, $module);
+        $conflictsCheckDuration = (microtime(true) - $conflictsCheckStart) * 1000;
+        
+        $this->logging->technical('module.conflicts.check', [
+            'organization_id' => $organizationId,
+            'module_slug' => $moduleSlug,
+            'conflicts' => $conflicts,
+            'has_conflicts' => !empty($conflicts),
+            'duration_ms' => $conflictsCheckDuration
+        ]);
+        
         if (!empty($conflicts)) {
+            $this->logging->business('module.activation.failed', [
+                'organization_id' => $organizationId,
+                'module_slug' => $moduleSlug,
+                'reason' => 'MODULE_CONFLICTS',
+                'conflicts' => $conflicts,
+                'duration_ms' => (microtime(true) - $startTime) * 1000
+            ]);
+            
             return [
                 'success' => false,
                 'message' => 'Конфликт с активными модулями: ' . implode(', ', $conflicts),
