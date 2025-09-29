@@ -147,19 +147,29 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
 
     private function getStorageUsage(int $organizationId): float
     {
-        $org = \App\Models\Organization::find($organizationId);
-        if ($org && !is_null($org->storage_used_mb)) {
-            return (float) $org->storage_used_mb;
-        }
+        // КРИТИЧНО: Кешируем storage usage на 10 минут, т.к. он редко меняется
+        return \Illuminate\Support\Facades\Cache::remember("storage_usage_{$organizationId}", 600, function () use ($organizationId) {
+            $org = \App\Models\Organization::find($organizationId);
+            if ($org && !is_null($org->storage_used_mb)) {
+                return (float) $org->storage_used_mb;
+            }
 
-        // Fallback на старую эвристику, если счётчик ещё не посчитан
-        $completedWorksCount = \App\Models\CompletedWork::whereHas('contract', function($query) use ($organizationId) {
-            $query->where('organization_id', $organizationId);
-        })->count();
-        
-        $materialsCount = \App\Models\Material::where('organization_id', $organizationId)->count();
-        
-        return ($completedWorksCount * 0.1) + ($materialsCount * 0.05);
+            // Fallback на старую эвристику, если счётчик ещё не посчитан
+            // ОПТИМИЗАЦИЯ: Используем более быстрые запросы через JOIN вместо whereHas
+            try {
+                $completedWorksCount = \Illuminate\Support\Facades\DB::table('completed_works')
+                    ->join('contracts', 'completed_works.contract_id', '=', 'contracts.id')
+                    ->where('contracts.organization_id', $organizationId)
+                    ->count();
+                
+                $materialsCount = \App\Models\Material::where('organization_id', $organizationId)->count();
+                
+                return ($completedWorksCount * 0.1) + ($materialsCount * 0.05);
+            } catch (\Exception $e) {
+                // Если запросы не работают, возвращаем минимальное значение
+                return 0.1;
+            }
+        });
     }
 
     public function canCreateUser(User $user): bool

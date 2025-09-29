@@ -33,6 +33,7 @@ class RequestLoggingMiddleware
         // Логировать входящий запрос (только для API)
         if ($this->shouldLogRequest($request)) {
             $this->loggingService->access([
+                'event' => 'http.request',
                 'method' => $request->method(),
                 'uri' => $request->getRequestUri(),
                 'content_length' => strlen($request->getContent()),
@@ -100,6 +101,7 @@ class RequestLoggingMiddleware
     protected function logRequestResult(Request $request, ?Response $response, ?Throwable $exception): void
     {
         $responseData = [];
+        $performanceData = [];
         
         if ($response) {
             $responseData = [
@@ -119,6 +121,12 @@ class RequestLoggingMiddleware
             ];
         }
 
+        // Получаем performance data если доступно
+        if (App::bound(PerformanceContext::class)) {
+            $performanceContext = App::make(PerformanceContext::class);
+            $performanceData = $performanceContext->getBasicMetrics();
+        }
+
         // ACCESS: Логируем завершенный запрос с полными метриками
         $this->loggingService->access(array_merge([
             'event' => 'http.request.completed',
@@ -128,7 +136,7 @@ class RequestLoggingMiddleware
             'content_length' => strlen($request->getContent()),
             'query_params_count' => count($request->query()),
             'has_files' => $request->hasFile('*')
-        ], $responseData ?? [], $performanceData ?? []));
+        ], $responseData, $performanceData));
 
         // TECHNICAL: Логируем производительность запросов для оптимизации
         if (App::bound(PerformanceContext::class)) {
@@ -162,7 +170,7 @@ class RequestLoggingMiddleware
                     'query_params_count' => count($request->query()),
                     'has_files' => $request->hasFile('*'),
                     'content_length' => strlen($request->getContent()),
-                    'full_performance' => $performanceContext->getMetrics()
+                    'full_performance' => $performanceContext->getDetailedMetrics()
                 ], 'error');
             }
 

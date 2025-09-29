@@ -61,36 +61,39 @@ class PrometheusService
 
     public function renderMetrics(): string
     {
-        $this->collectSystemMetrics();
-        $this->loadCountersFromStorage();
-        
-        $output = [];
-        
-        // Добавляем HELP и TYPE комментарии
-        $output[] = '# HELP laravel_http_requests_total Total number of HTTP requests';
-        $output[] = '# TYPE laravel_http_requests_total counter';
-        
-        $output[] = '# HELP laravel_http_request_duration_seconds Duration of HTTP requests in seconds';
-        $output[] = '# TYPE laravel_http_request_duration_seconds gauge';
-        
-        $output[] = '# HELP laravel_memory_usage_bytes Current memory usage in bytes';
-        $output[] = '# TYPE laravel_memory_usage_bytes gauge';
-        
-        $output[] = '# HELP laravel_database_connections_active Number of active database connections';
-        $output[] = '# TYPE laravel_database_connections_active gauge';
-        
-        $output[] = '# HELP laravel_exceptions_total Total number of exceptions';
-        $output[] = '# TYPE laravel_exceptions_total counter';
-        
-        $output[] = '# HELP laravel_queue_size Number of jobs in queue';
-        $output[] = '# TYPE laravel_queue_size gauge';
-        
-        // Добавляем метрики
-        foreach ($this->metrics as $name => $value) {
-            $output[] = "{$this->namespace}_{$name} {$value}";
-        }
-        
-        return implode("\n", $output) . "\n";
+        // КРИТИЧНО: Кешируем метрики на 30 секунд для избежания медленного чтения файлов
+        return \Illuminate\Support\Facades\Cache::remember('prometheus_metrics', 30, function () {
+            $this->collectSystemMetrics();
+            $this->loadCountersFromStorage();
+            
+            $output = [];
+            
+            // Добавляем HELP и TYPE комментарии
+            $output[] = '# HELP laravel_http_requests_total Total number of HTTP requests';
+            $output[] = '# TYPE laravel_http_requests_total counter';
+            
+            $output[] = '# HELP laravel_http_request_duration_seconds Duration of HTTP requests in seconds';
+            $output[] = '# TYPE laravel_http_request_duration_seconds gauge';
+            
+            $output[] = '# HELP laravel_memory_usage_bytes Current memory usage in bytes';
+            $output[] = '# TYPE laravel_memory_usage_bytes gauge';
+            
+            $output[] = '# HELP laravel_database_connections_active Number of active database connections';
+            $output[] = '# TYPE laravel_database_connections_active gauge';
+            
+            $output[] = '# HELP laravel_exceptions_total Total number of exceptions';
+            $output[] = '# TYPE laravel_exceptions_total counter';
+            
+            $output[] = '# HELP laravel_queue_size Number of jobs in queue';
+            $output[] = '# TYPE laravel_queue_size gauge';
+            
+            // Добавляем метрики
+            foreach ($this->metrics as $name => $value) {
+                $output[] = "{$this->namespace}_{$name} {$value}";
+            }
+            
+            return implode("\n", $output) . "\n";
+        });
     }
 
     private function incrementCounter(string $key): void
@@ -115,18 +118,34 @@ class PrometheusService
 
     private function loadCountersFromStorage(): void
     {
-        $files = glob($this->storageDir . '/*.counter');
-        
-        foreach ($files as $file) {
-            $basename = basename($file, '.counter');
-            $metricFiles = glob($this->storageDir . '/' . $basename . '.metric');
+        // КРИТИЧНО: Кешируем загрузку файлов на 15 секунд чтобы избежать медленного I/O
+        $cachedMetrics = \Illuminate\Support\Facades\Cache::remember('prometheus_file_metrics', 15, function () {
+            $metrics = [];
+            $files = glob($this->storageDir . '/*.counter');
             
-            if (!empty($metricFiles)) {
-                $metricName = file_get_contents($metricFiles[0]);
-                $value = (int) file_get_contents($file);
-                $this->metrics[$metricName] = $value;
+            // Ограничиваем количество обрабатываемых файлов для производительности
+            $files = array_slice($files, 0, 100); // Максимум 100 файлов
+            
+            foreach ($files as $file) {
+                $basename = basename($file, '.counter');
+                $metricFile = $this->storageDir . '/' . $basename . '.metric';
+                
+                if (file_exists($metricFile)) {
+                    try {
+                        $metricName = file_get_contents($metricFile);
+                        $value = (int) file_get_contents($file);
+                        $metrics[$metricName] = $value;
+                    } catch (\Exception $e) {
+                        // Пропускаем поврежденные файлы
+                        continue;
+                    }
+                }
             }
-        }
+            
+            return $metrics;
+        });
+        
+        $this->metrics = array_merge($this->metrics, $cachedMetrics);
     }
 
     private function saveMetricName(string $key): void
