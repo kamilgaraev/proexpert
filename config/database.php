@@ -157,6 +157,13 @@ return [
             'password' => env('REDIS_PASSWORD', '=@GZ{<cuCfJWv2'),
             'port' => env('REDIS_PORT', '6379'),
             'database' => env('REDIS_DB', '0'),
+            'options' => [
+                'parameters' => [
+                    'timeout' => 2,
+                    'read_write_timeout' => 2,
+                    'tcp_keepalive' => 1,
+                ],
+            ],
         ],
 
         'cache' => [
@@ -166,6 +173,14 @@ return [
             'password' => env('REDIS_PASSWORD', '=@GZ{<cuCfJWv2'),
             'port' => env('REDIS_PORT', '6379'),
             'database' => env('REDIS_CACHE_DB', '1'),
+            'options' => [
+                'parameters' => [
+                    'timeout' => 2,
+                    'read_write_timeout' => 2,
+                    'tcp_keepalive' => 1,
+                    'persistent' => true,
+                ],
+            ],
         ],
 
     ],
