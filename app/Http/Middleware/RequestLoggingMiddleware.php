@@ -30,17 +30,17 @@ class RequestLoggingMiddleware
             $performanceContext->checkpoint('request_start');
         }
 
-        // Логировать входящий запрос (только для API)
-        if ($this->shouldLogRequest($request)) {
-            $this->loggingService->access([
-                'event' => 'http.request',
-                'method' => $request->method(),
-                'uri' => $request->getRequestUri(),
-                'content_length' => strlen($request->getContent()),
-                'has_files' => $request->hasFile('*'),
-                'query_params_count' => count($request->query())
-            ]);
-        }
+        // КРИТИЧНО: Временно отключаем входящее логирование для диагностики блокировок
+        // if ($this->shouldLogRequest($request)) {
+        //     $this->loggingService->access([
+        //         'event' => 'http.request',
+        //         'method' => $request->method(),
+        //         'uri' => $request->getRequestUri(),
+        //         'content_length' => strlen($request->getContent()),
+        //         'has_files' => $request->hasFile('*'),
+        //         'query_params_count' => count($request->query())
+        //     ]);
+        // }
 
         $response = null;
         $exception = null;
