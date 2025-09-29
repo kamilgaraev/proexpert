@@ -21,16 +21,16 @@ class LoggingServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        // Регистрировать контексты как синглтоны
-        $this->app->singleton(RequestContext::class, function ($app) {
+        // Регистрировать контексты (новый экземпляр для каждого запроса)
+        $this->app->bind(RequestContext::class, function ($app) {
             return new RequestContext();
         });
 
-        $this->app->singleton(UserContext::class, function ($app) {
+        $this->app->bind(UserContext::class, function ($app) {
             return new UserContext();
         });
 
-        $this->app->singleton(PerformanceContext::class, function ($app) {
+        $this->app->bind(PerformanceContext::class, function ($app) {
             return new PerformanceContext();
         });
 

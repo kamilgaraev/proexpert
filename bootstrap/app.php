@@ -41,15 +41,14 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prepend(\App\Http\Middleware\CorsMiddleware::class);
         // PHASE 2: Correlation ID для всех запросов - в самом начале цепочки
         $middleware->prepend(\App\Http\Middleware\CorrelationIdMiddleware::class);
-        // ДИАГНОСТИКА: Временно отключаем PrometheusMiddleware 
-        // $middleware->append(\App\Http\Middleware\PrometheusMiddleware::class);
+        $middleware->append(\App\Http\Middleware\PrometheusMiddleware::class);
 
         // Группы middleware (например, для API)
         $middleware->api([
              'throttle:api',
              \Illuminate\Routing\Middleware\SubstituteBindings::class,
-             // ДИАГНОСТИКА: Временно отключаем RequestLoggingMiddleware
-             // \App\Http\Middleware\RequestLoggingMiddleware::class,
+             // PHASE 2: Новое структурированное логирование для всех API запросов
+             \App\Http\Middleware\RequestLoggingMiddleware::class,
              \App\Http\Middleware\SetOrganizationContext::class,
         ]);
 

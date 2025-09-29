@@ -5,6 +5,7 @@ namespace App\Services\CompletedWork;
 use App\Models\CompletedWork;
 use App\DTOs\CompletedWork\CompletedWorkDTO;
 use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
+use App\Services\Logging\LoggingService;
 use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
@@ -23,13 +24,16 @@ class CompletedWorkService
 {
     protected CompletedWorkRepositoryInterface $completedWorkRepository;
     protected RateCoefficientService $rateCoefficientService;
+    protected LoggingService $logging;
 
     public function __construct(
         CompletedWorkRepositoryInterface $completedWorkRepository,
-        RateCoefficientService $rateCoefficientService
+        RateCoefficientService $rateCoefficientService,
+        LoggingService $logging
     ) {
         $this->completedWorkRepository = $completedWorkRepository;
         $this->rateCoefficientService = $rateCoefficientService;
+        $this->logging = $logging;
     }
 
     public function getAll(array $filters = [], int $perPage = 15, string $sortBy = 'completion_date', string $sortDirection = 'desc', array $relations = []): LengthAwarePaginator
@@ -49,10 +53,32 @@ class CompletedWorkService
 
     public function create(CompletedWorkDTO $dto): CompletedWork
     {
+        // BUSINESS: Начало создания выполненной работы
+        $this->logging->business('completed_work.creation.started', [
+            'project_id' => $dto->project_id,
+            'contract_id' => $dto->contract_id,
+            'work_type_id' => $dto->work_type_id,
+            'organization_id' => $dto->organization_id,
+            'quantity' => $dto->quantity,
+            'price' => $dto->price,
+            'total_amount' => $dto->total_amount,
+            'status' => $dto->status,
+            'has_materials' => !empty($dto->materials),
+            'materials_count' => count($dto->materials ?? [])
+        ]);
+
         return DB::transaction(function () use ($dto) {
             // Проверяем, доступен ли проект для текущей организации безопасности
             $rule = new ProjectAccessibleRule();
             if (!$rule->passes('project_id', $dto->project_id)) {
+                // SECURITY: Попытка создать работу для недоступного проекта
+                $this->logging->security('completed_work.creation.unauthorized', [
+                    'project_id' => $dto->project_id,
+                    'organization_id' => $dto->organization_id,
+                    'user_id' => request()->user()?->id,
+                    'attempted_by_ip' => request()->ip()
+                ], 'warning');
+                
                 throw new BusinessLogicException('Проект недоступен для вашей организации.', 422);
             }
 
@@ -109,6 +135,13 @@ class CompletedWorkService
             $createdModel = $this->completedWorkRepository->create($data);
 
             if (!$createdModel) {
+                // TECHNICAL: Ошибка создания записи в БД
+                $this->logging->technical('completed_work.creation.failed.database', [
+                    'project_id' => $dto->project_id,
+                    'contract_id' => $dto->contract_id,
+                    'organization_id' => $dto->organization_id
+                ], 'error');
+                
                 throw new BusinessLogicException('Не удалось создать запись о выполненной работе.', 500);
             }
 
@@ -120,6 +153,31 @@ class CompletedWorkService
             if ($dto->contract_id && $dto->status === 'confirmed') {
                 $this->updateContractStatus($dto->contract_id);
             }
+
+            // BUSINESS: Выполненная работа успешно создана
+            $this->logging->business('completed_work.created', [
+                'work_id' => $createdModel->id,
+                'project_id' => $createdModel->project_id,
+                'contract_id' => $createdModel->contract_id,
+                'work_type_id' => $createdModel->work_type_id,
+                'organization_id' => $createdModel->organization_id,
+                'final_amount' => $createdModel->total_amount,
+                'quantity' => $createdModel->quantity,
+                'status' => $createdModel->status,
+                'has_materials' => $createdModel->materials()->count() > 0
+            ]);
+
+            // AUDIT: Создание финансово значимой записи
+            $this->logging->audit('completed_work.created', [
+                'work_id' => $createdModel->id,
+                'project_id' => $createdModel->project_id,
+                'contract_id' => $createdModel->contract_id,
+                'organization_id' => $createdModel->organization_id,
+                'amount' => $createdModel->total_amount,
+                'completion_date' => $createdModel->completion_date,
+                'status' => $createdModel->status,
+                'performed_by' => request()->user()?->id
+            ]);
 
             return $createdModel->fresh(['materials.measurementUnit']);
         });

@@ -8,6 +8,7 @@ use App\Repositories\Interfaces\ProjectRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Services\Export\CsvExporterService;
 use App\Services\Export\ExcelExporterService;
+use App\Services\Logging\LoggingService;
 use App\Models\User;
 use App\Models\Role;
 use Illuminate\Http\Request;
@@ -35,6 +36,7 @@ class ReportService
     protected ReportTemplateService $reportTemplateService;
     protected MaterialReportService $materialReportService;
     protected RateCoefficientService $rateCoefficientService;
+    protected LoggingService $logging;
 
     public function __construct(
         MaterialUsageLogRepositoryInterface $materialLogRepo,
@@ -45,7 +47,8 @@ class ReportService
         ExcelExporterService $excelExporter,
         ReportTemplateService $reportTemplateService,
         MaterialReportService $materialReportService,
-        RateCoefficientService $rateCoefficientService
+        RateCoefficientService $rateCoefficientService,
+        LoggingService $logging
     ) {
         $this->materialLogRepo = $materialLogRepo;
         $this->workLogRepo = $workLogRepo;
@@ -56,6 +59,7 @@ class ReportService
         $this->reportTemplateService = $reportTemplateService;
         $this->materialReportService = $materialReportService;
         $this->rateCoefficientService = $rateCoefficientService;
+        $this->logging = $logging;
     }
 
     /**
@@ -445,7 +449,27 @@ class ReportService
         $reportNumber = $request->query('report_number');
         $format = $request->query('format');
 
+        // BUSINESS: Запрос официального отчета по материалам - критичный бизнес-процесс
+        $this->logging->business('report.official_material_usage.requested', [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'date_from' => $dateFrom,
+            'date_to' => $dateTo,
+            'report_number' => $reportNumber,
+            'format' => $format,
+            'user_id' => request()->user()?->id
+        ]);
+
         if (!$projectId || !$dateFrom || !$dateTo) {
+            // TECHNICAL: Некорректные параметры для генерации отчета
+            $this->logging->technical('report.official_material_usage.failed.missing_params', [
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'date_from' => $dateFrom,
+                'date_to' => $dateTo,
+                'user_id' => request()->user()?->id
+            ], 'warning');
+            
             throw new BusinessLogicException('Необходимо указать project_id, date_from и date_to для формирования отчета.', 400);
         }
 
@@ -474,15 +498,6 @@ class ReportService
             return $value !== null && $value !== '';
         });
 
-        Log::info('Generating Official Material Usage Report', [
-            'org_id' => $organizationId,
-            'project_id' => $projectId,
-            'date_from' => $dateFrom,
-            'date_to' => $dateTo,
-            'format' => $format,
-            'filters' => $filters
-        ]);
-
         $reportData = $this->materialReportService->generateOfficialUsageReport(
             (int)$projectId,
             $dateFrom,
@@ -493,15 +508,71 @@ class ReportService
 
         // Если запрашивается Excel экспорт – генерируем файл в бакете reports и отдаём ссылку
         if ($format === 'xlsx') {
+            // BUSINESS: Начало экспорта отчета в Excel
+            $this->logging->business('report.official_material_usage.excel_export.started', [
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'date_range' => [$dateFrom, $dateTo],
+                'filters_count' => count($filters),
+                'user_id' => request()->user()?->id
+            ]);
+
             $url = $this->excelExporter->uploadOfficialMaterialReport($reportData);
             if (!$url) {
+                // TECHNICAL: Ошибка при экспорте Excel файла
+                $this->logging->technical('report.official_material_usage.excel_export.failed', [
+                    'organization_id' => $organizationId,
+                    'project_id' => $projectId,
+                    'user_id' => request()->user()?->id
+                ], 'error');
+                
                 throw new BusinessLogicException('Не удалось сформировать файл отчёта.', 500);
             }
+
+            // BUSINESS: Успешный экспорт отчета в Excel
+            $this->logging->business('report.official_material_usage.excel_export.completed', [
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'download_url' => $url,
+                'expires_at' => now()->addHours(2),
+                'user_id' => request()->user()?->id
+            ]);
+
+            // AUDIT: Экспорт критичного отчета для compliance
+            $this->logging->audit('report.official_material_usage.exported', [
+                'organization_id' => $organizationId,
+                'project_id' => $projectId,
+                'report_number' => $reportNumber,
+                'date_range' => [$dateFrom, $dateTo],
+                'format' => 'xlsx',
+                'performed_by' => request()->user()?->id
+            ]);
+
             return [
                 'download_url' => $url,
                 'expires_at' => now()->addHours(2),
             ];
         }
+
+        // BUSINESS: Успешная генерация JSON отчета
+        $this->logging->business('report.official_material_usage.json_generated', [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'date_range' => [$dateFrom, $dateTo],
+            'filters_applied' => count($filters),
+            'data_rows_count' => count($reportData['materials'] ?? []),
+            'user_id' => request()->user()?->id
+        ]);
+
+        // AUDIT: Просмотр критичного отчета для compliance
+        $this->logging->audit('report.official_material_usage.viewed', [
+            'organization_id' => $organizationId,
+            'project_id' => $projectId,
+            'report_number' => $reportNumber,
+            'date_range' => [$dateFrom, $dateTo],
+            'format' => 'json',
+            'performed_by' => request()->user()?->id
+        ]);
 
         // JSON ответ
         return [
