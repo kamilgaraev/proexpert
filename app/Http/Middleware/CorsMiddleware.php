@@ -7,9 +7,16 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Config;
+use App\Services\Logging\LoggingService;
 
 class CorsMiddleware
 {
+    protected LoggingService $logging;
+
+    public function __construct(LoggingService $logging)
+    {
+        $this->logging = $logging;
+    }
     /**
      * Обрабатывает входящий запрос.
      *
@@ -22,14 +29,17 @@ class CorsMiddleware
         // Получаем Origin из заголовка запроса
         $origin = $request->header('Origin');
         
-        // Логируем для отладки
-        Log::info('CORS Middleware вызван', [
-            'request_method' => $request->method(),
-            'origin' => $origin,
-            'uri' => $request->getRequestUri(),
-            'all_headers' => $request->headers->all(),
-            'app_env' => app()->environment()
-        ]);
+        // Логируем только подозрительные или важные CORS запросы (не /metrics от Prometheus)
+        if (!$this->isRoutineRequest($request)) {
+            $this->logging->access([
+                'event' => 'cors.request.processed',
+                'method' => $request->method(),
+                'origin' => $origin,
+                'uri' => $request->getRequestUri(),
+                'user_agent' => $request->header('User-Agent'),
+                'ip_address' => $request->ip()
+            ]);
+        }
         
         // Получаем конфигурацию CORS
         $allowedOrigins = Config::get('cors.allowed_origins', []);
@@ -71,27 +81,37 @@ class CorsMiddleware
             if (!$originMatched) {
                 // В режиме разработки можем быть более снисходительными
                 if (app()->environment('local')) {
-                    Log::warning('CORS: Принимаем запрос с неуказанного origin в режиме разработки', [
-                        'origin' => $origin
-                    ]);
+                    // SECURITY: Разрешение неизвестного origin в dev среде
+                    $this->logging->security('cors.origin.allowed.dev', [
+                        'origin' => $origin,
+                        'environment' => 'local',
+                        'uri' => $request->getRequestUri()
+                    ], 'info');
                     $allowedOrigin = $origin;
                     $allowCredentials = 'true';
                     $originMatched = true;
                 } else {
                     // В продакшене для prohelper.pro доменов разрешаем
                     if ($origin && (strpos($origin, '.prohelper.pro') !== false || $origin === 'https://prohelper.pro')) {
-                        Log::warning('CORS: Принимаем prohelper.pro домен не из списка', [
-                            'origin' => $origin
-                        ]);
+                        // SECURITY: Разрешение prohelper.pro домена не из списка
+                        $this->logging->security('cors.origin.allowed.prohelper', [
+                            'origin' => $origin,
+                            'uri' => $request->getRequestUri(),
+                            'auto_approved' => true
+                        ], 'info');
                         $allowedOrigin = $origin;
                         $allowCredentials = 'true';
                         $originMatched = true;
                     } else {
-                        Log::warning('CORS: Отклонен запрос с недопустимого origin', [
+                        // SECURITY: КРИТИЧНО - Отклонен запрос с недопустимого origin
+                        $this->logging->security('cors.origin.rejected', [
                             'origin' => $origin,
+                            'uri' => $request->getRequestUri(),
+                            'user_agent' => $request->header('User-Agent'),
+                            'ip_address' => $request->ip(),
                             'allowed_origins' => $allowedOrigins,
-                            'allowed_patterns' => $allowedOriginsPatterns
-                        ]);
+                            'potential_security_threat' => true
+                        ], 'warning');
                         $allowedOrigin = 'null';
                         $allowCredentials = 'false';
                     }
@@ -125,12 +145,14 @@ class CorsMiddleware
         
         // Если это preflight OPTIONS-запрос
         if ($request->isMethod('OPTIONS')) {
-            Log::info('CORS: Обработка preflight OPTIONS запроса', [
-                'headers' => $headers,
+            // TECHNICAL: Обработка preflight запроса - важно для API интеграций
+            $this->logging->technical('cors.preflight.processed', [
                 'origin' => $origin,
                 'allowed_origin' => $allowedOrigin,
                 'origin_matched' => $originMatched,
-                'allowed_origins_config' => $allowedOrigins
+                'uri' => $request->getRequestUri(),
+                'requested_method' => $request->header('Access-Control-Request-Method'),
+                'requested_headers' => $request->header('Access-Control-Request-Headers')
             ]);
             // Возвращаем пустой ответ 200 с нужными CORS-заголовками
             return response('', 200, $headers);
@@ -145,23 +167,31 @@ class CorsMiddleware
                 $response->headers->set($key, $value);
             }
             
-            Log::info('CORS: Заголовки успешно добавлены к ответу', [
-                'has_allow_origin' => $response->headers->has('Access-Control-Allow-Origin'),
-                'allow_origin' => $response->headers->get('Access-Control-Allow-Origin'),
-                'status_code' => $response->getStatusCode()
-            ]);
+            // Логируем только проблемные или важные CORS ответы (не каждый /metrics)
+            if (!$this->isRoutineRequest($request) || $response->getStatusCode() >= 400) {
+                // ACCESS: Успешная обработка CORS
+                $this->logging->access([
+                    'event' => 'cors.response.success',
+                    'uri' => $request->getRequestUri(),
+                    'method' => $request->method(),
+                    'status_code' => $response->getStatusCode(),
+                    'allow_origin' => $response->headers->get('Access-Control-Allow-Origin'),
+                    'origin' => $origin
+                ]);
+            }
             
             return $response;
         } catch (\Throwable $e) {
-            // --- НАЧАЛО ДИАГНОСТИЧЕСКИХ ЛОГОВ ---
-            Log::info('CORS: Вход в блок catch Throwable', [
-                'request_uri' => $request->getRequestUri(),
-                'method' => $request->method()
-            ]);
-            Log::info('CORS: Исключение - Класс', ['class' => get_class($e)]);
-            Log::info('CORS: Исключение - Сообщение', ['message' => $e->getMessage()]);
-            Log::info('CORS: Исключение - Файл', ['file' => $e->getFile() . ':' . $e->getLine()]);
-            // --- КОНЕЦ ДИАГНОСТИЧЕСКИХ ЛОГОВ ---
+            // TECHNICAL: Исключение в CORS middleware
+            $this->logging->technical('cors.exception.caught', [
+                'uri' => $request->getRequestUri(),
+                'method' => $request->method(),
+                'exception_class' => get_class($e),
+                'exception_message' => $e->getMessage(),
+                'exception_file' => $e->getFile(),
+                'exception_line' => $e->getLine(),
+                'origin' => $origin
+            ], 'error');
 
             // Специальная обработка для business logic исключений - пробрасываем дальше в Handler
             if ($e instanceof \App\Exceptions\Billing\InsufficientBalanceException ||
@@ -176,15 +206,14 @@ class CorsMiddleware
                 throw $e; // Пробрасываем в Handler
             }
 
-            // Логируем ошибку для диагностики только для системных ошибок
-            Log::error('CORS: Ошибка при обработке запроса (детальный лог ниже, если сработает)', [
-                'error' => $e->getMessage(),
-                'request_uri' => $request->getRequestUri()
-            ]);
-             
-            if (method_exists($e, 'getTraceAsString')) {
-                Log::debug('CORS: Stack trace (попытка записи через Log::debug)', ['trace' => $e->getTraceAsString()]);
-            }
+            // TECHNICAL: Системная ошибка в CORS middleware
+            $this->logging->technical('cors.system.error', [
+                'error_message' => $e->getMessage(),
+                'uri' => $request->getRequestUri(),
+                'method' => $request->method(),
+                'exception_class' => get_class($e),
+                'stack_trace_hash' => md5($e->getTraceAsString())
+            ], 'error');
             
             // Возвращаем ответ об ошибке с заголовками CORS только для системных ошибок
             return response()->json([
@@ -192,5 +221,26 @@ class CorsMiddleware
                 'message' => 'При обработке запроса произошла ошибка. Администратор уведомлен. [Diag: Catch Block Reached]'
             ], 500, $headers);
         }
+    }
+
+    /**
+     * Проверяет является ли запрос рутинным (например, мониторинг)
+     */
+    protected function isRoutineRequest(Request $request): bool
+    {
+        $uri = $request->getRequestUri();
+        $userAgent = $request->header('User-Agent', '');
+        
+        // Prometheus мониторинг
+        if (str_contains($uri, '/metrics') && str_contains($userAgent, 'Prometheus/')) {
+            return true;
+        }
+        
+        // Health checks
+        if (in_array($uri, ['/up', '/health', '/ping'])) {
+            return true;
+        }
+        
+        return false;
     }
 }

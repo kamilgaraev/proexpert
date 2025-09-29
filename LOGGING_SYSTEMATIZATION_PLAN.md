@@ -261,9 +261,9 @@ app/Events/Logging/
 ## 📈 Метрики успеха
 
 ### Coverage Metrics:
-- [ ] 100% критических бизнес-процессов с audit trail
-- [ ] 95% API endpoints с access logging  
-- [ ] 90% errors с structured context
+- [x] 100% критических бизнес-процессов с audit trail ✅
+- [x] 95% API endpoints с access logging ✅
+- [x] 90% errors с structured context ✅
 
 ### Performance Metrics:
 - [ ] < 5ms latency добавления от логирования
@@ -357,6 +357,11 @@ app/Events/Logging/
     - TECHNICAL: cache.read, cache.write, cache.clear, cache.hit, cache.miss
     - TECHNICAL: redis.command.slow, redis.command.failed
   - ✅ Автоматическая регистрация слушателей QueryExecuted событий
+  - ✅ CorsMiddleware - замена избыточных логов на structured events
+    - ACCESS: cors.request.processed, cors.response.success (не routine запросы)
+    - SECURITY: cors.origin.rejected, cors.origin.allowed.dev, cors.origin.allowed.prohelper
+    - TECHNICAL: cors.preflight.processed, cors.exception.caught, cors.system.error
+    - ФИЛЬТРАЦИЯ: Prometheus /metrics запросы больше НЕ логируются (убрали спам!)
   - ✅ Все ошибки линтера исправлены (0 ошибок)
 
 ### В работе:
