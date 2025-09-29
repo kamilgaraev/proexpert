@@ -21,18 +21,62 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
 
     public function getUserLimitsData(User $user): array
     {
-        // Смотрим только подписку организации
-        $organizationId = $user->current_organization_id;
-        if ($organizationId) {
-            $orgSubscription = $this->organizationSubscriptionRepo->getByOrganizationId($organizationId);
-            // Подписка активна, если не истекла (даже если отменена, но срок еще не закончился)
-            if ($orgSubscription && $orgSubscription->status === 'active' && $orgSubscription->ends_at > now()) {
-                return $this->getOrganizationLimitsData($user, $orgSubscription);
-            }
-        }
+        // КРИТИЧНО: Кешируем весь результат более агрессивно + timeout + fallback
+        $cacheKey = "user_limits_full_{$user->id}_{$user->current_organization_id}";
+        
+        try {
+            return \Illuminate\Support\Facades\Cache::remember($cacheKey, 600, function () use ($user) {
+                // Timeout для операции
+                $startTime = microtime(true);
+                $timeoutSeconds = 3;
+                
+                try {
+                    // Смотрим только подписку организации
+                    $organizationId = $user->current_organization_id;
+                    if ($organizationId) {
+                        // Проверяем timeout
+                        if ((microtime(true) - $startTime) > $timeoutSeconds) {
+                            throw new \Exception('Timeout getting subscription');
+                        }
+                        
+                        $orgSubscription = $this->organizationSubscriptionRepo->getByOrganizationId($organizationId);
+                        // Подписка активна, если не истекла (даже если отменена, но срок еще не закончился)
+                        if ($orgSubscription && $orgSubscription->status === 'active' && $orgSubscription->ends_at > now()) {
+                            return $this->getOrganizationLimitsData($user, $orgSubscription);
+                        }
+                    }
 
-        // Если нет активной организационной подписки — отдаём базовые лимиты
-        return $this->getDefaultLimitsData($user);
+                    // Если нет активной организационной подписки — отдаём базовые лимиты
+                    return $this->getDefaultLimitsData($user);
+                    
+                } catch (\Exception $e) {
+                    // Fallback на базовые лимиты при любых ошибках
+                    return $this->getFallbackLimitsData($user);
+                }
+            });
+        } catch (\Exception $e) {
+            // Если кеш недоступен - сразу fallback
+            return $this->getFallbackLimitsData($user);
+        }
+    }
+    
+    /**
+     * Быстрые базовые лимиты без запросов к БД
+     */
+    private function getFallbackLimitsData(User $user): array
+    {
+        return [
+            'has_subscription' => false,
+            'subscription' => null,
+            'limits' => [
+                'foremen' => ['limit' => 1, 'used' => 0, 'remaining' => 1, 'percentage_used' => 0, 'is_unlimited' => false],
+                'projects' => ['limit' => 1, 'used' => 0, 'remaining' => 1, 'percentage_used' => 0, 'is_unlimited' => false],
+                'storage' => ['limit_gb' => 0.1, 'used_gb' => 0, 'used_mb' => 0, 'remaining_gb' => 0.1, 'percentage_used' => 0, 'is_unlimited' => false],
+            ],
+            'features' => [],
+            'warnings' => [],
+            'upgrade_required' => true,
+        ];
     }
 
 

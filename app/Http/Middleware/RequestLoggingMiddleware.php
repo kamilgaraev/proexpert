@@ -77,7 +77,7 @@ class RequestLoggingMiddleware
             return false;
         }
 
-        // Не логировать health check запросы
+        // Не логировать health check запросы (но /metrics логируем!)
         if ($this->isHealthCheck($request)) {
             return false;
         }
@@ -93,6 +93,14 @@ class RequestLoggingMiddleware
         }
 
         return false;
+    }
+    
+    /**
+     * Проверить, является ли запрос metrics запросом
+     */
+    protected function isMetricsRequest(Request $request): bool
+    {
+        return str_contains($request->path(), 'metrics');
     }
 
     /**
