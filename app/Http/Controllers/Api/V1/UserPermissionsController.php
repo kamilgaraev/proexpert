@@ -37,36 +37,50 @@ class UserPermissionsController extends Controller
         $user = Auth::user();
         $organizationId = $this->getOrganizationId($request);
         
-        // Определяем контекст
-        $context = $organizationId ? ['organization_id' => $organizationId] : null;
-        $authContext = $organizationId ? AuthorizationContext::getOrganizationContext($organizationId) : null;
-        
-        // Получаем роли пользователя
-        $userRoles = $this->authService->getUserRoles($user, $authContext);
-        $rolesSlugs = $this->authService->getUserRoleSlugs($user, $context);
-        
-        // Получаем все права
-        $permissions = $this->authService->getUserPermissionsStructured($user, $authContext);
-        
-        // Получаем доступные интерфейсы
-        $availableInterfaces = $this->getAvailableInterfaces($user, $authContext);
-        
-        // Получаем активные модули (если в контексте организации)
-        $activeModules = [];
-        if ($organizationId) {
-            $activeModules = $this->getActiveModules($organizationId);
-        }
+        // КРИТИЧНО: Кешируем права пользователя на 5 минут для избежания медленных запросов
+        $cacheKey = "user_permissions_full_{$user->id}_{$organizationId}";
+        $data = \Illuminate\Support\Facades\Cache::remember($cacheKey, 300, function () use ($user, $organizationId) {
+            // Определяем контекст
+            $context = $organizationId ? ['organization_id' => $organizationId] : null;
+            $authContext = $organizationId ? AuthorizationContext::getOrganizationContext($organizationId) : null;
+            
+            // Получаем роли пользователя
+            $userRoles = $this->authService->getUserRoles($user, $authContext);
+            $rolesSlugs = $this->authService->getUserRoleSlugs($user, $context);
+            
+            // Получаем все права
+            $permissions = $this->authService->getUserPermissionsStructured($user, $authContext);
+            
+            // Получаем доступные интерфейсы
+            $availableInterfaces = $this->getAvailableInterfaces($user, $authContext);
+            
+            // Получаем активные модули (если в контексте организации)
+            $activeModules = [];
+            if ($organizationId) {
+                $activeModules = $this->getActiveModules($organizationId);
+            }
+            
+            return [
+                'user_roles' => $userRoles,
+                'roles_slugs' => $rolesSlugs,
+                'permissions' => $permissions,
+                'available_interfaces' => $availableInterfaces,
+                'active_modules' => $activeModules,
+                'organization_id' => $organizationId,
+                'user_id' => $user->id
+            ];
+        });
         
         return response()->json([
             'success' => true,
             'data' => [
-                'user_id' => $user->id,
-                'organization_id' => $organizationId,
-                'context' => $context,
+                'user_id' => $data['user_id'],
+                'organization_id' => $data['organization_id'],
+                'context' => $organizationId ? ['organization_id' => $organizationId] : null,
                 
                 // Роли пользователя
-                'roles' => $rolesSlugs,
-                'roles_detailed' => $userRoles->map(function($assignment) {
+                'roles' => $data['roles_slugs'],
+                'roles_detailed' => $data['user_roles']->map(function($assignment) {
                     return [
                         'slug' => $assignment->role_slug,
                         'type' => $assignment->role_type,
@@ -78,24 +92,24 @@ class UserPermissionsController extends Controller
                 
                 // Права пользователя
                 'permissions' => [
-                    'system' => array_values($permissions['system'] ?? []),
-                    'modules' => $permissions['modules'] ?? []
+                    'system' => array_values($data['permissions']['system'] ?? []),
+                    'modules' => $data['permissions']['modules'] ?? []
                 ],
                 
                 // Плоский список всех прав для удобства проверки на фронте
-                'permissions_flat' => $this->flattenPermissions($permissions),
+                'permissions_flat' => $this->flattenPermissions($data['permissions']),
                 
                 // Доступные интерфейсы
-                'interfaces' => $availableInterfaces,
+                'interfaces' => $data['available_interfaces'],
                 
                 // Активные модули
-                'active_modules' => $activeModules,
+                'active_modules' => $data['active_modules'],
                 
                 // Метаданные для отладки
                 'meta' => [
                     'checked_at' => now()->toISOString(),
-                    'total_permissions' => count($this->flattenPermissions($permissions)),
-                    'total_roles' => count($rolesSlugs)
+                    'total_permissions' => count($this->flattenPermissions($data['permissions'])),
+                    'total_roles' => count($data['roles_slugs'])
                 ]
             ]
         ]);

@@ -25,7 +25,11 @@ class DashboardController extends Controller
         $user = Auth::user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
 
-        $data = $this->dashboardService->getDashboardData($organizationId);
+        // Кешируем данные дашборда на 2 минуты
+        $cacheKey = "dashboard_data_{$organizationId}";
+        $data = \Illuminate\Support\Facades\Cache::remember($cacheKey, 120, function () use ($organizationId) {
+            return $this->dashboardService->getDashboardData($organizationId);
+        });
 
         return response()->json($data);
     }

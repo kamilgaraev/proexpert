@@ -24,7 +24,12 @@ class SubscriptionLimitsController extends Controller
     public function show(Request $request): JsonResponse
     {
         $user = Auth::user();
-        $limitsData = $this->limitsService->getUserLimitsData($user);
+        
+        // Кешируем лимиты подписки на 5 минут
+        $cacheKey = "subscription_limits_{$user->id}_{$user->current_organization_id}";
+        $limitsData = \Illuminate\Support\Facades\Cache::remember($cacheKey, 300, function () use ($user) {
+            return $this->limitsService->getUserLimitsData($user);
+        });
         
         return response()->json([
             'success' => true,

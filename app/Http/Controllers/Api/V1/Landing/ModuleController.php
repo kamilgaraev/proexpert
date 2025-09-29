@@ -45,38 +45,50 @@ class ModuleController extends Controller
             return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
         }
 
-        $allModules = $this->moduleManager->getAllAvailableModules();
-        $activeModules = $this->moduleManager->getOrganizationModules($organizationId);
-        $activeModuleSlugs = $activeModules->pluck('slug')->toArray();
-
-        $modulesWithStatus = $allModules->map(function ($module) use ($activeModuleSlugs, $organizationId) {
-            // Системные модули (can_deactivate: false) всегда активны
-            $isActive = !$module->can_deactivate || in_array($module->slug, $activeModuleSlugs);
-            $activation = $isActive ? $module->getActivationForOrganization($organizationId) : null;
+        // Кешируем модули на 5 минут - они редко меняются
+        $cacheKey = "modules_with_status_{$organizationId}";
+        $modulesWithStatus = \Illuminate\Support\Facades\Cache::remember($cacheKey, 300, function () use ($organizationId) {
             
-            return [
-                'slug' => $module->slug,
-                'name' => $module->name,
-                'description' => $module->description,
-                'type' => $module->type,
-                'category' => $module->category,
-                'billing_model' => $module->billing_model,
-                'price' => $module->getPrice(),
-                'currency' => $module->getCurrency(),
-                'duration_days' => $module->getDurationDays(),
-                'features' => $module->features ?? [],
-                'permissions' => $module->permissions ?? [],
-                'icon' => $module->icon,
-                'can_deactivate' => $module->can_deactivate,
-                'is_active' => $isActive,
-                'activation' => $activation ? [
-                    'activated_at' => $activation->activated_at,
-                    'expires_at' => $activation->expires_at,
-                    'status' => $activation->status,
-                    'days_until_expiration' => $activation->getDaysUntilExpiration()
-                ] : null
-            ];
-        })->groupBy('category');
+            $allModules = $this->moduleManager->getAllAvailableModules();
+            $activeModules = $this->moduleManager->getOrganizationModules($organizationId);
+            $activeModuleSlugs = $activeModules->pluck('slug')->toArray();
+            
+            // КРИТИЧНО: Предзагружаем ВСЕ активации сразу одним запросом вместо N+1
+            $activations = \App\Models\OrganizationModuleActivation::where('organization_id', $organizationId)
+                ->whereIn('module_slug', $activeModuleSlugs)
+                ->with('module')
+                ->get()
+                ->keyBy('module_slug');
+
+            return $allModules->map(function ($module) use ($activeModuleSlugs, $organizationId, $activations) {
+                // Системные модули (can_deactivate: false) всегда активны
+                $isActive = !$module->can_deactivate || in_array($module->slug, $activeModuleSlugs);
+                $activation = $isActive && isset($activations[$module->slug]) ? $activations[$module->slug] : null;
+                
+                return [
+                    'slug' => $module->slug,
+                    'name' => $module->name,
+                    'description' => $module->description,
+                    'type' => $module->type,
+                    'category' => $module->category,
+                    'billing_model' => $module->billing_model,
+                    'price' => $module->getPrice(),
+                    'currency' => $module->getCurrency(),
+                    'duration_days' => $module->getDurationDays(),
+                    'features' => $module->features ?? [],
+                    'permissions' => $module->permissions ?? [],
+                    'icon' => $module->icon,
+                    'can_deactivate' => $module->can_deactivate,
+                    'is_active' => $isActive,
+                    'activation' => $activation ? [
+                        'activated_at' => $activation->activated_at,
+                        'expires_at' => $activation->expires_at,
+                        'status' => $activation->status,
+                        'days_until_expiration' => $activation->getDaysUntilExpiration()
+                    ] : null
+                ];
+            })->groupBy('category');
+        });
 
         return (new SuccessResponse($modulesWithStatus->toArray()))->toResponse($request);
     }
@@ -93,7 +105,11 @@ class ModuleController extends Controller
             return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
         }
 
-        $activeModules = $this->moduleManager->getOrganizationModules($organizationId);
+        // Кешируем активные модули на 5 минут
+        $cacheKey = "active_modules_{$organizationId}";
+        $activeModules = \Illuminate\Support\Facades\Cache::remember($cacheKey, 300, function () use ($organizationId) {
+            return $this->moduleManager->getOrganizationModules($organizationId);
+        });
 
         return (new SuccessResponse(Module::toPublicCollection($activeModules)))->toResponse($request);
     }
@@ -259,8 +275,13 @@ class ModuleController extends Controller
             return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
         }
 
-        $daysAhead = $request->input('days_ahead', 7);
-        $expiringModules = $this->activationService->getExpiringModules($organizationId, $daysAhead);
+        $daysAhead = $request->input('days', 7); // Исправлено: используем 'days' как в логах
+        
+        // Кешируем истекающие модули на 1 час
+        $cacheKey = "expiring_modules_{$organizationId}_{$daysAhead}";
+        $expiringModules = \Illuminate\Support\Facades\Cache::remember($cacheKey, 3600, function () use ($organizationId, $daysAhead) {
+            return $this->activationService->getExpiringModules($organizationId, $daysAhead);
+        });
 
         return (new SuccessResponse($expiringModules))->toResponse($request);
     }
@@ -277,13 +298,16 @@ class ModuleController extends Controller
             return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
         }
 
-        $billingStats = $this->billingService->getOrganizationBillingStats($organizationId);
-        $upcomingBilling = $this->billingService->getUpcomingBilling($organizationId);
+        // Кешируем биллинг на 2 минуты
+        $cacheKey = "module_billing_{$organizationId}";
+        $billingData = \Illuminate\Support\Facades\Cache::remember($cacheKey, 120, function () use ($organizationId) {
+            return [
+                'stats' => $this->billingService->getOrganizationBillingStats($organizationId),
+                'upcoming' => $this->billingService->getUpcomingBilling($organizationId)
+            ];
+        });
 
-        return (new SuccessResponse([
-            'stats' => $billingStats,
-            'upcoming' => $upcomingBilling
-        ]))->toResponse($request);
+        return (new SuccessResponse($billingData))->toResponse($request);
     }
 
     /**
@@ -311,15 +335,17 @@ class ModuleController extends Controller
     {
         $user = Auth::user();
         
-        $permissions = $this->permissionService->getUserAvailablePermissions($user);
-        $activeModules = $this->permissionService->getUserActiveModules($user);
-        $permissionMatrix = $this->permissionService->getUserModulePermissionMatrix($user);
+        // Кешируем права доступа пользователя на 5 минут
+        $cacheKey = "user_permissions_{$user->id}_{$user->current_organization_id}";
+        $permissionsData = \Illuminate\Support\Facades\Cache::remember($cacheKey, 300, function () use ($user) {
+            return [
+                'permissions' => $this->permissionService->getUserAvailablePermissions($user),
+                'active_modules' => $this->permissionService->getUserActiveModules($user),
+                'permission_matrix' => $this->permissionService->getUserModulePermissionMatrix($user)
+            ];
+        });
 
-        return (new SuccessResponse([
-            'permissions' => $permissions,
-            'active_modules' => $activeModules,
-            'permission_matrix' => $permissionMatrix
-        ]))->toResponse($request);
+        return (new SuccessResponse($permissionsData))->toResponse($request);
     }
 
     /**

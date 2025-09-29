@@ -44,13 +44,26 @@ class BalanceController extends Controller
     {
         /** @var User $user */
         $user = Auth::user();
-        $organization = $user->currentOrganization; // Предполагаем связь user->organization
-
-        if (!$organization) {
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
             return response()->json(['message' => 'Organization not found for this user.'], 404);
         }
 
-        $balance = $this->balanceService->getOrCreateOrganizationBalance($organization);
+        // Кешируем баланс на 30 секунд для избежания повторных запросов
+        $balance = \Illuminate\Support\Facades\Cache::remember(
+            "organization_balance_{$organizationId}", 
+            30, 
+            function () use ($organizationId) {
+                $organization = \App\Models\Organization::find($organizationId);
+                return $organization ? $this->balanceService->getOrCreateOrganizationBalance($organization) : null;
+            }
+        );
+        
+        if (!$balance) {
+            return response()->json(['message' => 'Organization not found.'], 404);
+        }
+
         return new OrganizationBalanceResource($balance);
     }
 
