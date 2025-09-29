@@ -2,95 +2,60 @@
 
 namespace App\Console\Commands;
 
-use Illuminate\Console\Command;
 use App\Modules\Core\ModuleScanner;
-use App\Models\Module;
+use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
 
 class ModulesScanCommand extends Command
 {
-    protected $signature = 'modules:scan {--force : Force rescan even if recently scanned}';
-    protected $description = 'Scan and update module configurations from config files';
-
-    protected ModuleScanner $scanner;
-
-    public function __construct(ModuleScanner $scanner)
+    protected $signature = 'modules:scan {--clear-cache : Clear module cache before scanning}';
+    
+    protected $description = 'Scan and register all modules from configuration files';
+    
+    public function handle(ModuleScanner $moduleScanner): int
     {
-        parent::__construct();
-        $this->scanner = $scanner;
-    }
-
-    public function handle(): int
-    {
-        $force = $this->option('force');
+        $this->info('Scanning modules...');
         
-        // Проверяем когда последний раз сканировали (если не force)
-        if (!$force) {
-            $lastScan = Cache::get('modules_last_scan');
-            if ($lastScan && $lastScan > now()->subMinutes(10)) {
-                $this->info('Modules were scanned recently. Use --force to override.');
-                return 0;
-            }
+        if ($this->option('clear-cache')) {
+            Cache::forget('modules_registry');
+            $this->info('Module cache cleared.');
         }
-
-        $this->info('Starting module configuration scan...');
         
         try {
-            // Запускаем сканирование
-            $modules = $this->scanner->scanAndRegister();
+            $modules = $moduleScanner->scanAndRegister();
             
-            $this->info("Successfully scanned {$modules->count()} modules:");
+            $this->info("Successfully scanned and registered {$modules->count()} modules:");
             
-            foreach ($modules as $moduleConfig) {
-                $this->line("  ✓ {$moduleConfig['name']} ({$moduleConfig['slug']})");
-                
-                // Показываем количество прав для важных модулей
-                if (in_array($moduleConfig['slug'], ['multi-organization', 'users', 'organizations'])) {
-                    $permissionsCount = count($moduleConfig['permissions'] ?? []);
-                    $this->line("    └─ Permissions: {$permissionsCount}");
-                }
+            foreach ($modules as $module) {
+                $status = $this->checkModuleStatus($module);
+                $this->line("  - {$module['name']} ({$module['slug']}) - {$status}");
             }
             
-            // Обновляем время последнего сканирования
-            Cache::put('modules_last_scan', now(), 3600);
+            $this->newLine();
+            $this->info('Module scanning completed successfully!');
             
-            // Проверяем конкретно модуль мультиорганизации
-            $multiOrgModule = Module::where('slug', 'multi-organization')->first();
-            if ($multiOrgModule) {
-                $reportsPermissions = collect($multiOrgModule->permissions)
-                    ->filter(fn($perm) => str_contains($perm, 'reports'))
-                    ->count();
-                    
-                if ($reportsPermissions > 0) {
-                    $this->info("✓ Multi-organization module has {$reportsPermissions} reports permissions");
-                } else {
-                    $this->warn("⚠ Multi-organization module missing reports permissions");
-                }
-            }
-            
-            // Очищаем кэш прав доступа
-            try {
-                // Проверяем поддержку тегов
-                if (method_exists(Cache::getStore(), 'tags')) {
-                    Cache::tags(['permissions', 'modules'])->flush();
-                    $this->info('✓ Tagged permissions cache cleared');
-                } else {
-                    // Очищаем ключи по отдельности для драйверов без поддержки тегов
-                    Cache::forget('module_registry');
-                    Cache::forget('module_permissions');
-                    Cache::forget('user_permissions_cache');
-                    Cache::forget('role_permissions_cache');
-                    $this->info('✓ Permissions cache keys cleared');
-                }
-            } catch (\Exception $e) {
-                $this->warn("Cache clearing failed: {$e->getMessage()}");
-            }
-            
-            return 0;
+            return self::SUCCESS;
             
         } catch (\Exception $e) {
-            $this->error("Module scan failed: {$e->getMessage()}");
-            return 1;
+            $this->error('Failed to scan modules: ' . $e->getMessage());
+            $this->error('Trace: ' . $e->getTraceAsString());
+            
+            return self::FAILURE;
         }
+    }
+    
+    private function checkModuleStatus(array $moduleConfig): string
+    {
+        $className = $moduleConfig['class_name'] ?? null;
+        
+        if (!$className) {
+            return '<fg=red>No class name</>';
+        }
+        
+        if (!class_exists($className)) {
+            return '<fg=red>Class not found</>';
+        }
+        
+        return '<fg=green>OK</>';
     }
 }

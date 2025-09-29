@@ -95,19 +95,7 @@ class AppServiceProvider extends ServiceProvider
         CompletedWork::observe(CompletedWorkObserver::class);
         MaterialReceipt::observe(MaterialReceiptObserver::class);
         
-        // Автоматическое сканирование и регистрация модулей
-        // Выполняем только если не в консоли или во время тестов
-        if (!$this->app->runningInConsole() || $this->app->runningUnitTests()) {
-            try {
-                $moduleScanner = $this->app->make(ModuleScanner::class);
-                $moduleScanner->scanAndRegister();
-            } catch (\Exception $e) {
-                // Логируем ошибку, но не падаем
-                Log::warning('Module auto-registration failed', [
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-            }
-        }
+        // Автоматическое сканирование модулей отключено для производительности
+        // Используйте команду: php artisan modules:scan для обновления модулей
     }
 } 
