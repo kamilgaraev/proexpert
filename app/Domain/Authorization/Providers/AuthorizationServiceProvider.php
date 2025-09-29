@@ -10,6 +10,7 @@ use App\Domain\Authorization\Services\PermissionResolver;
 use App\Domain\Authorization\Services\ModulePermissionChecker;
 use App\Domain\Authorization\Services\CustomRoleService;
 use App\Domain\Authorization\Services\RoleUpdater;
+use App\Services\Logging\LoggingService;
 use App\Domain\Authorization\Listeners\UpdateRolesOnModuleActivation;
 use App\Domain\Authorization\Listeners\UpdateRolesOnModuleDeactivation;
 use App\Modules\Events\ModuleActivated;
@@ -40,14 +41,16 @@ class AuthorizationServiceProvider extends ServiceProvider
         $this->app->singleton(PermissionResolver::class, function ($app) {
             return new PermissionResolver(
                 $app->make(RoleScanner::class),
-                $app->make(ModulePermissionChecker::class)
+                $app->make(ModulePermissionChecker::class),
+                $app->make(LoggingService::class)
             );
         });
 
         $this->app->singleton(AuthorizationService::class, function ($app) {
             return new AuthorizationService(
                 $app->make(RoleScanner::class),
-                $app->make(PermissionResolver::class)
+                $app->make(PermissionResolver::class),
+                $app->make(LoggingService::class)
             );
         });
 
