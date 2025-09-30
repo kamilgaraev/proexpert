@@ -37,6 +37,12 @@ class RoleMiddleware
      */
     public function handle(Request $request, Closure $next, string $roles, ?string $contextType = null, ?string $contextParam = null): ResponseAlias
     {
+        // Пропускаем Prometheus мониторинг без проверки ролей
+        $userAgent = $request->userAgent() ?? '';
+        if (str_contains($userAgent, 'Prometheus')) {
+            return $next($request);
+        }
+        
         $user = $request->user();
         
         if (!$user) {

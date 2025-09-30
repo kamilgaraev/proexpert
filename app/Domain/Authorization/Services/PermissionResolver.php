@@ -35,24 +35,40 @@ class PermissionResolver
     {
         $startTime = microtime(true);
         
-        $this->logging->security('permission.resolve.start', [
-            'user_id' => $assignment->user_id,
-            'role_slug' => $assignment->role_slug,
-            'role_type' => $assignment->role_type,
-            'permission' => $permission,
-            'context' => $context
-        ]);
+        // Кеширование результата проверки разрешений с версионированием
+        $cacheKey = $this->getVersionedCacheKey($assignment->user_id, $assignment->role_slug, $permission, $context);
+        $cachedResult = Cache::get($cacheKey);
+        
+        if ($cachedResult !== null) {
+            return $cachedResult;
+        }
+        
+        // Логируем только если не от Prometheus
+        $userAgent = request()->userAgent() ?? '';
+        if (!str_contains($userAgent, 'Prometheus')) {
+            $this->logging->security('permission.resolve.start', [
+                'user_id' => $assignment->user_id,
+                'role_slug' => $assignment->role_slug,
+                'role_type' => $assignment->role_type,
+                'permission' => $permission,
+                'context' => $context
+            ]);
+        }
 
         // Сначала проверяем системные права
         $hasSystemPerm = $this->hasSystemPermission($assignment, $permission);
         
         if ($hasSystemPerm) {
-            $this->logging->security('permission.granted.system', [
-                'user_id' => $assignment->user_id,
-                'role_slug' => $assignment->role_slug,
-                'permission' => $permission,
-                'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
-            ]);
+            Cache::put($cacheKey, true, 300); // Кеш на 5 минут
+            
+            if (!str_contains($userAgent, 'Prometheus')) {
+                $this->logging->security('permission.granted.system', [
+                    'user_id' => $assignment->user_id,
+                    'role_slug' => $assignment->role_slug,
+                    'permission' => $permission,
+                    'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+                ]);
+            }
             return true;
         }
 
@@ -60,26 +76,34 @@ class PermissionResolver
         $hasModulePerm = $this->hasModulePermission($assignment, $permission, $context);
         
         if ($hasModulePerm) {
-            $this->logging->security('permission.granted.module', [
-                'user_id' => $assignment->user_id,
-                'role_slug' => $assignment->role_slug,
-                'permission' => $permission,
-                'context' => $context,
-                'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
-            ]);
+            Cache::put($cacheKey, true, 300); // Кеш на 5 минут
+            
+            if (!str_contains($userAgent, 'Prometheus')) {
+                $this->logging->security('permission.granted.module', [
+                    'user_id' => $assignment->user_id,
+                    'role_slug' => $assignment->role_slug,
+                    'permission' => $permission,
+                    'context' => $context,
+                    'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+                ]);
+            }
             return true;
         }
 
-        $this->logging->security('permission.denied.complete', [
-            'user_id' => $assignment->user_id,
-            'role_slug' => $assignment->role_slug,
-            'role_type' => $assignment->role_type,
-            'permission' => $permission,
-            'context' => $context,
-            'checked_system' => true,
-            'checked_modules' => true,
-            'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
-        ], 'info');
+        Cache::put($cacheKey, false, 300); // Кеш на 5 минут
+        
+        if (!str_contains($userAgent, 'Prometheus')) {
+            $this->logging->security('permission.denied.complete', [
+                'user_id' => $assignment->user_id,
+                'role_slug' => $assignment->role_slug,
+                'role_type' => $assignment->role_type,
+                'permission' => $permission,
+                'context' => $context,
+                'checked_system' => true,
+                'checked_modules' => true,
+                'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+            ], 'info');
+        }
 
         return false;
     }
@@ -263,16 +287,20 @@ class PermissionResolver
             return $context['organization_id'];
         }
 
-        // Затем из контекста назначения
-        $authContext = $assignment->context;
+        // Затем из контекста назначения (с eager loading)
+        $authContext = $assignment->relationLoaded('context') 
+            ? $assignment->context 
+            : $assignment->load('context.parentContext')->context;
         
-        if ($authContext->type === 'organization') {
+        if ($authContext && $authContext->type === 'organization') {
             return $authContext->resource_id;
         }
 
-        if ($authContext->type === 'project') {
+        if ($authContext && $authContext->type === 'project') {
             // Нужно получить организацию проекта через родительский контекст
-            $parentContext = $authContext->parentContext;
+            $parentContext = $authContext->relationLoaded('parentContext') 
+                ? $authContext->parentContext 
+                : $authContext->load('parentContext')->parentContext;
             if ($parentContext && $parentContext->type === 'organization') {
                 return $parentContext->resource_id;
             }
@@ -289,6 +317,40 @@ class PermissionResolver
         return Cache::remember("custom_role_$roleSlug", 300, function () use ($roleSlug) {
             return OrganizationCustomRole::where('slug', $roleSlug)->first();
         });
+    }
+
+    /**
+     * Очистить кеш разрешений для пользователя
+     */
+    public function clearUserPermissionCache(int $userId): void
+    {
+        // Простое решение - используем тег кеша или версионирование
+        Cache::forget("user_permission_version_{$userId}");
+        
+        // Для более сложной очистки можно использовать версионирование кеша
+        $currentVersion = Cache::get("user_permission_version_{$userId}", 0);
+        Cache::put("user_permission_version_{$userId}", $currentVersion + 1, 3600);
+    }
+
+    /**
+     * Очистить весь кеш разрешений (для emergency случаев)
+     */
+    public function clearAllPermissionCache(): void
+    {
+        $currentVersion = Cache::get("permission_global_version", 0);
+        Cache::put("permission_global_version", $currentVersion + 1, 3600);
+    }
+
+    /**
+     * Получить ключ кеша с версионированием
+     */
+    protected function getVersionedCacheKey(int $userId, string $roleSlug, string $permission, ?array $context = null): string
+    {
+        $userVersion = Cache::get("user_permission_version_{$userId}", 0);
+        $globalVersion = Cache::get("permission_global_version", 0);
+        
+        $baseKey = "permission_{$userId}_{$roleSlug}_{$permission}_" . md5(json_encode($context));
+        return "{$baseKey}_v{$userVersion}_{$globalVersion}";
     }
 
     /**
