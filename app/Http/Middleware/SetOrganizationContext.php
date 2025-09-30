@@ -14,18 +14,15 @@ use App\Models\LandingAdmin;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\App;
 use App\Services\Organization\OrganizationContext;
-use App\Services\Organization\OrganizationCacheService;
 use App\Services\Logging\LoggingService;
 
 class SetOrganizationContext
 {
     protected LoggingService $logging;
-    protected OrganizationCacheService $cacheService;
     
-    public function __construct(LoggingService $logging, OrganizationCacheService $cacheService)
+    public function __construct(LoggingService $logging)
     {
         $this->logging = $logging;
-        $this->cacheService = $cacheService;
     }
     /**
      * Handle an incoming request.
@@ -69,14 +66,10 @@ class SetOrganizationContext
         $logContext = ['user_id' => $user->id];
 
         try {
-            // ОПТИМИЗАЦИЯ: Используем сервис кэширования для JWT payload
+            // ДИАГНОСТИКА: Время парсинга JWT токена
             $jwtParseStart = microtime(true);
-            $payload = $this->cacheService->getCachedJwtPayload();
+            $payload = JWTAuth::parseToken()->getPayload();
             $jwtParseDuration = (microtime(true) - $jwtParseStart) * 1000;
-            
-            if (!$payload) {
-                throw new JWTException('JWT payload не может быть декодирован');
-            }
             
             $this->logging->technical('organization.context.jwt_parsed', [
                 'user_id' => $user->id,
@@ -87,9 +80,9 @@ class SetOrganizationContext
             $logContext['token_org_id'] = $organizationIdFromToken;
 
             if ($organizationIdFromToken) {
-                // ОПТИМИЗАЦИЯ: Используем сервис кэширования для поиска организации
+                // ДИАГНОСТИКА: Время поиска организации в БД
                 $orgLookupStart = microtime(true);
-                $org = $this->cacheService->getCachedUserOrganization($user, $organizationIdFromToken);
+                $org = $user->organizations()->find($organizationIdFromToken);
                 $orgLookupDuration = (microtime(true) - $orgLookupStart) * 1000;
                 
                 $this->logging->technical('organization.context.org_lookup', [

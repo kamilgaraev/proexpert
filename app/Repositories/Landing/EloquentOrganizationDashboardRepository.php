@@ -166,13 +166,14 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
             }
 
             $users = DB::table('users')
-                ->join('user_organization', 'users.id', '=', 'user_organization.user_id')
+                ->join('organization_user', 'users.id', '=', 'organization_user.user_id')
                 ->leftJoin('user_role_assignments', function($join) use ($contextId) {
                     $join->on('users.id', '=', 'user_role_assignments.user_id')
                          ->where('user_role_assignments.context_id', '=', $contextId)
                          ->where('user_role_assignments.is_active', '=', true);
                 })
-                ->where('user_organization.organization_id', $organizationId)
+                ->where('organization_user.organization_id', $organizationId)
+                ->where('organization_user.is_active', true)
                 ->whereNull('users.deleted_at')
                 ->select([
                     'users.id',
