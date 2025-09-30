@@ -34,7 +34,7 @@ class AppServiceProvider extends ServiceProvider
         });
         // Регистрируем ExcelExporterService как singleton
         $this->app->singleton(ExcelExporterService::class, function ($app) {
-            return new ExcelExporterService();
+            return new ExcelExporterService($app->make(\App\Services\Logging\LoggingService::class));
         });
         
         // Регистрируем MaterialReportService как singleton
@@ -56,7 +56,22 @@ class AppServiceProvider extends ServiceProvider
             return new \App\Services\User\UserService(
                 $app->make(\App\Repositories\Interfaces\UserRepositoryInterface::class),
                 $app->make(\App\Domain\Authorization\Services\AuthorizationService::class),
-                $app->make(\App\Helpers\AdminPanelAccessHelper::class)
+                $app->make(\App\Helpers\AdminPanelAccessHelper::class),
+                $app->make(\App\Services\Logging\LoggingService::class)
+            );
+        });
+
+        // Регистрируем OrganizationSubscriptionService
+        $this->app->singleton(\App\Services\Landing\OrganizationSubscriptionService::class, function ($app) {
+            return new \App\Services\Landing\OrganizationSubscriptionService(
+                $app->make(\App\Services\Logging\LoggingService::class)
+            );
+        });
+
+        // Регистрируем OrganizationDashboardService
+        $this->app->singleton(\App\Services\Landing\OrganizationDashboardService::class, function ($app) {
+            return new \App\Services\Landing\OrganizationDashboardService(
+                $app->make(\App\Services\Landing\OrganizationSubscriptionService::class)
             );
         });
         

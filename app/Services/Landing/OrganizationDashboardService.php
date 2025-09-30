@@ -3,16 +3,20 @@
 namespace App\Services\Landing;
 
 use App\Services\Landing\OrganizationSubscriptionService;
-use App\Services\Landing\OrganizationSubscriptionAddonService;
 
 class OrganizationDashboardService
 {
+    protected OrganizationSubscriptionService $subscriptionService;
+
+    public function __construct(OrganizationSubscriptionService $subscriptionService)
+    {
+        $this->subscriptionService = $subscriptionService;
+    }
+
     public function getDashboardData($organization)
     {
-        $subscriptionService = new OrganizationSubscriptionService();
-        $addonService = new OrganizationSubscriptionAddonService();
 
-        $subscription = $subscriptionService->getCurrentSubscription($organization->id);
+        $subscription = $this->subscriptionService->getCurrentSubscription($organization->id);
         $plan = $subscription ? $subscription->plan : null;
 
         // Остатки по лимитам
@@ -34,15 +38,8 @@ class OrganizationDashboardService
             'used_storage_gb' => $usedStorageGb,
         ] : null;
 
-        // Add-on'ы
-        $orgAddons = $addonService->getOrganizationAddons($organization->id);
-        $addons = collect($orgAddons)->map(function($addon) {
-            return [
-                'name' => $addon->addon->name ?? null,
-                'status' => $addon->status,
-                'expires_at' => $addon->expires_at,
-            ];
-        })->values();
+        // Add-on'ы временно отключены
+        $addons = collect([]);
 
         return [
             'plan' => $planData,

@@ -18,7 +18,7 @@ class OrganizationSubscriptionController extends Controller
             return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
         }
         
-        $service = new OrganizationSubscriptionService();
+        $service = app(OrganizationSubscriptionService::class);
         $subscription = $service->getCurrentSubscription($organizationId);
         
         if (!$subscription) {
@@ -65,7 +65,7 @@ class OrganizationSubscriptionController extends Controller
         
         $planSlug = $request->input('plan_slug');
         $isAutoPaymentEnabled = $request->boolean('is_auto_payment_enabled', true);
-        $service = new OrganizationSubscriptionService();
+        $service = app(OrganizationSubscriptionService::class);
         $subscription = $service->subscribe($organizationId, $planSlug, $isAutoPaymentEnabled);
         
         return response()->json([
@@ -85,7 +85,7 @@ class OrganizationSubscriptionController extends Controller
         
         $planSlug = $request->input('plan_slug');
         $isAutoPaymentEnabled = $request->boolean('is_auto_payment_enabled', true);
-        $service = new OrganizationSubscriptionService();
+        $service = app(OrganizationSubscriptionService::class);
         $subscription = $service->updateSubscription($organizationId, $planSlug, $isAutoPaymentEnabled);
         
         return response()->json([
@@ -103,7 +103,7 @@ class OrganizationSubscriptionController extends Controller
             return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
         }
         
-        $service = new OrganizationSubscriptionService();
+        $service = app(OrganizationSubscriptionService::class);
         $result = $service->cancelSubscription($organizationId);
         
         if (!$result['success']) {
@@ -133,7 +133,7 @@ class OrganizationSubscriptionController extends Controller
             return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
         }
         
-        $service = new OrganizationSubscriptionService();
+        $service = app(OrganizationSubscriptionService::class);
         $result = $service->previewPlanChange($organizationId, $request->input('plan_slug'));
         
         if (!$result['success']) {
@@ -163,7 +163,7 @@ class OrganizationSubscriptionController extends Controller
             return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
         }
         
-        $service = new OrganizationSubscriptionService();
+        $service = app(OrganizationSubscriptionService::class);
         $result = $service->changePlan($organizationId, $request->input('plan_slug'));
         
         if (!$result['success']) {

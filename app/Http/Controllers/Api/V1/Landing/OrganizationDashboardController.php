@@ -13,11 +13,16 @@ class OrganizationDashboardController extends Controller
     {
         $user = Auth::user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
-        $organization = $user->organizations()->where('organization_id', $organizationId)->first();
-        if (!$organization) {
-            return response()->json(['error' => 'Организация не найдена или нет доступа'], 404);
+        
+        if (!$organizationId) {
+            return response()->json(['error' => 'Организация не определена'], 400);
         }
-        $dashboardService = new OrganizationDashboardService();
+        
+        $organization = \App\Models\Organization::find($organizationId);
+        if (!$organization) {
+            return response()->json(['error' => 'Организация не найдена'], 404);
+        }
+        $dashboardService = app(OrganizationDashboardService::class);
         $data = $dashboardService->getDashboardData($organization);
         return response()->json($data);
     }
