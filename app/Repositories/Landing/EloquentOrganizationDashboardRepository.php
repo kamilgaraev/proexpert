@@ -3,6 +3,7 @@
 namespace App\Repositories\Landing;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use App\Models\Project;
 use App\Models\Contract;
 use App\Models\CompletedWork;
@@ -48,42 +49,62 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
 
     public function getProjectSummary(int $organizationId): array
     {
-        // ОПТИМИЗАЦИЯ: Один запрос вместо трех
-        $data = Project::where('organization_id', $organizationId)
-            ->selectRaw('
-                COUNT(*) as total,
-                COUNT(CASE WHEN status = "active" THEN 1 END) as active,
-                COUNT(CASE WHEN status = "completed" THEN 1 END) as completed
-            ')
-            ->first();
+        try {
+            // БЕЗОПАСНЫЙ ПОДХОД: Получаем все проекты и считаем в коде
+            $projects = Project::where('organization_id', $organizationId)
+                ->select('status')
+                ->get();
 
-        return [
-            'total' => (int)$data->total,
-            'active' => (int)$data->active,
-            'completed' => (int)$data->completed,
-        ];
+            $total = $projects->count();
+            $active = $projects->filter(function ($project) {
+                return in_array($project->status, ['active']);
+            })->count();
+            $completed = $projects->filter(function ($project) {
+                return in_array($project->status, ['completed']);
+            })->count();
+
+            return [
+                'total' => $total,
+                'active' => $active,
+                'completed' => $completed,
+            ];
+        } catch (\Exception $e) {
+            Log::error('Error in getProjectSummary: ' . $e->getMessage());
+            return ['total' => 0, 'active' => 0, 'completed' => 0];
+        }
     }
 
     public function getContractSummary(int $organizationId): array
     {
-        // ОПТИМИЗАЦИЯ: Один запрос вместо пяти
-        $data = Contract::where('organization_id', $organizationId)
-            ->selectRaw('
-                COUNT(*) as total,
-                COUNT(CASE WHEN status = "active" THEN 1 END) as active,
-                COUNT(CASE WHEN status = "draft" THEN 1 END) as draft,
-                COUNT(CASE WHEN status = "completed" THEN 1 END) as completed,
-                SUM(total_amount) as total_amount
-            ')
-            ->first();
+        try {
+            // БЕЗОПАСНЫЙ ПОДХОД: Получаем все контракты и считаем в коде
+            $contracts = Contract::where('organization_id', $organizationId)
+                ->select('status', 'total_amount')
+                ->get();
 
-        return [
-            'total' => (int)$data->total,
-            'active' => (int)$data->active,
-            'draft' => (int)$data->draft,
-            'completed' => (int)$data->completed,
-            'total_amount' => (float)($data->total_amount ?? 0),
-        ];
+            $total = $contracts->count();
+            $active = $contracts->filter(function ($contract) {
+                return in_array($contract->status, ['active']);
+            })->count();
+            $draft = $contracts->filter(function ($contract) {
+                return in_array($contract->status, ['draft']);
+            })->count();
+            $completed = $contracts->filter(function ($contract) {
+                return in_array($contract->status, ['completed']);
+            })->count();
+            $totalAmount = $contracts->sum('total_amount') ?? 0;
+
+            return [
+                'total' => $total,
+                'active' => $active,
+                'draft' => $draft,
+                'completed' => $completed,
+                'total_amount' => (float)$totalAmount,
+            ];
+        } catch (\Exception $e) {
+            Log::error('Error in getContractSummary: ' . $e->getMessage());
+            return ['total' => 0, 'active' => 0, 'draft' => 0, 'completed' => 0, 'total_amount' => 0];
+        }
     }
 
     public function getWorkMaterialSummary(int $organizationId): array
@@ -155,45 +176,53 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
     {
         // ОПТИМИЗАЦИЯ: Кэшируем результат детальной информации о команде на 10 минут
         return cache()->remember("team_details_{$organizationId}", 600, function() use ($organizationId) {
-            // ОПТИМИЗАЦИЯ: Используем JOIN вместо whereHas для лучшей производительности
-            $contextId = DB::table('authorization_contexts')
-                ->where('type', 'organization')
-                ->where('resource_id', $organizationId)
-                ->value('id');
-                
-            if (!$contextId) {
+            try {
+                // ОПТИМИЗАЦИЯ: Используем JOIN вместо whereHas для лучшей производительности
+                $contextId = DB::table('authorization_contexts')
+                    ->where('type', 'organization')
+                    ->where('resource_id', $organizationId)
+                    ->value('id');
+                    
+                if (!$contextId) {
+                    return [];
+                }
+
+                $users = DB::table('users')
+                    ->join('organization_user', 'users.id', '=', 'organization_user.user_id')
+                    ->leftJoin('user_role_assignments', function($join) use ($contextId) {
+                        $join->on('users.id', '=', 'user_role_assignments.user_id')
+                             ->where('user_role_assignments.context_id', '=', $contextId)
+                             ->where('user_role_assignments.is_active', '=', true);
+                    })
+                    ->where('organization_user.organization_id', $organizationId)
+                    ->where('organization_user.is_active', true)
+                    ->whereNull('users.deleted_at')
+                    ->select([
+                        'users.id',
+                        'users.name', 
+                        'users.email',
+                        'users.avatar_path',
+                        DB::raw('STRING_AGG(user_role_assignments.role_slug, \',\') as roles')
+                    ])
+                    ->groupBy('users.id', 'users.name', 'users.email', 'users.avatar_path')
+                    ->get();
+
+                return $users->map(function ($user) {
+                    return [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                        'email' => $user->email,
+                        'avatar_path' => $user->avatar_path,
+                        'roles' => $user->roles ? explode(',', $user->roles) : [],
+                    ];
+                })->toArray();
+            } catch (\Exception $e) {
+                Log::error('Error in getTeamDetails: ' . $e->getMessage(), [
+                    'organization_id' => $organizationId,
+                    'trace' => $e->getTraceAsString()
+                ]);
                 return [];
             }
-
-            $users = DB::table('users')
-                ->join('organization_user', 'users.id', '=', 'organization_user.user_id')
-                ->leftJoin('user_role_assignments', function($join) use ($contextId) {
-                    $join->on('users.id', '=', 'user_role_assignments.user_id')
-                         ->where('user_role_assignments.context_id', '=', $contextId)
-                         ->where('user_role_assignments.is_active', '=', true);
-                })
-                ->where('organization_user.organization_id', $organizationId)
-                ->where('organization_user.is_active', true)
-                ->whereNull('users.deleted_at')
-                ->select([
-                    'users.id',
-                    'users.name', 
-                    'users.email',
-                    'users.avatar_url',
-                    DB::raw('GROUP_CONCAT(user_role_assignments.role_slug) as roles')
-                ])
-                ->groupBy('users.id', 'users.name', 'users.email', 'users.avatar_url')
-                ->get();
-
-            return $users->map(function ($user) {
-                return [
-                    'id' => $user->id,
-                    'name' => $user->name,
-                    'email' => $user->email,
-                    'avatar_url' => $user->avatar_url,
-                    'roles' => $user->roles ? explode(',', $user->roles) : [],
-                ];
-            })->toArray();
         });
     }
 
@@ -236,11 +265,14 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
 
     private function distribution(string $modelClass, int $orgId, string $field): array
     {
-        return $modelClass::where('organization_id', $orgId)
-            ->select($field, DB::raw('COUNT(*) as cnt'))
-            ->groupBy($field)
-            ->pluck('cnt', $field)
-            ->toArray();
+        // БЕЗОПАСНЫЙ ПОДХОД: Получаем данные в коде для избежания SQL ошибок
+        $items = $modelClass::where('organization_id', $orgId)
+            ->select($field)
+            ->get();
+            
+        return $items->groupBy($field)->map(function ($group) {
+            return $group->count();
+        })->toArray();
     }
 
     /**
