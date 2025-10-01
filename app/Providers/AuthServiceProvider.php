@@ -32,16 +32,17 @@ class AuthServiceProvider extends ServiceProvider
     {
         $this->registerPolicies();
 
-        // Интеграция с новой системой авторизации
         Gate::before(function (\App\Models\User $user, string $ability, $arguments = null) {
-            // Интегрируем с новой системой авторизации
+            $userAgent = request()->userAgent() ?? '';
+            if (str_contains($userAgent, 'Prometheus')) {
+                return null;
+            }
+            
             $authorizationService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
             
-            // Если это проверка разрешения в формате 'permission:context'
             if (strpos($ability, ':') !== false) {
                 [$permission, $context] = explode(':', $ability, 2);
                 
-                // Пытаемся определить контекст из аргументов или текущей организации
                 $organizationId = null;
                 if (is_numeric($context)) {
                     $organizationId = (int) $context;
@@ -56,7 +57,6 @@ class AuthServiceProvider extends ServiceProvider
                 }
             }
             
-            // Для admin.* прав проверяем сначала в организационном, потом в системном контексте
             if (str_starts_with($ability, 'admin.')) {
                 $organizationAccess = false;
                 if ($user->current_organization_id) {
@@ -71,17 +71,26 @@ class AuthServiceProvider extends ServiceProvider
                 return $organizationAccess || $systemAccess;
             }
             
-            // Проверяем как системное разрешение
             return $authorizationService->can($user, $ability, ['context_type' => 'system']);
         });
         
         Gate::define('admin.access', function (User $user) {
+            $userAgent = request()->userAgent() ?? '';
+            if (str_contains($userAgent, 'Prometheus')) {
+                return false;
+            }
+            
             $authorizationService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
             return $authorizationService->can($user, 'admin.access', ['context_type' => 'system']) ||
                    $authorizationService->can($user, 'admin.access', ['context_type' => 'organization', 'context_id' => $user->current_organization_id]);
         });
         
         Gate::define('organization.manage', function (User $user, ?int $organizationId = null) {
+            $userAgent = request()->userAgent() ?? '';
+            if (str_contains($userAgent, 'Prometheus')) {
+                return false;
+            }
+            
             $authorizationService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
             $orgId = $organizationId ?? $user->current_organization_id;
             return $authorizationService->can($user, 'organization.manage', ['context_type' => 'organization', 'context_id' => $orgId]);

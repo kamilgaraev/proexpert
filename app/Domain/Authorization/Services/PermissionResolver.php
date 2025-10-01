@@ -33,79 +33,104 @@ class PermissionResolver
      */
     public function hasPermission(UserRoleAssignment $assignment, string $permission, ?array $context = null): bool
     {
-        $startTime = microtime(true);
+        static $depthCounter = 0;
+        $maxDepth = 50;
         
-        // Кеширование результата проверки разрешений с версионированием
-        $cacheKey = $this->getVersionedCacheKey($assignment->user_id, $assignment->role_slug, $permission, $context);
-        $cachedResult = Cache::get($cacheKey);
-        
-        if ($cachedResult !== null) {
-            return $cachedResult;
-        }
-        
-        // Логируем только если не от Prometheus
-        $userAgent = request()->userAgent() ?? '';
-        if (!str_contains($userAgent, 'Prometheus')) {
-            $this->logging->security('permission.resolve.start', [
+        if ($depthCounter >= $maxDepth) {
+            $this->logging->security('permission.max_depth_exceeded', [
                 'user_id' => $assignment->user_id,
-                'role_slug' => $assignment->role_slug,
-                'role_type' => $assignment->role_type,
                 'permission' => $permission,
-                'context' => $context
-            ]);
+                'max_depth' => $maxDepth
+            ], 'error');
+            return false;
         }
-
-        // Сначала проверяем системные права
-        $hasSystemPerm = $this->hasSystemPermission($assignment, $permission);
         
-        if ($hasSystemPerm) {
-            Cache::put($cacheKey, true, 300); // Кеш на 5 минут
+        $depthCounter++;
+        
+        try {
+            $startTime = microtime(true);
             
-            if (!str_contains($userAgent, 'Prometheus')) {
-                $this->logging->security('permission.granted.system', [
-                    'user_id' => $assignment->user_id,
-                    'role_slug' => $assignment->role_slug,
-                    'permission' => $permission,
-                    'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
-                ]);
+            $cacheKey = $this->getVersionedCacheKey($assignment->user_id, $assignment->role_slug, $permission, $context);
+            $cachedResult = Cache::get($cacheKey);
+            
+            if ($cachedResult !== null) {
+                return $cachedResult;
             }
-            return true;
-        }
-
-        // Затем модульные права (если есть контекст организации)
-        $hasModulePerm = $this->hasModulePermission($assignment, $permission, $context);
-        
-        if ($hasModulePerm) {
-            Cache::put($cacheKey, true, 300); // Кеш на 5 минут
             
+            $timeout = 5.0;
+            if ((microtime(true) - $startTime) > $timeout) {
+                $this->logging->security('permission.resolve.timeout', [
+                    'user_id' => $assignment->user_id,
+                    'permission' => $permission,
+                    'timeout_seconds' => $timeout
+                ], 'error');
+                return false;
+            }
+            
+            $userAgent = request()->userAgent() ?? '';
             if (!str_contains($userAgent, 'Prometheus')) {
-                $this->logging->security('permission.granted.module', [
+                $this->logging->security('permission.resolve.start', [
                     'user_id' => $assignment->user_id,
                     'role_slug' => $assignment->role_slug,
+                    'role_type' => $assignment->role_type,
                     'permission' => $permission,
                     'context' => $context,
-                    'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+                    'depth' => $depthCounter
                 ]);
             }
-            return true;
-        }
 
-        Cache::put($cacheKey, false, 300); // Кеш на 5 минут
-        
-        if (!str_contains($userAgent, 'Prometheus')) {
-            $this->logging->security('permission.denied.complete', [
-                'user_id' => $assignment->user_id,
-                'role_slug' => $assignment->role_slug,
-                'role_type' => $assignment->role_type,
-                'permission' => $permission,
-                'context' => $context,
-                'checked_system' => true,
-                'checked_modules' => true,
-                'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
-            ], 'info');
-        }
+            $hasSystemPerm = $this->hasSystemPermission($assignment, $permission);
+            
+            if ($hasSystemPerm) {
+                Cache::put($cacheKey, true, 300);
+                
+                if (!str_contains($userAgent, 'Prometheus')) {
+                    $this->logging->security('permission.granted.system', [
+                        'user_id' => $assignment->user_id,
+                        'role_slug' => $assignment->role_slug,
+                        'permission' => $permission,
+                        'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+                    ]);
+                }
+                return true;
+            }
 
-        return false;
+            $hasModulePerm = $this->hasModulePermission($assignment, $permission, $context);
+            
+            if ($hasModulePerm) {
+                Cache::put($cacheKey, true, 300);
+                
+                if (!str_contains($userAgent, 'Prometheus')) {
+                    $this->logging->security('permission.granted.module', [
+                        'user_id' => $assignment->user_id,
+                        'role_slug' => $assignment->role_slug,
+                        'permission' => $permission,
+                        'context' => $context,
+                        'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+                    ]);
+                }
+                return true;
+            }
+
+            Cache::put($cacheKey, false, 300);
+            
+            if (!str_contains($userAgent, 'Prometheus')) {
+                $this->logging->security('permission.denied.complete', [
+                    'user_id' => $assignment->user_id,
+                    'role_slug' => $assignment->role_slug,
+                    'role_type' => $assignment->role_type,
+                    'permission' => $permission,
+                    'context' => $context,
+                    'checked_system' => true,
+                    'checked_modules' => true,
+                    'resolve_duration_ms' => round((microtime(true) - $startTime) * 1000, 2)
+                ], 'info');
+            }
+
+            return false;
+        } finally {
+            $depthCounter--;
+        }
     }
 
     /**
@@ -140,14 +165,12 @@ class PermissionResolver
      */
     public function hasModulePermission(UserRoleAssignment $assignment, string $permission, ?array $context = null): bool
     {
-        // Определяем организацию из контекста
         $organizationId = $this->extractOrganizationId($assignment, $context);
         
         if (!$organizationId) {
             return false;
         }
 
-        // Разбираем permission на модуль и действие (например: projects.view -> projects, view)
         $parts = explode('.', $permission, 2);
         if (count($parts) !== 2) {
             return false;
@@ -155,12 +178,15 @@ class PermissionResolver
 
         [$module, $action] = $parts;
         
-        // Проверяем, активирован ли модуль для организации
-        if (!$this->moduleChecker->isModuleActive($module, $organizationId)) {
+        $cacheKey = "module_active_{$module}_{$organizationId}";
+        $isActive = Cache::remember($cacheKey, 300, function () use ($module, $organizationId) {
+            return $this->moduleChecker->isModuleActive($module, $organizationId);
+        });
+        
+        if (!$isActive) {
             return false;
         }
 
-        // Проверяем модульные права роли
         $modulePermissions = $this->getModulePermissions($assignment);
         
         return $this->checkModulePermission($modulePermissions, $module, $action);
@@ -171,14 +197,16 @@ class PermissionResolver
      */
     public function getSystemPermissions(UserRoleAssignment $assignment): array
     {
-        if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
-            $permissions = $this->roleScanner->getSystemPermissions($assignment->role_slug);
-            return $permissions;
-        } else {
-            $customRole = $this->getCustomRole($assignment->role_slug);
-            $permissions = $customRole ? $customRole->system_permissions : [];
-            return $permissions;
-        }
+        $cacheKey = "system_perms_{$assignment->role_type}_{$assignment->role_slug}";
+        
+        return Cache::remember($cacheKey, 600, function () use ($assignment) {
+            if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
+                return $this->roleScanner->getSystemPermissions($assignment->role_slug);
+            } else {
+                $customRole = $this->getCustomRole($assignment->role_slug);
+                return $customRole ? $customRole->system_permissions : [];
+            }
+        });
     }
 
     /**
@@ -186,12 +214,16 @@ class PermissionResolver
      */
     public function getModulePermissions(UserRoleAssignment $assignment): array
     {
-        if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
-            return $this->roleScanner->getModulePermissions($assignment->role_slug);
-        } else {
-            $customRole = $this->getCustomRole($assignment->role_slug);
-            return $customRole ? $customRole->module_permissions : [];
-        }
+        $cacheKey = "module_perms_{$assignment->role_type}_{$assignment->role_slug}";
+        
+        return Cache::remember($cacheKey, 600, function () use ($assignment) {
+            if ($assignment->role_type === UserRoleAssignment::TYPE_SYSTEM) {
+                return $this->roleScanner->getModulePermissions($assignment->role_slug);
+            } else {
+                $customRole = $this->getCustomRole($assignment->role_slug);
+                return $customRole ? $customRole->module_permissions : [];
+            }
+        });
     }
 
     /**

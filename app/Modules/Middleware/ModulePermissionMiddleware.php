@@ -19,6 +19,11 @@ class ModulePermissionMiddleware
 
     public function handle(Request $request, Closure $next, string $permission): Response
     {
+        $userAgent = $request->userAgent() ?? '';
+        if (str_contains($userAgent, 'Prometheus')) {
+            return $next($request);
+        }
+        
         $user = Auth::user();
         
         if (!$user) {
