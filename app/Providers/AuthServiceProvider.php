@@ -95,5 +95,35 @@ class AuthServiceProvider extends ServiceProvider
             $orgId = $organizationId ?? $user->current_organization_id;
             return $authorizationService->can($user, 'organization.manage', ['context_type' => 'organization', 'context_id' => $orgId]);
         });
+        
+        Gate::define('access-mobile-app', function (User $user, ?int $organizationId = null) {
+            $userAgent = request()->userAgent() ?? '';
+            if (str_contains($userAgent, 'Prometheus')) {
+                return false;
+            }
+            
+            $mobileAccessHelper = app(\App\Helpers\MobileAccessHelper::class);
+            $authorizationService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+            $orgId = $organizationId ?? $user->current_organization_id;
+            
+            if (!$orgId) {
+                return false;
+            }
+            
+            $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($orgId);
+            $userRoles = $user->roleAssignments()
+                ->where('context_id', $context->id)
+                ->where('is_active', true)
+                ->pluck('role_slug')
+                ->toArray();
+            
+            foreach ($userRoles as $roleSlug) {
+                if ($mobileAccessHelper->canRoleAccessMobile($roleSlug, $orgId)) {
+                    return true;
+                }
+            }
+            
+            return false;
+        });
     }
 }

@@ -52,7 +52,7 @@
     "schedule-management": ["*"]
   },
   
-  "interface_access": ["lk", "admin"],
+  "interface_access": ["lk", "admin", "mobile"],
   
   "hierarchy": {
     "can_manage_roles": [
