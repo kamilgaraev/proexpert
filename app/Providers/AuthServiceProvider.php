@@ -38,6 +38,12 @@ class AuthServiceProvider extends ServiceProvider
                 return null;
             }
             
+            // Пропускаем специальные Gates с кастомной логикой - пусть обрабатываются в Gate::define()
+            $customGates = ['access-mobile-app', 'organization.manage', 'admin.access'];
+            if (in_array($ability, $customGates)) {
+                return null;
+            }
+            
             $authorizationService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
             
             if (strpos($ability, ':') !== false) {
