@@ -32,7 +32,20 @@ class OrganizationSubscriptionController extends Controller
             ]);
         }
         
-        $subscription->load('plan');
+        $subscription->load(['plan', 'activeBundledModules.module']);
+        
+        $plan = $subscription->plan;
+        $bundledModules = $subscription->activeBundledModules->map(function ($activation) {
+            return [
+                'id' => $activation->module->id,
+                'name' => $activation->module->name,
+                'slug' => $activation->module->slug,
+                'category' => $activation->module->category,
+                'icon' => $activation->module->icon,
+                'activated_at' => $activation->activated_at?->format('Y-m-d H:i:s'),
+                'expires_at' => $activation->expires_at?->format('Y-m-d H:i:s'),
+            ];
+        });
         
         return response()->json([
             'success' => true,
@@ -41,14 +54,23 @@ class OrganizationSubscriptionController extends Controller
                 'subscription' => [
                     'id' => $subscription->id,
                     'status' => $subscription->status,
-                    'plan_name' => $subscription->plan->name ?? 'Unknown',
-                    'plan_description' => $subscription->plan->description ?? '',
+                    'plan' => [
+                        'slug' => $plan->slug ?? null,
+                        'name' => $plan->name ?? 'Unknown',
+                        'description' => $plan->description ?? '',
+                        'price' => $plan->price ?? 0,
+                        'currency' => $plan->currency ?? 'RUB',
+                        'features' => $plan->features ?? [],
+                    ],
                     'is_trial' => false,
                     'trial_ends_at' => $subscription->trial_ends_at?->format('Y-m-d H:i:s'),
                     'ends_at' => $subscription->ends_at?->format('Y-m-d H:i:s'),
                     'next_billing_at' => $subscription->next_billing_at?->format('Y-m-d H:i:s'),
                     'is_canceled' => $subscription->canceled_at !== null,
+                    'canceled_at' => $subscription->canceled_at?->format('Y-m-d H:i:s'),
                     'is_auto_payment_enabled' => $subscription->is_auto_payment_enabled,
+                    'bundled_modules' => $bundledModules,
+                    'bundled_modules_count' => $bundledModules->count(),
                 ]
             ]
         ]);
