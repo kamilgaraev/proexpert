@@ -64,7 +64,8 @@ class AppServiceProvider extends ServiceProvider
         // Регистрируем OrganizationSubscriptionService
         $this->app->singleton(\App\Services\Landing\OrganizationSubscriptionService::class, function ($app) {
             return new \App\Services\Landing\OrganizationSubscriptionService(
-                $app->make(\App\Services\Logging\LoggingService::class)
+                $app->make(\App\Services\Logging\LoggingService::class),
+                $app->make(\App\Services\SubscriptionModuleSyncService::class)
             );
         });
 
