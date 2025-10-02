@@ -63,7 +63,7 @@ class ModuleActivationService
             'can_activate' => empty($checks['missing_dependencies']) && 
                              empty($checks['conflicts']) && 
                              $canAfford && 
-                             !$checks['is_already_active']
+                             !($checks['is_already_active'] ?? false)
         ];
     }
     

@@ -151,7 +151,9 @@ class AccessController
     public function checkDependencies(int $organizationId, Module $module): array
     {
         $dependencies = $module->dependencies ?? [];
+        $conflicts = $module->conflicts ?? [];
         $missing = [];
+        $found = [];
         
         foreach ($dependencies as $dependencySlug) {
             if (!$this->hasModuleAccess($organizationId, $dependencySlug)) {
@@ -159,7 +161,19 @@ class AccessController
             }
         }
         
-        return $missing;
+        foreach ($conflicts as $conflictSlug) {
+            if ($this->hasModuleAccess($organizationId, $conflictSlug)) {
+                $found[] = $conflictSlug;
+            }
+        }
+        
+        $isActive = $this->hasModuleAccess($organizationId, $module->slug);
+        
+        return [
+            'missing_dependencies' => $missing,
+            'conflicts' => $found,
+            'is_already_active' => $isActive
+        ];
     }
     
     public function checkConflicts(int $organizationId, Module $module): array

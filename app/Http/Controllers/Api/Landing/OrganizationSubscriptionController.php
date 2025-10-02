@@ -78,6 +78,12 @@ class OrganizationSubscriptionController extends Controller
 
     public function subscribe(Request $request)
     {
+        $request->validate([
+            'plan_slug' => 'required|string',
+            'duration_days' => 'nullable|integer|in:30,90,365',
+            'is_auto_payment_enabled' => 'nullable|boolean'
+        ]);
+
         $user = Auth::user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
@@ -86,9 +92,10 @@ class OrganizationSubscriptionController extends Controller
         }
         
         $planSlug = $request->input('plan_slug');
+        $durationDays = $request->input('duration_days', 30);
         $isAutoPaymentEnabled = $request->boolean('is_auto_payment_enabled', true);
         $service = app(OrganizationSubscriptionService::class);
-        $subscription = $service->subscribe($organizationId, $planSlug, $isAutoPaymentEnabled);
+        $subscription = $service->subscribe($organizationId, $planSlug, $isAutoPaymentEnabled, $durationDays);
         
         return response()->json([
             'success' => true,

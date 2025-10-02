@@ -4,36 +4,43 @@ namespace App\Domain\Authorization\Listeners;
 
 use App\Domain\Authorization\Services\RoleUpdater;
 use App\Modules\Events\ModuleDeactivated;
+use App\Services\Logging\LoggingService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Queue\InteractsWithQueue;
-use Illuminate\Support\Facades\Log;
 
 class UpdateRolesOnModuleDeactivation implements ShouldQueue
 {
     use InteractsWithQueue;
 
     protected RoleUpdater $roleUpdater;
+    protected LoggingService $logging;
 
-    public function __construct(RoleUpdater $roleUpdater)
+    public function __construct(RoleUpdater $roleUpdater, LoggingService $logging)
     {
         $this->roleUpdater = $roleUpdater;
+        $this->logging = $logging;
     }
 
     public function handle(ModuleDeactivated $event): void
     {
         try {
-            $this->roleUpdater->removeRolesForModule($event->moduleSlug);
+            $updated = $this->roleUpdater->removeRolesForModule($event->moduleSlug);
             
-            Log::info("Права модуля удалены из ролей при деактивации: {$event->moduleSlug}", [
-                'organization_id' => $event->organizationId,
-                'module_slug' => $event->moduleSlug
-            ]);
+            if ($updated) {
+                $this->logging->technical('role.permissions.removed', [
+                    'organization_id' => $event->organizationId,
+                    'module_slug' => $event->moduleSlug,
+                    'action' => 'module_deactivated'
+                ]);
+            }
             
         } catch (\Exception $e) {
-            Log::error("Ошибка удаления прав модуля {$event->moduleSlug} из ролей: " . $e->getMessage(), [
+            $this->logging->technical('role.permissions.removal_failed', [
                 'organization_id' => $event->organizationId,
-                'exception' => $e
-            ]);
+                'module_slug' => $event->moduleSlug,
+                'error' => $e->getMessage(),
+                'hint' => 'Проверьте права на запись файлов config/RoleDefinitions/*.json'
+            ], 'warning');
         }
     }
 }

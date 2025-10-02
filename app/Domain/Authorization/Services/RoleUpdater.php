@@ -117,7 +117,17 @@ class RoleUpdater
 
         $roleData['module_permissions'][$moduleSlug] = $permissionsToAdd;
 
-        return File::put($rolePath, json_encode($roleData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        if (!is_writable($rolePath)) {
+            throw new \RuntimeException("Файл роли не доступен для записи: {$rolePath}. Выполните: sudo chown www-data:www-data {$rolePath} && sudo chmod 664 {$rolePath}");
+        }
+
+        $success = File::put($rolePath, json_encode($roleData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        
+        if (!$success) {
+            throw new \RuntimeException("Не удалось записать файл роли: {$rolePath}");
+        }
+        
+        return true;
     }
 
     protected function removeModulePermissionsFromRole(string $roleSlug, string $moduleSlug): bool
@@ -136,7 +146,17 @@ class RoleUpdater
 
         unset($roleData['module_permissions'][$moduleSlug]);
 
-        return File::put($rolePath, json_encode($roleData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        if (!is_writable($rolePath)) {
+            throw new \RuntimeException("Файл роли не доступен для записи: {$rolePath}. Выполните: sudo chown www-data:www-data {$rolePath} && sudo chmod 664 {$rolePath}");
+        }
+
+        $success = File::put($rolePath, json_encode($roleData, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        
+        if (!$success) {
+            throw new \RuntimeException("Не удалось записать файл роли: {$rolePath}");
+        }
+        
+        return true;
     }
 
     protected function filterPermissionsForRole(string $roleSlug, array $permissions): array

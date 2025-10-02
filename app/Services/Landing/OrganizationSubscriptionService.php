@@ -35,15 +35,18 @@ class OrganizationSubscriptionService
         return $this->repo->getByOrganizationId($organizationId);
     }
 
-    public function subscribe($organizationId, $planSlug, bool $isAutoPaymentEnabled = true)
+    public function subscribe($organizationId, $planSlug, bool $isAutoPaymentEnabled = true, int $durationDays = 30)
     {
         $plan = SubscriptionPlan::where('slug', $planSlug)->where('is_active', true)->firstOrFail();
         $organization = Organization::findOrFail($organizationId);
         $now = Carbon::now();
+        
+        $finalPrice = $this->calculatePriceWithDuration($plan->price, $durationDays);
+        
         $data = [
             'status' => 'active',
             'starts_at' => $now,
-            'ends_at' => $now->copy()->addDays($plan->duration_in_days),
+            'ends_at' => $now->copy()->addDays($durationDays),
             'is_auto_payment_enabled' => $isAutoPaymentEnabled,
         ];
 
@@ -54,17 +57,19 @@ class OrganizationSubscriptionService
             'plan_id' => $plan->id,
             'plan_name' => $plan->name,
             'plan_price' => $plan->price,
-            'duration_days' => $plan->duration_in_days,
+            'duration_days' => $durationDays,
+            'final_price' => $finalPrice,
+            'discount_applied' => $this->getDiscountRate($durationDays),
             'auto_payment_enabled' => $isAutoPaymentEnabled,
             'starts_at' => $now->toISOString(),
-            'ends_at' => $now->copy()->addDays($plan->duration_in_days)->toISOString(),
+            'ends_at' => $now->copy()->addDays($durationDays)->toISOString(),
             'user_id' => Auth::id()
         ]);
 
         try {
             // Списываем стоимость плана с баланса (в копейках/центах)
-            if (((float) $plan->price) > 0) {
-                $amountCents = (int) round(((float) $plan->price) * 100);
+            if (((float) $finalPrice) > 0) {
+                $amountCents = (int) round(((float) $finalPrice) * 100);
                 // Бросит InsufficientBalanceException, если средств нет
                 $this->balanceService->debitBalance(
                     $organization,
@@ -126,6 +131,28 @@ class OrganizationSubscriptionService
             
             throw $e;
         }
+    }
+
+    protected function calculatePriceWithDuration(float $basePrice, int $durationDays): float
+    {
+        $monthlyPrice = $basePrice;
+        
+        return match($durationDays) {
+            30 => $monthlyPrice,
+            90 => $monthlyPrice * 3 * 0.95,
+            365 => $monthlyPrice * 12 * 0.85,
+            default => $monthlyPrice * ($durationDays / 30)
+        };
+    }
+
+    protected function getDiscountRate(int $durationDays): float
+    {
+        return match($durationDays) {
+            30 => 0,
+            90 => 5,
+            365 => 15,
+            default => 0
+        };
     }
 
     public function updateSubscription($organizationId, $planSlug, bool $isAutoPaymentEnabled = true)
