@@ -24,7 +24,7 @@ class SubscriptionPlanSeeder extends Seeder
                 'max_foremen' => 1,
                 'max_projects' => 1,
                 'max_storage_gb' => 1,
-                'features' => json_encode([
+                'features' => [
                     'Лимиты' => [
                         '1 прораб',
                         '1 проект',
@@ -42,7 +42,7 @@ class SubscriptionPlanSeeder extends Seeder
                         'Только базовый функционал',
                         '10 операций/мес',
                     ],
-                ]),
+                ],
                 'is_active' => true,
                 'display_order' => 1,
             ],
@@ -56,7 +56,7 @@ class SubscriptionPlanSeeder extends Seeder
                 'max_foremen' => 2,
                 'max_projects' => 3,
                 'max_storage_gb' => 1,
-                'features' => json_encode([
+                'features' => [
                     'Лимиты' => [
                         '2 прораба',
                         '3 проекта',
@@ -73,7 +73,7 @@ class SubscriptionPlanSeeder extends Seeder
                         'Базовые отчеты без ограничений',
                         'Техническая поддержка',
                     ],
-                ]),
+                ],
                 'is_active' => true,
                 'display_order' => 2,
             ],
@@ -87,7 +87,7 @@ class SubscriptionPlanSeeder extends Seeder
                 'max_foremen' => 10,
                 'max_projects' => 15,
                 'max_storage_gb' => 5,
-                'features' => json_encode([
+                'features' => [
                     'Лимиты' => [
                         '10 прорабов',
                         '15 проектов',
@@ -107,7 +107,7 @@ class SubscriptionPlanSeeder extends Seeder
                         'Приоритетная поддержка',
                         'Обучение команды',
                     ],
-                ]),
+                ],
                 'is_active' => true,
                 'display_order' => 3,
             ],
@@ -121,7 +121,7 @@ class SubscriptionPlanSeeder extends Seeder
                 'max_foremen' => 30,
                 'max_projects' => 50,
                 'max_storage_gb' => 20,
-                'features' => json_encode([
+                'features' => [
                     'Лимиты' => [
                         '30 прорабов',
                         '50 проектов',
@@ -141,7 +141,7 @@ class SubscriptionPlanSeeder extends Seeder
                         'SLA 99.9%',
                         'Еженедельные консультации',
                     ],
-                ]),
+                ],
                 'is_active' => true,
                 'display_order' => 4,
             ],
@@ -155,7 +155,7 @@ class SubscriptionPlanSeeder extends Seeder
                 'max_foremen' => null,
                 'max_projects' => null,
                 'max_storage_gb' => null,
-                'features' => json_encode([
+                'features' => [
                     'Безлимитные возможности' => [
                         'Неограниченное количество прорабов',
                         'Неограниченное количество проектов',
@@ -177,7 +177,7 @@ class SubscriptionPlanSeeder extends Seeder
                         'Круглосуточная поддержка',
                         'Регулярные стратегические сессии',
                     ],
-                ]),
+                ],
                 'is_active' => true,
                 'display_order' => 5,
             ],
