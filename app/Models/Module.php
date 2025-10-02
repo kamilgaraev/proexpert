@@ -111,6 +111,41 @@ class Module extends Model
         return $this->billing_model === 'one_time';
     }
 
+    public function isIncludedInPlan(string $planSlug): bool
+    {
+        $pricingConfig = $this->pricing_config ?? [];
+        
+        if (!isset($pricingConfig['included_in_plans'])) {
+            return $pricingConfig['included_in_plan'] ?? false;
+        }
+        
+        $includedPlans = (array) $pricingConfig['included_in_plans'];
+        return in_array($planSlug, $includedPlans, true);
+    }
+
+    public function getIncludedPlans(): array
+    {
+        $pricingConfig = $this->pricing_config ?? [];
+        
+        if (isset($pricingConfig['included_in_plans'])) {
+            return (array) $pricingConfig['included_in_plans'];
+        }
+        
+        if (($pricingConfig['included_in_plan'] ?? false) === true) {
+            return ['all'];
+        }
+        
+        return [];
+    }
+
+    public function scopeIncludedInPlan($query, string $planSlug)
+    {
+        return $query->where(function ($q) use ($planSlug) {
+            $q->whereJsonContains('pricing_config->included_in_plans', $planSlug)
+              ->orWhere('pricing_config->included_in_plan', true);
+        });
+    }
+
     public function scopeActive($query)
     {
         return $query->where('is_active', true);

@@ -13,7 +13,7 @@
   "pricing": {
     "base_price": 5900,
     "currency": "RUB",
-    "included_in_plan": false,
+    "included_in_plans": ["enterprise"],
     "duration_days": 30
   },
   

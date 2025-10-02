@@ -30,6 +30,9 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
         Route::get('/permissions', [ModuleController::class, 'permissions'])
             ->name('permissions');
         
+        Route::get('/bundled', [ModuleController::class, 'getBundledModules'])
+            ->name('bundled');
+        
         // Методы для владельцев организации
         Route::middleware(['authorize:modules.manage'])
             ->group(function () {

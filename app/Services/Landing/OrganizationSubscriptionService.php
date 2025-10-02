@@ -11,18 +11,23 @@ use App\Interfaces\Billing\BalanceServiceInterface;
 use App\Services\Logging\LoggingService;
 use App\Models\Organization;
 use App\Exceptions\Billing\InsufficientBalanceException;
+use App\Services\SubscriptionModuleSyncService;
 
 class OrganizationSubscriptionService
 {
     protected $repo;
     protected BalanceServiceInterface $balanceService;
     protected LoggingService $logging;
+    protected SubscriptionModuleSyncService $moduleSyncService;
 
-    public function __construct(LoggingService $logging)
-    {
+    public function __construct(
+        LoggingService $logging,
+        SubscriptionModuleSyncService $moduleSyncService
+    ) {
         $this->repo = new OrganizationSubscriptionRepository();
         $this->balanceService = app(BalanceServiceInterface::class);
         $this->logging = $logging;
+        $this->moduleSyncService = $moduleSyncService;
     }
 
     public function getCurrentSubscription($organizationId)
@@ -93,6 +98,18 @@ class OrganizationSubscriptionService
                 'transaction_type' => 'subscription_created',
                 'performed_by' => Auth::id() ?? 'system'
             ]);
+
+            $moduleSyncResult = $this->moduleSyncService->syncModulesOnSubscribe($subscription);
+            
+            if ($moduleSyncResult['activated_count'] > 0 || $moduleSyncResult['converted_count'] > 0) {
+                $this->logging->business('subscription.modules.synced', [
+                    'subscription_id' => $subscription->id,
+                    'organization_id' => $organizationId,
+                    'activated_count' => $moduleSyncResult['activated_count'],
+                    'converted_count' => $moduleSyncResult['converted_count'],
+                    'modules' => $moduleSyncResult['modules']
+                ]);
+            }
 
             return $subscription;
 
@@ -264,10 +281,22 @@ class OrganizationSubscriptionService
             'performed_by' => Auth::id() ?? 'system'
         ]);
 
+        $deactivatedModules = $this->moduleSyncService->handleSubscriptionCancellation($subscription);
+        
+        if ($deactivatedModules > 0) {
+            $this->logging->business('subscription.modules.deactivated', [
+                'subscription_id' => $subscription->id,
+                'organization_id' => $organizationId,
+                'deactivated_count' => $deactivatedModules,
+                'reason' => 'subscription_canceled'
+            ]);
+        }
+
         return [
             'success' => true,
             'subscription' => $subscription->fresh(),
-            'message' => 'Подписка отменена, но будет действовать до ' . $subscription->ends_at->format('d.m.Y')
+            'message' => 'Подписка отменена, но будет действовать до ' . $subscription->ends_at->format('d.m.Y'),
+            'deactivated_modules_count' => $deactivatedModules
         ];
     }
 
@@ -424,19 +453,42 @@ class OrganizationSubscriptionService
         }
 
         // Обновляем подписку
+        $oldPlan = $currentSubscription->plan;
         $updatedSubscription = $this->repo->createOrUpdate($organizationId, $newPlan->id, [
             'status' => 'active',
             'starts_at' => $now,
             'ends_at' => $now->copy()->addDays($newPlan->duration_in_days),
             'next_billing_at' => $now->copy()->addDays($newPlan->duration_in_days),
             'is_auto_payment_enabled' => $currentSubscription->is_auto_payment_enabled,
-            'canceled_at' => null // Сбрасываем отмену, если была
+            'canceled_at' => null
         ]);
+
+        $moduleSyncResult = $this->moduleSyncService->syncModulesOnPlanChange(
+            $updatedSubscription,
+            $oldPlan,
+            $newPlan
+        );
+        
+        if ($moduleSyncResult['deactivated_count'] > 0 || 
+            $moduleSyncResult['activated_count'] > 0 || 
+            $moduleSyncResult['converted_count'] > 0) {
+            
+            $this->logging->business('subscription.plan_change.modules_synced', [
+                'subscription_id' => $updatedSubscription->id,
+                'organization_id' => $organizationId,
+                'old_plan' => $oldPlan->slug,
+                'new_plan' => $newPlan->slug,
+                'deactivated_count' => $moduleSyncResult['deactivated_count'],
+                'activated_count' => $moduleSyncResult['activated_count'],
+                'converted_count' => $moduleSyncResult['converted_count']
+            ]);
+        }
 
         return [
             'success' => true,
             'subscription' => $updatedSubscription->load('plan'),
             'billing_info' => $billingCalculation,
+            'modules_sync' => $moduleSyncResult,
             'message' => $this->getChangeMessage($billingCalculation, $currentSubscription->plan->name, $newPlan->name)
         ];
     }

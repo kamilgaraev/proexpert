@@ -375,4 +375,50 @@ class ModuleController extends Controller
 
         return (new SuccessResponse($result))->toResponse($request);
     }
+
+    public function getBundledModules(Request $request): JsonResponse
+    {
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        }
+
+        $subscription = \App\Models\OrganizationSubscription::where('organization_id', $organizationId)
+            ->where('status', 'active')
+            ->with(['activeBundledModules.module'])
+            ->first();
+
+        if (!$subscription) {
+            return (new SuccessResponse([
+                'bundled_modules' => [],
+                'has_subscription' => false,
+                'message' => 'Нет активной подписки'
+            ]))->toResponse($request);
+        }
+
+        $bundledModules = $subscription->activeBundledModules->map(function ($activation) {
+            return [
+                'id' => $activation->module->id,
+                'name' => $activation->module->name,
+                'slug' => $activation->module->slug,
+                'description' => $activation->module->description,
+                'category' => $activation->module->category,
+                'icon' => $activation->module->icon,
+                'activated_at' => $activation->activated_at,
+                'expires_at' => $activation->expires_at,
+                'status' => $activation->status,
+            ];
+        });
+
+        return (new SuccessResponse([
+            'bundled_modules' => $bundledModules,
+            'has_subscription' => true,
+            'subscription' => [
+                'plan_name' => $subscription->plan->name,
+                'ends_at' => $subscription->ends_at,
+            ]
+        ]))->toResponse($request);
+    }
 }

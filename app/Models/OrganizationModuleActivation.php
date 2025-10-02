@@ -13,6 +13,8 @@ class OrganizationModuleActivation extends Model
     protected $fillable = [
         'organization_id',
         'module_id',
+        'subscription_id',
+        'is_bundled_with_plan',
         'status',
         'activated_at',
         'expires_at',
@@ -38,6 +40,7 @@ class OrganizationModuleActivation extends Model
         'module_settings' => 'array',
         'usage_stats' => 'array',
         'paid_amount' => 'decimal:2',
+        'is_bundled_with_plan' => 'boolean',
     ];
 
     public function organization(): BelongsTo
@@ -48,6 +51,11 @@ class OrganizationModuleActivation extends Model
     public function module(): BelongsTo
     {
         return $this->belongsTo(Module::class);
+    }
+
+    public function subscription(): BelongsTo
+    {
+        return $this->belongsTo(OrganizationSubscription::class, 'subscription_id');
     }
 
     public function isActive(): bool
@@ -163,5 +171,70 @@ class OrganizationModuleActivation extends Model
         return $query->where('status', 'active')
             ->whereNotNull('expires_at')
             ->whereBetween('expires_at', [now(), now()->addDays($days)]);
+    }
+
+    public function scopeBundled($query)
+    {
+        return $query->where('is_bundled_with_plan', true);
+    }
+
+    public function scopeStandalone($query)
+    {
+        return $query->where('is_bundled_with_plan', false);
+    }
+
+    public function isBundled(): bool
+    {
+        return $this->is_bundled_with_plan === true;
+    }
+
+    public function isStandalone(): bool
+    {
+        return !$this->isBundled();
+    }
+
+    public function syncWithSubscription(OrganizationSubscription $subscription): bool
+    {
+        if (!$this->isBundled()) {
+            return false;
+        }
+
+        return $this->update([
+            'subscription_id' => $subscription->id,
+            'expires_at' => $subscription->ends_at,
+            'next_billing_date' => $subscription->next_billing_at,
+        ]);
+    }
+
+    public function convertToBundled(OrganizationSubscription $subscription): bool
+    {
+        return $this->update([
+            'is_bundled_with_plan' => true,
+            'subscription_id' => $subscription->id,
+            'expires_at' => $subscription->ends_at,
+            'next_billing_date' => $subscription->next_billing_at,
+            'paid_amount' => 0,
+        ]);
+    }
+
+    public function convertToStandalone(): bool
+    {
+        return $this->update([
+            'is_bundled_with_plan' => false,
+            'subscription_id' => null,
+        ]);
+    }
+
+    public function deactivateAsBundled(string $reason = 'Подписка отменена'): bool
+    {
+        if (!$this->isBundled()) {
+            return false;
+        }
+
+        return $this->update([
+            'status' => 'suspended',
+            'cancelled_at' => now(),
+            'cancellation_reason' => $reason,
+        ]);
     }
 }

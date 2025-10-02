@@ -13,8 +13,8 @@
   "pricing": {
     "base_price": 0,
     "currency": "RUB",
-    "included_in_plan": true,
-    "duration_days": 0
+    "included_in_plans": ["free", "start", "business", "profi", "enterprise"],
+    "duration_days": 30
   },
   
   "permissions": [

@@ -46,9 +46,20 @@ class OrganizationSubscription extends Model
         return $this->belongsTo(SubscriptionPlan::class, 'subscription_plan_id');
     }
 
-    public function addons(): HasMany
+    public function bundledModules(): HasMany
     {
-        return $this->hasMany(OrganizationSubscriptionAddon::class);
+        return $this->hasMany(OrganizationModuleActivation::class, 'subscription_id')
+            ->where('is_bundled_with_plan', true);
+    }
+
+    public function activeBundledModules(): HasMany
+    {
+        return $this->bundledModules()
+            ->where('status', 'active')
+            ->where(function ($query) {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
+            });
     }
 
     /**
@@ -87,9 +98,42 @@ class OrganizationSubscription extends Model
         }
         
         if ($this->isCanceled()) {
-            return 'canceled_active'; // Отменена, но еще действует
+            return 'canceled_active';
         }
         
         return $this->status;
+    }
+
+    public function syncModulesExpiration(): int
+    {
+        return $this->bundledModules()->update([
+            'expires_at' => $this->ends_at,
+            'next_billing_date' => $this->next_billing_at,
+        ]);
+    }
+
+    public function deactivateBundledModules(string $reason = 'Подписка отменена'): int
+    {
+        return $this->bundledModules()
+            ->where('status', 'active')
+            ->update([
+                'status' => 'suspended',
+                'cancelled_at' => now(),
+                'cancellation_reason' => $reason,
+            ]);
+    }
+
+    public function reactivateBundledModules(): int
+    {
+        return $this->bundledModules()
+            ->where('status', 'suspended')
+            ->whereNotNull('cancelled_at')
+            ->update([
+                'status' => 'active',
+                'cancelled_at' => null,
+                'cancellation_reason' => null,
+                'expires_at' => $this->ends_at,
+                'next_billing_date' => $this->next_billing_at,
+            ]);
     }
 } 
