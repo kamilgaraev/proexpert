@@ -97,13 +97,7 @@ class AuthServiceProvider extends ServiceProvider
         });
         
         Gate::define('access-mobile-app', function (User $user, ?int $organizationId = null) {
-            $userAgent = request()->userAgent() ?? '';
-            if (str_contains($userAgent, 'Prometheus')) {
-                return false;
-            }
-            
             $mobileAccessHelper = app(\App\Helpers\MobileAccessHelper::class);
-            $authorizationService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
             $orgId = $organizationId ?? $user->current_organization_id;
             
             if (!$orgId) {
