@@ -79,4 +79,26 @@ class InvitationService
         Mail::to($invitation->email)->send(new UserInvitationMail($invitation->email, $invitation->plain_password, $loginUrl));
         $invitation->update(['sent_at' => now()]);
     }
+
+    public function getInvitationStats(int $organizationId): array
+    {
+        $total = UserInvitation::where('organization_id', $organizationId)->count();
+        $pending = UserInvitation::where('organization_id', $organizationId)
+            ->where('status', 'pending')
+            ->count();
+        $accepted = UserInvitation::where('organization_id', $organizationId)
+            ->where('status', 'accepted')
+            ->count();
+        $expired = UserInvitation::where('organization_id', $organizationId)
+            ->where('status', 'expired')
+            ->count();
+
+        return [
+            'total' => $total,
+            'pending' => $pending,
+            'accepted' => $accepted,
+            'expired' => $expired,
+            'acceptance_rate' => $total > 0 ? round(($accepted / $total) * 100, 1) : 0,
+        ];
+    }
 } 

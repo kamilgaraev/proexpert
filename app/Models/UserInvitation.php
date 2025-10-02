@@ -16,11 +16,13 @@ class UserInvitation extends Model
         'organization_id',
         'invited_by_user_id',
         'user_id',
+        'accepted_by_user_id',
         'email',
         'name',
         'role_slugs',
         'token',
         'expires_at',
+        'accepted_at',
         'plain_password',
         'status',
         'sent_at',
@@ -30,9 +32,17 @@ class UserInvitation extends Model
     protected $casts = [
         'role_slugs' => 'array',
         'expires_at' => 'datetime',
+        'accepted_at' => 'datetime',
         'sent_at'    => 'datetime',
         'metadata'   => 'array',
         'status' => InvitationStatus::class,
+    ];
+
+    protected $appends = [
+        'role_names',
+        'status_text',
+        'status_color',
+        'invitation_url',
     ];
 
     // Добавляем token при создании
@@ -71,7 +81,7 @@ class UserInvitation extends Model
 
     public function acceptedBy()
     {
-        return $this->belongsTo(User::class, 'user_id');
+        return $this->belongsTo(User::class, 'accepted_by_user_id');
     }
 
     // Методы проверки статуса
@@ -95,7 +105,8 @@ class UserInvitation extends Model
     {
         $this->update([
             'status' => InvitationStatus::ACCEPTED,
-            'user_id' => $user->id
+            'accepted_by_user_id' => $user->id,
+            'accepted_at' => now()
         ]);
     }
 
@@ -110,5 +121,47 @@ class UserInvitation extends Model
             'token' => Str::random(64),
             'expires_at' => Carbon::now()->addDays(7)
         ]);
+    }
+
+    public function getRoleNamesAttribute(): array
+    {
+        $roleMap = [
+            'organization_admin' => 'Администратор организации',
+            'foreman' => 'Прораб',
+            'web_admin' => 'Веб-администратор',
+            'accountant' => 'Бухгалтер',
+            'worker' => 'Рабочий',
+            'admin' => 'Администратор',
+        ];
+
+        return array_map(function ($slug) use ($roleMap) {
+            return $roleMap[$slug] ?? $slug;
+        }, $this->role_slugs ?? []);
+    }
+
+    public function getStatusTextAttribute(): string
+    {
+        return match ($this->status) {
+            InvitationStatus::PENDING => 'Ожидает принятия',
+            InvitationStatus::ACCEPTED => 'Принято',
+            InvitationStatus::EXPIRED => 'Истекло',
+            InvitationStatus::CANCELLED => 'Отменено',
+        };
+    }
+
+    public function getStatusColorAttribute(): string
+    {
+        return match ($this->status) {
+            InvitationStatus::PENDING => 'warning',
+            InvitationStatus::ACCEPTED => 'success',
+            InvitationStatus::EXPIRED => 'error',
+            InvitationStatus::CANCELLED => 'default',
+        };
+    }
+
+    public function getInvitationUrlAttribute(): string
+    {
+        $baseUrl = config('app.url');
+        return "{$baseUrl}/invitation/{$this->token}";
     }
 }

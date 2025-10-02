@@ -24,20 +24,20 @@ class UserInvitationController extends Controller
     {
         $user = Auth::user();
 
-        // Определяем организацию, по которой выводим приглашения
-        $organizationId = $user->current_organization_id ?? optional($user->organizations()->first())->id;
+        $organizationId = $user->current_organization_id;
 
         if (!$organizationId) {
             return response()->json(['success' => true, 'data' => []]);
         }
 
         $invitations = \App\Models\UserInvitation::where('organization_id', $organizationId)
+            ->with(['invitedBy', 'acceptedBy', 'organization'])
             ->latest('created_at')
             ->get();
 
         return response()->json([
             'success' => true,
-            'data'    => $invitations,
+            'data'    => \App\Http\Resources\Api\V1\Landing\UserInvitationResource::collection($invitations),
         ]);
     }
 
@@ -75,9 +75,28 @@ class UserInvitationController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show(int $invitationId)
     {
-        //
+        $user = Auth::user();
+        $organizationId = $user->current_organization_id;
+
+        if (!$organizationId) {
+            return response()->json(['success' => false, 'message' => 'Не определён контекст организации'], 400);
+        }
+
+        $invitation = UserInvitation::where('id', $invitationId)
+            ->where('organization_id', $organizationId)
+            ->with(['invitedBy', 'acceptedBy', 'organization'])
+            ->first();
+
+        if (!$invitation) {
+            return response()->json(['success' => false, 'message' => 'Приглашение не найдено'], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => new \App\Http\Resources\Api\V1\Landing\UserInvitationResource($invitation),
+        ]);
     }
 
     /**
@@ -99,15 +118,66 @@ class UserInvitationController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(string $id)
+    public function destroy(int $invitationId)
     {
-        //
+        $user = Auth::user();
+        $organizationId = $user->current_organization_id;
+
+        if (!$organizationId) {
+            return response()->json(['success' => false, 'message' => 'Не определён контекст организации'], 400);
+        }
+
+        $invitation = UserInvitation::where('id', $invitationId)
+            ->where('organization_id', $organizationId)
+            ->first();
+
+        if (!$invitation) {
+            return response()->json(['success' => false, 'message' => 'Приглашение не найдено'], 404);
+        }
+
+        $invitation->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Приглашение удалено'
+        ]);
     }
 
     public function resend(Request $request, int $invitationId)
     {
-        $invitation = UserInvitation::findOrFail($invitationId);
+        $user = Auth::user();
+        $organizationId = $user->current_organization_id;
+
+        if (!$organizationId) {
+            return response()->json(['success' => false, 'message' => 'Не определён контекст организации'], 400);
+        }
+
+        $invitation = UserInvitation::where('id', $invitationId)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+
         $this->invitationService->resend($invitation);
-        return response()->json(['success'=>true]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Приглашение отправлено повторно'
+        ]);
+    }
+
+    public function stats(Request $request)
+    {
+        $user = Auth::user();
+        $organizationId = $user->current_organization_id;
+
+        if (!$organizationId) {
+            return response()->json(['success' => false, 'message' => 'Не определён контекст организации'], 400);
+        }
+
+        $stats = $this->invitationService->getInvitationStats($organizationId);
+
+        return response()->json([
+            'success' => true,
+            'data' => $stats,
+        ]);
     }
 }

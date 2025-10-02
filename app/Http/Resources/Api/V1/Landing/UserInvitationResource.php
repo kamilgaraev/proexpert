@@ -23,8 +23,14 @@ class UserInvitationResource extends JsonResource
             'status' => $this->status,
             'status_text' => $this->status_text,
             'status_color' => $this->status_color,
-            'token' => $this->when($request->user()->can('view-invitation-tokens'), $this->token),
-            'invitation_url' => $this->when($request->user()->can('view-invitation-tokens'), $this->invitation_url),
+            'token' => $this->when(
+                $request->user()?->can('users.invite', ['context_type' => 'organization', 'context_id' => $this->organization_id]),
+                $this->token
+            ),
+            'invitation_url' => $this->when(
+                $request->user()?->can('users.invite', ['context_type' => 'organization', 'context_id' => $this->organization_id]),
+                $this->invitation_url
+            ),
             'expires_at' => $this->expires_at?->toISOString(),
             'accepted_at' => $this->accepted_at?->toISOString(),
             'is_expired' => $this->isExpired(),
