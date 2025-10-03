@@ -12,6 +12,7 @@ use App\Services\Logging\LoggingService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 class ModuleManager 
 {
     protected ModuleRegistry $registry;
@@ -259,6 +260,8 @@ class ModuleManager
             
             event(new ModuleActivated($organizationId, $moduleSlug));
             
+            $this->clearOrganizationModuleCaches($organizationId);
+            
             return [
                 'success' => true,
                 'message' => "Модуль '{$module->name}' успешно активирован",
@@ -441,6 +444,8 @@ class ModuleManager
             
             event(new ModuleDeactivated($organizationId, $moduleSlug));
             
+            $this->clearOrganizationModuleCaches($organizationId);
+            
             return [
                 'success' => true,
                 'message' => "Модуль '{$module->name}' деактивирован",
@@ -600,5 +605,34 @@ class ModuleManager
         }
         
         return $warnings;
+    }
+    
+    protected function clearOrganizationModuleCaches(int $organizationId): void
+    {
+        $cacheKeys = [
+            "org_active_modules_{$organizationId}",
+            "active_modules_{$organizationId}",
+        ];
+        
+        foreach ($cacheKeys as $key) {
+            Cache::forget($key);
+        }
+        
+        $organization = Organization::find($organizationId);
+        if ($organization) {
+            $userIds = $organization->users()->pluck('id');
+            
+            foreach ($userIds as $userId) {
+                Cache::forget("user_permissions_full_{$userId}_{$organizationId}");
+                Cache::forget("user_permissions_{$userId}_{$organizationId}");
+                Cache::forget("user_available_permissions_{$userId}_{$organizationId}");
+            }
+        }
+        
+        $this->logging->technical('cache.organization_modules.cleared', [
+            'organization_id' => $organizationId,
+            'cleared_keys' => count($cacheKeys),
+            'cleared_user_caches' => isset($userIds) ? count($userIds) : 0
+        ]);
     }
 }
