@@ -151,33 +151,32 @@ class ModuleManager
             ];
         }
         
-        // ДИАГНОСТИКА: Проверяем зависимости
         $dependenciesCheckStart = microtime(true);
-        $missingDependencies = $this->accessController->checkDependencies($organizationId, $module);
+        $dependenciesCheck = $this->accessController->checkDependencies($organizationId, $module);
         $dependenciesCheckDuration = (microtime(true) - $dependenciesCheckStart) * 1000;
         
         $this->logging->technical('module.dependencies.check', [
             'organization_id' => $organizationId,
             'module_slug' => $moduleSlug,
-            'missing_dependencies' => $missingDependencies,
-            'has_missing_dependencies' => !empty($missingDependencies),
+            'dependencies_check' => $dependenciesCheck,
+            'has_missing_dependencies' => !empty($dependenciesCheck['missing_dependencies']),
             'duration_ms' => $dependenciesCheckDuration
         ]);
         
-        if (!empty($missingDependencies)) {
+        if (!empty($dependenciesCheck['missing_dependencies'])) {
             $this->logging->business('module.activation.failed', [
                 'organization_id' => $organizationId,
                 'module_slug' => $moduleSlug,
                 'reason' => 'MISSING_DEPENDENCIES',
-                'missing_dependencies' => $missingDependencies,
+                'missing_dependencies' => $dependenciesCheck['missing_dependencies'],
                 'duration_ms' => (microtime(true) - $startTime) * 1000
             ]);
             
             return [
                 'success' => false,
-                'message' => 'Не хватает зависимых модулей: ' . implode(', ', $missingDependencies),
+                'message' => 'Не хватает зависимых модулей: ' . implode(', ', $dependenciesCheck['missing_dependencies']),
                 'code' => 'MISSING_DEPENDENCIES',
-                'missing_dependencies' => $missingDependencies
+                'missing_dependencies' => $dependenciesCheck['missing_dependencies']
             ];
         }
         
