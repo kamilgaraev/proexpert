@@ -16,15 +16,18 @@ class CustomReportBuilderController extends Controller
         protected CustomReportBuilderService $builderService,
         protected LoggingService $logging
     ) {
-        $this->middleware('can:view-reports');
     }
 
     public function getDataSources(): JsonResponse
     {
         try {
-            $this->logging->technical('report_builder.get_data_sources_requested', [], 'debug');
-
+            Log::info('[CustomReportBuilderController@getDataSources] Request received');
+            
             $dataSources = $this->builderService->getAvailableDataSources();
+            
+            Log::info('[CustomReportBuilderController@getDataSources] Success', [
+                'count' => count($dataSources)
+            ]);
 
             $this->logging->technical('report_builder.get_data_sources_success', [
                 'count' => count($dataSources)
@@ -35,20 +38,22 @@ class CustomReportBuilderController extends Controller
                 'data' => $dataSources,
             ]);
         } catch (\Throwable $e) {
+            Log::error('[CustomReportBuilderController@getDataSources] Error', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             $this->logging->technical('report_builder.get_data_sources_failed', [
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine()
             ], 'error');
 
-            Log::error('[CustomReportBuilderController@getDataSources] Error', [
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения источников данных: ' . $e->getMessage()
+                'message' => 'Ошибка получения источников данных'
             ], 500);
         }
     }
@@ -93,7 +98,7 @@ class CustomReportBuilderController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения полей: ' . $e->getMessage()
+                'message' => 'Ошибка получения полей источника данных'
             ], 500);
         }
     }
@@ -123,7 +128,7 @@ class CustomReportBuilderController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка получения связей: ' . $e->getMessage()
+                'message' => 'Ошибка получения связей источника данных'
             ], 500);
         }
     }

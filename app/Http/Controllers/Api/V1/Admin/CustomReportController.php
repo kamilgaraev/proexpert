@@ -22,7 +22,6 @@ class CustomReportController extends Controller
         protected CustomReportExecutionService $executionService,
         protected LoggingService $logging
     ) {
-        $this->middleware('can:view-reports');
     }
 
     public function index(Request $request): JsonResponse

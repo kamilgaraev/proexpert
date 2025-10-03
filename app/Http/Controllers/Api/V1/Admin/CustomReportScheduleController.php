@@ -15,7 +15,6 @@ class CustomReportScheduleController extends Controller
     public function __construct(
         protected CustomReportSchedulerService $schedulerService
     ) {
-        $this->middleware('can:view-reports');
     }
 
     public function index(Request $request, int $reportId): JsonResponse
