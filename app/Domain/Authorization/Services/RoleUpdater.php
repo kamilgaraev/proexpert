@@ -39,9 +39,13 @@ class RoleUpdater
         
         foreach ($roleDefinitions as $roleSlug => $roleData) {
             if ($this->shouldUpdateRoleForModule($roleData, $moduleSlug)) {
-                if ($this->addModulePermissionsToRole($roleSlug, $moduleSlug, $modulePermissions)) {
-                    $rolesUpdated = true;
-                    Log::info("Обновлена роль {$roleSlug} правами модуля {$moduleSlug}");
+                try {
+                    if ($this->addModulePermissionsToRole($roleSlug, $moduleSlug, $modulePermissions)) {
+                        $rolesUpdated = true;
+                        Log::info("Обновлена роль {$roleSlug} правами модуля {$moduleSlug}");
+                    }
+                } catch (\RuntimeException $e) {
+                    Log::warning("Не удалось добавить права модуля {$moduleSlug} в роль {$roleSlug}: {$e->getMessage()}");
                 }
             }
         }
@@ -61,15 +65,18 @@ class RoleUpdater
         $roleDefinitions = $this->roleScanner->getAllRoles();
         
         foreach ($roleDefinitions as $roleSlug => $roleData) {
-            if ($this->removeModulePermissionsFromRole($roleSlug, $moduleSlug)) {
-                $rolesUpdated = true;
-                Log::info("Удалены права модуля {$moduleSlug} из роли {$roleSlug}");
+            try {
+                if ($this->removeModulePermissionsFromRole($roleSlug, $moduleSlug)) {
+                    $rolesUpdated = true;
+                    Log::info("Удалены права модуля {$moduleSlug} из роли {$roleSlug}");
+                }
+            } catch (\RuntimeException $e) {
+                Log::warning("Не удалось удалить права модуля {$moduleSlug} из роли {$roleSlug}: {$e->getMessage()}");
             }
         }
 
         if ($rolesUpdated) {
             $this->roleScanner->clearCache();
-            // Очищаем кеш авторизации для всех пользователей
             Cache::flush();
         }
 

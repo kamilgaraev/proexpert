@@ -11,11 +11,6 @@ use App\Domain\Authorization\Services\ModulePermissionChecker;
 use App\Domain\Authorization\Services\CustomRoleService;
 use App\Domain\Authorization\Services\RoleUpdater;
 use App\Services\Logging\LoggingService;
-use App\Domain\Authorization\Listeners\UpdateRolesOnModuleActivation;
-use App\Domain\Authorization\Listeners\UpdateRolesOnModuleDeactivation;
-use App\Modules\Events\ModuleActivated;
-use App\Modules\Events\ModuleDeactivated;
-use Illuminate\Support\Facades\Event;
 
 /**
  * Service Provider для новой системы авторизации
@@ -135,8 +130,9 @@ class AuthorizationServiceProvider extends ServiceProvider
      */
     protected function registerEventListeners(): void
     {
-        Event::listen(ModuleActivated::class, UpdateRolesOnModuleActivation::class);
-        Event::listen(ModuleDeactivated::class, UpdateRolesOnModuleDeactivation::class);
+        // NOTE: Listeners отключены - права модулей определяются статически в файлах ролей.
+        // Система динамически проверяет активность модуля в организации при проверке прав.
+        // Изменение файлов конфигурации на проде недопустимо по соображениям безопасности.
     }
 
     /**

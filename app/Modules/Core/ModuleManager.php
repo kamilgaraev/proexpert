@@ -620,7 +620,7 @@ class ModuleManager
         
         $organization = Organization::find($organizationId);
         if ($organization) {
-            $userIds = $organization->users()->pluck('id');
+            $userIds = $organization->users()->pluck('users.id');
             
             foreach ($userIds as $userId) {
                 Cache::forget("user_permissions_full_{$userId}_{$organizationId}");
