@@ -21,39 +21,111 @@ class CustomReportBuilderController extends Controller
 
     public function getDataSources(): JsonResponse
     {
-        $dataSources = $this->builderService->getAvailableDataSources();
+        try {
+            $this->logging->technical('report_builder.get_data_sources_requested', [], 'debug');
 
-        return response()->json([
-            'success' => true,
-            'data' => $dataSources,
-        ]);
+            $dataSources = $this->builderService->getAvailableDataSources();
+
+            $this->logging->technical('report_builder.get_data_sources_success', [
+                'count' => count($dataSources)
+            ], 'debug');
+
+            return response()->json([
+                'success' => true,
+                'data' => $dataSources,
+            ]);
+        } catch (\Throwable $e) {
+            $this->logging->technical('report_builder.get_data_sources_failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 'error');
+
+            Log::error('[CustomReportBuilderController@getDataSources] Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения источников данных: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function getDataSourceFields(string $dataSource): JsonResponse
     {
-        $fields = $this->builderService->getDataSourceFields($dataSource);
+        try {
+            $this->logging->technical('report_builder.get_fields_requested', [
+                'data_source' => $dataSource
+            ], 'debug');
 
-        if (empty($fields)) {
+            $fields = $this->builderService->getDataSourceFields($dataSource);
+
+            if (empty($fields)) {
+                $this->logging->technical('report_builder.data_source_not_found', [
+                    'data_source' => $dataSource
+                ], 'warning');
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Источник данных не найден',
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => $fields,
+            ]);
+        } catch (\Throwable $e) {
+            $this->logging->technical('report_builder.get_fields_failed', [
+                'data_source' => $dataSource,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 'error');
+
+            Log::error('[CustomReportBuilderController@getDataSourceFields] Error', [
+                'data_source' => $dataSource,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Источник данных не найден',
-            ], 404);
+                'message' => 'Ошибка получения полей: ' . $e->getMessage()
+            ], 500);
         }
-
-        return response()->json([
-            'success' => true,
-            'data' => $fields,
-        ]);
     }
 
     public function getDataSourceRelations(string $dataSource): JsonResponse
     {
-        $relations = $this->builderService->getDataSourceRelations($dataSource);
+        try {
+            $relations = $this->builderService->getDataSourceRelations($dataSource);
 
-        return response()->json([
-            'success' => true,
-            'data' => $relations,
-        ]);
+            return response()->json([
+                'success' => true,
+                'data' => $relations,
+            ]);
+        } catch (\Throwable $e) {
+            $this->logging->technical('report_builder.get_relations_failed', [
+                'data_source' => $dataSource,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 'error');
+
+            Log::error('[CustomReportBuilderController@getDataSourceRelations] Error', [
+                'data_source' => $dataSource,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения связей: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function validateConfig(Request $request): JsonResponse
@@ -175,42 +247,114 @@ class CustomReportBuilderController extends Controller
 
     public function getOperators(): JsonResponse
     {
-        $operators = $this->builderService->getAllowedOperators();
+        try {
+            $operators = $this->builderService->getAllowedOperators();
 
-        return response()->json([
-            'success' => true,
-            'data' => $operators,
-        ]);
+            return response()->json([
+                'success' => true,
+                'data' => $operators,
+            ]);
+        } catch (\Throwable $e) {
+            $this->logging->technical('report_builder.get_operators_failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 'error');
+
+            Log::error('[CustomReportBuilderController@getOperators] Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения операторов: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function getAggregations(): JsonResponse
     {
-        $aggregations = $this->builderService->getAggregationFunctions();
+        try {
+            $aggregations = $this->builderService->getAggregationFunctions();
 
-        return response()->json([
-            'success' => true,
-            'data' => $aggregations,
-        ]);
+            return response()->json([
+                'success' => true,
+                'data' => $aggregations,
+            ]);
+        } catch (\Throwable $e) {
+            $this->logging->technical('report_builder.get_aggregations_failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 'error');
+
+            Log::error('[CustomReportBuilderController@getAggregations] Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения агрегаций: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function getExportFormats(): JsonResponse
     {
-        $formats = $this->builderService->getExportFormats();
+        try {
+            $formats = $this->builderService->getExportFormats();
 
-        return response()->json([
-            'success' => true,
-            'data' => $formats,
-        ]);
+            return response()->json([
+                'success' => true,
+                'data' => $formats,
+            ]);
+        } catch (\Throwable $e) {
+            $this->logging->technical('report_builder.get_export_formats_failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 'error');
+
+            Log::error('[CustomReportBuilderController@getExportFormats] Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения форматов экспорта: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     public function getCategories(): JsonResponse
     {
-        $categories = $this->builderService->getCategories();
+        try {
+            $categories = $this->builderService->getCategories();
 
-        return response()->json([
-            'success' => true,
-            'data' => $categories,
-        ]);
+            return response()->json([
+                'success' => true,
+                'data' => $categories,
+            ]);
+        } catch (\Throwable $e) {
+            $this->logging->technical('report_builder.get_categories_failed', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 'error');
+
+            Log::error('[CustomReportBuilderController@getCategories] Error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения категорий: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }
 
