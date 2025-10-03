@@ -5,58 +5,115 @@ namespace App\Services\Report;
 use App\Models\CustomReport;
 use App\Services\Report\ReportDataSourceRegistry;
 use App\Services\Report\Builders\ReportQueryBuilder;
+use App\Services\Logging\LoggingService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CustomReportBuilderService
 {
     public function __construct(
         protected ReportDataSourceRegistry $registry,
-        protected ReportQueryBuilder $queryBuilder
+        protected ReportQueryBuilder $queryBuilder,
+        protected LoggingService $logging
     ) {}
 
     public function validateReportConfig(array $config): array
     {
         $errors = [];
 
-        if (empty($config['name'])) {
-            $errors[] = 'Название отчета обязательно';
+        try {
+            $this->logging->technical('report_builder.validation_started', [
+                'has_name' => !empty($config['name']),
+                'has_category' => !empty($config['report_category']),
+                'has_data_sources' => !empty($config['data_sources']),
+                'has_columns' => !empty($config['columns_config'])
+            ], 'debug');
+
+            if (empty($config['name'])) {
+                $errors[] = 'Название отчета обязательно';
+            }
+
+            if (empty($config['report_category'])) {
+                $errors[] = 'Категория отчета обязательна';
+            }
+
+            if (empty($config['data_sources'])) {
+                $errors[] = 'Необходимо указать источники данных';
+            }
+
+            if (empty($config['columns_config'])) {
+                $errors[] = 'Необходимо выбрать хотя бы одну колонку';
+            }
+
+            $queryErrors = $this->queryBuilder->validateQueryConfig($config);
+            $errors = array_merge($errors, $queryErrors);
+
+            $this->logging->technical('report_builder.validation_completed', [
+                'errors_count' => count($errors),
+                'has_errors' => !empty($errors)
+            ], empty($errors) ? 'info' : 'warning');
+
+            return $errors;
+        } catch (\Throwable $e) {
+            $this->logging->technical('report_builder.validation_exception', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 'error');
+            throw $e;
         }
-
-        if (empty($config['report_category'])) {
-            $errors[] = 'Категория отчета обязательна';
-        }
-
-        if (empty($config['data_sources'])) {
-            $errors[] = 'Необходимо указать источники данных';
-        }
-
-        if (empty($config['columns_config'])) {
-            $errors[] = 'Необходимо выбрать хотя бы одну колонку';
-        }
-
-        $queryErrors = $this->queryBuilder->validateQueryConfig($config);
-        $errors = array_merge($errors, $queryErrors);
-
-        return $errors;
     }
 
     public function buildQueryFromConfig(CustomReport $report, int $organizationId): Builder
     {
-        $config = [
-            'data_sources' => $report->data_sources,
-            'query_config' => $report->query_config ?? [],
-            'columns_config' => $report->columns_config,
-            'aggregations_config' => $report->aggregations_config ?? [],
-            'sorting_config' => $report->sorting_config ?? [],
-        ];
+        try {
+            $this->logging->technical('report_builder.build_query_started', [
+                'report_id' => $report->id,
+                'report_name' => $report->name,
+                'organization_id' => $organizationId,
+                'has_aggregations' => !empty($report->aggregations_config),
+                'has_filters' => !empty($report->query_config),
+            ], 'debug');
 
-        return $this->queryBuilder->buildFromConfig($config, $organizationId);
+            $config = [
+                'data_sources' => $report->data_sources,
+                'query_config' => $report->query_config ?? [],
+                'columns_config' => $report->columns_config,
+                'aggregations_config' => $report->aggregations_config ?? [],
+                'sorting_config' => $report->sorting_config ?? [],
+            ];
+
+            $query = $this->queryBuilder->buildFromConfig($config, $organizationId);
+
+            $this->logging->technical('report_builder.build_query_completed', [
+                'report_id' => $report->id,
+                'sql' => $query->toSql()
+            ], 'debug');
+
+            return $query;
+        } catch (\Throwable $e) {
+            $this->logging->technical('report_builder.build_query_failed', [
+                'report_id' => $report->id,
+                'report_name' => $report->name,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 'error');
+            throw $e;
+        }
     }
 
     public function testReportQuery(CustomReport $report, int $organizationId, array $userFilters = []): array
     {
         try {
+            $this->logging->technical('report_builder.test_query_started', [
+                'report_id' => $report->id,
+                'report_name' => $report->name,
+                'organization_id' => $organizationId,
+                'has_user_filters' => !empty($userFilters)
+            ], 'debug');
+
             $query = $this->buildQueryFromConfig($report, $organizationId);
 
             if (!empty($userFilters) && !empty($report->filters_config)) {
@@ -69,6 +126,13 @@ class CustomReportBuilderService
             
             $executionTime = (microtime(true) - $startTime) * 1000;
 
+            $this->logging->business('report_builder.test_query_completed', [
+                'report_id' => $report->id,
+                'report_name' => $report->name,
+                'rows_count' => $results->count(),
+                'execution_time_ms' => round($executionTime, 2)
+            ]);
+
             return [
                 'success' => true,
                 'rows_count' => $results->count(),
@@ -77,6 +141,13 @@ class CustomReportBuilderService
                 'sql' => $query->toSql(),
             ];
         } catch (\Exception $e) {
+            $this->logging->technical('report_builder.test_query_failed', [
+                'report_id' => $report->id,
+                'report_name' => $report->name,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ], 'error');
+
             return [
                 'success' => false,
                 'error' => $e->getMessage(),

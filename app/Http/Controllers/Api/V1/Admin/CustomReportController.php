@@ -6,18 +6,21 @@ use App\Http\Controllers\Controller;
 use App\Models\CustomReport;
 use App\Services\Report\CustomReportBuilderService;
 use App\Services\Report\CustomReportExecutionService;
+use App\Services\Logging\LoggingService;
 use App\Http\Requests\Api\V1\Admin\CustomReport\CreateCustomReportRequest;
 use App\Http\Requests\Api\V1\Admin\CustomReport\UpdateCustomReportRequest;
 use App\Http\Requests\Api\V1\Admin\CustomReport\ExecuteCustomReportRequest;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class CustomReportController extends Controller
 {
     public function __construct(
         protected CustomReportBuilderService $builderService,
-        protected CustomReportExecutionService $executionService
+        protected CustomReportExecutionService $executionService,
+        protected LoggingService $logging
     ) {
         $this->middleware('can:view-reports');
     }
@@ -66,29 +69,77 @@ class CustomReportController extends Controller
         $user = $request->user();
         $organizationId = $user->current_organization_id;
 
-        $data = $request->validated();
-        
-        $errors = $this->builderService->validateReportConfig($data);
-        
-        if (!empty($errors)) {
+        try {
+            $this->logging->technical('custom_report.create_started', [
+                'user_id' => $user->id,
+                'organization_id' => $organizationId
+            ], 'debug');
+
+            $data = $request->validated();
+            
+            $errors = $this->builderService->validateReportConfig($data);
+            
+            if (!empty($errors)) {
+                $this->logging->technical('custom_report.validation_failed', [
+                    'user_id' => $user->id,
+                    'organization_id' => $organizationId,
+                    'errors' => $errors
+                ], 'warning');
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Ошибка валидации конфигурации отчета',
+                    'errors' => $errors,
+                ], 422);
+            }
+
+            $report = CustomReport::create([
+                ...$data,
+                'user_id' => $user->id,
+                'organization_id' => $organizationId,
+            ]);
+
+            $this->logging->audit('custom_report.created', [
+                'report_id' => $report->id,
+                'report_name' => $report->name,
+                'report_category' => $report->report_category,
+                'user_id' => $user->id,
+                'organization_id' => $organizationId
+            ]);
+
+            $this->logging->business('custom_report.created', [
+                'report_id' => $report->id,
+                'report_name' => $report->name,
+                'has_aggregations' => !empty($report->aggregations_config),
+                'has_joins' => !empty($report->data_sources['joins'] ?? [])
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Отчет успешно создан',
+                'data' => $report->load('user'),
+            ], 201);
+        } catch (\Throwable $e) {
+            $this->logging->technical('custom_report.create_failed', [
+                'user_id' => $user->id,
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 'error');
+
+            Log::error('[CustomReportController@store] Unexpected error', [
+                'user_id' => $user->id,
+                'organization_id' => $organizationId,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Ошибка валидации конфигурации отчета',
-                'errors' => $errors,
-            ], 422);
+                'message' => 'Внутренняя ошибка при создании отчета'
+            ], 500);
         }
-
-        $report = CustomReport::create([
-            ...$data,
-            'user_id' => $user->id,
-            'organization_id' => $organizationId,
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Отчет успешно создан',
-            'data' => $report->load('user'),
-        ], 201);
     }
 
     public function show(Request $request, int $id): JsonResponse
@@ -253,25 +304,69 @@ class CustomReportController extends Controller
         $user = $request->user();
         $organizationId = $user->current_organization_id;
 
-        $report = CustomReport::find($id);
+        try {
+            $this->logging->technical('custom_report.execute_started', [
+                'report_id' => $id,
+                'user_id' => $user->id,
+                'organization_id' => $organizationId,
+                'has_filters' => !empty($request->input('filters', [])),
+                'export_format' => $request->input('export')
+            ], 'debug');
 
-        if (!$report || !$report->canBeViewedBy($user->id, $organizationId)) {
+            $report = CustomReport::find($id);
+
+            if (!$report || !$report->canBeViewedBy($user->id, $organizationId)) {
+                $this->logging->security('custom_report.execute_access_denied', [
+                    'report_id' => $id,
+                    'user_id' => $user->id,
+                    'organization_id' => $organizationId
+                ], 'warning');
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Отчет не найден',
+                ], 404);
+            }
+
+            $filters = $request->input('filters', []);
+            $exportFormat = $request->input('export');
+
+            $this->logging->business('custom_report.execute_requested', [
+                'report_id' => $report->id,
+                'report_name' => $report->name,
+                'user_id' => $user->id,
+                'export_format' => $exportFormat
+            ]);
+
+            return $this->executionService->executeReport(
+                $report,
+                $organizationId,
+                $filters,
+                $exportFormat,
+                $user->id
+            );
+        } catch (\Throwable $e) {
+            $this->logging->technical('custom_report.execute_failed', [
+                'report_id' => $id,
+                'user_id' => $user->id,
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ], 'error');
+
+            Log::error('[CustomReportController@execute] Unexpected error', [
+                'report_id' => $id,
+                'user_id' => $user->id,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Отчет не найден',
-            ], 404);
+                'message' => 'Внутренняя ошибка при выполнении отчета'
+            ], 500);
         }
-
-        $filters = $request->input('filters', []);
-        $exportFormat = $request->input('export');
-
-        return $this->executionService->executeReport(
-            $report,
-            $organizationId,
-            $filters,
-            $exportFormat,
-            $user->id
-        );
     }
 
     public function executions(Request $request, int $id): JsonResponse

@@ -82,28 +82,44 @@ class CustomReportSchedulerService
         return $schedule->fresh();
     }
 
-    public function executeScheduledReports(): void
+    public function executeScheduledReports(): array
     {
         $dueSchedules = CustomReportSchedule::due()->with('customReport')->get();
 
         $this->logging->technical('scheduled_reports.execution.started', [
             'due_schedules_count' => $dueSchedules->count(),
-        ]);
+        ], 'info');
 
         $successCount = 0;
         $failedCount = 0;
+        $skippedCount = 0;
 
         foreach ($dueSchedules as $schedule) {
             try {
+                if (!$schedule->is_active) {
+                    $skippedCount++;
+                    continue;
+                }
+
                 $this->executeSchedule($schedule);
                 $successCount++;
+
+                $this->logging->technical('scheduled_report.execution.success', [
+                    'schedule_id' => $schedule->id,
+                    'report_id' => $schedule->custom_report_id,
+                    'report_name' => $schedule->customReport->name ?? 'Unknown',
+                ], 'info');
+
             } catch (\Exception $e) {
                 $failedCount++;
                 
                 $this->logging->technical('scheduled_report.execution.failed', [
                     'schedule_id' => $schedule->id,
                     'report_id' => $schedule->custom_report_id,
+                    'report_name' => $schedule->customReport->name ?? 'Unknown',
                     'error' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
                 ], 'error');
             }
         }
@@ -112,7 +128,15 @@ class CustomReportSchedulerService
             'total' => $dueSchedules->count(),
             'success' => $successCount,
             'failed' => $failedCount,
+            'skipped' => $skippedCount,
         ]);
+
+        return [
+            'total' => $dueSchedules->count(),
+            'executed' => $successCount,
+            'failed' => $failedCount,
+            'skipped' => $skippedCount,
+        ];
     }
 
     public function executeSchedule(CustomReportSchedule $schedule): void

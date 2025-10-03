@@ -28,6 +28,16 @@ class CustomReportExecutionService
         ?string $exportFormat = null,
         ?int $userId = null
     ): array|StreamedResponse {
+        $this->logging->technical('report_execution.started', [
+            'report_id' => $report->id,
+            'report_name' => $report->name,
+            'organization_id' => $organizationId,
+            'user_id' => $userId,
+            'has_filters' => !empty($filters),
+            'filters_count' => count($filters),
+            'export_format' => $exportFormat
+        ], 'info');
+
         $execution = $this->createExecution($report, $filters, $userId ?? $report->user_id, $organizationId);
 
         try {
@@ -35,13 +45,32 @@ class CustomReportExecutionService
 
             $startTime = microtime(true);
             
+            $this->logging->technical('report_execution.building_query', [
+                'report_id' => $report->id,
+                'execution_id' => $execution->id
+            ], 'debug');
+
             $query = $this->builder->buildQueryFromConfig($report, $organizationId);
 
             if (!empty($filters) && !empty($report->filters_config)) {
+                $this->logging->technical('report_execution.applying_filters', [
+                    'report_id' => $report->id,
+                    'execution_id' => $execution->id,
+                    'filters' => $filters
+                ], 'debug');
+
                 $this->applyUserFilters($query, $filters, $report);
             }
 
             $limit = config('custom-reports.limits.max_result_rows', 10000);
+            
+            $this->logging->technical('report_execution.executing_query', [
+                'report_id' => $report->id,
+                'execution_id' => $execution->id,
+                'sql' => $query->toSql(),
+                'limit' => $limit
+            ], 'debug');
+
             $results = $this->executeQueryWithTimeout($query, $limit);
 
             $executionTime = (microtime(true) - $startTime) * 1000;
@@ -258,11 +287,15 @@ class CustomReportExecutionService
             return $formatted;
         })->toArray();
 
-        return match($format) {
-            'csv' => $this->csvExporter->export($columns, $data, $fileName),
-            'excel' => $this->excelExporter->export($columns, $data, $fileName),
+        $filePath = storage_path("app/exports/{$fileName}");
+        
+        match($format) {
+            'csv' => $this->csvExporter->saveToFile($data, $columns, $filePath),
+            'excel' => $this->excelExporter->saveToFile($data, $columns, $filePath),
             default => throw new \InvalidArgumentException("Неподдерживаемый формат: {$format}"),
         };
+        
+        return $filePath;
     }
 
     protected function generateFileName(CustomReport $report, string $format): string

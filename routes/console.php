@@ -75,5 +75,21 @@ Schedule::command('modules:scan')
     })
     ->appendOutputTo(storage_path('logs/schedule-modules-scan.log'));
 
+Schedule::command('custom-reports:execute-scheduled')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(30)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled custom-reports:execute-scheduled command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-custom-reports-execute.log'));
+
+Schedule::command('custom-reports:cleanup-executions --days=90')
+    ->dailyAt('04:00')
+    ->withoutOverlapping(60)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled custom-reports:cleanup-executions command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-custom-reports-cleanup.log'));
+
 // Если команда billing:process-renewals также должна быть здесь, ее можно добавить аналогично:
 // Schedule::command('billing:process-renewals')->dailyAt('02:00');
