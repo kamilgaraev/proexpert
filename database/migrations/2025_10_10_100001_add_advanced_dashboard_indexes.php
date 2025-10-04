@@ -67,16 +67,33 @@ return new class extends Migration
      */
     protected function createIndexIfNotExists(string $table, string $indexName, array $columns): void
     {
-        $exists = DB::select(
+        // Проверка существования индекса
+        $indexExists = DB::select(
             "SELECT 1 FROM pg_indexes WHERE indexname = ?",
             [$indexName]
         );
         
-        if (empty($exists)) {
-            Schema::table($table, function (Blueprint $blueprint) use ($columns, $indexName) {
-                $blueprint->index($columns, $indexName);
-            });
+        if (!empty($indexExists)) {
+            return; // Индекс уже существует
         }
+        
+        // Проверка существования всех колонок
+        foreach ($columns as $column) {
+            $columnExists = DB::select(
+                "SELECT 1 FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
+                [$table, $column]
+            );
+            
+            if (empty($columnExists)) {
+                // Колонка не существует - пропускаем создание индекса
+                return;
+            }
+        }
+        
+        // Создаем индекс только если все колонки существуют
+        Schema::table($table, function (Blueprint $blueprint) use ($columns, $indexName) {
+            $blueprint->index($columns, $indexName);
+        });
     }
     
     /**
