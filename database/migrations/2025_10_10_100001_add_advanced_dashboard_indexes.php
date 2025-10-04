@@ -34,32 +34,56 @@ return new class extends Migration
         $this->createIndexIfNotExists('projects', 'idx_projects_org_created', ['organization_id', 'created_at']);
         
         // Индексы для dashboards (модуль Advanced Dashboard)
-        $this->createIndexIfNotExists('dashboards', 'idx_dashboards_user_org_default', ['user_id', 'organization_id', 'is_default']);
-        $this->createIndexIfNotExists('dashboards', 'idx_dashboards_org_shared', ['organization_id', 'is_shared']);
-        $this->createIndexIfNotExists('dashboards', 'idx_dashboards_slug', ['slug']);
-        $this->createIndexIfNotExists('dashboards', 'idx_dashboards_created', ['created_at']);
+        // Создаем только если таблица существует
+        if ($this->tableExists('dashboards')) {
+            $this->createIndexIfNotExists('dashboards', 'idx_dashboards_user_org_default', ['user_id', 'organization_id', 'is_default']);
+            $this->createIndexIfNotExists('dashboards', 'idx_dashboards_org_shared', ['organization_id', 'is_shared']);
+            $this->createIndexIfNotExists('dashboards', 'idx_dashboards_slug', ['slug']);
+            $this->createIndexIfNotExists('dashboards', 'idx_dashboards_created', ['created_at']);
+        }
         
         // Индексы для dashboard_alerts
-        $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_org_active', ['organization_id', 'is_active']);
-        $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_user_active', ['user_id', 'is_active']);
-        $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_type_entity', ['alert_type', 'target_entity']);
-        $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_target', ['target_entity', 'target_entity_id']);
-        $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_last_checked', ['last_checked_at']);
-        $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_active_checked', ['is_active', 'last_checked_at']);
+        if ($this->tableExists('dashboard_alerts')) {
+            $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_org_active', ['organization_id', 'is_active']);
+            $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_user_active', ['user_id', 'is_active']);
+            $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_type_entity', ['alert_type', 'target_entity']);
+            $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_target', ['target_entity', 'target_entity_id']);
+            $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_last_checked', ['last_checked_at']);
+            $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_active_checked', ['is_active', 'last_checked_at']);
+        }
         
         // Индексы для scheduled_reports
-        $this->createIndexIfNotExists('scheduled_reports', 'idx_reports_org_active', ['organization_id', 'is_active']);
-        $this->createIndexIfNotExists('scheduled_reports', 'idx_reports_active_next_run', ['is_active', 'next_run_at']);
-        $this->createIndexIfNotExists('scheduled_reports', 'idx_reports_next_run', ['next_run_at']);
-        $this->createIndexIfNotExists('scheduled_reports', 'idx_reports_frequency', ['frequency']);
+        if ($this->tableExists('scheduled_reports')) {
+            $this->createIndexIfNotExists('scheduled_reports', 'idx_reports_org_active', ['organization_id', 'is_active']);
+            $this->createIndexIfNotExists('scheduled_reports', 'idx_reports_active_next_run', ['is_active', 'next_run_at']);
+            $this->createIndexIfNotExists('scheduled_reports', 'idx_reports_next_run', ['next_run_at']);
+            $this->createIndexIfNotExists('scheduled_reports', 'idx_reports_frequency', ['frequency']);
+        }
         
         // JSONB индексы для PostgreSQL (если используется PostgreSQL)
         if (DB::getDriverName() === 'pgsql') {
-            DB::statement('CREATE INDEX IF NOT EXISTS idx_dashboards_layout_gin ON dashboards USING gin (layout)');
-            DB::statement('CREATE INDEX IF NOT EXISTS idx_dashboards_widgets_gin ON dashboards USING gin (widgets)');
-            DB::statement('CREATE INDEX IF NOT EXISTS idx_dashboards_filters_gin ON dashboards USING gin (filters)');
-            DB::statement('CREATE INDEX IF NOT EXISTS idx_alerts_conditions_gin ON dashboard_alerts USING gin (conditions)');
+            if ($this->tableExists('dashboards')) {
+                DB::statement('CREATE INDEX IF NOT EXISTS idx_dashboards_layout_gin ON dashboards USING gin (layout)');
+                DB::statement('CREATE INDEX IF NOT EXISTS idx_dashboards_widgets_gin ON dashboards USING gin (widgets)');
+                DB::statement('CREATE INDEX IF NOT EXISTS idx_dashboards_filters_gin ON dashboards USING gin (filters)');
+            }
+            if ($this->tableExists('dashboard_alerts')) {
+                DB::statement('CREATE INDEX IF NOT EXISTS idx_alerts_conditions_gin ON dashboard_alerts USING gin (conditions)');
+            }
         }
+    }
+
+    /**
+     * Проверка существования таблицы
+     */
+    protected function tableExists(string $table): bool
+    {
+        $exists = DB::select(
+            "SELECT 1 FROM information_schema.tables WHERE table_name = ?",
+            [$table]
+        );
+        
+        return !empty($exists);
     }
 
     /**
