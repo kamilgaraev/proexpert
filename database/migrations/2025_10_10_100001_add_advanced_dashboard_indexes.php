@@ -16,55 +16,42 @@ return new class extends Migration
     public function up(): void
     {
         // Индексы для contracts (финансовая и предиктивная аналитика)
-        Schema::table('contracts', function (Blueprint $table) {
-            $table->index(['organization_id', 'status'], 'idx_contracts_org_status');
-            $table->index(['project_id', 'status'], 'idx_contracts_project_status');
-            $table->index(['organization_id', 'created_at'], 'idx_contracts_org_created');
-            $table->index('progress', 'idx_contracts_progress');
-        });
+        $this->createIndexIfNotExists('contracts', 'idx_contracts_org_status', ['organization_id', 'status']);
+        $this->createIndexIfNotExists('contracts', 'idx_contracts_project_status', ['project_id', 'status']);
+        $this->createIndexIfNotExists('contracts', 'idx_contracts_org_created', ['organization_id', 'created_at']);
+        $this->createIndexIfNotExists('contracts', 'idx_contracts_progress', ['progress']);
+
         
         // Индексы для completed_works (KPI, финансы)
-        Schema::table('completed_works', function (Blueprint $table) {
-            $table->index(['user_id', 'created_at'], 'idx_completed_works_user_date');
-            $table->index(['project_id', 'created_at'], 'idx_completed_works_project_date');
-            $table->index('created_at', 'idx_completed_works_created');
-        });
+        $this->createIndexIfNotExists('completed_works', 'idx_completed_works_user_date', ['user_id', 'created_at']);
+        $this->createIndexIfNotExists('completed_works', 'idx_completed_works_project_date', ['project_id', 'created_at']);
+        $this->createIndexIfNotExists('completed_works', 'idx_completed_works_created', ['created_at']);
         
         // Индексы для materials (предиктивная аналитика)
-        Schema::table('materials', function (Blueprint $table) {
-            $table->index(['organization_id', 'balance'], 'idx_materials_org_balance');
-        });
+        $this->createIndexIfNotExists('materials', 'idx_materials_org_balance', ['organization_id', 'balance']);
         
         // Индексы для projects (общие запросы)
-        Schema::table('projects', function (Blueprint $table) {
-            $table->index(['organization_id', 'created_at'], 'idx_projects_org_created');
-        });
+        $this->createIndexIfNotExists('projects', 'idx_projects_org_created', ['organization_id', 'created_at']);
         
         // Индексы для dashboards (модуль Advanced Dashboard)
-        Schema::table('dashboards', function (Blueprint $table) {
-            $table->index(['user_id', 'organization_id', 'is_default'], 'idx_dashboards_user_org_default');
-            $table->index(['organization_id', 'is_shared'], 'idx_dashboards_org_shared');
-            $table->index('slug', 'idx_dashboards_slug');
-            $table->index('created_at', 'idx_dashboards_created');
-        });
+        $this->createIndexIfNotExists('dashboards', 'idx_dashboards_user_org_default', ['user_id', 'organization_id', 'is_default']);
+        $this->createIndexIfNotExists('dashboards', 'idx_dashboards_org_shared', ['organization_id', 'is_shared']);
+        $this->createIndexIfNotExists('dashboards', 'idx_dashboards_slug', ['slug']);
+        $this->createIndexIfNotExists('dashboards', 'idx_dashboards_created', ['created_at']);
         
         // Индексы для dashboard_alerts
-        Schema::table('dashboard_alerts', function (Blueprint $table) {
-            $table->index(['organization_id', 'is_active'], 'idx_alerts_org_active');
-            $table->index(['user_id', 'is_active'], 'idx_alerts_user_active');
-            $table->index(['alert_type', 'target_entity'], 'idx_alerts_type_entity');
-            $table->index(['target_entity', 'target_entity_id'], 'idx_alerts_target');
-            $table->index('last_checked_at', 'idx_alerts_last_checked');
-            $table->index(['is_active', 'last_checked_at'], 'idx_alerts_active_checked');
-        });
+        $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_org_active', ['organization_id', 'is_active']);
+        $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_user_active', ['user_id', 'is_active']);
+        $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_type_entity', ['alert_type', 'target_entity']);
+        $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_target', ['target_entity', 'target_entity_id']);
+        $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_last_checked', ['last_checked_at']);
+        $this->createIndexIfNotExists('dashboard_alerts', 'idx_alerts_active_checked', ['is_active', 'last_checked_at']);
         
         // Индексы для scheduled_reports
-        Schema::table('scheduled_reports', function (Blueprint $table) {
-            $table->index(['organization_id', 'is_active'], 'idx_reports_org_active');
-            $table->index(['is_active', 'next_run_at'], 'idx_reports_active_next_run');
-            $table->index('next_run_at', 'idx_reports_next_run');
-            $table->index('frequency', 'idx_reports_frequency');
-        });
+        $this->createIndexIfNotExists('scheduled_reports', 'idx_reports_org_active', ['organization_id', 'is_active']);
+        $this->createIndexIfNotExists('scheduled_reports', 'idx_reports_active_next_run', ['is_active', 'next_run_at']);
+        $this->createIndexIfNotExists('scheduled_reports', 'idx_reports_next_run', ['next_run_at']);
+        $this->createIndexIfNotExists('scheduled_reports', 'idx_reports_frequency', ['frequency']);
         
         // JSONB индексы для PostgreSQL (если используется PostgreSQL)
         if (DB::getDriverName() === 'pgsql') {
@@ -76,60 +63,80 @@ return new class extends Migration
     }
 
     /**
+     * Проверка и создание индекса если не существует
+     */
+    protected function createIndexIfNotExists(string $table, string $indexName, array $columns): void
+    {
+        $exists = DB::select(
+            "SELECT 1 FROM pg_indexes WHERE indexname = ?",
+            [$indexName]
+        );
+        
+        if (empty($exists)) {
+            Schema::table($table, function (Blueprint $blueprint) use ($columns, $indexName) {
+                $blueprint->index($columns, $indexName);
+            });
+        }
+    }
+    
+    /**
+     * Удаление индекса если существует
+     */
+    protected function dropIndexIfExists(string $table, string $indexName): void
+    {
+        $exists = DB::select(
+            "SELECT 1 FROM pg_indexes WHERE indexname = ?",
+            [$indexName]
+        );
+        
+        if (!empty($exists)) {
+            Schema::table($table, function (Blueprint $blueprint) use ($indexName) {
+                $blueprint->dropIndex($indexName);
+            });
+        }
+    }
+    
+    /**
      * Reverse the migrations.
      */
     public function down(): void
     {
         // Contracts
-        Schema::table('contracts', function (Blueprint $table) {
-            $table->dropIndex('idx_contracts_org_status');
-            $table->dropIndex('idx_contracts_project_status');
-            $table->dropIndex('idx_contracts_org_created');
-            $table->dropIndex('idx_contracts_progress');
-        });
+        $this->dropIndexIfExists('contracts', 'idx_contracts_org_status');
+        $this->dropIndexIfExists('contracts', 'idx_contracts_project_status');
+        $this->dropIndexIfExists('contracts', 'idx_contracts_org_created');
+        $this->dropIndexIfExists('contracts', 'idx_contracts_progress');
         
         // Completed Works
-        Schema::table('completed_works', function (Blueprint $table) {
-            $table->dropIndex('idx_completed_works_user_date');
-            $table->dropIndex('idx_completed_works_project_date');
-            $table->dropIndex('idx_completed_works_created');
-        });
+        $this->dropIndexIfExists('completed_works', 'idx_completed_works_user_date');
+        $this->dropIndexIfExists('completed_works', 'idx_completed_works_project_date');
+        $this->dropIndexIfExists('completed_works', 'idx_completed_works_created');
         
         // Materials
-        Schema::table('materials', function (Blueprint $table) {
-            $table->dropIndex('idx_materials_org_balance');
-        });
+        $this->dropIndexIfExists('materials', 'idx_materials_org_balance');
         
         // Projects
-        Schema::table('projects', function (Blueprint $table) {
-            $table->dropIndex('idx_projects_org_created');
-        });
+        $this->dropIndexIfExists('projects', 'idx_projects_org_created');
         
         // Dashboards
-        Schema::table('dashboards', function (Blueprint $table) {
-            $table->dropIndex('idx_dashboards_user_org_default');
-            $table->dropIndex('idx_dashboards_org_shared');
-            $table->dropIndex('idx_dashboards_slug');
-            $table->dropIndex('idx_dashboards_created');
-        });
+        $this->dropIndexIfExists('dashboards', 'idx_dashboards_user_org_default');
+        $this->dropIndexIfExists('dashboards', 'idx_dashboards_org_shared');
+        $this->dropIndexIfExists('dashboards', 'idx_dashboards_slug');
+        $this->dropIndexIfExists('dashboards', 'idx_dashboards_created');
         
         // Alerts
-        Schema::table('dashboard_alerts', function (Blueprint $table) {
-            $table->dropIndex('idx_alerts_org_active');
-            $table->dropIndex('idx_alerts_user_active');
-            $table->dropIndex('idx_alerts_type_entity');
-            $table->dropIndex('idx_alerts_target');
-            $table->dropIndex('idx_alerts_last_checked');
-            $table->dropIndex('idx_alerts_active_checked');
-        });
+        $this->dropIndexIfExists('dashboard_alerts', 'idx_alerts_org_active');
+        $this->dropIndexIfExists('dashboard_alerts', 'idx_alerts_user_active');
+        $this->dropIndexIfExists('dashboard_alerts', 'idx_alerts_type_entity');
+        $this->dropIndexIfExists('dashboard_alerts', 'idx_alerts_target');
+        $this->dropIndexIfExists('dashboard_alerts', 'idx_alerts_last_checked');
+        $this->dropIndexIfExists('dashboard_alerts', 'idx_alerts_active_checked');
         
         // Scheduled Reports
-        Schema::table('scheduled_reports', function (Blueprint $table) {
-            $table->dropIndex('idx_reports_org_active');
-            $table->dropIndex('idx_reports_active_next_run');
-            $table->dropIndex('idx_reports_next_run');
-            $table->dropIndex('idx_reports_frequency');
-        });
+        $this->dropIndexIfExists('scheduled_reports', 'idx_reports_org_active');
+        $this->dropIndexIfExists('scheduled_reports', 'idx_reports_active_next_run');
+        $this->dropIndexIfExists('scheduled_reports', 'idx_reports_next_run');
+        $this->dropIndexIfExists('scheduled_reports', 'idx_reports_frequency');
         
         // JSONB индексы для PostgreSQL
         if (DB::getDriverName() === 'pgsql') {
