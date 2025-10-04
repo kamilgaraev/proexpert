@@ -467,6 +467,205 @@ class ModuleManager
         }
     }
     
+    public function activateTrial(int $organizationId, string $moduleSlug): array
+    {
+        $startTime = microtime(true);
+        
+        $this->logging->business('module.trial.activation.started', [
+            'organization_id' => $organizationId,
+            'module_slug' => $moduleSlug
+        ]);
+        
+        $module = $this->registry->getModule($moduleSlug);
+        
+        if (!$module) {
+            return [
+                'success' => false,
+                'message' => 'Модуль не найден',
+                'code' => 'MODULE_NOT_FOUND'
+            ];
+        }
+        
+        if (!$module->is_active) {
+            return [
+                'success' => false,
+                'message' => 'Модуль недоступен для активации',
+                'code' => 'MODULE_INACTIVE'
+            ];
+        }
+        
+        if ($module->isFree()) {
+            return [
+                'success' => false,
+                'message' => 'Trial период доступен только для платных модулей',
+                'code' => 'TRIAL_NOT_AVAILABLE_FOR_FREE'
+            ];
+        }
+        
+        if ($this->hasUsedTrial($organizationId, $module->id)) {
+            return [
+                'success' => false,
+                'message' => 'Trial период уже был использован для этого модуля',
+                'code' => 'TRIAL_ALREADY_USED'
+            ];
+        }
+        
+        if ($this->accessController->hasModuleAccess($organizationId, $moduleSlug)) {
+            return [
+                'success' => false,
+                'message' => 'Модуль уже активирован',
+                'code' => 'MODULE_ALREADY_ACTIVE'
+            ];
+        }
+        
+        $pricingConfig = $module->pricing_config ?? [];
+        $trialDays = $pricingConfig['trial_days'] ?? 14;
+        
+        try {
+            DB::transaction(function () use ($organizationId, $module, $trialDays) {
+                OrganizationModuleActivation::create([
+                    'organization_id' => $organizationId,
+                    'module_id' => $module->id,
+                    'status' => 'trial',
+                    'activated_at' => now(),
+                    'trial_ends_at' => now()->addDays($trialDays),
+                    'expires_at' => now()->addDays($trialDays),
+                    'paid_amount' => 0,
+                    'module_settings' => [],
+                    'usage_stats' => []
+                ]);
+                
+                $this->accessController->clearAccessCache($organizationId);
+            });
+            
+            event(new \App\Modules\Events\TrialActivated($organizationId, $moduleSlug, $trialDays));
+            
+            $this->clearOrganizationModuleCaches($organizationId);
+            
+            $duration = (microtime(true) - $startTime) * 1000;
+            
+            $this->logging->business('module.trial.activation.completed', [
+                'organization_id' => $organizationId,
+                'module_slug' => $moduleSlug,
+                'trial_days' => $trialDays,
+                'duration_ms' => $duration
+            ]);
+            
+            return [
+                'success' => true,
+                'message' => "Trial период модуля '{$module->name}' активирован на {$trialDays} дней",
+                'trial_days' => $trialDays,
+                'trial_ends_at' => now()->addDays($trialDays)->toISOString()
+            ];
+            
+        } catch (\Exception $e) {
+            $this->logging->technical('module.trial.activation.failed', [
+                'organization_id' => $organizationId,
+                'module_slug' => $moduleSlug,
+                'error' => $e->getMessage()
+            ], 'error');
+            
+            return [
+                'success' => false,
+                'message' => 'Ошибка активации trial периода: ' . $e->getMessage(),
+                'code' => 'TRIAL_ACTIVATION_ERROR'
+            ];
+        }
+    }
+    
+    public function hasUsedTrial(int $organizationId, int $moduleId): bool
+    {
+        return OrganizationModuleActivation::where('organization_id', $organizationId)
+            ->where('module_id', $moduleId)
+            ->whereNotNull('trial_ends_at')
+            ->exists();
+    }
+    
+    public function convertTrialToPaid(int $organizationId, string $moduleSlug): array
+    {
+        $module = $this->registry->getModule($moduleSlug);
+        
+        if (!$module) {
+            return [
+                'success' => false,
+                'message' => 'Модуль не найден',
+                'code' => 'MODULE_NOT_FOUND'
+            ];
+        }
+        
+        $activation = OrganizationModuleActivation::where('organization_id', $organizationId)
+            ->where('module_id', $module->id)
+            ->where('status', 'trial')
+            ->first();
+            
+        if (!$activation) {
+            return [
+                'success' => false,
+                'message' => 'Trial период не найден',
+                'code' => 'TRIAL_NOT_FOUND'
+            ];
+        }
+        
+        $organization = Organization::findOrFail($organizationId);
+        
+        if (!$this->billingEngine->canAfford($organization, $module)) {
+            return [
+                'success' => false,
+                'message' => 'Недостаточно средств на балансе',
+                'code' => 'INSUFFICIENT_BALANCE'
+            ];
+        }
+        
+        try {
+            DB::transaction(function () use ($activation, $module, $organization) {
+                if (!$this->billingEngine->chargeForModule($organization, $module)) {
+                    throw new \Exception('Ошибка списания средств');
+                }
+                
+                $pricingConfig = $module->pricing_config ?? [];
+                $durationDays = $pricingConfig['duration_days'] ?? 30;
+                
+                $activation->update([
+                    'status' => 'active',
+                    'activated_at' => now(),
+                    'expires_at' => $module->billing_model === 'subscription' 
+                        ? now()->addDays($durationDays) 
+                        : null,
+                    'paid_amount' => $this->billingEngine->calculateChargeAmount($module)
+                ]);
+                
+                $this->accessController->clearAccessCache($organization->id);
+            });
+            
+            $this->clearOrganizationModuleCaches($organizationId);
+            
+            $this->logging->business('module.trial.converted', [
+                'organization_id' => $organizationId,
+                'module_slug' => $moduleSlug,
+                'paid_amount' => $activation->paid_amount
+            ]);
+            
+            return [
+                'success' => true,
+                'message' => "Модуль '{$module->name}' успешно активирован",
+                'paid_amount' => $activation->paid_amount
+            ];
+            
+        } catch (\Exception $e) {
+            $this->logging->technical('module.trial.conversion.failed', [
+                'organization_id' => $organizationId,
+                'module_slug' => $moduleSlug,
+                'error' => $e->getMessage()
+            ], 'error');
+            
+            return [
+                'success' => false,
+                'message' => 'Ошибка конвертации trial: ' . $e->getMessage(),
+                'code' => 'TRIAL_CONVERSION_ERROR'
+            ];
+        }
+    }
+
     public function hasAccess(int $organizationId, string $moduleSlug): bool
     {
         return $this->accessController->hasModuleAccess($organizationId, $moduleSlug);

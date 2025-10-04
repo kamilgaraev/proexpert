@@ -35,7 +35,15 @@
     "report-templates": ["report_templates.view", "report_templates.create", "report_templates.export"],
     "data-filters": ["filters.contracts.view", "filters.export"],
     "dashboard-widgets": ["dashboard.view", "dashboard.contracts.statistics", "dashboard.limits.view"],
-    "schedule-management": ["schedule.view", "schedule.export"]
+    "schedule-management": ["schedule.view", "schedule.export"],
+    "advanced-dashboard": [
+      "advanced-dashboard.dashboards.view",
+      "advanced-dashboard.dashboards.create",
+      "advanced-dashboard.analytics.financial.view",
+      "advanced-dashboard.analytics.hr.view",
+      "advanced-dashboard.export.pdf",
+      "advanced-dashboard.export.excel"
+    ]
   },
   
   "interface_access": ["admin"],

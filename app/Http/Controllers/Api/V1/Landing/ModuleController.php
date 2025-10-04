@@ -427,4 +427,92 @@ class ModuleController extends Controller
             ]
         ]))->toResponse($request);
     }
+
+    public function activateTrial(Request $request, string $moduleSlug): JsonResponse
+    {
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        }
+        
+        $result = $this->moduleManager->activateTrial($organizationId, $moduleSlug);
+        
+        if (!$result['success']) {
+            return (new ErrorResponse(
+                $result['message'], 
+                $result['code'] === 'TRIAL_ALREADY_USED' ? 409 : 400,
+                ['code' => $result['code']]
+            ))->toResponse($request);
+        }
+        
+        return (new SuccessResponse($result))->toResponse($request);
+    }
+
+    public function checkTrialAvailability(Request $request, string $moduleSlug): JsonResponse
+    {
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        }
+        
+        $module = Module::where('slug', $moduleSlug)->first();
+        
+        if (!$module) {
+            return (new ErrorResponse('Модуль не найден', 404))->toResponse($request);
+        }
+        
+        if ($module->isFree()) {
+            return (new SuccessResponse([
+                'trial_available' => false,
+                'reason' => 'FREE_MODULE',
+                'message' => 'Trial период доступен только для платных модулей'
+            ]))->toResponse($request);
+        }
+        
+        $hasUsedTrial = $this->moduleManager->hasUsedTrial($organizationId, $module->id);
+        $hasAccess = $this->moduleManager->hasAccess($organizationId, $moduleSlug);
+        
+        $pricingConfig = $module->pricing_config ?? [];
+        $trialDays = $pricingConfig['trial_days'] ?? 14;
+        
+        return (new SuccessResponse([
+            'trial_available' => !$hasUsedTrial && !$hasAccess,
+            'has_used_trial' => $hasUsedTrial,
+            'is_active' => $hasAccess,
+            'trial_days' => $trialDays,
+            'module' => [
+                'name' => $module->name,
+                'slug' => $module->slug,
+                'price' => $module->getPrice(),
+                'currency' => $module->getCurrency(),
+                'billing_model' => $module->billing_model
+            ]
+        ]))->toResponse($request);
+    }
+
+    public function convertTrialToPaid(Request $request, string $moduleSlug): JsonResponse
+    {
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        }
+        
+        $result = $this->moduleManager->convertTrialToPaid($organizationId, $moduleSlug);
+        
+        if (!$result['success']) {
+            return (new ErrorResponse(
+                $result['message'],
+                $result['code'] === 'INSUFFICIENT_BALANCE' ? 402 : 400,
+                ['code' => $result['code']]
+            ))->toResponse($request);
+        }
+        
+        return (new SuccessResponse($result))->toResponse($request);
+    }
 }

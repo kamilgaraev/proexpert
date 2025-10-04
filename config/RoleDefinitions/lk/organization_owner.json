@@ -49,7 +49,8 @@
     "report-templates": ["*"],
     "data-filters": ["*"],
     "dashboard-widgets": ["*"],
-    "schedule-management": ["*"]
+    "schedule-management": ["*"],
+    "advanced-dashboard": ["*"]
   },
   
   "interface_access": ["lk", "admin", "mobile"],

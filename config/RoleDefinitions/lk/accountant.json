@@ -83,6 +83,16 @@
     ],
     "schedule-management": [
       "schedule.view", "schedule.export"
+    ],
+    "advanced-dashboard": [
+      "advanced-dashboard.dashboards.view",
+      "advanced-dashboard.dashboards.create",
+      "advanced-dashboard.analytics.financial.view",
+      "advanced-dashboard.analytics.predictive.view",
+      "advanced-dashboard.analytics.hr.view",
+      "advanced-dashboard.export.pdf",
+      "advanced-dashboard.export.excel",
+      "advanced-dashboard.export.scheduled_reports"
     ]
   },
   

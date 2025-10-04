@@ -11,7 +11,8 @@
   ],
   
   "module_permissions": {
-    "*": ["*"]
+    "*": ["*"],
+    "advanced-dashboard": ["*"]
   },
   
   "interface_access": ["admin", "lk", "mobile"],

@@ -48,7 +48,13 @@
     "report-templates": ["report_templates.*"],
     "data-filters": ["filters.*"],
     "dashboard-widgets": ["dashboard.*"],
-    "schedule-management": ["schedule.*"]
+    "schedule-management": ["schedule.*"],
+    "advanced-dashboard": [
+      "advanced-dashboard.dashboards.*",
+      "advanced-dashboard.analytics.*",
+      "advanced-dashboard.alerts.*",
+      "advanced-dashboard.export.*"
+    ]
   },
   
   "interface_access": ["admin"],

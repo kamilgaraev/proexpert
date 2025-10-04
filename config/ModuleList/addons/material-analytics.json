@@ -14,7 +14,8 @@
     "base_price": 2990,
     "currency": "RUB",
     "included_in_plan": false,
-    "duration_days": 30
+    "duration_days": 30,
+    "trial_days": 7
   },
   
   "permissions": [

@@ -1,0 +1,97 @@
+{
+  "name": "Продвинутый дашборд",
+  "slug": "advanced-dashboard",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "analytics",
+  "description": "Расширенный дашборд с финансовой аналитикой, прогнозами, множественными дашбордами и real-time обновлениями",
+  
+  "class_name": "App\\BusinessModules\\Features\\AdvancedDashboard\\AdvancedDashboardModule",
+  "service_provider": "App\\BusinessModules\\Features\\AdvancedDashboard\\AdvancedDashboardServiceProvider",
+  
+  "pricing": {
+    "base_price": 4990,
+    "currency": "RUB",
+    "included_in_plans": ["profi", "enterprise"],
+    "duration_days": 30,
+    "trial_days": 7
+  },
+  
+  "permissions": [
+    "advanced_dashboard.view",
+    "advanced_dashboard.financial_analytics",
+    "advanced_dashboard.predictive_analytics",
+    "advanced_dashboard.kpi_tracking",
+    "advanced_dashboard.multiple_dashboards",
+    "advanced_dashboard.custom_dashboards",
+    "advanced_dashboard.dashboard_sharing",
+    "advanced_dashboard.real_time_updates",
+    "advanced_dashboard.alerts",
+    "advanced_dashboard.export_pdf",
+    "advanced_dashboard.export_excel",
+    "advanced_dashboard.scheduled_reports",
+    "advanced_dashboard.api_access",
+    "advanced_dashboard.drill_down",
+    "advanced_dashboard.comparison_analytics"
+  ],
+  
+  "features": [
+    "💰 Финансовая аналитика (Cash Flow, P&L, ROI, прогноз доходов)",
+    "🔮 Предиктивная аналитика (прогноз завершения контрактов, риски бюджета)",
+    "👥 HR-аналитика (KPI сотрудников, топ исполнителей, загрузка ресурсов)",
+    "📊 Сравнительная аналитика (проекты, подрядчики, периоды)",
+    "🎨 Множественные именованные дашборды (до 10 на организацию)",
+    "✨ Кастомизация дашбордов (drag-and-drop, шаблоны для ролей)",
+    "🔔 Система умных алертов (триггеры, светофоры, история)",
+    "⚡ Real-time обновления через WebSocket",
+    "📤 Экспорт дашбордов в PDF с графиками",
+    "📊 Экспорт данных в Excel",
+    "📅 Планировщик автоматической отправки отчетов",
+    "🔍 Drill-down в детали любого виджета",
+    "🔗 API доступ к данным дашборда",
+    "📈 15+ новых продвинутых виджетов",
+    "💾 История данных за 12 месяцев (vs 3 месяца в базовом)"
+  ],
+  
+  "dependencies": [
+    "dashboard-widgets",
+    "organizations",
+    "users"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_dashboards_per_organization": 10,
+    "max_dashboards_per_user": 5,
+    "max_widgets_per_dashboard": 30,
+    "max_alerts_per_user": 20,
+    "max_scheduled_reports": 15,
+    "data_retention_months": 12,
+    "real_time_connections": 50,
+    "api_requests_per_hour": 1000
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "dashboard",
+  "display_order": 5,
+  
+  "tags": ["premium", "analytics", "dashboard", "business-intelligence"],
+  
+  "screenshots": [
+    "/images/modules/advanced-dashboard/financial-analytics.png",
+    "/images/modules/advanced-dashboard/predictive-analytics.png",
+    "/images/modules/advanced-dashboard/multiple-dashboards.png"
+  ],
+  
+  "video_url": "https://youtu.be/demo-advanced-dashboard",
+  
+  "documentation_url": "/docs/modules/advanced-dashboard"
+}
+

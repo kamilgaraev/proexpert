@@ -28,7 +28,10 @@
     "report-templates": ["report_templates.view"],
     "data-filters": ["filters.view"],
     "dashboard-widgets": ["dashboard.view"],
-    "schedule-management": ["schedule.view"]
+    "schedule-management": ["schedule.view"],
+    "advanced-dashboard": [
+      "advanced-dashboard.dashboards.view"
+    ]
   },
   
   "interface_access": ["admin"],

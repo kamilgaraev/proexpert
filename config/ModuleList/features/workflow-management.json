@@ -14,7 +14,8 @@
     "base_price": 1990,
     "currency": "RUB", 
     "included_in_plans": ["business", "profi", "enterprise"],
-    "duration_days": 30
+    "duration_days": 30,
+    "trial_days": 7
   },
   
   "permissions": [

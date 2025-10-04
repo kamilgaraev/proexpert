@@ -1,0 +1,1947 @@
+openapi: 3.0.3
+info:
+  title: Advanced Dashboard API
+  description: |
+    API для модуля "Продвинутый дашборд" ProHelper.
+    
+    Предоставляет доступ к:
+    - Финансовой аналитике (Cash Flow, P&L, ROI)
+    - Предиктивной аналитике (прогнозы контрактов, рисков)
+    - HR аналитике (KPI сотрудников)
+    - Управлению дашбордами
+    - Системе алертов
+    - Экспорту отчетов
+    
+    ## Аутентификация
+    Все endpoints требуют JWT токена в header `Authorization: Bearer {token}`
+    
+    ## Organization Context
+    Все endpoints требуют header `X-Organization-ID` с ID текущей организации
+    
+    ## Активация модуля
+    Модуль должен быть активирован для организации (middleware `advanced_dashboard.active`)
+    
+    ## Rate Limiting
+    100 запросов в минуту на организацию
+  version: 1.0.0
+  contact:
+    name: ProHelper Support
+    email: support@prohelper.ru
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.prohelper.ru/api/v1/admin/advanced-dashboard
+    description: Production server
+  - url: https://dev-api.prohelper.ru/api/v1/admin/advanced-dashboard
+    description: Development server
+
+tags:
+  - name: Dashboards
+    description: Управление дашбордами (CRUD, шаринг, шаблоны)
+  - name: Financial Analytics
+    description: Финансовая аналитика (Cash Flow, P&L, ROI)
+  - name: Predictive Analytics
+    description: Предиктивная аналитика (прогнозы контрактов, рисков)
+  - name: HR & KPI
+    description: HR аналитика и KPI сотрудников
+  - name: Alerts
+    description: Система алертов и уведомлений
+  - name: Export
+    description: Экспорт дашбордов и scheduled reports
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ==================== DASHBOARDS ====================
+  
+  /dashboards:
+    get:
+      tags: [Dashboards]
+      summary: Получить список дашбордов
+      description: Возвращает все дашборды пользователя (owned + shared)
+      operationId: getDashboards
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Dashboard'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/ModuleNotActive'
+    
+    post:
+      tags: [Dashboards]
+      summary: Создать новый дашборд
+      operationId: createDashboard
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDashboardRequest'
+      responses:
+        '201':
+          description: Дашборд создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: Dashboard created successfully
+                  data:
+                    $ref: '#/components/schemas/Dashboard'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/LimitExceeded'
+
+  /dashboards/templates:
+    get:
+      tags: [Dashboards]
+      summary: Получить список шаблонов
+      description: Возвращает доступные шаблоны дашбордов (admin, finance, technical, hr)
+      operationId: getDashboardTemplates
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DashboardTemplate'
+
+  /dashboards/from-template:
+    post:
+      tags: [Dashboards]
+      summary: Создать дашборд из шаблона
+      operationId: createDashboardFromTemplate
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [template]
+              properties:
+                template:
+                  type: string
+                  enum: [admin, finance, technical, hr]
+                  example: finance
+                name:
+                  type: string
+                  maxLength: 255
+                  example: My Finance Dashboard
+      responses:
+        '201':
+          description: Дашборд создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Dashboard'
+
+  /dashboards/{id}:
+    get:
+      tags: [Dashboards]
+      summary: Получить дашборд по ID
+      operationId: getDashboard
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Dashboard'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    
+    put:
+      tags: [Dashboards]
+      summary: Обновить дашборд
+      operationId: updateDashboard
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDashboardRequest'
+      responses:
+        '200':
+          description: Дашборд обновлен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Dashboard'
+    
+    delete:
+      tags: [Dashboards]
+      summary: Удалить дашборд
+      operationId: deleteDashboard
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Дашборд удален
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /dashboards/{id}/layout:
+    put:
+      tags: [Dashboards]
+      summary: Обновить layout дашборда
+      operationId: updateDashboardLayout
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [layout]
+              properties:
+                layout:
+                  type: object
+                  description: Grid layout configuration
+                  example:
+                    lg: [{i: "widget-1", x: 0, y: 0, w: 6, h: 4}]
+      responses:
+        '200':
+          description: Layout обновлен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessResponse'
+
+  /dashboards/{id}/widgets:
+    put:
+      tags: [Dashboards]
+      summary: Обновить виджеты дашборда
+      operationId: updateDashboardWidgets
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [widgets]
+              properties:
+                widgets:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      type:
+                        type: string
+                      settings:
+                        type: object
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessResponse'
+
+  /dashboards/{id}/filters:
+    put:
+      tags: [Dashboards]
+      summary: Обновить глобальные фильтры
+      operationId: updateDashboardFilters
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filters:
+                  type: object
+                  properties:
+                    period:
+                      type: string
+                    project_ids:
+                      type: array
+                      items:
+                        type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessResponse'
+
+  /dashboards/{id}/share:
+    post:
+      tags: [Dashboards]
+      summary: Расшарить дашборд
+      operationId: shareDashboard
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [share_type]
+              properties:
+                share_type:
+                  type: string
+                  enum: [team, organization]
+                user_ids:
+                  type: array
+                  items:
+                    type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessResponse'
+    
+    delete:
+      tags: [Dashboards]
+      summary: Убрать расшаривание
+      operationId: unshareDashboard
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessResponse'
+
+  /dashboards/{id}/duplicate:
+    post:
+      tags: [Dashboards]
+      summary: Клонировать дашборд
+      operationId: duplicateDashboard
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+      responses:
+        '201':
+          description: Дашборд клонирован
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Dashboard'
+
+  /dashboards/{id}/make-default:
+    post:
+      tags: [Dashboards]
+      summary: Установить как default
+      operationId: makeDefaultDashboard
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessResponse'
+
+  # ==================== ANALYTICS: FINANCIAL ====================
+  
+  /analytics/financial/cash-flow:
+    get:
+      tags: [Financial Analytics]
+      summary: Получить Cash Flow
+      description: Возвращает данные о притоке и оттоке денежных средств
+      operationId: getCashFlow
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+        - name: project_id
+          in: query
+          schema:
+            type: integer
+        - name: groupBy
+          in: query
+          schema:
+            type: string
+            enum: [day, week, month]
+            default: month
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CashFlowResponse'
+
+  /analytics/financial/profit-loss:
+    get:
+      tags: [Financial Analytics]
+      summary: Получить P&L отчет
+      description: Отчет о прибылях и убытках
+      operationId: getProfitAndLoss
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+        - name: project_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfitLossResponse'
+
+  /analytics/financial/roi:
+    get:
+      tags: [Financial Analytics]
+      summary: Получить ROI
+      description: Рентабельность инвестиций по проектам
+      operationId: getROI
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: project_id
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ROIResponse'
+
+  /analytics/financial/revenue-forecast:
+    get:
+      tags: [Financial Analytics]
+      summary: Прогноз доходов
+      description: Прогноз доходов на N месяцев вперед
+      operationId: getRevenueForecast
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: months
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 24
+            default: 6
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevenueForecastResponse'
+
+  /analytics/financial/receivables-payables:
+    get:
+      tags: [Financial Analytics]
+      summary: Дебиторка и кредиторка
+      description: Дебиторская и кредиторская задолженность
+      operationId: getReceivablesPayables
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceivablesPayablesResponse'
+
+  # ==================== ANALYTICS: PREDICTIVE ====================
+  
+  /analytics/predictive/contract-forecast:
+    get:
+      tags: [Predictive Analytics]
+      summary: Прогноз завершения контракта
+      description: Предсказание даты завершения контракта на основе текущего прогресса
+      operationId: predictContractCompletion
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: contract_id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContractForecastResponse'
+
+  /analytics/predictive/budget-risk:
+    get:
+      tags: [Predictive Analytics]
+      summary: Риск превышения бюджета
+      description: Оценка вероятности превышения бюджета контракта
+      operationId: predictBudgetOverrun
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: contract_id
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BudgetRiskResponse'
+
+  /analytics/predictive/material-needs:
+    get:
+      tags: [Predictive Analytics]
+      summary: Прогноз потребности в материалах
+      description: Предсказание потребности в материалах на N месяцев
+      operationId: predictMaterialNeeds
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: months
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+            default: 3
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MaterialNeedsResponse'
+
+  # ==================== ANALYTICS: HR & KPI ====================
+  
+  /analytics/hr/kpi:
+    get:
+      tags: [HR & KPI]
+      summary: KPI сотрудника
+      description: Расчет KPI конкретного сотрудника за период
+      operationId: calculateUserKPI
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserKPIResponse'
+
+  /analytics/hr/top-performers:
+    get:
+      tags: [HR & KPI]
+      summary: Топ исполнители
+      description: Рейтинг лучших исполнителей организации
+      operationId: getTopPerformers
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TopPerformersResponse'
+
+  /analytics/hr/resource-utilization:
+    get:
+      tags: [HR & KPI]
+      summary: Загрузка ресурсов
+      description: Анализ загрузки сотрудников
+      operationId: getResourceUtilization
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - $ref: '#/components/parameters/DateFrom'
+        - $ref: '#/components/parameters/DateTo'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceUtilizationResponse'
+
+  # ==================== ALERTS ====================
+  
+  /alerts:
+    get:
+      tags: [Alerts]
+      summary: Получить список алертов
+      operationId: getAlerts
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: dashboard_id
+          in: query
+          schema:
+            type: integer
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [budget_overrun, deadline_risk, low_stock, contract_completion, payment_overdue, kpi_threshold, custom]
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+        - name: priority
+          in: query
+          schema:
+            type: string
+            enum: [low, medium, high, critical]
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Alert'
+    
+    post:
+      tags: [Alerts]
+      summary: Создать алерт
+      operationId: createAlert
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAlertRequest'
+      responses:
+        '201':
+          description: Алерт создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/Alert'
+
+  /alerts/check-all:
+    post:
+      tags: [Alerts]
+      summary: Проверить все алерты
+      description: Принудительная проверка всех активных алертов
+      operationId: checkAllAlerts
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      checked:
+                        type: integer
+                      triggered:
+                        type: integer
+                      errors:
+                        type: integer
+
+  /alerts/{id}:
+    get:
+      tags: [Alerts]
+      summary: Получить алерт
+      operationId: getAlert
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/Alert'
+    
+    put:
+      tags: [Alerts]
+      summary: Обновить алерт
+      operationId: updateAlert
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAlertRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessResponse'
+    
+    delete:
+      tags: [Alerts]
+      summary: Удалить алерт
+      operationId: deleteAlert
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessResponse'
+
+  /alerts/{id}/toggle:
+    post:
+      tags: [Alerts]
+      summary: Включить/выключить алерт
+      operationId: toggleAlert
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_active]
+              properties:
+                is_active:
+                  type: boolean
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessResponse'
+
+  /alerts/{id}/reset:
+    post:
+      tags: [Alerts]
+      summary: Сбросить состояние алерта
+      operationId: resetAlert
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessResponse'
+
+  /alerts/{id}/history:
+    get:
+      tags: [Alerts]
+      summary: История срабатываний
+      operationId: getAlertHistory
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      type: object
+
+  # ==================== EXPORT ====================
+  
+  /export/formats:
+    get:
+      tags: [Export]
+      summary: Доступные форматы экспорта
+      operationId: getExportFormats
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: object
+                    properties:
+                      pdf:
+                        type: object
+                      excel:
+                        type: object
+
+  /export/dashboard/{id}/pdf:
+    post:
+      tags: [Export]
+      summary: Экспорт дашборда в PDF
+      operationId: exportDashboardToPDF
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filters:
+                  type: object
+                widgets:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      file_path:
+                        type: string
+                      file_url:
+                        type: string
+                      format:
+                        type: string
+                        example: pdf
+
+  /export/dashboard/{id}/excel:
+    post:
+      tags: [Export]
+      summary: Экспорт дашборда в Excel
+      operationId: exportDashboardToExcel
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filters:
+                  type: object
+                widgets:
+                  type: array
+                  items:
+                    type: string
+                include_raw_data:
+                  type: boolean
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      file_path:
+                        type: string
+                      file_url:
+                        type: string
+                      format:
+                        type: string
+                        example: excel
+
+  /export/scheduled-reports:
+    get:
+      tags: [Export]
+      summary: Список scheduled reports
+      operationId: getScheduledReports
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+        - name: frequency
+          in: query
+          schema:
+            type: string
+            enum: [daily, weekly, monthly, custom]
+      responses:
+        '200':
+          description: Успешно
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ScheduledReport'
+    
+    post:
+      tags: [Export]
+      summary: Создать scheduled report
+      operationId: createScheduledReport
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateScheduledReportRequest'
+      responses:
+        '201':
+          description: Отчет создан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  data:
+                    $ref: '#/components/schemas/ScheduledReport'
+
+  /export/scheduled-reports/{id}:
+    put:
+      tags: [Export]
+      summary: Обновить scheduled report
+      operationId: updateScheduledReport
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateScheduledReportRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessResponse'
+    
+    delete:
+      tags: [Export]
+      summary: Удалить scheduled report
+      operationId: deleteScheduledReport
+      parameters:
+        - $ref: '#/components/parameters/OrganizationHeader'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/SuccessResponse'
+
+# ==================== COMPONENTS ====================
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    OrganizationHeader:
+      name: X-Organization-ID
+      in: header
+      required: true
+      schema:
+        type: integer
+      description: ID текущей организации
+    
+    DateFrom:
+      name: from
+      in: query
+      required: true
+      schema:
+        type: string
+        format: date
+      example: '2025-01-01'
+    
+    DateTo:
+      name: to
+      in: query
+      required: true
+      schema:
+        type: string
+        format: date
+      example: '2025-10-04'
+
+  responses:
+    SuccessResponse:
+      description: Операция выполнена успешно
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: true
+              message:
+                type: string
+                example: Operation completed successfully
+    
+    Unauthorized:
+      description: Не авторизован
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: Unauthorized
+    
+    Forbidden:
+      description: Доступ запрещен
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: Access denied
+    
+    ModuleNotActive:
+      description: Модуль не активирован
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: Advanced Dashboard module is not active for this organization
+    
+    NotFound:
+      description: Ресурс не найден
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: Resource not found
+    
+    ValidationError:
+      description: Ошибка валидации
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+              errors:
+                type: object
+    
+    LimitExceeded:
+      description: Превышен лимит
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              message:
+                type: string
+                example: Dashboard limit exceeded (max 10 per user)
+
+  schemas:
+    Dashboard:
+      type: object
+      properties:
+        id:
+          type: integer
+        user_id:
+          type: integer
+        organization_id:
+          type: integer
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+          nullable: true
+        layout:
+          type: object
+          nullable: true
+        widgets:
+          type: array
+          items:
+            type: object
+        filters:
+          type: object
+          nullable: true
+        is_shared:
+          type: boolean
+        shared_with:
+          type: array
+          items:
+            type: integer
+          nullable: true
+        visibility:
+          type: string
+          enum: [private, team, organization]
+        is_default:
+          type: boolean
+        template:
+          type: string
+          nullable: true
+        enable_realtime:
+          type: boolean
+        refresh_interval:
+          type: integer
+          nullable: true
+        views_count:
+          type: integer
+        last_viewed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateDashboardRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 1000
+        visibility:
+          type: string
+          enum: [private, team, organization]
+          default: private
+        layout:
+          type: object
+        widgets:
+          type: array
+          items:
+            type: object
+
+    UpdateDashboardRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        visibility:
+          type: string
+          enum: [private, team, organization]
+
+    DashboardTemplate:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+        preview_url:
+          type: string
+        widgets:
+          type: array
+          items:
+            type: object
+
+    Alert:
+      type: object
+      properties:
+        id:
+          type: integer
+        dashboard_id:
+          type: integer
+          nullable: true
+        user_id:
+          type: integer
+        organization_id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        alert_type:
+          type: string
+          enum: [budget_overrun, deadline_risk, low_stock, contract_completion, payment_overdue, kpi_threshold, custom]
+        target_entity:
+          type: string
+          enum: [project, contract, material, user]
+          nullable: true
+        target_entity_id:
+          type: integer
+          nullable: true
+        conditions:
+          type: object
+          nullable: true
+        comparison_operator:
+          type: string
+          enum: ['gt', 'gte', 'lt', 'lte', 'eq', 'neq']
+        threshold_value:
+          type: number
+          nullable: true
+        threshold_unit:
+          type: string
+          nullable: true
+        notification_channels:
+          type: array
+          items:
+            type: string
+            enum: [email, in_app, webhook]
+        recipients:
+          type: array
+          items:
+            type: string
+          nullable: true
+        cooldown_minutes:
+          type: integer
+          nullable: true
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+        is_active:
+          type: boolean
+        is_triggered:
+          type: boolean
+        last_triggered_at:
+          type: string
+          format: date-time
+          nullable: true
+        trigger_count:
+          type: integer
+
+    CreateAlertRequest:
+      type: object
+      required: [name, alert_type, comparison_operator]
+      properties:
+        dashboard_id:
+          type: integer
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        alert_type:
+          type: string
+          enum: [budget_overrun, deadline_risk, low_stock, contract_completion, payment_overdue, kpi_threshold, custom]
+        target_entity:
+          type: string
+          enum: [project, contract, material, user]
+        target_entity_id:
+          type: integer
+        conditions:
+          type: object
+        comparison_operator:
+          type: string
+          enum: ['gt', 'gte', 'lt', 'lte', 'eq', 'neq', '>', '>=', '<', '<=', '==', '!=']
+        threshold_value:
+          type: number
+        threshold_unit:
+          type: string
+        notification_channels:
+          type: array
+          items:
+            type: string
+            enum: [email, in_app, webhook]
+        recipients:
+          type: array
+          items:
+            type: string
+        cooldown_minutes:
+          type: integer
+          minimum: 1
+          maximum: 10080
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+        is_active:
+          type: boolean
+
+    UpdateAlertRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        threshold_value:
+          type: number
+        notification_channels:
+          type: array
+          items:
+            type: string
+        recipients:
+          type: array
+          items:
+            type: string
+        cooldown_minutes:
+          type: integer
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+
+    ScheduledReport:
+      type: object
+      properties:
+        id:
+          type: integer
+        dashboard_id:
+          type: integer
+        user_id:
+          type: integer
+        organization_id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: string
+        frequency:
+          type: string
+          enum: [daily, weekly, monthly, custom]
+        cron_expression:
+          type: string
+          nullable: true
+        time_of_day:
+          type: string
+          format: time
+        export_formats:
+          type: array
+          items:
+            type: string
+            enum: [pdf, excel]
+        recipients:
+          type: array
+          items:
+            type: string
+        is_active:
+          type: boolean
+        next_run_at:
+          type: string
+          format: date-time
+        last_run_at:
+          type: string
+          format: date-time
+          nullable: true
+        run_count:
+          type: integer
+
+    CreateScheduledReportRequest:
+      type: object
+      required: [dashboard_id, name, frequency, export_formats, recipients]
+      properties:
+        dashboard_id:
+          type: integer
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+        frequency:
+          type: string
+          enum: [daily, weekly, monthly, custom]
+        cron_expression:
+          type: string
+        time_of_day:
+          type: string
+          format: time
+        days_of_week:
+          type: array
+          items:
+            type: integer
+        day_of_month:
+          type: integer
+          minimum: 1
+          maximum: 31
+        export_formats:
+          type: array
+          items:
+            type: string
+            enum: [pdf, excel]
+        recipients:
+          type: array
+          items:
+            type: string
+            format: email
+        cc_recipients:
+          type: array
+          items:
+            type: string
+        email_subject:
+          type: string
+        email_body:
+          type: string
+        filters:
+          type: object
+        widgets:
+          type: array
+          items:
+            type: string
+        include_raw_data:
+          type: boolean
+        is_active:
+          type: boolean
+
+    UpdateScheduledReportRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        frequency:
+          type: string
+          enum: [daily, weekly, monthly, custom]
+        time_of_day:
+          type: string
+          format: time
+        export_formats:
+          type: array
+          items:
+            type: string
+        recipients:
+          type: array
+          items:
+            type: string
+        is_active:
+          type: boolean
+
+    CashFlowResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            period:
+              type: object
+            cash_flow:
+              type: array
+              items:
+                type: object
+                properties:
+                  period:
+                    type: string
+                  inflow:
+                    type: number
+                  outflow:
+                    type: number
+                  net:
+                    type: number
+            summary:
+              type: object
+              properties:
+                total_inflow:
+                  type: number
+                total_outflow:
+                  type: number
+                net_cash_flow:
+                  type: number
+
+    ProfitLossResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            period:
+              type: object
+            revenue:
+              type: number
+            costs:
+              type: number
+            gross_profit:
+              type: number
+            expenses:
+              type: number
+            net_profit:
+              type: number
+            profit_margin:
+              type: number
+
+    ROIResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            roi:
+              type: number
+            total_revenue:
+              type: number
+            total_costs:
+              type: number
+            profit:
+              type: number
+            projects:
+              type: array
+              items:
+                type: object
+
+    RevenueForecastResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            forecast_months:
+              type: integer
+            forecast:
+              type: array
+              items:
+                type: object
+                properties:
+                  month:
+                    type: string
+                  expected_revenue:
+                    type: number
+                  confidence:
+                    type: string
+
+    ReceivablesPayablesResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            receivables:
+              type: object
+              properties:
+                total:
+                  type: number
+                overdue:
+                  type: number
+                current:
+                  type: number
+            payables:
+              type: object
+              properties:
+                total:
+                  type: number
+                overdue:
+                  type: number
+                current:
+                  type: number
+
+    ContractForecastResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            contract_id:
+              type: integer
+            current_progress:
+              type: number
+            predicted_completion_date:
+              type: string
+              format: date
+            days_remaining:
+              type: integer
+            confidence:
+              type: number
+
+    BudgetRiskResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            contract_id:
+              type: integer
+            budget_total:
+              type: number
+            current_spent:
+              type: number
+            predicted_total:
+              type: number
+            overrun_risk:
+              type: string
+              enum: [low, medium, high, critical]
+            overrun_percentage:
+              type: number
+
+    MaterialNeedsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            forecast_months:
+              type: integer
+            materials:
+              type: array
+              items:
+                type: object
+                properties:
+                  material_id:
+                    type: integer
+                  material_name:
+                    type: string
+                  current_balance:
+                    type: number
+                  predicted_need:
+                    type: number
+                  shortage_risk:
+                    type: string
+
+    UserKPIResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            user_id:
+              type: integer
+            user_name:
+              type: string
+            period:
+              type: object
+            metrics:
+              type: object
+              properties:
+                completed_works_count:
+                  type: integer
+                work_volume:
+                  type: number
+                on_time_completion_rate:
+                  type: number
+                quality_score:
+                  type: number
+                revenue_generated:
+                  type: number
+                cost_efficiency:
+                  type: number
+            overall_kpi:
+              type: number
+            performance_level:
+              type: string
+              enum: [excellent, good, average, below_average, poor]
+
+    TopPerformersResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            period:
+              type: object
+            performers:
+              type: array
+              items:
+                type: object
+                properties:
+                  user_id:
+                    type: integer
+                  user_name:
+                    type: string
+                  kpi_score:
+                    type: number
+                  rank:
+                    type: integer
+
+    ResourceUtilizationResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            period:
+              type: object
+            overall_utilization:
+              type: number
+            users:
+              type: array
+              items:
+                type: object
+                properties:
+                  user_id:
+                    type: integer
+                  user_name:
+                    type: string
+                  utilization:
+                    type: number
+                  workload_status:
+                    type: string
+                    enum: [underutilized, optimal, overloaded]
+

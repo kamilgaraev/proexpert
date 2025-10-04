@@ -118,6 +118,22 @@
     "schedule-management": [
       "schedule.view", "schedule.create", "schedule.edit", "schedule.delete", "schedule.assign",
       "schedule.approve", "schedule.export", "schedule.notifications"
+    ],
+    "advanced-dashboard": [
+      "advanced-dashboard.dashboards.view",
+      "advanced-dashboard.dashboards.create",
+      "advanced-dashboard.dashboards.edit",
+      "advanced-dashboard.dashboards.delete",
+      "advanced-dashboard.dashboards.share",
+      "advanced-dashboard.analytics.financial.view",
+      "advanced-dashboard.analytics.predictive.view",
+      "advanced-dashboard.analytics.hr.view",
+      "advanced-dashboard.alerts.view",
+      "advanced-dashboard.alerts.create",
+      "advanced-dashboard.alerts.manage",
+      "advanced-dashboard.export.pdf",
+      "advanced-dashboard.export.excel",
+      "advanced-dashboard.export.scheduled_reports"
     ]
   },
   

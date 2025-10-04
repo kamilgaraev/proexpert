@@ -33,12 +33,22 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
         Route::get('/bundled', [ModuleController::class, 'getBundledModules'])
             ->name('bundled');
         
+        // Trial endpoints
+        Route::get('/{moduleSlug}/trial-availability', [ModuleController::class, 'checkTrialAvailability'])
+            ->name('trial-availability');
+        
         // Методы для владельцев организации
         Route::middleware(['authorize:modules.manage'])
             ->group(function () {
                 
                 Route::post('/activate', [ModuleController::class, 'activate'])
                     ->name('activate');
+                
+                Route::post('/{moduleSlug}/activate-trial', [ModuleController::class, 'activateTrial'])
+                    ->name('activate-trial');
+                
+                Route::post('/{moduleSlug}/convert-trial', [ModuleController::class, 'convertTrialToPaid'])
+                    ->name('convert-trial');
                 
                 Route::delete('/{moduleSlug}', [ModuleController::class, 'deactivate'])
                     ->name('deactivate');
