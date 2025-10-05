@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\CustomReport;
 use App\Services\Report\CustomReportBuilderService;
 use App\Services\Logging\LoggingService;
+use App\Http\Requests\Api\V1\Admin\CustomReport\ValidateConfigRequest;
+use App\Http\Requests\Api\V1\Admin\CustomReport\PreviewReportRequest;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -133,17 +135,19 @@ class CustomReportBuilderController extends Controller
         }
     }
 
-    public function validateConfig(Request $request): JsonResponse
+    public function validateConfig(ValidateConfigRequest $request): JsonResponse
     {
         $user = $request->user();
 
         try {
+            $config = $request->validated();
+            
             $this->logging->technical('report_builder.validate_config_requested', [
                 'user_id' => $user->id,
-                'organization_id' => $user->current_organization_id
+                'organization_id' => $user->current_organization_id,
+                'has_data_sources' => isset($config['data_sources']),
+                'has_columns' => isset($config['columns_config'])
             ], 'debug');
-
-            $config = $request->all();
             
             $errors = $this->builderService->validateReportConfig($config);
 
@@ -160,6 +164,11 @@ class CustomReportBuilderController extends Controller
                     'errors' => $errors,
                 ], 422);
             }
+
+            $this->logging->technical('report_builder.validation_success', [
+                'user_id' => $user->id,
+                'organization_id' => $user->current_organization_id
+            ], 'debug');
 
             return response()->json([
                 'success' => true,
@@ -186,18 +195,19 @@ class CustomReportBuilderController extends Controller
         }
     }
 
-    public function preview(Request $request): JsonResponse
+    public function preview(PreviewReportRequest $request): JsonResponse
     {
         $user = $request->user();
         $organizationId = $user->current_organization_id;
 
         try {
+            $config = $request->validated();
+            
             $this->logging->technical('report_builder.preview_requested', [
                 'user_id' => $user->id,
-                'organization_id' => $organizationId
+                'organization_id' => $organizationId,
+                'has_filters' => isset($config['filters'])
             ], 'debug');
-
-            $config = $request->all();
             
             $errors = $this->builderService->validateReportConfig($config);
             
@@ -217,7 +227,7 @@ class CustomReportBuilderController extends Controller
             $tempReport = new CustomReport($config);
             $tempReport->organization_id = $organizationId;
 
-            $filters = $request->input('filters', []);
+            $filters = $config['filters'] ?? [];
             $result = $this->builderService->testReportQuery($tempReport, $organizationId, $filters);
 
             $this->logging->business('report_builder.preview_completed', [
