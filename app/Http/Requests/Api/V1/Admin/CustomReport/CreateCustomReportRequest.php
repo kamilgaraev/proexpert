@@ -8,7 +8,7 @@ class CreateCustomReportRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user() && $this->user()->can('view-reports');
+        return true; // Authorization handled by middleware: auth:api_admin, authorize:admin.access, module.access:advanced-reports
     }
 
     public function rules(): array
