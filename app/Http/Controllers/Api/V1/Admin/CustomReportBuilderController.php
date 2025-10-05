@@ -8,7 +8,6 @@ use App\Services\Report\CustomReportBuilderService;
 use App\Services\Logging\LoggingService;
 use App\Http\Requests\Api\V1\Admin\CustomReport\ValidateConfigRequest;
 use App\Http\Requests\Api\V1\Admin\CustomReport\PreviewReportRequest;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -23,13 +22,7 @@ class CustomReportBuilderController extends Controller
     public function getDataSources(): JsonResponse
     {
         try {
-            Log::info('[CustomReportBuilderController@getDataSources] Request received');
-            
             $dataSources = $this->builderService->getAvailableDataSources();
-            
-            Log::info('[CustomReportBuilderController@getDataSources] Success', [
-                'count' => count($dataSources)
-            ]);
 
             $this->logging->technical('report_builder.get_data_sources_success', [
                 'count' => count($dataSources)
@@ -40,13 +33,6 @@ class CustomReportBuilderController extends Controller
                 'data' => $dataSources,
             ]);
         } catch (\Throwable $e) {
-            Log::error('[CustomReportBuilderController@getDataSources] Error', [
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
             $this->logging->technical('report_builder.get_data_sources_failed', [
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
@@ -92,12 +78,6 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            Log::error('[CustomReportBuilderController@getDataSourceFields] Error', [
-                'data_source' => $dataSource,
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения полей источника данных'
@@ -122,12 +102,6 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            Log::error('[CustomReportBuilderController@getDataSourceRelations] Error', [
-                'data_source' => $dataSource,
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения связей источника данных'
@@ -140,30 +114,33 @@ class CustomReportBuilderController extends Controller
         $user = $request->user();
 
         try {
-            Log::info('[CustomReportBuilderController@validateConfig] START', [
-                'user_id' => $user->id
-            ]);
+            $this->logging->technical('report_builder.validate_config_start', [
+                'user_id' => $user->id,
+                'endpoint' => 'validateConfig'
+            ], 'info');
 
             $config = $request->validated();
             
-            Log::info('[CustomReportBuilderController@validateConfig] Config validated', [
-                'config_keys' => array_keys($config)
-            ]);
+            $this->logging->technical('report_builder.validate_config_data_received', [
+                'user_id' => $user->id,
+                'config_keys' => array_keys($config),
+                'data_sources_present' => isset($config['data_sources']),
+                'columns_config_present' => isset($config['columns_config'])
+            ], 'info');
             
-            $this->logging->technical('report_builder.validate_config_requested', [
+            $this->logging->technical('report_builder.calling_validation_service', [
                 'user_id' => $user->id,
                 'organization_id' => $user->current_organization_id,
-                'has_data_sources' => isset($config['data_sources']),
-                'has_columns' => isset($config['columns_config'])
-            ], 'debug');
-            
-            Log::info('[CustomReportBuilderController@validateConfig] Calling builderService->validateReportConfig');
+                'require_full_config' => false
+            ], 'info');
             
             $errors = $this->builderService->validateReportConfig($config, false);
             
-            Log::info('[CustomReportBuilderController@validateConfig] Validation completed', [
-                'errors_count' => count($errors)
-            ]);
+            $this->logging->technical('report_builder.validation_service_completed', [
+                'user_id' => $user->id,
+                'errors_count' => count($errors),
+                'has_errors' => !empty($errors)
+            ], 'info');
 
             if (!empty($errors)) {
                 $this->logging->technical('report_builder.validation_errors', [
@@ -195,12 +172,6 @@ class CustomReportBuilderController extends Controller
                 'file' => $e->getFile(),
                 'line' => $e->getLine()
             ], 'error');
-
-            Log::error('[CustomReportBuilderController@validateConfig] Unexpected error', [
-                'user_id' => $user->id,
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
 
             return response()->json([
                 'success' => false,
@@ -261,12 +232,6 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            Log::error('[CustomReportBuilderController@preview] Unexpected error', [
-                'user_id' => $user->id,
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
             return response()->json([
                 'success' => false,
                 'message' => 'Внутренняя ошибка при предпросмотре отчета'
@@ -289,11 +254,6 @@ class CustomReportBuilderController extends Controller
                 'file' => $e->getFile(),
                 'line' => $e->getLine()
             ], 'error');
-
-            Log::error('[CustomReportBuilderController@getOperators] Error', [
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
 
             return response()->json([
                 'success' => false,
@@ -318,11 +278,6 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            Log::error('[CustomReportBuilderController@getAggregations] Error', [
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения агрегаций: ' . $e->getMessage()
@@ -346,11 +301,6 @@ class CustomReportBuilderController extends Controller
                 'line' => $e->getLine()
             ], 'error');
 
-            Log::error('[CustomReportBuilderController@getExportFormats] Error', [
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка получения форматов экспорта: ' . $e->getMessage()
@@ -373,11 +323,6 @@ class CustomReportBuilderController extends Controller
                 'file' => $e->getFile(),
                 'line' => $e->getLine()
             ], 'error');
-
-            Log::error('[CustomReportBuilderController@getCategories] Error', [
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
 
             return response()->json([
                 'success' => false,

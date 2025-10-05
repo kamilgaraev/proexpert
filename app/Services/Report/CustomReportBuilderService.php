@@ -8,7 +8,6 @@ use App\Services\Report\Builders\ReportQueryBuilder;
 use App\Services\Logging\LoggingService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 class CustomReportBuilderService
 {
@@ -23,21 +22,20 @@ class CustomReportBuilderService
         $errors = [];
 
         try {
-            Log::info('[CustomReportBuilderService@validateReportConfig] START', [
+            $this->logging->technical('report_builder.service_validation_started', [
                 'require_full_config' => $requireFullConfig,
-                'config_keys' => array_keys($config)
-            ]);
-
-            $this->logging->technical('report_builder.validation_started', [
+                'config_keys' => array_keys($config),
                 'has_name' => !empty($config['name']),
                 'has_category' => !empty($config['report_category']),
                 'has_data_sources' => !empty($config['data_sources']),
-                'has_columns' => !empty($config['columns_config']),
-                'require_full_config' => $requireFullConfig
-            ], 'debug');
+                'has_columns' => !empty($config['columns_config'])
+            ], 'info');
 
             if ($requireFullConfig) {
-                Log::info('[CustomReportBuilderService@validateReportConfig] Full config validation');
+                $this->logging->technical('report_builder.full_config_validation', [
+                    'checking_name' => empty($config['name']),
+                    'checking_category' => empty($config['report_category'])
+                ], 'info');
                 
                 if (empty($config['name'])) {
                     $errors[] = 'Название отчета обязательно';
@@ -48,13 +46,16 @@ class CustomReportBuilderService
                 }
             }
 
-            Log::info('[CustomReportBuilderService@validateReportConfig] Calling validateConfigStructure');
+            $this->logging->technical('report_builder.before_structure_validation', [
+                'current_errors_count' => count($errors)
+            ], 'info');
             
             $structureErrors = $this->validateConfigStructure($config);
             
-            Log::info('[CustomReportBuilderService@validateReportConfig] Structure validation completed', [
-                'structure_errors_count' => count($structureErrors)
-            ]);
+            $this->logging->technical('report_builder.after_structure_validation', [
+                'structure_errors_count' => count($structureErrors),
+                'structure_errors' => $structureErrors
+            ], 'info');
             
             $errors = array_merge($errors, $structureErrors);
 
@@ -78,29 +79,33 @@ class CustomReportBuilderService
     {
         $errors = [];
 
-        Log::info('[CustomReportBuilderService@validateConfigStructure] START');
+        $this->logging->technical('report_builder.structure_validation_start', [
+            'config_keys' => array_keys($config)
+        ], 'info');
 
         try {
             if (!empty($config['data_sources'])) {
-                Log::info('[CustomReportBuilderService@validateConfigStructure] Validating data_sources');
+                $this->logging->technical('report_builder.validating_data_sources', [
+                    'data_sources_keys' => array_keys($config['data_sources'])
+                ], 'info');
                 
                 $primarySource = $config['data_sources']['primary'] ?? null;
                 
-                Log::info('[CustomReportBuilderService@validateConfigStructure] Primary source', [
+                $this->logging->technical('report_builder.checking_primary_source', [
                     'primary_source' => $primarySource
-                ]);
+                ], 'info');
                 
                 if ($primarySource && !$this->registry->validateDataSource($primarySource)) {
                     $errors[] = "Некорректный источник данных: {$primarySource}";
-                    Log::warning('[CustomReportBuilderService@validateConfigStructure] Invalid primary source', [
+                    $this->logging->technical('report_builder.invalid_primary_source', [
                         'primary_source' => $primarySource
-                    ]);
+                    ], 'warning');
                 }
 
                 if (!empty($config['data_sources']['joins'])) {
-                    Log::info('[CustomReportBuilderService@validateConfigStructure] Validating joins', [
+                    $this->logging->technical('report_builder.validating_joins', [
                         'joins_count' => count($config['data_sources']['joins'])
-                    ]);
+                    ], 'info');
                     
                     $maxJoins = config('custom-reports.limits.max_joins', 7);
                     if (count($config['data_sources']['joins']) > $maxJoins) {
@@ -122,9 +127,9 @@ class CustomReportBuilderService
             }
 
             if (!empty($config['columns_config'])) {
-                Log::info('[CustomReportBuilderService@validateConfigStructure] Validating columns', [
+                $this->logging->technical('report_builder.validating_columns', [
                     'columns_count' => count($config['columns_config'])
-                ]);
+                ], 'info');
                 
                 $maxColumns = config('custom-reports.limits.max_columns', 50);
                 if (count($config['columns_config']) > $maxColumns) {
@@ -142,7 +147,7 @@ class CustomReportBuilderService
             }
 
             if (!empty($config['aggregations_config'])) {
-                Log::info('[CustomReportBuilderService@validateConfigStructure] Validating aggregations');
+                $this->logging->technical('report_builder.validating_aggregations', [], 'info');
                 
                 $maxAggregations = config('custom-reports.limits.max_aggregations', 10);
                 $aggregations = $config['aggregations_config']['aggregations'] ?? [];
@@ -157,9 +162,9 @@ class CustomReportBuilderService
             }
 
             if (!empty($config['query_config']['where'])) {
-                Log::info('[CustomReportBuilderService@validateConfigStructure] Validating filters', [
+                $this->logging->technical('report_builder.validating_filters', [
                     'filters_count' => count($config['query_config']['where'])
-                ]);
+                ], 'info');
                 
                 $maxFilters = config('custom-reports.limits.max_filters', 20);
                 if (count($config['query_config']['where']) > $maxFilters) {
@@ -167,18 +172,19 @@ class CustomReportBuilderService
                 }
             }
 
-            Log::info('[CustomReportBuilderService@validateConfigStructure] COMPLETED', [
-                'errors_count' => count($errors)
-            ]);
+            $this->logging->technical('report_builder.structure_validation_completed', [
+                'errors_count' => count($errors),
+                'errors' => $errors
+            ], count($errors) > 0 ? 'warning' : 'info');
 
             return $errors;
         } catch (\Throwable $e) {
-            Log::error('[CustomReportBuilderService@validateConfigStructure] EXCEPTION', [
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
-            ]);
+            $this->logging->technical('report_builder.structure_validation_exception', [
+                'exception_message' => $e->getMessage(),
+                'exception_file' => $e->getFile(),
+                'exception_line' => $e->getLine(),
+                'exception_trace' => $e->getTraceAsString()
+            ], 'error');
             throw $e;
         }
     }
