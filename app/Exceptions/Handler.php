@@ -83,6 +83,7 @@ class Handler extends ExceptionHandler
                 
                 if ($e instanceof ValidationException) {
                     return response()->json([
+                        'success' => false,
                         'message' => $e->getMessage() ?: 'Данные не прошли валидацию.',
                         'errors' => $e->errors(),
                     ], $e->status, $corsHeaders);
@@ -94,36 +95,49 @@ class Handler extends ExceptionHandler
                         $status = 400;
                     }
                     return response()->json([
+                        'success' => false,
                         'message' => $e->getMessage() ?: 'Ошибка бизнес-логики.',
                     ], $status, $corsHeaders);
                 }
 
                 if ($e instanceof AuthorizationException) {
+                    $message = $e->getMessage();
+                    
+                    // Делаем сообщение более понятным
+                    if (empty($message) || $message === 'This action is unauthorized.') {
+                        $message = 'У вас недостаточно прав для выполнения этого действия. Обратитесь к администратору.';
+                    }
+                    
                     return response()->json([
-                        'message' => $e->getMessage() ?: 'Доступ запрещён.',
+                        'success' => false,
+                        'message' => $message,
                     ], 403, $corsHeaders);
                 }
 
                 if ($e instanceof AuthenticationException) {
                     return response()->json([
-                        'message' => $e->getMessage() ?: 'Не аутентифицировано.',
+                        'success' => false,
+                        'message' => $e->getMessage() ?: 'Требуется аутентификация.',
                     ], 401, $corsHeaders);
                 }
 
                 if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
                     return response()->json([
-                        'message' => 'Ресурс не найден.'
+                        'success' => false,
+                        'message' => 'Запрашиваемый ресурс не найден.'
                     ], 404, $corsHeaders);
                 }
 
                 if ($e instanceof RouteNotFoundException) {
                     return response()->json([
+                        'success' => false,
                         'message' => 'Маршрут не найден или доступ запрещён.'
                     ], 401, $corsHeaders);
                 }
 
                 if ($e instanceof InsufficientBalanceException) {
                     return response()->json([
+                        'success' => false,
                         'message' => $e->getMessage() ?: 'Недостаточно средств на балансе для выполнения операции.'
                     ], 402, $corsHeaders); // 402 Payment Required
                 }
@@ -136,7 +150,10 @@ class Handler extends ExceptionHandler
                                'Если проблема повторяется, пожалуйста, свяжитесь с администрацией.';
                 }
                 
-                $response = ['message' => $message];
+                $response = [
+                    'success' => false,
+                    'message' => $message
+                ];
 
                 if (config('app.debug')) {
                     $response['exception'] = get_class($e);

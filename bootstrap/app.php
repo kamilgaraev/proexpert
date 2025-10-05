@@ -66,9 +66,16 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $exceptions->renderable(function (\Illuminate\Auth\Access\AuthorizationException $e, $request) {
             if ($request->expectsJson()) {
+                 $message = $e->getMessage();
+                 
+                 // Делаем сообщение более понятным
+                 if (empty($message) || $message === 'This action is unauthorized.') {
+                     $message = 'У вас недостаточно прав для выполнения этого действия. Обратитесь к администратору.';
+                 }
+                 
                  return response()->json([
                      'success' => false,
-                     'message' => $e->getMessage() ?: 'Forbidden.'
+                     'message' => $message
                  ], \Symfony\Component\HttpFoundation\Response::HTTP_FORBIDDEN);
             }
         });
