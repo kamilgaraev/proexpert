@@ -10,6 +10,8 @@ use App\Domain\Authorization\Services\PermissionResolver;
 use App\Domain\Authorization\Services\ModulePermissionChecker;
 use App\Domain\Authorization\Services\CustomRoleService;
 use App\Domain\Authorization\Services\RoleUpdater;
+use App\Domain\Authorization\Models\OrganizationCustomRole;
+use App\Domain\Authorization\Policies\CustomRolePolicy;
 use App\Services\Logging\LoggingService;
 
 /**
@@ -121,8 +123,7 @@ class AuthorizationServiceProvider extends ServiceProvider
      */
     protected function registerPolicies(): void
     {
-        // Можно добавить политики для моделей авторизации
-        // Gate::policy(OrganizationCustomRole::class, CustomRolePolicy::class);
+        Gate::policy(OrganizationCustomRole::class, CustomRolePolicy::class);
     }
 
     /**
