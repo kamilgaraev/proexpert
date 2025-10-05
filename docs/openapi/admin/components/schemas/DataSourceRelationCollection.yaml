@@ -1,0 +1,36 @@
+type: object
+description: Коллекция связей источника данных
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Название связи
+          example: "contracts"
+        label:
+          type: string
+          description: Название для отображения
+          example: "Контракты"
+        type:
+          type: string
+          description: Тип связи
+          enum: ["hasMany", "belongsTo", "belongsToMany"]
+          example: "hasMany"
+        related_source:
+          type: string
+          description: Связанный источник данных
+          example: "contracts"
+        foreign_key:
+          type: string
+          description: Внешний ключ
+          example: "project_id"
+        local_key:
+          type: string
+          description: Локальный ключ
+          example: "id"

@@ -234,6 +234,48 @@
 /reports/contractor-detail/{contractorId}:
   $ref: './contractor-reports.yaml#/~1reports~1contractor-detail~1{contractorId}'
 
+# Custom Reports Builder (Advanced Reports Module)
+/custom-reports:
+  $ref: './custom-reports.yaml#/~1custom-reports'
+/custom-reports/{id}:
+  $ref: './custom-reports.yaml#/~1custom-reports~1{id}'
+/custom-reports/{id}/clone:
+  $ref: './custom-reports.yaml#/~1custom-reports~1{id}~1clone'
+/custom-reports/{id}/favorite:
+  $ref: './custom-reports.yaml#/~1custom-reports~1{id}~1favorite'
+/custom-reports/{id}/share:
+  $ref: './custom-reports.yaml#/~1custom-reports~1{id}~1share'
+/custom-reports/{id}/execute:
+  $ref: './custom-reports.yaml#/~1custom-reports~1{id}~1execute'
+/custom-reports/{id}/executions:
+  $ref: './custom-reports.yaml#/~1custom-reports~1{id}~1executions'
+/custom-reports/builder/data-sources:
+  $ref: './custom-reports.yaml#/~1custom-reports~1builder~1data-sources'
+/custom-reports/builder/data-sources/{dataSource}/fields:
+  $ref: './custom-reports.yaml#/~1custom-reports~1builder~1data-sources~1{dataSource}~1fields'
+/custom-reports/builder/data-sources/{dataSource}/relations:
+  $ref: './custom-reports.yaml#/~1custom-reports~1builder~1data-sources~1{dataSource}~1relations'
+/custom-reports/builder/operators:
+  $ref: './custom-reports.yaml#/~1custom-reports~1builder~1operators'
+/custom-reports/builder/aggregations:
+  $ref: './custom-reports.yaml#/~1custom-reports~1builder~1aggregations'
+/custom-reports/builder/export-formats:
+  $ref: './custom-reports.yaml#/~1custom-reports~1builder~1export-formats'
+/custom-reports/builder/categories:
+  $ref: './custom-reports.yaml#/~1custom-reports~1builder~1categories'
+/custom-reports/builder/validate:
+  $ref: './custom-reports.yaml#/~1custom-reports~1builder~1validate'
+/custom-reports/builder/preview:
+  $ref: './custom-reports.yaml#/~1custom-reports~1builder~1preview'
+/custom-reports/{id}/schedules:
+  $ref: './custom-reports.yaml#/~1custom-reports~1{id}~1schedules'
+/custom-reports/{id}/schedules/{scheduleId}:
+  $ref: './custom-reports.yaml#/~1custom-reports~1{id}~1schedules~1{scheduleId}'
+/custom-reports/{id}/schedules/{scheduleId}/toggle:
+  $ref: './custom-reports.yaml#/~1custom-reports~1{id}~1schedules~1{scheduleId}~1toggle'
+/custom-reports/{id}/schedules/{scheduleId}/run-now:
+  $ref: './custom-reports.yaml#/~1custom-reports~1{id}~1schedules~1{scheduleId}~1run-now'
+
 /users:
   $ref: './users.yaml#/~1users'
 /users/{id}:

@@ -1,0 +1,70 @@
+type: object
+description: Модель выполнения отчета
+properties:
+  id:
+    type: integer
+    description: ID выполнения
+    example: 125
+  custom_report_id:
+    type: integer
+    description: ID отчета
+    example: 5
+  user_id:
+    type: integer
+    description: ID пользователя, запустившего отчет
+    example: 3
+  organization_id:
+    type: integer
+    description: ID организации
+    example: 1
+  applied_filters:
+    type: object
+    nullable: true
+    description: Примененные фильтры
+    example:
+      "projects.status": "active"
+      "projects.start_date":
+        from: "2024-01-01"
+        to: "2024-12-31"
+  execution_time_ms:
+    type: integer
+    description: Время выполнения в миллисекундах
+    example: 89
+  result_rows_count:
+    type: integer
+    description: Количество строк в результате
+    example: 24
+  export_format:
+    type: string
+    nullable: true
+    enum: ["csv", "excel", "pdf"]
+    description: Формат экспорта (если был)
+    example: null
+  export_file_id:
+    type: string
+    nullable: true
+    description: ID файла экспорта
+    example: null
+  status:
+    type: string
+    enum: ["pending", "processing", "completed", "failed", "cancelled"]
+    description: Статус выполнения
+    example: "completed"
+  error_message:
+    type: string
+    nullable: true
+    description: Сообщение об ошибке (если status=failed)
+    example: null
+  created_at:
+    type: string
+    format: date-time
+    description: Дата и время запуска
+    example: "2025-10-03T12:30:00.000000Z"
+  completed_at:
+    type: string
+    format: date-time
+    nullable: true
+    description: Дата и время завершения
+    example: "2025-10-03T12:30:00.000000Z"
+  user:
+    $ref: './UserSimple.yaml'

@@ -1,0 +1,55 @@
+type: object
+description: Результат выполнения отчета с данными
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: object
+    properties:
+      execution_id:
+        type: integer
+        description: ID выполнения отчета
+        example: 125
+      columns:
+        type: array
+        description: Конфигурация колонок
+        items:
+          type: object
+          properties:
+            field:
+              type: string
+              example: "name"
+            label:
+              type: string
+              example: "Название проекта"
+            format:
+              type: string
+              example: "text"
+      rows:
+        type: array
+        description: Строки данных
+        items:
+          type: object
+          additionalProperties: true
+          example:
+            name: "Проект А"
+            budget_amount: "1500000.00"
+            start_date: "2024-03-15"
+      total_rows:
+        type: integer
+        description: Общее количество строк
+        example: 24
+      execution_time_ms:
+        type: integer
+        description: Время выполнения в мс
+        example: 89
+      applied_filters:
+        type: object
+        nullable: true
+        description: Примененные фильтры
+        example:
+          "projects.status": "active"
+          "projects.start_date":
+            from: "2024-01-01"
+            to: "2024-12-31"

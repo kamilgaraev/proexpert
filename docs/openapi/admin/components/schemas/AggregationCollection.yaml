@@ -1,0 +1,19 @@
+type: object
+description: Коллекция агрегатных функций
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Ключ функции
+          example: "sum"
+        label:
+          type: string
+          description: Название для отображения
+          example: "Сумма"

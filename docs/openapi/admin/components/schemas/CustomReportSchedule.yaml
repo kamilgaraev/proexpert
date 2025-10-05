@@ -1,0 +1,95 @@
+type: object
+description: Модель расписания отчета
+properties:
+  id:
+    type: integer
+    description: ID расписания
+    example: 10
+  custom_report_id:
+    type: integer
+    description: ID отчета
+    example: 5
+  organization_id:
+    type: integer
+    description: ID организации
+    example: 1
+  user_id:
+    type: integer
+    description: ID создателя расписания
+    example: 3
+  schedule_type:
+    type: string
+    enum: ["daily", "weekly", "monthly"]
+    description: Тип расписания
+    example: "daily"
+  schedule_config:
+    type: object
+    description: Конфигурация расписания
+    properties:
+      time:
+        type: string
+        description: Время запуска (HH:MM)
+        example: "09:00"
+      day_of_week:
+        type: integer
+        minimum: 0
+        maximum: 6
+        nullable: true
+        description: День недели для weekly (0=воскресенье, 1=понедельник)
+        example: 1
+      day_of_month:
+        type: integer
+        minimum: 1
+        maximum: 31
+        nullable: true
+        description: День месяца для monthly
+        example: 1
+  filters_preset:
+    type: object
+    nullable: true
+    description: Предустановленные фильтры
+    example:
+      "projects.status": "active"
+  recipient_emails:
+    type: array
+    items:
+      type: string
+      format: email
+    description: Список email для отправки
+    example: ["manager@example.com", "director@example.com"]
+  export_format:
+    type: string
+    enum: ["csv", "excel", "pdf"]
+    description: Формат экспорта
+    example: "excel"
+  is_active:
+    type: boolean
+    description: Активно ли расписание
+    example: true
+  last_run_at:
+    type: string
+    format: date-time
+    nullable: true
+    description: Дата и время последнего запуска
+    example: "2025-10-03T09:00:00.000000Z"
+  next_run_at:
+    type: string
+    format: date-time
+    nullable: true
+    description: Дата и время следующего запуска
+    example: "2025-10-04T09:00:00.000000Z"
+  last_execution_id:
+    type: integer
+    nullable: true
+    description: ID последнего выполнения
+    example: 124
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания
+    example: "2025-09-01T10:00:00.000000Z"
+  updated_at:
+    type: string
+    format: date-time
+    description: Дата обновления
+    example: "2025-10-03T10:00:00.000000Z"

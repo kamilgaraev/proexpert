@@ -1,0 +1,27 @@
+type: object
+description: Коллекция источников данных
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Ключ источника данных
+          example: "projects"
+        label:
+          type: string
+          description: Название для отображения
+          example: "Проекты"
+        category:
+          type: string
+          description: Категория источника
+          example: "core"
+        table:
+          type: string
+          description: Имя таблицы БД
+          example: "projects"

@@ -1,0 +1,11 @@
+type: object
+description: Ответ с данными расписания отчета
+properties:
+  success:
+    type: boolean
+    example: true
+  message:
+    type: string
+    example: "Расписание успешно создано"
+  data:
+    $ref: './CustomReportSchedule.yaml'

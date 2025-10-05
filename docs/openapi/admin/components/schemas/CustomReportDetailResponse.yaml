@@ -1,0 +1,16 @@
+type: object
+description: Детальный ответ с данными отчета и последними выполнениями
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    allOf:
+      - $ref: './CustomReport.yaml'
+      - type: object
+        properties:
+          executions:
+            type: array
+            description: Последние 10 выполнений отчета
+            items:
+              $ref: './CustomReportExecution.yaml'

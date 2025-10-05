@@ -1,0 +1,23 @@
+type: object
+description: Коллекция форматов экспорта
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Ключ формата
+          example: "csv"
+        label:
+          type: string
+          description: Название для отображения
+          example: "CSV"
+        mime:
+          type: string
+          description: MIME-тип
+          example: "text/csv"

@@ -1,0 +1,1350 @@
+/custom-reports:
+  get:
+    tags: [Custom Reports]
+    summary: Получить список кастомных отчетов
+    description: |
+      Возвращает список всех кастомных отчетов текущей организации.
+      Пользователь видит свои отчеты и общие отчеты организации (is_shared=true).
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: category
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["core", "finances", "materials", "works", "staff"]
+        description: Фильтр по категории отчета
+        example: "finances"
+      - name: is_favorite
+        in: query
+        required: false
+        schema:
+          type: boolean
+        description: Только избранные отчеты
+        example: true
+      - name: is_shared
+        in: query
+        required: false
+        schema:
+          type: boolean
+        description: Только общие отчеты организации
+        example: false
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 15
+        description: Количество элементов на странице
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+        description: Номер страницы
+    responses:
+      "200":
+        description: Список отчетов успешно получен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CustomReportCollection.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю продвинутых отчетов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+  
+  post:
+    tags: [Custom Reports]
+    summary: Создать новый кастомный отчет
+    description: |
+      Создает новый кастомный отчет с заданной конфигурацией.
+      Перед созданием автоматически валидируется конфигурация.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CustomReportCreateRequest.yaml'
+    responses:
+      "201":
+        description: Отчет успешно создан
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CustomReportResponse.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю продвинутых отчетов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "422":
+        description: Ошибка валидации конфигурации отчета
+        content:
+          application/json:
+            schema:
+              $ref: '../components/responses/ValidationError.yaml'
+      "500":
+        description: Внутренняя ошибка при создании отчета
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка при создании отчета"
+
+/custom-reports/{id}:
+  get:
+    tags: [Custom Reports]
+    summary: Получить детали отчета
+    description: |
+      Возвращает полную информацию о кастомном отчете включая конфигурацию
+      и последние 10 выполнений.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+    responses:
+      "200":
+        description: Детали отчета успешно получены
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CustomReportDetailResponse.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю продвинутых отчетов
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+  
+  put:
+    tags: [Custom Reports]
+    summary: Обновить отчет
+    description: |
+      Обновляет конфигурацию существующего кастомного отчета.
+      Редактировать можно только свои отчеты.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CustomReportUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Отчет успешно обновлен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CustomReportResponse.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет прав на редактирование или доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Отчет не найден или у вас нет прав на редактирование"
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+      "422":
+        $ref: '../components/responses/ValidationError.yaml'
+  
+  delete:
+    tags: [Custom Reports]
+    summary: Удалить отчет
+    description: |
+      Удаляет кастомный отчет (soft delete).
+      Удалять можно только свои отчеты.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+    responses:
+      "200":
+        description: Отчет успешно удален
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Отчет успешно удален"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет прав на удаление
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Отчет не найден или у вас нет прав на удаление"
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+
+/custom-reports/{id}/clone:
+  post:
+    tags: [Custom Reports]
+    summary: Клонировать отчет
+    description: |
+      Создает копию существующего отчета с возможностью изменить название.
+      Клонировать можно как свои, так и общие отчеты организации.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета для клонирования
+        example: 5
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              name:
+                type: string
+                description: Новое название отчета (опционально)
+                example: "Копия отчета - Финансы по проектам"
+    responses:
+      "201":
+        description: Отчет успешно клонирован
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CustomReportResponse.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+
+/custom-reports/{id}/favorite:
+  post:
+    tags: [Custom Reports]
+    summary: Добавить/удалить из избранного
+    description: |
+      Переключает статус отчета в избранном.
+      Изменять статус избранного можно только для своих отчетов.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+    responses:
+      "200":
+        description: Статус избранного изменен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                data:
+                  type: object
+                  properties:
+                    is_favorite:
+                      type: boolean
+                      example: true
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет прав на изменение статуса
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Только владелец может изменять статус избранного"
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+
+/custom-reports/{id}/share:
+  post:
+    tags: [Custom Reports]
+    summary: Изменить настройки общего доступа
+    description: |
+      Делает отчет общим для всей организации или приватным.
+      Изменять настройки доступа можно только для своих отчетов.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - is_shared
+            properties:
+              is_shared:
+                type: boolean
+                description: true - сделать общим, false - сделать приватным
+                example: true
+    responses:
+      "200":
+        description: Настройки доступа обновлены
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Отчет теперь доступен всей организации"
+                data:
+                  type: object
+                  properties:
+                    is_shared:
+                      type: boolean
+                      example: true
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет прав на изменение настроек
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Отчет не найден или у вас нет прав"
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+
+/custom-reports/{id}/execute:
+  post:
+    tags: [Custom Reports]
+    summary: Выполнить отчет
+    description: |
+      Выполняет кастомный отчет с применением фильтров.
+      Поддерживает экспорт в различные форматы (CSV, Excel, PDF).
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+      - name: export
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: ["csv", "excel", "pdf"]
+        description: Формат экспорта (если указан, возвращает файл)
+        example: "excel"
+    requestBody:
+      required: false
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CustomReportExecuteRequest.yaml'
+    responses:
+      "200":
+        description: Отчет успешно выполнен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CustomReportExecutionResult.yaml'
+          text/csv:
+            schema:
+              type: string
+              format: binary
+            description: CSV файл с результатами (при export=csv)
+          application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+            schema:
+              type: string
+              format: binary
+            description: Excel файл с результатами (при export=excel)
+          application/pdf:
+            schema:
+              type: string
+              format: binary
+            description: PDF файл с результатами (при export=pdf)
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+      "500":
+        description: Ошибка выполнения отчета
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка при выполнении отчета"
+
+/custom-reports/{id}/executions:
+  get:
+    tags: [Custom Reports]
+    summary: Получить историю выполнений отчета
+    description: |
+      Возвращает историю выполнений отчета с информацией о статусе,
+      примененных фильтрах и времени выполнения.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
+        description: Количество записей в истории
+    responses:
+      "200":
+        description: История выполнений успешно получена
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CustomReportExecutionCollection.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+
+/custom-reports/builder/data-sources:
+  get:
+    tags: [Custom Reports Builder]
+    summary: Получить список источников данных
+    description: |
+      Возвращает список всех доступных источников данных для построения отчетов.
+      Источники данных - это таблицы БД (projects, contracts, materials и т.д.).
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    responses:
+      "200":
+        description: Список источников данных
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/DataSourceCollection.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+
+/custom-reports/builder/data-sources/{dataSource}/fields:
+  get:
+    tags: [Custom Reports Builder]
+    summary: Получить поля источника данных
+    description: |
+      Возвращает список доступных полей для указанного источника данных
+      с информацией о типе, возможности фильтрации, сортировки и агрегации.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: dataSource
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Ключ источника данных (например, "projects", "contracts")
+        example: "projects"
+    responses:
+      "200":
+        description: Список полей источника данных
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/DataSourceFieldCollection.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        description: Источник данных не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Источник данных не найден"
+
+/custom-reports/builder/data-sources/{dataSource}/relations:
+  get:
+    tags: [Custom Reports Builder]
+    summary: Получить связи источника данных
+    description: |
+      Возвращает доступные связи (для JOIN'ов) для указанного источника данных.
+      Связи описывают отношения между таблицами.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: dataSource
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Ключ источника данных
+        example: "projects"
+    responses:
+      "200":
+        description: Список связей источника данных
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/DataSourceRelationCollection.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+
+/custom-reports/builder/operators:
+  get:
+    tags: [Custom Reports Builder]
+    summary: Получить доступные операторы фильтров
+    description: |
+      Возвращает список всех доступных операторов для построения фильтров
+      (равно, больше, меньше, содержит и т.д.).
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    responses:
+      "200":
+        description: Список операторов
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/OperatorCollection.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+
+/custom-reports/builder/aggregations:
+  get:
+    tags: [Custom Reports Builder]
+    summary: Получить доступные агрегатные функции
+    description: |
+      Возвращает список всех доступных агрегатных функций
+      (SUM, AVG, COUNT, MIN, MAX, COUNT DISTINCT).
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    responses:
+      "200":
+        description: Список агрегатных функций
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/AggregationCollection.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+
+/custom-reports/builder/export-formats:
+  get:
+    tags: [Custom Reports Builder]
+    summary: Получить доступные форматы экспорта
+    description: |
+      Возвращает список поддерживаемых форматов экспорта
+      (CSV, Excel, PDF).
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    responses:
+      "200":
+        description: Список форматов экспорта
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/ExportFormatCollection.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+
+/custom-reports/builder/categories:
+  get:
+    tags: [Custom Reports Builder]
+    summary: Получить категории отчетов
+    description: |
+      Возвращает список категорий для классификации отчетов
+      (основные, финансы, материалы, работы, персонал).
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    responses:
+      "200":
+        description: Список категорий
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CategoryCollection.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+
+/custom-reports/builder/validate:
+  post:
+    tags: [Custom Reports Builder]
+    summary: Валидировать конфигурацию отчета
+    description: |
+      Проверяет корректность конфигурации отчета перед сохранением.
+      Валидирует источники данных, поля, операторы и структуру.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CustomReportConfigValidate.yaml'
+    responses:
+      "200":
+        description: Конфигурация валидна
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Конфигурация валидна"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "422":
+        description: Конфигурация содержит ошибки
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Конфигурация содержит ошибки"
+                errors:
+                  type: array
+                  items:
+                    type: string
+                  example: ["Источник данных 'invalid_table' не существует", "Поле 'projects.invalid_field' не найдено"]
+
+/custom-reports/builder/preview:
+  post:
+    tags: [Custom Reports Builder]
+    summary: Предпросмотр отчета
+    description: |
+      Выполняет тестовый запрос с конфигурацией отчета и возвращает
+      первые 20 строк результата для предпросмотра.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CustomReportPreviewRequest.yaml'
+    responses:
+      "200":
+        description: Предпросмотр успешно выполнен
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CustomReportPreviewResult.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "422":
+        description: Конфигурация содержит ошибки
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Конфигурация содержит ошибки"
+                errors:
+                  type: array
+                  items:
+                    type: string
+      "500":
+        description: Ошибка выполнения предпросмотра
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Внутренняя ошибка при предпросмотре отчета"
+
+/custom-reports/{id}/schedules:
+  get:
+    tags: [Custom Reports Schedules]
+    summary: Получить список расписаний отчета
+    description: |
+      Возвращает все расписания автоматической генерации и отправки
+      для указанного отчета.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+    responses:
+      "200":
+        description: Список расписаний
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CustomReportScheduleCollection.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+  
+  post:
+    tags: [Custom Reports Schedules]
+    summary: Создать расписание отчета
+    description: |
+      Создает новое расписание автоматической генерации и отправки отчета.
+      Поддерживает ежедневную, еженедельную и ежемесячную отправку.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CustomReportScheduleCreateRequest.yaml'
+    responses:
+      "201":
+        description: Расписание успешно создано
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CustomReportScheduleResponse.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+      "422":
+        $ref: '../components/responses/ValidationError.yaml'
+
+/custom-reports/{id}/schedules/{scheduleId}:
+  get:
+    tags: [Custom Reports Schedules]
+    summary: Получить детали расписания
+    description: |
+      Возвращает детальную информацию о расписании отчета.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+      - name: scheduleId
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID расписания
+        example: 10
+    responses:
+      "200":
+        description: Детали расписания
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CustomReportScheduleDetailResponse.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+  
+  put:
+    tags: [Custom Reports Schedules]
+    summary: Обновить расписание
+    description: |
+      Обновляет конфигурацию расписания отчета.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+      - name: scheduleId
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID расписания
+        example: 10
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '../components/schemas/CustomReportScheduleUpdateRequest.yaml'
+    responses:
+      "200":
+        description: Расписание успешно обновлено
+        content:
+          application/json:
+            schema:
+              $ref: '../components/schemas/CustomReportScheduleResponse.yaml'
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+      "422":
+        $ref: '../components/responses/ValidationError.yaml'
+  
+  delete:
+    tags: [Custom Reports Schedules]
+    summary: Удалить расписание
+    description: |
+      Удаляет расписание отчета.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+      - name: scheduleId
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID расписания
+        example: 10
+    responses:
+      "200":
+        description: Расписание успешно удалено
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Расписание успешно удалено"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+
+/custom-reports/{id}/schedules/{scheduleId}/toggle:
+  post:
+    tags: [Custom Reports Schedules]
+    summary: Включить/выключить расписание
+    description: |
+      Переключает активность расписания отчета.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+      - name: scheduleId
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID расписания
+        example: 10
+    responses:
+      "200":
+        description: Статус расписания изменен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Расписание отключено"
+                data:
+                  type: object
+                  properties:
+                    is_active:
+                      type: boolean
+                      example: false
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+
+/custom-reports/{id}/schedules/{scheduleId}/run-now:
+  post:
+    tags: [Custom Reports Schedules]
+    summary: Запустить расписание немедленно
+    description: |
+      Принудительно запускает выполнение отчета и отправку на email
+      без ожидания следующего времени по расписанию.
+      
+      **Требования:** Доступ к модулю "advanced-reports"
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID отчета
+        example: 5
+      - name: scheduleId
+        in: path
+        required: true
+        schema:
+          type: integer
+        description: ID расписания
+        example: 10
+    responses:
+      "200":
+        description: Отчет выполнен и отправлен
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                message:
+                  type: string
+                  example: "Отчет выполнен и отправлен"
+                data:
+                  type: object
+                  properties:
+                    execution_id:
+                      type: integer
+                      example: 126
+                    sent_to:
+                      type: array
+                      items:
+                        type: string
+                      example: ["manager@example.com", "director@example.com"]
+                    execution_time_ms:
+                      type: integer
+                      example: 95
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        description: Нет доступа к модулю
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Доступ к модулю advanced_reports запрещен."
+      "404":
+        $ref: '../components/responses/NotFound.yaml'
+      "500":
+        description: Ошибка выполнения или отправки
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка при выполнении отчета"

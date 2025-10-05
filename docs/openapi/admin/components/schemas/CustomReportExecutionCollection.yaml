@@ -1,0 +1,10 @@
+type: object
+description: Коллекция выполнений отчета
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: array
+    items:
+      $ref: './CustomReportExecution.yaml'

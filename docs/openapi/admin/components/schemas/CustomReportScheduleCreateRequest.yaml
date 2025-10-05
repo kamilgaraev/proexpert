@@ -1,0 +1,57 @@
+type: object
+description: Запрос на создание расписания отчета
+required:
+  - schedule_type
+  - schedule_config
+  - recipient_emails
+  - export_format
+properties:
+  schedule_type:
+    type: string
+    enum: ["daily", "weekly", "monthly"]
+    description: Тип расписания (обязательное)
+    example: "daily"
+  schedule_config:
+    type: object
+    required:
+      - time
+    description: Конфигурация расписания (обязательное)
+    properties:
+      time:
+        type: string
+        pattern: "^([01]?[0-9]|2[0-3]):[0-5][0-9]$"
+        description: Время запуска в формате HH:MM (обязательное)
+        example: "09:00"
+      day_of_week:
+        type: integer
+        minimum: 0
+        maximum: 6
+        nullable: true
+        description: День недели для weekly (0=воскресенье, 1=понедельник)
+        example: 1
+      day_of_month:
+        type: integer
+        minimum: 1
+        maximum: 31
+        nullable: true
+        description: День месяца для monthly
+        example: 1
+  filters_preset:
+    type: object
+    nullable: true
+    description: Предустановленные фильтры для автозапуска
+    example:
+      "projects.status": "active"
+  recipient_emails:
+    type: array
+    minItems: 1
+    items:
+      type: string
+      format: email
+    description: Список email для отправки (обязательное, минимум 1)
+    example: ["manager@example.com", "director@example.com"]
+  export_format:
+    type: string
+    enum: ["csv", "excel", "pdf"]
+    description: Формат экспорта (обязательное)
+    example: "excel"

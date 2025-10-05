@@ -1,0 +1,44 @@
+type: object
+description: Результат предпросмотра отчета
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: object
+    properties:
+      columns:
+        type: array
+        items:
+          type: object
+          properties:
+            field:
+              type: string
+              example: "name"
+            label:
+              type: string
+              example: "Название"
+            format:
+              type: string
+              example: "text"
+      rows:
+        type: array
+        description: Первые 20 строк результата
+        items:
+          type: object
+          additionalProperties: true
+          example:
+            name: "Проект А"
+            budget_amount: "1500000.00"
+      preview:
+        type: boolean
+        description: Признак предпросмотра
+        example: true
+      total_rows:
+        type: integer
+        description: Количество строк в превью
+        example: 3
+      execution_time_ms:
+        type: integer
+        description: Время выполнения в мс
+        example: 45

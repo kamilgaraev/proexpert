@@ -1,0 +1,19 @@
+type: object
+description: Коллекция категорий отчетов
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Ключ категории
+          example: "core"
+        label:
+          type: string
+          description: Название для отображения
+          example: "Основные"

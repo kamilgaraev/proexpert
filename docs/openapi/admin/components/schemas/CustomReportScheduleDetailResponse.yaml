@@ -1,0 +1,8 @@
+type: object
+description: Детальный ответ с данными расписания
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    $ref: './CustomReportSchedule.yaml'

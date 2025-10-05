@@ -1,0 +1,32 @@
+type: object
+description: Запрос на валидацию конфигурации отчета
+properties:
+  data_sources:
+    type: object
+    description: Конфигурация источников данных
+    properties:
+      primary:
+        type: string
+        example: "projects"
+      joins:
+        type: array
+        nullable: true
+        items:
+          type: object
+  query_config:
+    type: object
+    nullable: true
+    description: Конфигурация WHERE условий
+  columns_config:
+    type: array
+    description: Конфигурация колонок
+    items:
+      type: object
+  aggregations_config:
+    type: object
+    nullable: true
+    description: Конфигурация агрегаций
+  sorting_config:
+    type: array
+    nullable: true
+    description: Конфигурация сортировки

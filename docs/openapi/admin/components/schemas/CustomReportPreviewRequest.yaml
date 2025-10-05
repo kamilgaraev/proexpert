@@ -1,0 +1,49 @@
+type: object
+description: Запрос на предпросмотр отчета
+properties:
+  data_sources:
+    type: object
+    required:
+      - primary
+    properties:
+      primary:
+        type: string
+        example: "projects"
+      joins:
+        type: array
+        nullable: true
+        items:
+          type: object
+  columns_config:
+    type: array
+    minItems: 1
+    items:
+      type: object
+      properties:
+        field:
+          type: string
+          example: "projects.name"
+        label:
+          type: string
+          example: "Название"
+        order:
+          type: integer
+          example: 1
+        format:
+          type: string
+          nullable: true
+          example: "text"
+  query_config:
+    type: object
+    nullable: true
+    properties:
+      where:
+        type: array
+        items:
+          type: object
+  filters:
+    type: object
+    nullable: true
+    description: Дополнительные фильтры для предпросмотра
+    example:
+      "projects.status": "active"

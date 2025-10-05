@@ -1,0 +1,255 @@
+type: object
+description: Модель кастомного отчета
+properties:
+  id:
+    type: integer
+    description: Уникальный идентификатор отчета
+    example: 5
+  name:
+    type: string
+    description: Название отчета
+    example: "Финансы по проектам"
+  description:
+    type: string
+    nullable: true
+    description: Описание отчета
+    example: "Суммы контрактов по каждому проекту"
+  organization_id:
+    type: integer
+    description: ID организации
+    example: 1
+  user_id:
+    type: integer
+    description: ID создателя отчета
+    example: 3
+  report_category:
+    type: string
+    enum: ["core", "finances", "materials", "works", "staff"]
+    description: Категория отчета
+    example: "finances"
+  data_sources:
+    type: object
+    description: Конфигурация источников данных и их связей
+    properties:
+      primary:
+        type: string
+        description: Основной источник данных
+        example: "projects"
+      joins:
+        type: array
+        nullable: true
+        description: Массив JOIN'ов с другими таблицами
+        items:
+          type: object
+          properties:
+            table:
+              type: string
+              example: "contracts"
+            type:
+              type: string
+              enum: ["left", "inner", "right"]
+              example: "left"
+            on:
+              type: array
+              items:
+                type: string
+              minItems: 2
+              maxItems: 2
+              example: ["projects.id", "contracts.project_id"]
+  query_config:
+    type: object
+    nullable: true
+    description: Конфигурация запроса (WHERE условия)
+    properties:
+      where:
+        type: array
+        nullable: true
+        items:
+          type: object
+          properties:
+            field:
+              type: string
+              example: "projects.status"
+            operator:
+              type: string
+              example: "="
+            value:
+              oneOf:
+                - type: string
+                - type: number
+                - type: boolean
+                - type: array
+                - type: object
+              example: "active"
+      where_logic:
+        type: string
+        enum: ["and", "or"]
+        default: "and"
+        example: "and"
+  columns_config:
+    type: array
+    description: Конфигурация колонок отчета
+    items:
+      type: object
+      properties:
+        field:
+          type: string
+          example: "projects.name"
+        label:
+          type: string
+          example: "Название проекта"
+        order:
+          type: integer
+          example: 1
+        format:
+          type: string
+          nullable: true
+          enum: ["text", "number", "currency", "percent", "date", "datetime", "boolean"]
+          example: "text"
+        aggregation:
+          type: string
+          nullable: true
+          enum: ["sum", "avg", "count", "min", "max", "count_distinct"]
+          example: "sum"
+  filters_config:
+    type: array
+    nullable: true
+    description: Конфигурация пользовательских фильтров
+    items:
+      type: object
+      properties:
+        field:
+          type: string
+          example: "projects.status"
+        label:
+          type: string
+          example: "Статус проекта"
+        type:
+          type: string
+          enum: ["select", "text", "number", "date", "date_range", "boolean"]
+          example: "select"
+        options:
+          type: array
+          nullable: true
+          items:
+            type: string
+          example: ["active", "completed", "on_hold"]
+        required:
+          type: boolean
+          example: false
+        default:
+          nullable: true
+          example: null
+  aggregations_config:
+    type: object
+    nullable: true
+    description: Конфигурация агрегаций и группировок
+    properties:
+      group_by:
+        type: array
+        items:
+          type: string
+        example: ["projects.id", "projects.name"]
+      aggregations:
+        type: array
+        items:
+          type: object
+          properties:
+            field:
+              type: string
+              example: "contracts.total_amount"
+            function:
+              type: string
+              enum: ["sum", "avg", "count", "min", "max", "count_distinct"]
+              example: "sum"
+            alias:
+              type: string
+              example: "total_amount"
+      having:
+        type: array
+        nullable: true
+        items:
+          type: object
+          properties:
+            field:
+              type: string
+              example: "total_amount"
+            operator:
+              type: string
+              example: ">"
+            value:
+              oneOf:
+                - type: string
+                - type: number
+              example: 100000
+  sorting_config:
+    type: array
+    nullable: true
+    description: Конфигурация сортировки
+    items:
+      type: object
+      properties:
+        field:
+          type: string
+          example: "total_amount"
+        direction:
+          type: string
+          enum: ["asc", "desc"]
+          example: "desc"
+  visualization_config:
+    type: object
+    nullable: true
+    description: Конфигурация визуализации (графики)
+    properties:
+      enabled:
+        type: boolean
+        example: true
+      chart_type:
+        type: string
+        enum: ["bar", "line", "pie", "area"]
+        example: "bar"
+      x_axis:
+        type: string
+        example: "projects.name"
+      y_axis:
+        type: string
+        example: "total_amount"
+      colors:
+        type: array
+        items:
+          type: string
+        example: ["#3b82f6", "#10b981"]
+  is_shared:
+    type: boolean
+    description: Доступен ли отчет всей организации
+    example: true
+  is_favorite:
+    type: boolean
+    description: Является ли отчет избранным для текущего пользователя
+    example: true
+  is_scheduled:
+    type: boolean
+    description: Имеет ли отчет активное расписание
+    example: true
+  execution_count:
+    type: integer
+    description: Счетчик выполнений отчета
+    example: 45
+  last_executed_at:
+    type: string
+    format: date-time
+    nullable: true
+    description: Дата и время последнего выполнения
+    example: "2025-10-03T10:30:00.000000Z"
+  created_at:
+    type: string
+    format: date-time
+    description: Дата создания
+    example: "2025-09-01T08:00:00.000000Z"
+  updated_at:
+    type: string
+    format: date-time
+    description: Дата последнего обновления
+    example: "2025-10-03T10:30:00.000000Z"
+  user:
+    $ref: './UserSimple.yaml'

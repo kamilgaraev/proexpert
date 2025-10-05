@@ -1,0 +1,41 @@
+type: object
+description: Коллекция полей источника данных
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: array
+    items:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Ключ поля
+          example: "id"
+        label:
+          type: string
+          description: Название поля для отображения
+          example: "ID"
+        type:
+          type: string
+          description: Тип поля
+          enum: ["integer", "string", "decimal", "date", "datetime", "boolean"]
+          example: "integer"
+        filterable:
+          type: boolean
+          description: Можно ли использовать в фильтрах
+          example: true
+        sortable:
+          type: boolean
+          description: Можно ли использовать для сортировки
+          example: true
+        aggregatable:
+          type: boolean
+          description: Можно ли использовать в агрегациях
+          example: false
+        format:
+          type: string
+          nullable: true
+          description: Формат отображения
+          example: "currency"

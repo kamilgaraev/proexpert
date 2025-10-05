@@ -1,0 +1,99 @@
+type: object
+description: Запрос на обновление кастомного отчета (все поля опциональны)
+properties:
+  name:
+    type: string
+    maxLength: 255
+    description: Название отчета
+    example: "Финансы по проектам (обновлено)"
+  description:
+    type: string
+    maxLength: 1000
+    nullable: true
+    description: Описание отчета
+    example: "Обновленное описание"
+  report_category:
+    type: string
+    enum: ["core", "finances", "materials", "works", "staff"]
+    description: Категория отчета
+    example: "finances"
+  data_sources:
+    type: object
+    description: Конфигурация источников данных
+    properties:
+      primary:
+        type: string
+        example: "projects"
+      joins:
+        type: array
+        nullable: true
+        items:
+          type: object
+          properties:
+            table:
+              type: string
+            type:
+              type: string
+              enum: ["left", "inner", "right"]
+            on:
+              type: array
+              items:
+                type: string
+              minItems: 2
+              maxItems: 2
+  query_config:
+    type: object
+    nullable: true
+    description: Конфигурация WHERE условий
+    properties:
+      where:
+        type: array
+        items:
+          type: object
+      where_logic:
+        type: string
+        enum: ["and", "or"]
+  columns_config:
+    type: array
+    minItems: 1
+    description: Конфигурация колонок
+    items:
+      type: object
+      properties:
+        field:
+          type: string
+        label:
+          type: string
+        order:
+          type: integer
+        format:
+          type: string
+          nullable: true
+        aggregation:
+          type: string
+          nullable: true
+  filters_config:
+    type: array
+    nullable: true
+    description: Конфигурация пользовательских фильтров
+    items:
+      type: object
+  aggregations_config:
+    type: object
+    nullable: true
+    description: Конфигурация агрегаций
+  sorting_config:
+    type: array
+    nullable: true
+    description: Конфигурация сортировки
+    items:
+      type: object
+  visualization_config:
+    type: object
+    nullable: true
+    description: Конфигурация визуализации
+  is_shared:
+    type: boolean
+    nullable: true
+    description: Сделать ли отчет общим для организации
+    example: true

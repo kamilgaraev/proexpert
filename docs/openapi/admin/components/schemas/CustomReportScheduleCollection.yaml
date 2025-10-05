@@ -1,0 +1,10 @@
+type: object
+description: Коллекция расписаний отчета
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: array
+    items:
+      $ref: './CustomReportSchedule.yaml'

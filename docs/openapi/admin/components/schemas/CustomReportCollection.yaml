@@ -1,0 +1,25 @@
+type: object
+description: Коллекция кастомных отчетов с пагинацией
+properties:
+  success:
+    type: boolean
+    example: true
+  data:
+    type: array
+    items:
+      $ref: './CustomReport.yaml'
+  meta:
+    type: object
+    properties:
+      current_page:
+        type: integer
+        example: 1
+      per_page:
+        type: integer
+        example: 15
+      total:
+        type: integer
+        example: 42
+      last_page:
+        type: integer
+        example: 3
