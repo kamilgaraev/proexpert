@@ -187,13 +187,23 @@ class DashboardManagementController extends Controller
      * 
      * GET /api/v1/admin/advanced-dashboard/dashboards/{id}
      */
-    public function show(int $id): JsonResponse
+    public function show(Request $request, int $id): JsonResponse
     {
         $dashboard = Dashboard::findOrFail($id);
         
+        $user = Auth::user();
+        $userId = $user?->id ?? 0;
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
+        
         // Проверка доступа
-        $userId = Auth::id() ?? 0;
-        if (!$dashboard->canBeAccessedBy($userId)) {
+        if (!$dashboard->canBeAccessedBy($userId, $organizationId)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Access denied to this dashboard',
