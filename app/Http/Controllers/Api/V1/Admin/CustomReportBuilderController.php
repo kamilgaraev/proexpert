@@ -8,9 +8,9 @@ use App\Services\Report\CustomReportBuilderService;
 use App\Services\Logging\LoggingService;
 use App\Http\Requests\Api\V1\Admin\CustomReport\ValidateConfigRequest;
 use App\Http\Requests\Api\V1\Admin\CustomReport\PreviewReportRequest;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 
 class CustomReportBuilderController extends Controller
 {
@@ -140,7 +140,15 @@ class CustomReportBuilderController extends Controller
         $user = $request->user();
 
         try {
+            Log::info('[CustomReportBuilderController@validateConfig] START', [
+                'user_id' => $user->id
+            ]);
+
             $config = $request->validated();
+            
+            Log::info('[CustomReportBuilderController@validateConfig] Config validated', [
+                'config_keys' => array_keys($config)
+            ]);
             
             $this->logging->technical('report_builder.validate_config_requested', [
                 'user_id' => $user->id,
@@ -149,7 +157,13 @@ class CustomReportBuilderController extends Controller
                 'has_columns' => isset($config['columns_config'])
             ], 'debug');
             
+            Log::info('[CustomReportBuilderController@validateConfig] Calling builderService->validateReportConfig');
+            
             $errors = $this->builderService->validateReportConfig($config, false);
+            
+            Log::info('[CustomReportBuilderController@validateConfig] Validation completed', [
+                'errors_count' => count($errors)
+            ]);
 
             if (!empty($errors)) {
                 $this->logging->technical('report_builder.validation_errors', [
