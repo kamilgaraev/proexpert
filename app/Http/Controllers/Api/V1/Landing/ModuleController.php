@@ -169,7 +169,6 @@ class ModuleController extends Controller
             return (new ErrorResponse($result['message'], 400))->toResponse($request);
         }
 
-        \Illuminate\Support\Facades\Cache::forget("active_modules_{$organizationId}");
         app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
 
         return (new SuccessResponse($result))->toResponse($request);
@@ -216,7 +215,6 @@ class ModuleController extends Controller
             return (new ErrorResponse($result['message'], 400))->toResponse($request);
         }
 
-        \Illuminate\Support\Facades\Cache::forget("active_modules_{$organizationId}");
         app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
 
         return (new SuccessResponse($result))->toResponse($request);
@@ -378,6 +376,8 @@ class ModuleController extends Controller
 
         $moduleSlugs = $request->input('module_slugs');
         $result = $this->activationService->bulkActivateModules($organizationId, $moduleSlugs);
+
+        app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
 
         return (new SuccessResponse($result))->toResponse($request);
     }

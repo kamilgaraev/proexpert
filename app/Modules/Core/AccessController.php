@@ -194,11 +194,24 @@ class AccessController
     {
         // Очищаем конкретные ключи без wildcards
         $specificKeys = [
-            "org_active_modules_{$organizationId}"
+            "org_active_modules_{$organizationId}",
+            "active_modules_{$organizationId}"
         ];
         
         foreach ($specificKeys as $key) {
             Cache::forget($key);
+        }
+        
+        // Очищаем кэш разрешений всех пользователей организации
+        $organization = Organization::find($organizationId);
+        if ($organization) {
+            $userIds = $organization->users()->pluck('users.id');
+            
+            foreach ($userIds as $userId) {
+                Cache::forget("user_permissions_{$userId}_{$organizationId}");
+                Cache::forget("user_permissions_full_{$userId}_{$organizationId}");
+                Cache::forget("user_available_permissions_{$userId}_{$organizationId}");
+            }
         }
         
         // Для wildcard паттернов используем теги или полную очистку
@@ -216,18 +229,15 @@ class AccessController
     private function clearWildcardCache(string $prefix, string $suffix = ''): void
     {
         try {
-            // Для Redis - используем scan
-            if (Cache::getStore() instanceof \Illuminate\Cache\RedisStore) {
-                $redis = Cache::getStore()->connection();
-                $keys = $redis->keys($prefix . '*' . $suffix);
+            if (config('cache.default') === 'redis') {
+                $redis = Cache::getRedis();
+                $pattern = $prefix . '*' . $suffix;
+                $keys = $redis->keys($pattern);
                 if (!empty($keys)) {
                     $redis->del($keys);
                 }
-            } else {
-                // Для других драйверов - ничего не делаем, cache:clear покроет
             }
         } catch (\Exception $e) {
-            // Игнорируем ошибки очистки кэша
         }
     }
 }
