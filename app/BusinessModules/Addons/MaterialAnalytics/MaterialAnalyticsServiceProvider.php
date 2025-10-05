@@ -13,7 +13,7 @@ class MaterialAnalyticsServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        // Модуль использует существующие маршруты и контроллеры для аналитики материалов
+        // Модуль использует универсальный middleware module.access:material-analytics
         // Дополнительная логика инициализации может быть добавлена здесь
     }
 }
