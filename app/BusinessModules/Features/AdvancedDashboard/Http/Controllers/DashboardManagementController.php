@@ -31,8 +31,17 @@ class DashboardManagementController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $userId = Auth::id() ?? 0;
-        $organizationId = $request->header('X-Organization-ID');
+        $user = Auth::user();
+        $userId = $user?->id ?? 0;
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
+        
         $includeShared = $request->boolean('include_shared', true);
         
         $dashboards = $this->layoutService->getUserDashboards(
@@ -67,8 +76,16 @@ class DashboardManagementController extends Controller
             'visibility' => 'nullable|string|in:private,team,organization',
         ]);
         
-        $userId = Auth::id() ?? 0;
-        $organizationId = $request->header('X-Organization-ID');
+        $user = Auth::user();
+        $userId = $user?->id ?? 0;
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
         
         try {
             $dashboard = $this->layoutService->createDashboard(
@@ -112,8 +129,16 @@ class DashboardManagementController extends Controller
             'name' => 'nullable|string|max:255',
         ]);
         
-        $userId = Auth::id() ?? 0;
-        $organizationId = $request->header('X-Organization-ID');
+        $user = Auth::user();
+        $userId = $user?->id ?? 0;
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
         
         try {
             $dashboard = $this->layoutService->createFromTemplate(
