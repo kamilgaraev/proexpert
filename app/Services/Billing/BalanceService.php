@@ -13,6 +13,7 @@ use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 
 class BalanceService implements BalanceServiceInterface
 {
@@ -86,6 +87,8 @@ class BalanceService implements BalanceServiceInterface
                 'description' => $description,
                 'payment_reference' => $payment?->id
             ]);
+
+            Cache::forget("organization_balance_{$organization->id}");
 
             return $orgBalance->refresh();
         });
@@ -172,6 +175,8 @@ class BalanceService implements BalanceServiceInterface
                 'performed_by' => request()->user()?->id ?? 'system',
                 'description' => $description
             ]);
+
+            Cache::forget("organization_balance_{$organization->id}");
 
             return $orgBalance->refresh();
         });
