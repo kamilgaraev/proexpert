@@ -212,14 +212,14 @@ class ProjectScheduleRepository extends BaseRepository implements ProjectSchedul
     {
         $stats = $this->model->newQuery()
             ->where('organization_id', $organizationId)
-            ->selectRaw('
+            ->selectRaw("
                 COUNT(*) as total_schedules,
-                COUNT(CASE WHEN status = "active" THEN 1 END) as active_schedules,
-                COUNT(CASE WHEN status = "completed" THEN 1 END) as completed_schedules,
-                COUNT(CASE WHEN is_template = 1 THEN 1 END) as templates,
+                COUNT(CASE WHEN status = 'active' THEN 1 END) as active_schedules,
+                COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed_schedules,
+                COUNT(CASE WHEN is_template = true THEN 1 END) as templates,
                 AVG(overall_progress_percent) as avg_progress,
-                COUNT(CASE WHEN critical_path_calculated = 1 THEN 1 END) as with_critical_path
-            ')
+                COUNT(CASE WHEN critical_path_calculated = true THEN 1 END) as with_critical_path
+            ")
             ->first();
 
         $overdueStats = $this->model->newQuery()
