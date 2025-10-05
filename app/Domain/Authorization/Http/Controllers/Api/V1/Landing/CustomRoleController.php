@@ -76,8 +76,6 @@ class CustomRoleController extends Controller
      */
     public function show(Request $request, OrganizationCustomRole $role): JsonResponse
     {
-        $this->authorize('view', $role);
-        
         return response()->json([
             'data' => new CustomRoleResource($role->load(['createdBy', 'assignments.user']))
         ]);
@@ -88,8 +86,6 @@ class CustomRoleController extends Controller
      */
     public function update(UpdateCustomRoleRequest $request, OrganizationCustomRole $role): JsonResponse
     {
-        $this->authorize('update', $role);
-        
         $this->roleService->updateRole($role, $request->validated(), $request->user());
         
         return response()->json([
@@ -103,8 +99,6 @@ class CustomRoleController extends Controller
      */
     public function destroy(Request $request, OrganizationCustomRole $role): JsonResponse
     {
-        $this->authorize('delete', $role);
-        
         $this->roleService->deleteRole($role);
         
         return response()->json([
@@ -117,8 +111,6 @@ class CustomRoleController extends Controller
      */
     public function clone(Request $request, OrganizationCustomRole $role): JsonResponse
     {
-        $this->authorize('update', $role);
-        
         $request->validate([
             'name' => 'required|string|max:255',
             'target_organization_id' => 'sometimes|required|integer|exists:organizations,id'
@@ -172,8 +164,6 @@ class CustomRoleController extends Controller
      */
     public function getUsers(Request $request, OrganizationCustomRole $role): JsonResponse
     {
-        $this->authorize('view', $role);
-        
         $users = $this->roleService->getRoleUsers($role);
         
         return response()->json([
@@ -195,8 +185,6 @@ class CustomRoleController extends Controller
      */
     public function assignToUser(Request $request, OrganizationCustomRole $role): JsonResponse
     {
-        $this->authorize('update', $role);
-        
         $request->validate([
             'user_id' => 'required|integer|exists:users,id',
             'context_type' => 'required|in:organization,project',
