@@ -2,7 +2,7 @@ name: Deploy to Production
 
 concurrency:
   group: prod-deploy
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 on:
   push:
@@ -49,13 +49,12 @@ jobs:
             git reset --hard origin/main
             php artisan down || true
             composer install --no-interaction --prefer-dist --optimize-autoloader
-            php artisan optimize:clear || true
             php artisan storage:link || true
             if [ ! -f /usr/local/bin/rr ]; then vendor/bin/rr get-binary --location=/usr/local/bin --no-config --stability=stable; fi
             
-            # КРИТИЧЕСКАЯ СЕКЦИЯ: миграции должны пройти успешно
-            echo "🔄 Running migrations..."
-            php artisan migrate --force
+            # КРИТИЧЕСКАЯ СЕКЦИЯ: безопасные миграции с автоматическим откатом
+            echo "🔄 Running safe migrations with automatic rollback..."
+            php artisan migrate:safe --force
             echo "✅ Migrations completed successfully"
             
             # Сканирование модулей для обновления прав доступа
@@ -63,17 +62,11 @@ jobs:
             php artisan modules:scan --clear-cache
             echo "✅ Modules scan completed successfully"
             
-            # КРИТИЧНО: Принудительная очистка кэша модулей
-            echo "🔄 Clearing module access cache..."
-            php artisan cache:clear
-            echo "✅ Module cache cleared successfully"
+            # Оптимизация: очистка и кэширование в одной команде
+            echo "🔄 Optimizing application..."
+            php artisan optimize
+            echo "✅ Optimization completed successfully"
             
-            php artisan route:clear || true
-            php artisan config:clear || true
-            php artisan view:clear || true
-            php artisan route:cache
-            php artisan config:cache
-            php artisan view:cache
             php artisan up || true
             php artisan octane:reload || sudo systemctl reload prohelper-octane || sudo systemctl restart prohelper-octane
 
@@ -155,22 +148,6 @@ jobs:
               echo 'Monitoring stack already running, restarting services...'
               (command -v docker-compose >/dev/null && docker-compose restart prometheus grafana || docker compose restart prometheus grafana)
             fi
-
-      - name: Health Check (appleboy)
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: 89.169.44.117
-          username: root
-          key: ${{ secrets.DEPLOY }}
-        
-          script: |
-            cd /var/www/prohelper
-            sleep 30
-            (curl -fsS http://localhost/up || curl -kfsS https://localhost/up || echo 'App health check failed')
-            curl -fsS http://localhost:9090/-/healthy || echo 'Prometheus health check failed'
-            curl -fsS http://localhost:3000/api/health || echo 'Grafana health check failed'
-            curl -fsS http://localhost:3100/ready || echo 'Loki health check failed'
-            (curl -fsS http://localhost/metrics || curl -kfsS https://localhost/metrics || echo 'Metrics endpoint check failed')
 
       - name: Update Monitoring Configuration (appleboy)
         uses: appleboy/ssh-action@v1.0.3
