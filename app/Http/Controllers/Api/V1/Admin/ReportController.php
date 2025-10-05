@@ -127,12 +127,26 @@ class ReportController extends Controller
      */
     public function officialMaterialUsageReport(OfficialMaterialUsageReportRequest $request): JsonResponse | StreamedResponse
     {
-        $reportData = $this->reportService->getOfficialMaterialUsageReport($request);
-        
-        if ($reportData instanceof StreamedResponse) {
-            return $reportData;
+        try {
+            $reportData = $this->reportService->getOfficialMaterialUsageReport($request);
+            
+            if ($reportData instanceof StreamedResponse) {
+                return $reportData;
+            }
+            
+            return response()->json($reportData);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Official material usage report generation failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'params' => $request->all()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Не удалось сформировать отчет: ' . $e->getMessage(),
+                'error_code' => 'REPORT_GENERATION_FAILED'
+            ], 400);
         }
-        
-        return response()->json($reportData);
     }
 } 

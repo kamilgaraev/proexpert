@@ -47,7 +47,16 @@ class AdvancedDashboardController extends Controller
             'project_id' => 'nullable|integer|exists:projects,id',
         ]);
         
-        $organizationId = $request->header('X-Organization-ID');
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
+        
         $from = Carbon::parse($validated['from']);
         $to = Carbon::parse($validated['to']);
         $projectId = $validated['project_id'] ?? null;
@@ -70,7 +79,7 @@ class AdvancedDashboardController extends Controller
      * 
      * GET /api/v1/admin/advanced-dashboard/analytics/financial/profit-loss
      */
-    public function getProfitAndLoss(Request $request): JsonResponse
+    public function getProfitLoss(Request $request): JsonResponse
     {
         $validated = $request->validate([
             'from' => 'required|date',
@@ -78,7 +87,16 @@ class AdvancedDashboardController extends Controller
             'project_id' => 'nullable|integer|exists:projects,id',
         ]);
         
-        $organizationId = $request->header('X-Organization-ID');
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
+        
         $from = Carbon::parse($validated['from']);
         $to = Carbon::parse($validated['to']);
         $projectId = $validated['project_id'] ?? null;
@@ -109,7 +127,16 @@ class AdvancedDashboardController extends Controller
             'to' => 'nullable|date|after_or_equal:from',
         ]);
         
-        $organizationId = $request->header('X-Organization-ID');
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
+        
         $projectId = $validated['project_id'] ?? null;
         $from = isset($validated['from']) ? Carbon::parse($validated['from']) : null;
         $to = isset($validated['to']) ? Carbon::parse($validated['to']) : null;
@@ -138,7 +165,16 @@ class AdvancedDashboardController extends Controller
             'months' => 'nullable|integer|min:1|max:24',
         ]);
         
-        $organizationId = $request->header('X-Organization-ID');
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
+        
         $months = $validated['months'] ?? 6;
         
         $data = $this->financialService->getRevenueForecast(
@@ -159,7 +195,15 @@ class AdvancedDashboardController extends Controller
      */
     public function getReceivablesPayables(Request $request): JsonResponse
     {
-        $organizationId = $request->header('X-Organization-ID');
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
         
         $data = $this->financialService->getReceivablesPayables($organizationId);
         
@@ -224,7 +268,16 @@ class AdvancedDashboardController extends Controller
             'months' => 'nullable|integer|min:1|max:12',
         ]);
         
-        $organizationId = $request->header('X-Organization-ID');
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
+        
         $months = $validated['months'] ?? 3;
         
         $data = $this->predictiveService->predictMaterialNeeds(
@@ -253,8 +306,17 @@ class AdvancedDashboardController extends Controller
             'to' => 'required|date|after_or_equal:from',
         ]);
         
-        $organizationId = $request->header('X-Organization-ID');
-        $userId = $validated['user_id'] ?? Auth::id() ?? 0;
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
+        
+        $userId = $validated['user_id'] ?? $user?->id ?? 0;
         $from = Carbon::parse($validated['from']);
         $to = Carbon::parse($validated['to']);
         
@@ -284,7 +346,16 @@ class AdvancedDashboardController extends Controller
             'limit' => 'nullable|integer|min:1|max:50',
         ]);
         
-        $organizationId = $request->header('X-Organization-ID');
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
+        
         $from = Carbon::parse($validated['from']);
         $to = Carbon::parse($validated['to']);
         $limit = $validated['limit'] ?? 10;
@@ -314,7 +385,16 @@ class AdvancedDashboardController extends Controller
             'to' => 'required|date|after_or_equal:from',
         ]);
         
-        $organizationId = $request->header('X-Organization-ID');
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization not determined',
+            ], 400);
+        }
+        
         $from = Carbon::parse($validated['from']);
         $to = Carbon::parse($validated['to']);
         

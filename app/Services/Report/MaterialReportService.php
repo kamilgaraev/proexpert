@@ -31,6 +31,9 @@ class MaterialReportService
         ?int $reportNumber = null,
         array $filters = []
     ): array {
+        set_time_limit(300); // 5 минут максимум
+        ini_set('memory_limit', '512M');
+        
         $project = Project::with(['organization'])->findOrFail($projectId);
         $periodFrom = Carbon::parse($dateFrom);
         $periodTo = Carbon::parse($dateTo);
@@ -48,6 +51,17 @@ class MaterialReportService
             ->with(['material.measurementUnit', 'user', 'supplier', 'workType']);
 
         $this->applyFiltersToMaterialLogs($materialLogsQuery, $filters);
+        
+        // Добавляем лимит для защиты от огромных выборок
+        $totalCount = $materialLogsQuery->count();
+        if ($totalCount > 50000) {
+            Log::warning('Official usage report: too many records', [
+                'project_id' => $projectId,
+                'count' => $totalCount
+            ]);
+            throw new \Exception("Слишком много записей для отчета ({$totalCount}). Пожалуйста, уточните период или фильтры.");
+        }
+        
         $materialLogs = $materialLogsQuery->get();
 
         // Получаем приходы за период и предыдущие с применением фильтров
@@ -56,7 +70,7 @@ class MaterialReportService
             ->with(['material.measurementUnit', 'supplier']);
 
         $this->applyFiltersToReceipts($receiptsQuery, $filters);
-        $receipts = $receiptsQuery->get();
+        $receipts = $receiptsQuery->limit(10000)->get();
 
         // Группируем по материалам и видам работ
         $materialGroups = $this->groupMaterialsByWork($materialLogs, $receipts, $periodFrom, $periodTo, $project->organization_id, $projectId);
@@ -109,6 +123,10 @@ class MaterialReportService
     ): array {
         $grouped = [];
         
+        // Кэшируем коэффициенты для всех материалов, чтобы избежать N+1
+        $materialIds = $materialLogs->pluck('material_id')->unique();
+        $coefficientsCache = [];
+        
         // Группируем по работам и материалам
         $workGroups = $materialLogs->groupBy(function ($log) {
             return $log->work_description ?? $log->workType?->name ?? 'Общие материалы';
@@ -119,7 +137,9 @@ class MaterialReportService
             
             foreach ($materialGroups as $materialId => $logs) {
                 $material = $logs->first()->material;
-                $unit = $material->measurementUnit->short_name ?? 'шт';
+                if (!$material) continue;
+                
+                $unit = $material->measurementUnit?->short_name ?? 'шт';
                 
                 // Получаем приходы для этого материала
                 $materialReceipts = $receipts->where('material_id', $materialId);
@@ -133,14 +153,31 @@ class MaterialReportService
                 $usedQuantity = $logs->where('operation_type', 'write_off')->sum('quantity');
                 $normQuantity = $logs->sum('production_norm_quantity') ?: $usedQuantity;
 
-                // Корректируем норму с учётом коэффициентов организации и получаем детали расчёта
-                $coeffResult = $this->rateCoefficientService->calculateAdjustedValueDetailed(
-                    $organizationId,
-                    $normQuantity,
-                    RateCoefficientAppliesToEnum::MATERIAL_NORMS->value,
-                    null,
-                    ['project_id' => $projectId, 'material_id' => $materialId]
-                );
+                // Используем кэш коэффициентов
+                $cacheKey = "{$materialId}_{$normQuantity}";
+                if (!isset($coefficientsCache[$cacheKey])) {
+                    try {
+                        $coeffResult = $this->rateCoefficientService->calculateAdjustedValueDetailed(
+                            $organizationId,
+                            $normQuantity,
+                            RateCoefficientAppliesToEnum::MATERIAL_NORMS->value,
+                            null,
+                            ['project_id' => $projectId, 'material_id' => $materialId]
+                        );
+                        $coefficientsCache[$cacheKey] = $coeffResult;
+                    } catch (\Exception $e) {
+                        Log::warning('Failed to calculate coefficients', [
+                            'material_id' => $materialId,
+                            'error' => $e->getMessage()
+                        ]);
+                        $coefficientsCache[$cacheKey] = [
+                            'final' => $normQuantity,
+                            'applications' => []
+                        ];
+                    }
+                } else {
+                    $coeffResult = $coefficientsCache[$cacheKey];
+                }
 
                 $normQuantity = $coeffResult['final'];
                 
