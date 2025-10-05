@@ -149,7 +149,7 @@ class CustomReportBuilderController extends Controller
                 'has_columns' => isset($config['columns_config'])
             ], 'debug');
             
-            $errors = $this->builderService->validateReportConfig($config);
+            $errors = $this->builderService->validateReportConfig($config, false);
 
             if (!empty($errors)) {
                 $this->logging->technical('report_builder.validation_errors', [
@@ -209,7 +209,7 @@ class CustomReportBuilderController extends Controller
                 'has_filters' => isset($config['filters'])
             ], 'debug');
             
-            $errors = $this->builderService->validateReportConfig($config);
+            $errors = $this->builderService->validateReportConfig($config, false);
             
             if (!empty($errors)) {
                 $this->logging->technical('report_builder.preview_validation_failed', [

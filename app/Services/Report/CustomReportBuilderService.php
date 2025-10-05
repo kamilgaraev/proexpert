@@ -18,7 +18,7 @@ class CustomReportBuilderService
         protected LoggingService $logging
     ) {}
 
-    public function validateReportConfig(array $config): array
+    public function validateReportConfig(array $config, bool $requireFullConfig = true): array
     {
         $errors = [];
 
@@ -27,27 +27,21 @@ class CustomReportBuilderService
                 'has_name' => !empty($config['name']),
                 'has_category' => !empty($config['report_category']),
                 'has_data_sources' => !empty($config['data_sources']),
-                'has_columns' => !empty($config['columns_config'])
+                'has_columns' => !empty($config['columns_config']),
+                'require_full_config' => $requireFullConfig
             ], 'debug');
 
-            if (empty($config['name'])) {
-                $errors[] = 'Название отчета обязательно';
+            if ($requireFullConfig) {
+                if (empty($config['name'])) {
+                    $errors[] = 'Название отчета обязательно';
+                }
+
+                if (empty($config['report_category'])) {
+                    $errors[] = 'Категория отчета обязательна';
+                }
             }
 
-            if (empty($config['report_category'])) {
-                $errors[] = 'Категория отчета обязательна';
-            }
-
-            if (empty($config['data_sources'])) {
-                $errors[] = 'Необходимо указать источники данных';
-            }
-
-            if (empty($config['columns_config'])) {
-                $errors[] = 'Необходимо выбрать хотя бы одну колонку';
-            }
-
-            $queryErrors = $this->queryBuilder->validateQueryConfig($config);
-            $errors = array_merge($errors, $queryErrors);
+            $errors = array_merge($errors, $this->validateConfigStructure($config));
 
             $this->logging->technical('report_builder.validation_completed', [
                 'errors_count' => count($errors),
@@ -63,6 +57,76 @@ class CustomReportBuilderService
             ], 'error');
             throw $e;
         }
+    }
+
+    protected function validateConfigStructure(array $config): array
+    {
+        $errors = [];
+
+        if (!empty($config['data_sources'])) {
+            $primarySource = $config['data_sources']['primary'] ?? null;
+            
+            if ($primarySource && !$this->registry->validateDataSource($primarySource)) {
+                $errors[] = "Некорректный источник данных: {$primarySource}";
+            }
+
+            if (!empty($config['data_sources']['joins'])) {
+                $maxJoins = config('custom-reports.limits.max_joins', 7);
+                if (count($config['data_sources']['joins']) > $maxJoins) {
+                    $errors[] = "Превышено максимальное количество JOIN'ов ({$maxJoins})";
+                }
+
+                foreach ($config['data_sources']['joins'] as $index => $join) {
+                    if (empty($join['table'])) {
+                        $errors[] = "JOIN #{$index}: не указана таблица";
+                    } elseif (!$this->registry->validateDataSource($join['table'])) {
+                        $errors[] = "JOIN #{$index}: некорректная таблица {$join['table']}";
+                    }
+
+                    if (empty($join['on']) || !is_array($join['on']) || count($join['on']) !== 2) {
+                        $errors[] = "JOIN #{$index}: некорректное условие связи";
+                    }
+                }
+            }
+        }
+
+        if (!empty($config['columns_config'])) {
+            $maxColumns = config('custom-reports.limits.max_columns', 50);
+            if (count($config['columns_config']) > $maxColumns) {
+                $errors[] = "Превышено максимальное количество колонок ({$maxColumns})";
+            }
+
+            foreach ($config['columns_config'] as $index => $column) {
+                if (empty($column['field'])) {
+                    $errors[] = "Колонка #{$index}: не указано поле";
+                }
+                if (empty($column['label'])) {
+                    $errors[] = "Колонка #{$index}: не указано название";
+                }
+            }
+        }
+
+        if (!empty($config['aggregations_config'])) {
+            $maxAggregations = config('custom-reports.limits.max_aggregations', 10);
+            $aggregations = $config['aggregations_config']['aggregations'] ?? [];
+            
+            if (count($aggregations) > $maxAggregations) {
+                $errors[] = "Превышено максимальное количество агрегаций ({$maxAggregations})";
+            }
+
+            if (!empty($config['aggregations_config']['group_by']) && empty($aggregations)) {
+                $errors[] = "При использовании GROUP BY необходимо указать агрегатные функции";
+            }
+        }
+
+        if (!empty($config['query_config']['where'])) {
+            $maxFilters = config('custom-reports.limits.max_filters', 20);
+            if (count($config['query_config']['where']) > $maxFilters) {
+                $errors[] = "Превышено максимальное количество фильтров ({$maxFilters})";
+            }
+        }
+
+        return $errors;
     }
 
     public function buildQueryFromConfig(CustomReport $report, int $organizationId): Builder
