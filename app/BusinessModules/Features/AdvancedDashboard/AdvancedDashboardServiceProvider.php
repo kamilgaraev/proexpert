@@ -19,17 +19,11 @@ class AdvancedDashboardServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        if ($this->app->runningInConsole()) {
-            // В консоли загружаем только миграции
-            $this->loadMigrations();
-            return;
-        }
-
-        // Загружаем маршруты
-        $this->loadRoutes();
-        
         // Загружаем миграции
         $this->loadMigrations();
+        
+        // Загружаем маршруты
+        $this->loadRoutes();
         
         // Регистрируем middleware
         $this->registerMiddleware();
@@ -81,8 +75,7 @@ class AdvancedDashboardServiceProvider extends ServiceProvider
         $routesPath = __DIR__ . '/routes.php';
         
         if (file_exists($routesPath)) {
-            Route::middleware(['web'])
-                ->group($routesPath);
+            require $routesPath;
         }
     }
 
