@@ -270,7 +270,7 @@ class AlertsService
         
         // Получаем бюджет проекта из контрактов
         $totalBudget = Contract::where('project_id', $project->id)
-            ->sum('contract_amount');
+            ->sum('total_amount');
         
         if ($totalBudget == 0) {
             return false;
@@ -459,7 +459,7 @@ class AlertsService
             case 'total_contracts_value':
                 return Contract::where('organization_id', $alert->organization_id)
                     ->whereIn('status', ['active', 'in_progress'])
-                    ->sum('contract_amount');
+                    ->sum('total_amount');
                     
             case 'material_spending_rate':
                 $from = Carbon::now()->startOfMonth();

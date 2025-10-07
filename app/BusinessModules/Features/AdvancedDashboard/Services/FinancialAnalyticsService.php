@@ -272,7 +272,7 @@ class FinancialAnalyticsService
             $query->where('project_id', $projectId);
         }
         
-        return $query->sum('contract_amount') ?? 0;
+        return $query->sum('total_amount') ?? 0;
     }
 
     /**
@@ -357,7 +357,7 @@ class FinancialAnalyticsService
             $query->where('project_id', $projectId);
         }
         
-        $contracts = $query->sum('contract_amount') ?? 0;
+        $contracts = $query->sum('total_amount') ?? 0;
         
         $advancePaymentsQuery = DB::table('contracts')
             ->where('organization_id', $organizationId)
@@ -609,7 +609,7 @@ class FinancialAnalyticsService
             $totalAmount = 0;
             
             foreach ($contractsInMonth as $contract) {
-                $contractAmount = $contract->contract_amount ?? 0;
+                $contractAmount = $contract->total_amount ?? 0;
                 $duration = Carbon::parse($contract->start_date)->diffInMonths(Carbon::parse($contract->end_date)) ?: 1;
                 $monthlyAmount = $contractAmount / $duration;
                 
@@ -732,7 +732,7 @@ class FinancialAnalyticsService
         $byContract = [];
         
         foreach ($contracts as $contract) {
-            $contractAmount = $contract->contract_amount ?? 0;
+            $contractAmount = $contract->total_amount ?? 0;
             $advancePaid = $contract->advance_payment ?? 0;
             $workCompleted = CompletedWork::where('contract_id', $contract->id)
                 ->sum(DB::raw('quantity * unit_price')) ?? 0;

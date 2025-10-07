@@ -101,7 +101,7 @@ class PredictiveAnalyticsService
             
             // Общий бюджет проекта
             $totalBudget = Contract::where('project_id', $projectId)
-                ->sum('contract_amount');
+                ->sum('total_amount');
             
             if ($totalBudget == 0) {
                 return [
