@@ -280,7 +280,8 @@ class FinancialAnalyticsService
      */
     protected function calculateOutflow(int $organizationId, Carbon $from, Carbon $to, ?int $projectId): float
     {
-        $materialCostsQuery = DB::table('completed_works')
+        $materialCostsQuery = DB::table('completed_work_materials')
+            ->join('completed_works', 'completed_work_materials.completed_work_id', '=', 'completed_works.id')
             ->join('projects', 'completed_works.project_id', '=', 'projects.id')
             ->where('projects.organization_id', $organizationId)
             ->whereBetween('completed_works.created_at', [$from, $to]);
@@ -289,7 +290,7 @@ class FinancialAnalyticsService
             $materialCostsQuery->where('completed_works.project_id', $projectId);
         }
         
-        $materialCosts = $materialCostsQuery->sum('completed_works.material_cost') ?? 0;
+        $materialCosts = $materialCostsQuery->sum('completed_work_materials.total_amount') ?? 0;
         
         $laborCostsQuery = DB::table('completed_works')
             ->join('projects', 'completed_works.project_id', '=', 'projects.id')
@@ -410,7 +411,8 @@ class FinancialAnalyticsService
      */
     protected function getOutflowByCategory(int $organizationId, Carbon $from, Carbon $to, ?int $projectId): array
     {
-        $materialCostsQuery = DB::table('completed_works')
+        $materialCostsQuery = DB::table('completed_work_materials')
+            ->join('completed_works', 'completed_work_materials.completed_work_id', '=', 'completed_works.id')
             ->join('projects', 'completed_works.project_id', '=', 'projects.id')
             ->where('projects.organization_id', $organizationId)
             ->whereBetween('completed_works.created_at', [$from, $to]);
@@ -419,7 +421,7 @@ class FinancialAnalyticsService
             $materialCostsQuery->where('completed_works.project_id', $projectId);
         }
         
-        $materialCosts = $materialCostsQuery->sum('completed_works.material_cost') ?? 0;
+        $materialCosts = $materialCostsQuery->sum('completed_work_materials.total_amount') ?? 0;
         
         $laborCostsQuery = DB::table('completed_works')
             ->join('projects', 'completed_works.project_id', '=', 'projects.id')

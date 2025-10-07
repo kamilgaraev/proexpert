@@ -279,7 +279,8 @@ class AlertsService
         // Получаем фактические расходы
         $actualSpending = DB::table('completed_works')
             ->where('project_id', $project->id)
-            ->sum('material_cost');
+            ->join('completed_work_materials', 'completed_works.id', '=', 'completed_work_materials.completed_work_id')
+            ->sum('completed_work_materials.total_amount');
         
         // Процент использования бюджета
         $budgetUsage = ($actualSpending / $totalBudget) * 100;
@@ -464,11 +465,12 @@ class AlertsService
             case 'material_spending_rate':
                 $from = Carbon::now()->startOfMonth();
                 $to = Carbon::now();
-                return DB::table('completed_works')
+                return DB::table('completed_work_materials')
+                    ->join('completed_works', 'completed_work_materials.completed_work_id', '=', 'completed_works.id')
                     ->join('projects', 'completed_works.project_id', '=', 'projects.id')
                     ->where('projects.organization_id', $alert->organization_id)
                     ->whereBetween('completed_works.created_at', [$from, $to])
-                    ->sum('completed_works.material_cost');
+                    ->sum('completed_work_materials.total_amount');
                     
             case 'average_contract_progress':
                 return Contract::where('organization_id', $alert->organization_id)

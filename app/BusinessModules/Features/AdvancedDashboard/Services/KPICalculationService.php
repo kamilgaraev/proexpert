@@ -349,7 +349,8 @@ class KPICalculationService
         
         $costs = CompletedWork::where('user_id', $userId)
             ->whereBetween('created_at', [$from, $to])
-            ->sum('material_cost') ?? 0;
+            ->join('completed_work_materials', 'completed_works.id', '=', 'completed_work_materials.completed_work_id')
+            ->sum('completed_work_materials.total_amount') ?? 0;
         
         if ($costs == 0) {
             return 100.0;

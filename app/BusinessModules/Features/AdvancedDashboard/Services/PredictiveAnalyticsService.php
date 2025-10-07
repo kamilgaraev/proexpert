@@ -113,7 +113,8 @@ class PredictiveAnalyticsService
             
             // Текущие расходы
             $currentSpending = CompletedWork::where('project_id', $projectId)
-                ->sum('material_cost');
+                ->join('completed_work_materials', 'completed_works.id', '=', 'completed_work_materials.completed_work_id')
+                ->sum('completed_work_materials.total_amount');
             
             // История расходов
             $spendingHistory = $this->getSpendingHistory($projectId);
@@ -306,6 +307,7 @@ class PredictiveAnalyticsService
         $from = Carbon::now()->subMonths(3);
         $completedWorks = CompletedWork::where('project_id', $projectId)
             ->where('created_at', '>=', $from)
+            ->withSum('materials as materials_total_cost', 'completed_work_materials.total_amount')
             ->orderBy('created_at')
             ->get();
         
@@ -317,7 +319,7 @@ class PredictiveAnalyticsService
                 $weeklySpending[$week] = 0;
             }
             
-            $weeklySpending[$week] += $work->material_cost ?? 0;
+            $weeklySpending[$week] += $work->materials_total_cost ?? 0;
         }
         
         foreach ($weeklySpending as $week => $amount) {
@@ -371,6 +373,7 @@ class PredictiveAnalyticsService
             ->where('completed_works.created_at', '>=', $from)
             ->orderBy('completed_works.created_at')
             ->select('completed_works.*')
+            ->withSum('materials as materials_total_cost', 'completed_work_materials.total_amount')
             ->get();
         
         $monthlyUsage = [];
@@ -388,7 +391,7 @@ class PredictiveAnalyticsService
             }
             
             $monthlyUsage[$month]['total_quantity'] += $work->quantity ?? 0;
-            $monthlyUsage[$month]['total_amount'] += $work->material_cost ?? 0;
+            $monthlyUsage[$month]['total_amount'] += $work->materials_total_cost ?? 0;
             $monthlyUsage[$month]['materials_count']++;
         }
         
