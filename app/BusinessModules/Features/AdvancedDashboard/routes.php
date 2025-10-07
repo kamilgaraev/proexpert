@@ -5,6 +5,7 @@ use App\BusinessModules\Features\AdvancedDashboard\Http\Controllers\AdvancedDash
 use App\BusinessModules\Features\AdvancedDashboard\Http\Controllers\DashboardManagementController;
 use App\BusinessModules\Features\AdvancedDashboard\Http\Controllers\AlertsController;
 use App\BusinessModules\Features\AdvancedDashboard\Http\Controllers\ExportController;
+use App\BusinessModules\Features\AdvancedDashboard\Http\Controllers\WidgetsRegistryController;
 
 /*
 |--------------------------------------------------------------------------
@@ -20,6 +21,10 @@ Route::prefix('api/v1/admin/advanced-dashboard')
     ->name('admin.advanced_dashboard.')
     ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'advanced_dashboard.active'])
     ->group(function () {
+        
+        // Widgets Registry
+        Route::get('/widgets/registry', [WidgetsRegistryController::class, 'getRegistry'])->name('widgets.registry');
+        Route::get('/widgets/{widgetId}/info', [WidgetsRegistryController::class, 'getWidgetInfo'])->name('widgets.info');
         
         // Dashboard Management
         Route::prefix('dashboards')->name('dashboards.')->group(function () {

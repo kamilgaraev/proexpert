@@ -1,0 +1,257 @@
+openapi: 3.0.0
+info:
+  title: Advanced Dashboard - Widgets Registry API
+  description: API для получения реестра доступных виджетов продвинутого дашборда
+  version: 1.0.0
+
+servers:
+  - url: https://api.example.com/api/v1/admin/advanced-dashboard
+    description: Production API
+
+tags:
+  - name: Widgets Registry
+    description: Реестр доступных виджетов
+
+paths:
+  /widgets/registry:
+    get:
+      tags:
+        - Widgets Registry
+      summary: Получить реестр всех виджетов
+      description: Возвращает полный список доступных виджетов с их статусом готовности
+      operationId: getWidgetsRegistry
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: X-Organization-ID
+          in: header
+          required: true
+          schema:
+            type: integer
+          description: ID организации
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      widgets:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Widget'
+                      categories:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/WidgetCategory'
+                      stats:
+                        type: object
+                        properties:
+                          total_widgets:
+                            type: integer
+                            example: 11
+                          ready_widgets:
+                            type: integer
+                            example: 11
+                          in_development:
+                            type: integer
+                            example: 0
+        '401':
+          description: Не авторизован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Модуль не активирован
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModuleNotActiveError'
+
+  /widgets/{widgetId}/info:
+    get:
+      tags:
+        - Widgets Registry
+      summary: Получить детальную информацию о виджете
+      description: Возвращает подробную информацию о конкретном виджете, включая параметры запроса
+      operationId: getWidgetInfo
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: widgetId
+          in: path
+          required: true
+          schema:
+            type: string
+          description: ID виджета (например, cash_flow)
+        - name: X-Organization-ID
+          in: header
+          required: true
+          schema:
+            type: integer
+          description: ID организации
+      responses:
+        '200':
+          description: Успешный ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/WidgetDetailed'
+        '404':
+          description: Виджет не найден
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: Widget not found
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Widget:
+      type: object
+      properties:
+        id:
+          type: string
+          example: cash_flow
+        name:
+          type: string
+          example: Движение денежных средств
+        description:
+          type: string
+          example: Анализ притока и оттока денежных средств с разбивкой по категориям и месяцам
+        category:
+          type: string
+          enum: [financial, predictive, hr]
+          example: financial
+        is_ready:
+          type: boolean
+          example: true
+        endpoint:
+          type: string
+          example: /analytics/financial/cash-flow
+        icon:
+          type: string
+          example: trending-up
+        default_size:
+          type: object
+          properties:
+            w:
+              type: integer
+              example: 6
+            h:
+              type: integer
+              example: 3
+        min_size:
+          type: object
+          properties:
+            w:
+              type: integer
+              example: 4
+            h:
+              type: integer
+              example: 2
+
+    WidgetCategory:
+      type: object
+      properties:
+        id:
+          type: string
+          example: financial
+        name:
+          type: string
+          example: Финансовая аналитика
+        description:
+          type: string
+          example: Виджеты для финансового анализа
+        color:
+          type: string
+          example: "#10B981"
+        icon:
+          type: string
+          example: dollar-sign
+
+    WidgetDetailed:
+      allOf:
+        - $ref: '#/components/schemas/Widget'
+        - type: object
+          properties:
+            params:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                    example: from
+                  type:
+                    type: string
+                    example: date
+                  required:
+                    type: boolean
+                    example: true
+            response_structure:
+              type: object
+              additionalProperties: true
+              example:
+                total_inflow: number
+                total_outflow: number
+                net_cash_flow: number
+
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Unauthorized
+        code:
+          type: string
+          example: UNAUTHORIZED
+
+    ModuleNotActiveError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Advanced Dashboard module is not active for this organization
+        code:
+          type: string
+          example: MODULE_NOT_ACTIVE
+        required_module:
+          type: string
+          example: advanced-dashboard
+        hint:
+          type: string
+          example: Activate the Advanced Dashboard module to access this feature
+
