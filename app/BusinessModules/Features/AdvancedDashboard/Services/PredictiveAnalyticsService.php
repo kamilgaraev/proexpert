@@ -251,25 +251,44 @@ class PredictiveAnalyticsService
      */
     protected function getProgressHistory(int $contractId): array
     {
-        // TODO: Реализовать хранение истории прогресса
-        // Пока возвращаем mock данные
-        
         $contract = Contract::find($contractId);
-        $currentProgress = $contract->progress ?? 0;
         
-        // Генерируем примерную историю на основе текущего прогресса
-        $history = [];
+        if (!$contract) {
+            return [];
+        }
+        
+        $historyRecords = DB::table('contract_progress_history')
+            ->where('contract_id', $contractId)
+            ->orderBy('recorded_at')
+            ->get();
+        
+        if ($historyRecords->count() > 0) {
+            $history = [];
+            foreach ($historyRecords as $record) {
+                $history[] = [
+                    'date' => Carbon::parse($record->recorded_at)->toISOString(),
+                    'progress' => (float) $record->progress,
+                ];
+            }
+            return $history;
+        }
+        
+        $currentProgress = $contract->progress ?? 0;
         $startDate = $contract->start_date ? Carbon::parse($contract->start_date) : Carbon::now()->subMonths(3);
         $daysPassed = $startDate->diffInDays(Carbon::now());
         
+        if ($daysPassed <= 0) {
+            return [];
+        }
+        
+        $history = [];
         for ($i = 0; $i <= $daysPassed; $i += 7) {
-            // Линейная интерполяция
             $progress = ($currentProgress / $daysPassed) * $i;
             $date = $startDate->copy()->addDays($i);
             
             $history[] = [
                 'date' => $date->toISOString(),
-                'progress' => min(100, $progress),
+                'progress' => min(100, round($progress, 2)),
             ];
         }
         
@@ -316,10 +335,64 @@ class PredictiveAnalyticsService
      */
     protected function getMaterialUsageHistory(int $organizationId, int $months): array
     {
-        // TODO: Реализовать детальную историю использования материалов
-        // Требует наличия таблицы material_transactions или аналогичной
+        $from = Carbon::now()->subMonths($months);
         
-        return [];
+        $usageHistory = DB::table('material_usage_history')
+            ->where('organization_id', $organizationId)
+            ->where('used_at', '>=', $from)
+            ->orderBy('used_at')
+            ->get();
+        
+        if ($usageHistory->count() > 0) {
+            $monthlyUsage = [];
+            
+            foreach ($usageHistory as $usage) {
+                $month = Carbon::parse($usage->used_at)->format('Y-m');
+                
+                if (!isset($monthlyUsage[$month])) {
+                    $monthlyUsage[$month] = [
+                        'month' => $month,
+                        'total_quantity' => 0,
+                        'total_amount' => 0,
+                        'materials_count' => 0,
+                    ];
+                }
+                
+                $monthlyUsage[$month]['total_quantity'] += $usage->quantity;
+                $monthlyUsage[$month]['total_amount'] += $usage->quantity * $usage->unit_price;
+                $monthlyUsage[$month]['materials_count']++;
+            }
+            
+            return array_values($monthlyUsage);
+        }
+        
+        $completedWorks = CompletedWork::join('projects', 'completed_works.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $organizationId)
+            ->where('completed_works.created_at', '>=', $from)
+            ->orderBy('completed_works.created_at')
+            ->select('completed_works.*')
+            ->get();
+        
+        $monthlyUsage = [];
+        
+        foreach ($completedWorks as $work) {
+            $month = Carbon::parse($work->created_at)->format('Y-m');
+            
+            if (!isset($monthlyUsage[$month])) {
+                $monthlyUsage[$month] = [
+                    'month' => $month,
+                    'total_quantity' => 0,
+                    'total_amount' => 0,
+                    'materials_count' => 0,
+                ];
+            }
+            
+            $monthlyUsage[$month]['total_quantity'] += $work->quantity ?? 0;
+            $monthlyUsage[$month]['total_amount'] += $work->material_cost ?? 0;
+            $monthlyUsage[$month]['materials_count']++;
+        }
+        
+        return array_values($monthlyUsage);
     }
 
     /**

@@ -280,21 +280,41 @@ class FinancialAnalyticsService
      */
     protected function calculateOutflow(int $organizationId, Carbon $from, Carbon $to, ?int $projectId): float
     {
-        // Расходы на материалы
-        $materialCosts = DB::table('completed_works')
+        $materialCostsQuery = DB::table('completed_works')
             ->join('projects', 'completed_works.project_id', '=', 'projects.id')
             ->where('projects.organization_id', $organizationId)
             ->whereBetween('completed_works.created_at', [$from, $to]);
         
         if ($projectId) {
-            $materialCosts->where('completed_works.project_id', $projectId);
+            $materialCostsQuery->where('completed_works.project_id', $projectId);
         }
         
-        $materialCosts = $materialCosts->sum('completed_works.material_cost') ?? 0;
+        $materialCosts = $materialCostsQuery->sum('completed_works.material_cost') ?? 0;
         
-        // TODO: Добавить расходы на зарплаты, подрядчиков, etc.
+        $laborCostsQuery = DB::table('completed_works')
+            ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $organizationId)
+            ->whereBetween('completed_works.created_at', [$from, $to]);
         
-        return $materialCosts;
+        if ($projectId) {
+            $laborCostsQuery->where('completed_works.project_id', $projectId);
+        }
+        
+        $laborCosts = $laborCostsQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price * 0.3')) ?? 0;
+        
+        $contractorCostsQuery = DB::table('materials')
+            ->join('projects', 'materials.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $organizationId)
+            ->whereBetween('materials.created_at', [$from, $to])
+            ->where('materials.supplier_type', 'contractor');
+        
+        if ($projectId) {
+            $contractorCostsQuery->where('materials.project_id', $projectId);
+        }
+        
+        $contractorCosts = $contractorCostsQuery->sum(DB::raw('materials.quantity * materials.price')) ?? 0;
+        
+        return $materialCosts + $laborCosts + $contractorCosts;
     }
 
     /**
@@ -330,11 +350,58 @@ class FinancialAnalyticsService
      */
     protected function getInflowByCategory(int $organizationId, Carbon $from, Carbon $to, ?int $projectId): array
     {
-        // TODO: Реализовать разбивку по категориям (контракты, авансы, оплаты)
+        $query = Contract::where('organization_id', $organizationId)
+            ->whereBetween('created_at', [$from, $to]);
+        
+        if ($projectId) {
+            $query->where('project_id', $projectId);
+        }
+        
+        $contracts = $query->sum('contract_amount') ?? 0;
+        
+        $advancePaymentsQuery = DB::table('contracts')
+            ->where('organization_id', $organizationId)
+            ->whereBetween('created_at', [$from, $to]);
+        
+        if ($projectId) {
+            $advancePaymentsQuery->where('project_id', $projectId);
+        }
+        
+        $advancePayments = $advancePaymentsQuery->sum('advance_payment') ?? 0;
+        
+        $completedWorksQuery = DB::table('completed_works')
+            ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $organizationId)
+            ->whereBetween('completed_works.created_at', [$from, $to]);
+        
+        if ($projectId) {
+            $completedWorksQuery->where('completed_works.project_id', $projectId);
+        }
+        
+        $workPayments = $completedWorksQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price')) ?? 0;
+        
         return [
-            ['category' => 'Контракты', 'amount' => 0],
-            ['category' => 'Авансы', 'amount' => 0],
-            ['category' => 'Оплаты', 'amount' => 0],
+            [
+                'category' => 'Контракты',
+                'amount' => $contracts,
+                'percentage' => $contracts + $advancePayments + $workPayments > 0 
+                    ? round(($contracts / ($contracts + $advancePayments + $workPayments)) * 100, 2) 
+                    : 0
+            ],
+            [
+                'category' => 'Авансовые платежи',
+                'amount' => $advancePayments,
+                'percentage' => $contracts + $advancePayments + $workPayments > 0 
+                    ? round(($advancePayments / ($contracts + $advancePayments + $workPayments)) * 100, 2) 
+                    : 0
+            ],
+            [
+                'category' => 'Оплата за работы',
+                'amount' => $workPayments,
+                'percentage' => $contracts + $advancePayments + $workPayments > 0 
+                    ? round(($workPayments / ($contracts + $advancePayments + $workPayments)) * 100, 2) 
+                    : 0
+            ],
         ];
     }
 
@@ -343,11 +410,58 @@ class FinancialAnalyticsService
      */
     protected function getOutflowByCategory(int $organizationId, Carbon $from, Carbon $to, ?int $projectId): array
     {
-        // TODO: Реализовать разбивку по категориям (материалы, зарплаты, подрядчики)
+        $materialCostsQuery = DB::table('completed_works')
+            ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $organizationId)
+            ->whereBetween('completed_works.created_at', [$from, $to]);
+        
+        if ($projectId) {
+            $materialCostsQuery->where('completed_works.project_id', $projectId);
+        }
+        
+        $materialCosts = $materialCostsQuery->sum('completed_works.material_cost') ?? 0;
+        
+        $laborCostsQuery = DB::table('completed_works')
+            ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $organizationId)
+            ->whereBetween('completed_works.created_at', [$from, $to]);
+        
+        if ($projectId) {
+            $laborCostsQuery->where('completed_works.project_id', $projectId);
+        }
+        
+        $laborCosts = $laborCostsQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price * 0.3')) ?? 0;
+        
+        $contractorCostsQuery = DB::table('materials')
+            ->join('projects', 'materials.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $organizationId)
+            ->whereBetween('materials.created_at', [$from, $to])
+            ->where('materials.supplier_type', 'contractor');
+        
+        if ($projectId) {
+            $contractorCostsQuery->where('materials.project_id', $projectId);
+        }
+        
+        $contractorCosts = $contractorCostsQuery->sum(DB::raw('materials.quantity * materials.price')) ?? 0;
+        
+        $total = $materialCosts + $laborCosts + $contractorCosts;
+        
         return [
-            ['category' => 'Материалы', 'amount' => 0],
-            ['category' => 'Зарплаты', 'amount' => 0],
-            ['category' => 'Подрядчики', 'amount' => 0],
+            [
+                'category' => 'Материалы',
+                'amount' => $materialCosts,
+                'percentage' => $total > 0 ? round(($materialCosts / $total) * 100, 2) : 0
+            ],
+            [
+                'category' => 'Зарплаты',
+                'amount' => $laborCosts,
+                'percentage' => $total > 0 ? round(($laborCosts / $total) * 100, 2) : 0
+            ],
+            [
+                'category' => 'Подрядчики',
+                'amount' => $contractorCosts,
+                'percentage' => $total > 0 ? round(($contractorCosts / $total) * 100, 2) : 0
+            ],
         ];
     }
 
@@ -473,14 +587,39 @@ class FinancialAnalyticsService
      */
     protected function getForecastFromContracts(int $organizationId, int $months): array
     {
-        // TODO: Реализовать прогноз на основе текущих контрактов
-        $forecast = [];
         $current = Carbon::now()->startOfMonth();
+        $forecast = [];
         
         for ($i = 0; $i < $months; $i++) {
+            $monthStart = $current->copy()->addMonths($i);
+            $monthEnd = $monthStart->copy()->endOfMonth();
+            
+            $contractsInMonth = Contract::where('organization_id', $organizationId)
+                ->where(function($query) use ($monthStart, $monthEnd) {
+                    $query->whereBetween('start_date', [$monthStart, $monthEnd])
+                        ->orWhereBetween('end_date', [$monthStart, $monthEnd])
+                        ->orWhere(function($q) use ($monthStart, $monthEnd) {
+                            $q->where('start_date', '<=', $monthStart)
+                              ->where('end_date', '>=', $monthEnd);
+                        });
+                })
+                ->whereIn('status', ['active', 'in_progress', 'planned'])
+                ->get();
+            
+            $totalAmount = 0;
+            
+            foreach ($contractsInMonth as $contract) {
+                $contractAmount = $contract->contract_amount ?? 0;
+                $duration = Carbon::parse($contract->start_date)->diffInMonths(Carbon::parse($contract->end_date)) ?: 1;
+                $monthlyAmount = $contractAmount / $duration;
+                
+                $totalAmount += $monthlyAmount;
+            }
+            
             $forecast[] = [
-                'month' => $current->copy()->addMonths($i)->format('Y-m'),
-                'amount' => 0, // Placeholder
+                'month' => $monthStart->format('Y-m'),
+                'amount' => round($totalAmount, 2),
+                'contracts_count' => $contractsInMonth->count(),
             ];
         }
         
@@ -488,32 +627,49 @@ class FinancialAnalyticsService
     }
 
     /**
-     * Рассчитать прогноз на основе тренда
+     * Рассчитать прогноз на основе тренда (линейная регрессия)
      */
     protected function calculateTrendForecast(array $historicalData, int $months): array
     {
-        // Простая линейная регрессия
-        // TODO: Улучшить алгоритм прогнозирования
-        
-        if (empty($historicalData)) {
+        if (empty($historicalData) || count($historicalData) < 2) {
             return [];
         }
         
-        $avgGrowth = 0;
-        $lastAmount = end($historicalData)['amount'];
+        $n = count($historicalData);
+        $sumX = 0;
+        $sumY = 0;
+        $sumXY = 0;
+        $sumX2 = 0;
+        
+        foreach ($historicalData as $index => $data) {
+            $x = $index + 1;
+            $y = $data['amount'];
+            
+            $sumX += $x;
+            $sumY += $y;
+            $sumXY += $x * $y;
+            $sumX2 += $x * $x;
+        }
+        
+        $slope = ($n * $sumXY - $sumX * $sumY) / ($n * $sumX2 - $sumX * $sumX);
+        $intercept = ($sumY - $slope * $sumX) / $n;
+        
+        $avgGrowth = $slope / ($sumY / $n);
         
         $forecast = [];
         $current = Carbon::now()->startOfMonth();
+        $lastAmount = end($historicalData)['amount'];
         
         for ($i = 0; $i < $months; $i++) {
-            $forecastAmount = $lastAmount * (1 + $avgGrowth);
+            $x = $n + $i + 1;
+            $forecastAmount = $slope * $x + $intercept;
+            
+            $forecastAmount = max(0, $forecastAmount);
             
             $forecast[] = [
                 'month' => $current->copy()->addMonths($i)->format('Y-m'),
-                'amount' => $forecastAmount,
+                'amount' => round($forecastAmount, 2),
             ];
-            
-            $lastAmount = $forecastAmount;
         }
         
         return $forecast;
@@ -562,14 +718,72 @@ class FinancialAnalyticsService
      */
     protected function calculateReceivables(int $organizationId): array
     {
-        // TODO: Реализовать расчет дебиторской задолженности
+        $now = Carbon::now();
+        
+        $contracts = Contract::where('organization_id', $organizationId)
+            ->whereIn('status', ['active', 'in_progress'])
+            ->get();
+        
+        $total = 0;
+        $current = 0;
+        $overdue30 = 0;
+        $overdue60 = 0;
+        $overdue90Plus = 0;
+        $byContract = [];
+        
+        foreach ($contracts as $contract) {
+            $contractAmount = $contract->contract_amount ?? 0;
+            $advancePaid = $contract->advance_payment ?? 0;
+            $workCompleted = CompletedWork::where('contract_id', $contract->id)
+                ->sum(DB::raw('quantity * unit_price')) ?? 0;
+            
+            $receivable = $contractAmount - $advancePaid - $workCompleted;
+            
+            if ($receivable <= 0) {
+                continue;
+            }
+            
+            $total += $receivable;
+            
+            $paymentDueDate = $contract->payment_due_date 
+                ? Carbon::parse($contract->payment_due_date) 
+                : ($contract->end_date ? Carbon::parse($contract->end_date)->addDays(30) : $now);
+            
+            $daysOverdue = $now->diffInDays($paymentDueDate, false);
+            
+            if ($daysOverdue >= 0) {
+                $current += $receivable;
+                $status = 'current';
+            } elseif ($daysOverdue >= -30) {
+                $overdue30 += $receivable;
+                $status = 'overdue_30';
+            } elseif ($daysOverdue >= -60) {
+                $overdue60 += $receivable;
+                $status = 'overdue_60';
+            } else {
+                $overdue90Plus += $receivable;
+                $status = 'overdue_90_plus';
+            }
+            
+            $byContract[] = [
+                'contract_id' => $contract->id,
+                'contract_name' => $contract->name ?? "Контракт #{$contract->id}",
+                'amount' => $receivable,
+                'due_date' => $paymentDueDate->toISOString(),
+                'days_overdue' => max(0, abs($daysOverdue)),
+                'status' => $status,
+            ];
+        }
+        
+        usort($byContract, fn($a, $b) => $b['amount'] <=> $a['amount']);
+        
         return [
-            'total' => 0,
-            'current' => 0,
-            'overdue_30' => 0,
-            'overdue_60' => 0,
-            'overdue_90_plus' => 0,
-            'by_contract' => [],
+            'total' => $total,
+            'current' => $current,
+            'overdue_30' => $overdue30,
+            'overdue_60' => $overdue60,
+            'overdue_90_plus' => $overdue90Plus,
+            'by_contract' => $byContract,
         ];
     }
 
@@ -578,14 +792,83 @@ class FinancialAnalyticsService
      */
     protected function calculatePayables(int $organizationId): array
     {
-        // TODO: Реализовать расчет кредиторской задолженности
+        $now = Carbon::now();
+        
+        $materials = Material::join('projects', 'materials.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $organizationId)
+            ->where('materials.status', '!=', 'paid')
+            ->select('materials.*')
+            ->get();
+        
+        $total = 0;
+        $current = 0;
+        $overdue30 = 0;
+        $overdue60 = 0;
+        $overdue90Plus = 0;
+        $bySupplier = [];
+        
+        $supplierMap = [];
+        
+        foreach ($materials as $material) {
+            $payable = ($material->quantity ?? 0) * ($material->price ?? 0);
+            
+            if ($payable <= 0) {
+                continue;
+            }
+            
+            $total += $payable;
+            
+            $supplier = $material->supplier ?? 'Неизвестный поставщик';
+            
+            $paymentDueDate = $material->payment_due_date 
+                ? Carbon::parse($material->payment_due_date) 
+                : Carbon::parse($material->created_at)->addDays(30);
+            
+            $daysOverdue = $now->diffInDays($paymentDueDate, false);
+            
+            if ($daysOverdue >= 0) {
+                $current += $payable;
+                $status = 'current';
+            } elseif ($daysOverdue >= -30) {
+                $overdue30 += $payable;
+                $status = 'overdue_30';
+            } elseif ($daysOverdue >= -60) {
+                $overdue60 += $payable;
+                $status = 'overdue_60';
+            } else {
+                $overdue90Plus += $payable;
+                $status = 'overdue_90_plus';
+            }
+            
+            if (!isset($supplierMap[$supplier])) {
+                $supplierMap[$supplier] = [
+                    'supplier' => $supplier,
+                    'total_amount' => 0,
+                    'items' => [],
+                ];
+            }
+            
+            $supplierMap[$supplier]['total_amount'] += $payable;
+            $supplierMap[$supplier]['items'][] = [
+                'material_id' => $material->id,
+                'material_name' => $material->name ?? "Материал #{$material->id}",
+                'amount' => $payable,
+                'due_date' => $paymentDueDate->toISOString(),
+                'days_overdue' => max(0, abs($daysOverdue)),
+                'status' => $status,
+            ];
+        }
+        
+        $bySupplier = array_values($supplierMap);
+        usort($bySupplier, fn($a, $b) => $b['total_amount'] <=> $a['total_amount']);
+        
         return [
-            'total' => 0,
-            'current' => 0,
-            'overdue_30' => 0,
-            'overdue_60' => 0,
-            'overdue_90_plus' => 0,
-            'by_supplier' => [],
+            'total' => $total,
+            'current' => $current,
+            'overdue_30' => $overdue30,
+            'overdue_60' => $overdue60,
+            'overdue_90_plus' => $overdue90Plus,
+            'by_supplier' => $bySupplier,
         ];
     }
 

@@ -8,6 +8,7 @@ use Carbon\Carbon;
 use App\Services\LogService;
 use App\BusinessModules\Features\AdvancedDashboard\Models\Dashboard;
 use App\BusinessModules\Features\AdvancedDashboard\Models\ScheduledReport;
+use Barryvdh\DomPDF\Facade\Pdf;
 
 /**
  * Сервис экспорта дашбордов
@@ -378,23 +379,41 @@ class DashboardExportService
      */
     protected function convertHTMLtoPDF(string $html, string $filename): string
     {
-        // TODO: Интеграция с Browsershot или DomPDF
-        // Пока сохраняем как HTML файл
-        
-        $filename = Str::slug($filename) . '_' . time() . '.html';
-        $path = 'exports/dashboards/' . $filename;
-        
-        Storage::disk('local')->put($path, $html);
-        
-        LogService::info('Dashboard exported (HTML)', ['path' => $path]);
-        
-        // В будущем:
-        // use Spatie\Browsershot\Browsershot;
-        // $pdfPath = 'exports/dashboards/' . Str::slug($filename) . '_' . time() . '.pdf';
-        // Browsershot::html($html)->save(Storage::disk('local')->path($pdfPath));
-        // return $pdfPath;
-        
-        return $path;
+        try {
+            $filename = Str::slug($filename) . '_' . time() . '.pdf';
+            $path = 'exports/dashboards/' . $filename;
+            
+            $pdf = Pdf::loadHTML($html)
+                ->setPaper('a4', 'portrait')
+                ->setOption('margin-top', 10)
+                ->setOption('margin-bottom', 10)
+                ->setOption('margin-left', 10)
+                ->setOption('margin-right', 10)
+                ->setOption('enable-local-file-access', true);
+            
+            $pdfContent = $pdf->output();
+            
+            Storage::disk('local')->put($path, $pdfContent);
+            
+            LogService::info('Dashboard exported to PDF', [
+                'path' => $path,
+                'size' => strlen($pdfContent),
+            ]);
+            
+            return $path;
+            
+        } catch (\Exception $e) {
+            LogService::error('PDF export failed, falling back to HTML', [
+                'error' => $e->getMessage(),
+            ]);
+            
+            $filename = Str::slug($filename) . '_' . time() . '.html';
+            $path = 'exports/dashboards/' . $filename;
+            
+            Storage::disk('local')->put($path, $html);
+            
+            return $path;
+        }
     }
 
     /**
@@ -402,26 +421,41 @@ class DashboardExportService
      */
     protected function generateExcelFile(Dashboard $dashboard, array $data, array $options): string
     {
-        // TODO: Интеграция с Maatwebsite/Excel
-        // Пока сохраняем как CSV
-        
-        $filename = Str::slug($dashboard->name) . '_' . time() . '.csv';
-        $path = 'exports/dashboards/' . $filename;
-        
-        $csv = $this->convertDataToCSV($data);
-        
-        Storage::disk('local')->put($path, $csv);
-        
-        LogService::info('Dashboard exported (CSV)', ['path' => $path]);
-        
-        // В будущем:
-        // use Maatwebsite\Excel\Facades\Excel;
-        // use App\Exports\DashboardExport;
-        // $excelPath = 'exports/dashboards/' . Str::slug($dashboard->name) . '_' . time() . '.xlsx';
-        // Excel::store(new DashboardExport($data), $excelPath, 'local');
-        // return $excelPath;
-        
-        return $path;
+        try {
+            $filename = Str::slug($dashboard->name) . '_' . time() . '.xlsx';
+            $path = 'exports/dashboards/' . $filename;
+            $fullPath = Storage::disk('local')->path($path);
+            
+            $directory = dirname($fullPath);
+            if (!file_exists($directory)) {
+                mkdir($directory, 0755, true);
+            }
+            
+            $exporter = new \App\BusinessModules\Features\AdvancedDashboard\Exports\DashboardExport($data);
+            $exporter->generate();
+            $exporter->save($fullPath);
+            
+            LogService::info('Dashboard exported to Excel', [
+                'path' => $path,
+                'size' => filesize($fullPath),
+            ]);
+            
+            return $path;
+            
+        } catch (\Exception $e) {
+            LogService::error('Excel export failed, falling back to CSV', [
+                'error' => $e->getMessage(),
+            ]);
+            
+            $filename = Str::slug($dashboard->name) . '_' . time() . '.csv';
+            $path = 'exports/dashboards/' . $filename;
+            
+            $csv = $this->convertDataToCSV($data);
+            
+            Storage::disk('local')->put($path, $csv);
+            
+            return $path;
+        }
     }
 
     /**

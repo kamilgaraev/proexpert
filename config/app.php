@@ -173,7 +173,7 @@ return [
         App\Providers\AppServiceProvider::class,
         App\Providers\RepositoryServiceProvider::class,
         App\Providers\AuthServiceProvider::class,
-        // App\Providers\BroadcastServiceProvider::class, // Файл отсутствует
+        App\Providers\BroadcastServiceProvider::class, // Файл отсутствует
         // App\Providers\EventServiceProvider::class, // Файл отсутствует
         App\Providers\RouteServiceProvider::class,
         App\Providers\BillingServiceProvider::class,

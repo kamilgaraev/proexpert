@@ -272,9 +272,25 @@ class KPICalculationService
      */
     protected function getOnTimeCompletionRate(int $userId, Carbon $from, Carbon $to): float
     {
-        // TODO: Реализовать после добавления полей deadline в completed_works
-        // Пока возвращаем placeholder
-        return 85.0;
+        $totalWorks = CompletedWork::where('user_id', $userId)
+            ->whereBetween('created_at', [$from, $to])
+            ->whereNotNull('deadline')
+            ->count();
+        
+        if ($totalWorks == 0) {
+            return 100.0;
+        }
+        
+        $onTimeWorks = CompletedWork::where('user_id', $userId)
+            ->whereBetween('created_at', [$from, $to])
+            ->whereNotNull('deadline')
+            ->where(function($query) {
+                $query->whereNull('completed_at')
+                    ->orWhereRaw('completed_at <= deadline');
+            })
+            ->count();
+        
+        return round(($onTimeWorks / $totalWorks) * 100, 2);
     }
 
     /**
@@ -282,9 +298,35 @@ class KPICalculationService
      */
     protected function getQualityScore(int $userId, Carbon $from, Carbon $to): float
     {
-        // TODO: Реализовать систему оценки качества работ
-        // Пока возвращаем placeholder на основе отсутствия переделок
-        return 90.0;
+        $worksWithRating = CompletedWork::where('user_id', $userId)
+            ->whereBetween('created_at', [$from, $to])
+            ->whereNotNull('quality_rating')
+            ->get();
+        
+        if ($worksWithRating->isEmpty()) {
+            $totalWorks = CompletedWork::where('user_id', $userId)
+                ->whereBetween('created_at', [$from, $to])
+                ->count();
+            
+            $reworked = DB::table('completed_works')
+                ->where('user_id', $userId)
+                ->whereBetween('created_at', [$from, $to])
+                ->where('status', 'reworked')
+                ->count();
+            
+            if ($totalWorks == 0) {
+                return 100.0;
+            }
+            
+            $reworkRate = ($reworked / $totalWorks);
+            $qualityScore = (1 - $reworkRate) * 100;
+            
+            return round(max(0, min(100, $qualityScore)), 2);
+        }
+        
+        $avgRating = $worksWithRating->avg('quality_rating');
+        
+        return round(min(100, $avgRating * 20), 2);
     }
 
     /**

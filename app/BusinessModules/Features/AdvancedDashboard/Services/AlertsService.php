@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use App\BusinessModules\Features\AdvancedDashboard\Models\DashboardAlert;
 use App\BusinessModules\Features\AdvancedDashboard\Events\AlertTriggered;
+use App\BusinessModules\Features\AdvancedDashboard\Services\KPICalculationService;
 use App\Models\Contract;
 use App\Models\Project;
 use App\Models\Material;
@@ -217,17 +218,36 @@ class AlertsService
      */
     public function getAlertHistory(int $alertId, int $limit = 50): array
     {
-        // TODO: Реализовать хранение и получение истории срабатываний
-        // Пока возвращаем базовую информацию из самого алерта
-        
         $alert = DashboardAlert::findOrFail($alertId);
+        
+        $history = DB::table('alert_history')
+            ->where('alert_id', $alertId)
+            ->orderBy('triggered_at', 'desc')
+            ->limit($limit)
+            ->get();
+        
+        $formattedHistory = [];
+        foreach ($history as $record) {
+            $formattedHistory[] = [
+                'id' => $record->id,
+                'status' => $record->status,
+                'trigger_value' => $record->trigger_value,
+                'message' => $record->message,
+                'triggered_at' => Carbon::parse($record->triggered_at)->toISOString(),
+                'resolved_at' => $record->resolved_at ? Carbon::parse($record->resolved_at)->toISOString() : null,
+                'trigger_data' => json_decode($record->trigger_data, true),
+            ];
+        }
         
         return [
             'alert_id' => $alert->id,
+            'alert_name' => $alert->name,
             'total_triggers' => $alert->trigger_count,
             'last_triggered_at' => $alert->last_triggered_at?->toISOString(),
             'last_checked_at' => $alert->last_checked_at?->toISOString(),
             'is_triggered' => $alert->is_triggered,
+            'history' => $formattedHistory,
+            'history_count' => count($formattedHistory),
         ];
     }
 
@@ -346,9 +366,27 @@ class AlertsService
      */
     protected function checkPaymentOverdue(DashboardAlert $alert): bool
     {
-        // TODO: Реализовать проверку просроченных платежей
-        // Требуется модель Payment
-        return false;
+        $organizationId = $alert->organization_id;
+        $now = Carbon::now();
+        
+        $overdueContracts = Contract::where('organization_id', $organizationId)
+            ->whereNotNull('payment_due_date')
+            ->where('payment_due_date', '<', $now)
+            ->where('status', '!=', 'completed')
+            ->where('status', '!=', 'paid')
+            ->count();
+        
+        $overdueMaterials = Material::join('projects', 'materials.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $organizationId)
+            ->whereNotNull('materials.payment_due_date')
+            ->where('materials.payment_due_date', '<', $now)
+            ->where('materials.status', '!=', 'paid')
+            ->count();
+        
+        $totalOverdue = $overdueContracts + $overdueMaterials;
+        $threshold = $alert->threshold_value ?? 1;
+        
+        return $this->compareValues($totalOverdue, $threshold, $alert->comparison_operator);
     }
 
     /**
@@ -356,8 +394,31 @@ class AlertsService
      */
     protected function checkKPIThreshold(DashboardAlert $alert): bool
     {
-        // TODO: Реализовать проверку KPI после создания KPICalculationService
-        return false;
+        if ($alert->target_entity !== 'user' || !$alert->target_entity_id) {
+            return false;
+        }
+        
+        $kpiService = app(KPICalculationService::class);
+        
+        $from = Carbon::now()->startOfMonth();
+        $to = Carbon::now();
+        
+        try {
+            $kpiData = $kpiService->calculateUserKPI(
+                $alert->target_entity_id,
+                $alert->organization_id,
+                $from,
+                $to
+            );
+            
+            $kpiValue = $kpiData['overall_kpi'] ?? 0;
+            $threshold = $alert->threshold_value ?? 60;
+            
+            return $this->compareValues($kpiValue, $threshold, $alert->comparison_operator);
+        } catch (\Exception $e) {
+            Log::error("KPI threshold check failed: " . $e->getMessage());
+            return false;
+        }
     }
 
     /**
@@ -365,15 +426,65 @@ class AlertsService
      */
     protected function checkCustomConditions(DashboardAlert $alert): bool
     {
-        // Для кастомных условий используем данные из conditions
         $conditions = $alert->conditions;
         
-        if (empty($conditions) || !isset($conditions['metric']) || !isset($conditions['value'])) {
+        if (!$conditions || !isset($conditions['metric'])) {
             return false;
         }
         
-        // TODO: Реализовать динамическую проверку кастомных метрик
-        return false;
+        $metric = $conditions['metric'];
+        $value = $this->getCustomMetricValue($metric, $alert);
+        
+        if ($value === null) {
+            return false;
+        }
+        
+        $threshold = $alert->threshold_value;
+        $operator = $alert->comparison_operator;
+        
+        return $this->compareValues($value, $threshold, $operator);
+    }
+    
+    /**
+     * Получить значение кастомной метрики
+     */
+    protected function getCustomMetricValue(string $metric, DashboardAlert $alert)
+    {
+        switch ($metric) {
+            case 'active_projects_count':
+                return Project::where('organization_id', $alert->organization_id)
+                    ->where('status', 'active')
+                    ->count();
+                    
+            case 'total_contracts_value':
+                return Contract::where('organization_id', $alert->organization_id)
+                    ->whereIn('status', ['active', 'in_progress'])
+                    ->sum('contract_amount');
+                    
+            case 'material_spending_rate':
+                $from = Carbon::now()->startOfMonth();
+                $to = Carbon::now();
+                return DB::table('completed_works')
+                    ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+                    ->where('projects.organization_id', $alert->organization_id)
+                    ->whereBetween('completed_works.created_at', [$from, $to])
+                    ->sum('completed_works.material_cost');
+                    
+            case 'average_contract_progress':
+                return Contract::where('organization_id', $alert->organization_id)
+                    ->whereIn('status', ['active', 'in_progress'])
+                    ->avg('progress');
+                    
+            case 'overdue_contracts_count':
+                return Contract::where('organization_id', $alert->organization_id)
+                    ->whereNotNull('end_date')
+                    ->where('end_date', '<', Carbon::now())
+                    ->where('status', '!=', 'completed')
+                    ->count();
+                    
+            default:
+                return null;
+        }
     }
 
     /**
