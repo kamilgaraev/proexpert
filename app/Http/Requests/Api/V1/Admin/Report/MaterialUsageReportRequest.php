@@ -11,27 +11,23 @@ use App\Models\Role;
 
 class MaterialUsageReportRequest extends FormRequest
 {
-    /**
-     * Determine if the user is authorized to make this request.
-     * Авторизация выполняется через middleware 'can:view-reports' на контроллере.
-     */
     public function authorize(): bool
     {
+        if (!$this->user()) {
+            abort(401, 'Unauthorized');
+        }
+
+        $organizationId = $this->attributes->get('current_organization_id');
+        if (!$organizationId) {
+            abort(403, 'Контекст организации не определен');
+        }
+
         return true;
     }
 
-    /**
-     * Get the validation rules that apply to the request.
-     *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array|string>
-     */
     public function rules(): array
     {
         $organizationId = $this->attributes->get('current_organization_id');
-        if (!$organizationId) {
-            // Это не должно произойти, если middleware organization_context работает
-            return ['organization_error' => 'required']; // Провалить валидацию
-        }
 
         return [
             'project_id' => [

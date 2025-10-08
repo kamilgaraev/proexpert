@@ -13,15 +13,21 @@ class WorkCompletionReportRequest extends FormRequest
 {
     public function authorize(): bool
     {
+        if (!$this->user()) {
+            abort(401, 'Unauthorized');
+        }
+
+        $organizationId = $this->attributes->get('current_organization_id');
+        if (!$organizationId) {
+            abort(403, 'Контекст организации не определен');
+        }
+
         return true;
     }
 
     public function rules(): array
     {
         $organizationId = $this->attributes->get('current_organization_id');
-        if (!$organizationId) {
-            return ['organization_error' => 'required'];
-        }
 
         return [
             'project_id' => [

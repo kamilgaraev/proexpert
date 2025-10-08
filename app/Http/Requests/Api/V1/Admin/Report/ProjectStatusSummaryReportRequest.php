@@ -10,6 +10,10 @@ class ProjectStatusSummaryReportRequest extends FormRequest
 {
     public function authorize(): bool
     {
+        if (!$this->user()) {
+            abort(401, 'Unauthorized');
+        }
+
         return true;
     }
 
