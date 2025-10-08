@@ -14,18 +14,11 @@ use App\Services\LogService;
 
 class JwtMiddleware
 {
-    /**
-     * Проверка JWT токена.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @param  \Closure  $next
-     * @param  string  $guard Имя guard для аутентификации
-     * @return mixed
-     */
     public function handle(Request $request, Closure $next, $guard = null)
     {
+        $isRefreshEndpoint = $request->is('*/auth/refresh');
+        
         try {
-            // Проверяем наличие токена в запросе
             if (!$token = JWTAuth::getToken()) {
                 LogService::authLog('auth_failed', [
                     'reason' => 'token_missing',
@@ -39,7 +32,6 @@ class JwtMiddleware
                 ], 401);
             }
             
-            // Проверяем токен на действительность (включая черный список)
             try {
                 $payload = JWTAuth::getPayload($token);
             } catch (TokenBlacklistedException $e) {
@@ -55,12 +47,10 @@ class JwtMiddleware
                 ], 401);
             }
             
-            // Устанавливаем guard, если указан
             if ($guard) {
                 auth()->shouldUse($guard);
             }
             
-            // Пытаемся получить пользователя по токену
             $user = JWTAuth::parseToken()->authenticate();
             
             if (!$user) {
@@ -77,7 +67,6 @@ class JwtMiddleware
                 ], 401);
             }
             
-            // Проверяем, есть ли токен в черном списке еще раз
             if (JWTAuth::manager()->getBlacklist()->has($payload)) {
                 LogService::authLog('auth_failed', [
                     'user_id' => $user->id,
@@ -92,7 +81,6 @@ class JwtMiddleware
                 ], 401);
             }
             
-            // Добавляем информацию о токене в запрос
             $request->attributes->add(['token_payload' => $payload]);
             $request->attributes->add(['jwt_token' => (string)$token]);
             
@@ -104,6 +92,16 @@ class JwtMiddleware
             ]);
             
         } catch (TokenExpiredException $e) {
+            if ($isRefreshEndpoint) {
+                LogService::authLog('token_expired_refresh', [
+                    'reason' => 'token_expired_allowed_for_refresh',
+                    'ip' => $request->ip(),
+                    'uri' => $request->getRequestUri(),
+                ]);
+                
+                return $next($request);
+            }
+            
             LogService::authLog('token_rejected', [
                 'reason' => 'token_expired',
                 'ip' => $request->ip(),
