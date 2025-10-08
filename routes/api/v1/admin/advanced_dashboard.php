@@ -6,7 +6,7 @@ use App\BusinessModules\Features\AdvancedDashboard\Http\Controllers\WidgetsRegis
 
 // Advanced Dashboard - Платный модуль
 // Требует активации модуля в организации
-Route::prefix('advanced-dashboard')->middleware(['feature:advanced_dashboard'])->group(function () {
+Route::prefix('advanced-dashboard')->middleware(['advanced_dashboard.active'])->group(function () {
     
     // Получение данных виджета
     Route::get('/widgets/{type}/data', [WidgetsController::class, 'getData'])->name('advanced-dashboard.widgets.data');

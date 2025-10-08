@@ -1,7 +1,6 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\BusinessModules\Features\AdvancedDashboard\Http\Controllers\AdvancedDashboardController;
 use App\BusinessModules\Features\AdvancedDashboard\Http\Controllers\DashboardManagementController;
 use App\BusinessModules\Features\AdvancedDashboard\Http\Controllers\AlertsController;
 use App\BusinessModules\Features\AdvancedDashboard\Http\Controllers\ExportController;
@@ -42,26 +41,6 @@ Route::prefix('api/v1/admin/advanced-dashboard')
             Route::post('/{id}/make-default', [DashboardManagementController::class, 'makeDefault'])->name('make_default');
             Route::post('/{id}/share', [DashboardManagementController::class, 'share'])->name('share');
             Route::delete('/{id}/share', [DashboardManagementController::class, 'unshare'])->name('unshare');
-        });
-        
-        // Analytics endpoints
-        Route::prefix('analytics')->name('analytics.')->group(function () {
-            // Financial
-            Route::get('/financial/cash-flow', [AdvancedDashboardController::class, 'getCashFlow'])->name('cash_flow');
-            Route::get('/financial/profit-loss', [AdvancedDashboardController::class, 'getProfitLoss'])->name('profit_loss');
-            Route::get('/financial/roi', [AdvancedDashboardController::class, 'getROI'])->name('roi');
-            Route::get('/financial/revenue-forecast', [AdvancedDashboardController::class, 'getRevenueForecast'])->name('revenue_forecast');
-            Route::get('/financial/receivables-payables', [AdvancedDashboardController::class, 'getReceivablesPayables'])->name('receivables_payables');
-            
-            // Predictive
-            Route::get('/predictive/contract-forecast', [AdvancedDashboardController::class, 'getContractForecast'])->name('contract_forecast');
-            Route::get('/predictive/budget-risk', [AdvancedDashboardController::class, 'getBudgetRisk'])->name('budget_risk');
-            Route::get('/predictive/material-needs', [AdvancedDashboardController::class, 'getMaterialNeeds'])->name('material_needs');
-            
-            // HR/KPI
-            Route::get('/hr/kpi', [AdvancedDashboardController::class, 'getKPI'])->name('kpi');
-            Route::get('/hr/top-performers', [AdvancedDashboardController::class, 'getTopPerformers'])->name('top_performers');
-            Route::get('/hr/resource-utilization', [AdvancedDashboardController::class, 'getResourceUtilization'])->name('resource_utilization');
         });
         
         // Alerts
