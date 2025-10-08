@@ -9,7 +9,6 @@ use App\Models\Project;
 use App\Models\User;
 use App\Models\WorkType;
 use App\Models\Organization;
-use App\Models\Role;
 use Faker\Factory as Faker;
 
 class WorkCompletionLogSeeder extends Seeder
@@ -24,31 +23,36 @@ class WorkCompletionLogSeeder extends Seeder
             throw new \Exception('Для сидирования work_completion_logs необходима хотя бы одна организация.');
         }
 
-        // Получаем прорабов (пользователей с ролью foreman)
-        $foremanRole = Role::where('slug', Role::ROLE_FOREMAN)->first();
-        if (!$foremanRole) {
-            throw new \Exception('Роль прораба не найдена в базе данных.');
-        }
-
-        $foremenIds = User::whereHas('roles', function ($query) use ($foremanRole) {
-            $query->where('role_id', $foremanRole->id);
+        // Получаем прорабов через новую систему авторизации
+        $foremenIds = User::whereHas('roleAssignments', function ($query) {
+            $query->where('role_slug', 'foreman')
+                  ->where('is_active', true);
         })->pluck('id')->toArray();
 
         if (empty($foremenIds)) {
             // Создаем тестового прораба если нет
-            $testForeman = User::create([
-                'name' => 'Тестовый Прораб',
-                'email' => 'foreman@test.com',
-                'password' => bcrypt('password'),
-                'current_organization_id' => $organizationId,
-                'user_type' => 'foreman',
-                'phone' => $faker->phoneNumber,
-                'email_verified_at' => now(),
-            ]);
+            $testForeman = User::firstOrCreate(
+                ['email' => 'foreman@test.com'],
+                [
+                    'name' => 'Тестовый Прораб',
+                    'password' => bcrypt('password'),
+                    'current_organization_id' => $organizationId,
+                    'phone' => $faker->phoneNumber,
+                    'email_verified_at' => now(),
+                ]
+            );
             
-            $testForeman->roles()->attach($foremanRole->id, [
-                'organization_id' => $organizationId
-            ]);
+            // Назначаем роль через новую систему
+            $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+            if (!$testForeman->hasRole('foreman', $context->id)) {
+                \App\Domain\Authorization\Models\UserRoleAssignment::create([
+                    'user_id' => $testForeman->id,
+                    'role_slug' => 'foreman',
+                    'role_type' => \App\Domain\Authorization\Models\UserRoleAssignment::TYPE_SYSTEM,
+                    'context_id' => $context->id,
+                    'is_active' => true,
+                ]);
+            }
             
             $foremenIds = [$testForeman->id];
         }
@@ -60,6 +64,15 @@ class WorkCompletionLogSeeder extends Seeder
         if (empty($projectIds) || empty($workTypeIds)) {
             throw new \Exception('Для сидирования work_completion_logs необходимы проекты и виды работ.');
         }
+
+        $existingCount = WorkCompletionLog::whereIn('project_id', $projectIds)->count();
+        if ($existingCount >= 50) {
+            $this->command->info("Пропускаем создание логов работ. Уже существует {$existingCount} записей");
+            return;
+        }
+
+        $recordsToCreate = 50 - $existingCount;
+        $this->command->info("Создаем {$recordsToCreate} записей логов работ...");
 
         // Генерируем записи за последние 3 месяца
         $startDate = Carbon::now()->subMonths(3);
@@ -83,8 +96,8 @@ class WorkCompletionLogSeeder extends Seeder
             'Облицовочные работы'
         ];
 
-        // Создаем 200 записей для демонстрации активности
-        foreach (range(1, 200) as $i) {
+        // Создаем записи для демонстрации активности
+        foreach (range(1, $recordsToCreate) as $i) {
             $completionDate = $faker->dateTimeBetween($startDate, $endDate);
             $quantity = $faker->randomFloat(2, 1, 100);
             $unitPrice = $faker->randomFloat(2, 500, 5000);
@@ -107,6 +120,6 @@ class WorkCompletionLogSeeder extends Seeder
             ]);
         }
 
-        $this->command->info('Создано 200 записей логов выполненных работ');
+        $this->command->info("✓ Создано {$recordsToCreate} записей логов выполненных работ");
     }
 } 

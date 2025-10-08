@@ -25,15 +25,20 @@ class MaterialUsageLogSeeder extends Seeder
             throw new \Exception('Для сидирования material_usage_logs необходима хотя бы одна организация.');
         }
 
-        // Получаем прорабов
-        $foremanRole = \App\Models\Role::where('slug', \App\Models\Role::ROLE_FOREMAN)->first();
-        $userIds = [];
-        
-        if ($foremanRole) {
-            $userIds = User::whereHas('roles', function ($query) use ($foremanRole) {
-                $query->where('role_id', $foremanRole->id);
-            })->pluck('id')->toArray();
+        $existingCount = MaterialUsageLog::where('organization_id', $organizationId)->count();
+        if ($existingCount >= 100) {
+            $this->command->info("Пропускаем создание логов материалов. Уже существует {$existingCount} записей для организации {$organizationId}");
+            return;
         }
+        
+        $recordsToCreate = 100 - $existingCount;
+        $this->command->info("Создаем {$recordsToCreate} записей логов материалов...");
+
+        // Получаем прорабов через новую систему авторизации
+        $userIds = User::whereHas('roleAssignments', function ($query) {
+            $query->where('role_slug', 'foreman')
+                  ->where('is_active', true);
+        })->pluck('id')->toArray();
         
         if (empty($userIds)) {
             $userIds = User::where('current_organization_id', $organizationId)->pluck('id')->toArray();
@@ -53,7 +58,7 @@ class MaterialUsageLogSeeder extends Seeder
         }
 
         // Создаем больше записей для демонстрации активности
-        foreach (range(1, 100) as $i) {
+        foreach (range(1, $recordsToCreate) as $i) {
             $operationType = $i % 2 === 0 ? 'write_off' : 'receipt';
             $quantity = rand(1, 100) + rand(0, 999) / 1000;
             $productionNormQuantity = $quantity * (0.95 + rand(0, 10) / 100); // ±5% от количества

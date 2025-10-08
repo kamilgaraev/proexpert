@@ -14,7 +14,6 @@ class MeasurementUnitSeeder extends Seeder
      */
     public function run(): void
     {
-        $now = Carbon::now();
         $unitsData = [
             ['name' => 'Штука', 'short_name' => 'шт.'],
             ['name' => 'Килограмм', 'short_name' => 'кг'],
@@ -26,29 +25,48 @@ class MeasurementUnitSeeder extends Seeder
             ['name' => 'Упаковка', 'short_name' => 'упак.'],
         ];
 
-        for ($organizationId = 1; $organizationId <= 20; $organizationId++) {
-            // Проверяем, существует ли организация с таким ID
-            $organizationExists = DB::table('organizations')->where('id', $organizationId)->exists();
+        $organizations = DB::table('organizations')->pluck('id');
+        
+        if ($organizations->isEmpty()) {
+            $this->command->warn('Нет организаций в базе данных. Пропускаем создание единиц измерения.');
+            return;
+        }
 
-            if ($organizationExists) {
-                $dataToInsert = [];
-                foreach ($unitsData as $unit) {
-                    $dataToInsert[] = [
+        $this->command->info("Обработка единиц измерения для {$organizations->count()} организаций...");
+        
+        $totalCreated = 0;
+        $totalUpdated = 0;
+        $now = Carbon::now();
+        
+        foreach ($organizations as $organizationId) {
+            foreach ($unitsData as $unit) {
+                $exists = DB::table('measurement_units')
+                    ->where('organization_id', $organizationId)
+                    ->where('short_name', $unit['short_name'])
+                    ->exists();
+
+                DB::table('measurement_units')->updateOrInsert(
+                    [
                         'organization_id' => $organizationId,
-                        'name' => $unit['name'],
                         'short_name' => $unit['short_name'],
-                        // 'type' => 'material', // Будет использовано значение по умолчанию из миграции
-                        // 'is_default' => false, // Будет использовано значение по умолчанию из миграции
-                        // 'is_system' => false, // Будет использовано значение по умолчанию из миграции
-                        'created_at' => $now,
+                    ],
+                    [
+                        'name' => $unit['name'],
                         'updated_at' => $now,
-                    ];
+                        'created_at' => DB::raw('COALESCE(created_at, "' . $now->toDateTimeString() . '")'),
+                    ]
+                );
+
+                if ($exists) {
+                    $totalUpdated++;
+                } else {
+                    $totalCreated++;
                 }
-                DB::table('measurement_units')->insert($dataToInsert);
-                $this->command->info("Seeded measurement units for existing organization ID: {$organizationId}");
-            } else {
-                $this->command->info("Skipped measurement units for non-existing organization ID: {$organizationId}");
             }
         }
+        
+        $this->command->info("✓ Обработано организаций: {$organizations->count()}");
+        $this->command->info("✓ Создано новых единиц: {$totalCreated}");
+        $this->command->info("✓ Обновлено существующих: {$totalUpdated}");
     }
 }

@@ -8,42 +8,85 @@ use Illuminate\Database\Seeder;
 
 class DatabaseSeeder extends Seeder
 {
-    /**
-     * Seed the application's database.
-     */
     public function run(): void
     {
-        // User::factory(10)->create();
+        $this->command->info('═══════════════════════════════════════════════════');
+        $this->command->info('   ЗАПОЛНЕНИЕ БАЗЫ ДАННЫХ ТЕСТОВЫМИ ДАННЫМИ');
+        $this->command->info('═══════════════════════════════════════════════════');
+        $this->command->newLine();
 
-        // User::factory()->create([
-        //     'name' => 'Test User',
-        //     'email' => 'test@example.com',
-        // ]);
+        $this->seedSystemData();
+        $this->seedBusinessData();
+        $this->seedTestData();
 
-        // Базовые системные данные
-        $this->call([
-            RolePermissionSeeder::class,
-            MeasurementUnitSeeder::class,
-            SubscriptionPlanSeeder::class,
-            SubscriptionAddonSeeder::class,
-            OrganizationModuleSeeder::class,
-        ]);
+        $this->command->newLine();
+        $this->command->info('═══════════════════════════════════════════════════');
+        $this->command->info('   ✓ ЗАПОЛНЕНИЕ ЗАВЕРШЕНО УСПЕШНО');
+        $this->command->info('═══════════════════════════════════════════════════');
+    }
 
-        // Базовые данные для работы (организации, проекты, материалы)
+    private function seedSystemData(): void
+    {
+        $this->command->info('┌─ СИСТЕМНЫЕ ДАННЫЕ');
+        
+        $this->command->info('│  ├─ Роли и права...');
+        $this->call(RolePermissionSeeder::class);
+        
+        $this->command->info('│  ├─ Единицы измерения...');
+        $this->call(MeasurementUnitSeeder::class);
+        
+        $this->command->info('│  └─ Тарифные планы...');
+        $this->call(SubscriptionPlanSeeder::class);
+        
+        $this->command->newLine();
+    }
+
+    private function seedBusinessData(): void
+    {
+        $this->command->info('┌─ БИЗНЕС-ДАННЫЕ');
+        
+        $this->command->info('│  ├─ Базовые данные (организации, проекты, материалы)...');
         $this->call(BasicDataSeeder::class);
+        
+        $this->callIfExists('│  └─ Контракты...', ContractSeeder::class);
+        
+        $this->command->newLine();
+    }
 
-        // Контракты с полными данными
-        $this->call(ContractSeeder::class);
+    private function seedTestData(): void
+    {
+        $this->command->info('┌─ ТЕСТОВЫЕ ДАННЫЕ (для демонстрации)');
+        
+        $this->command->info('│  ├─ Активность прорабов...');
+        $this->call(ForemanActivitySeeder::class);
+        
+        $this->command->info('│  ├─ Логи использования материалов...');
+        $this->call(MaterialUsageLogSeeder::class);
+        
+        $this->command->info('│  ├─ Логи выполненных работ...');
+        $this->call(WorkCompletionLogSeeder::class);
+        
+        $this->command->info('│  ├─ Выполненные работы...');
+        $this->call(CompletedWorkSeeder::class);
+        
+        $this->callIfExists('│  └─ Данные для официального отчета...', OfficialMaterialReportSeeder::class);
+        
+        $this->command->newLine();
+    }
 
-        // Сидеры для активности прорабов и выполненных работ
-        $this->call([
-            ForemanActivitySeeder::class,
-            MaterialUsageLogSeeder::class,
-            WorkCompletionLogSeeder::class,
-            CompletedWorkSeeder::class,
-        ]);
-
-        // Тестовые данные для официального отчета по материалам
-        $this->call(OfficialMaterialReportSeeder::class);
+    private function callIfExists(string $message, string|array $seeders): void
+    {
+        $seeders = is_array($seeders) ? $seeders : [$seeders];
+        
+        foreach ($seeders as $seeder) {
+            try {
+                if (class_exists($seeder)) {
+                    $this->command->info($message);
+                    $this->call($seeder);
+                }
+            } catch (\Exception $e) {
+                $this->command->warn("│  ⚠ Пропущен {$seeder}: " . $e->getMessage());
+            }
+        }
     }
 }

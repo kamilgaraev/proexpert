@@ -6,7 +6,6 @@ use Illuminate\Database\Seeder;
 use Carbon\Carbon;
 use App\Models\User;
 use App\Models\Organization;
-use App\Models\Role;
 use App\Models\Models\Log\WorkCompletionLog;
 use App\Models\Models\Log\MaterialUsageLog;
 use Faker\Factory as Faker;
@@ -23,14 +22,10 @@ class ForemanActivitySeeder extends Seeder
             throw new \Exception('Для сидирования активности прорабов необходима хотя бы одна организация.');
         }
 
-        // Получаем или создаем прорабов
-        $foremanRole = Role::where('slug', Role::ROLE_FOREMAN)->first();
-        if (!$foremanRole) {
-            throw new \Exception('Роль прораба не найдена в базе данных.');
-        }
-
-        $foremen = User::whereHas('roles', function ($query) use ($foremanRole) {
-            $query->where('role_id', $foremanRole->id);
+        // Получаем или создаем прорабов через новую систему авторизации
+        $foremen = User::whereHas('roleAssignments', function ($query) {
+            $query->where('role_slug', 'foreman')
+                  ->where('is_active', true);
         })->get();
 
         // Если нет прорабов, создаем тестовых
@@ -43,35 +38,58 @@ class ForemanActivitySeeder extends Seeder
                 'Андрей Смирнов'
             ];
 
+            $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+            
             foreach ($foremanNames as $index => $name) {
-                $foreman = User::create([
-                    'name' => $name,
-                    'email' => 'foreman' . ($index + 1) . '@test.com',
-                    'password' => bcrypt('password'),
-                    'current_organization_id' => $organizationId,
-                    'user_type' => 'foreman',
-                    'phone' => $faker->phoneNumber,
-                    'email_verified_at' => now(),
-                ]);
+                $email = 'foreman' . ($index + 1) . '@test.com';
                 
-                $foreman->roles()->attach($foremanRole->id, [
-                    'organization_id' => $organizationId
-                ]);
+                $foreman = User::firstOrCreate(
+                    ['email' => $email],
+                    [
+                        'name' => $name,
+                        'password' => bcrypt('password'),
+                        'current_organization_id' => $organizationId,
+                        'phone' => $faker->phoneNumber,
+                        'email_verified_at' => now(),
+                    ]
+                );
+                
+                // Назначаем роль через новую систему
+                if (!$foreman->hasRole('foreman', $context->id)) {
+                    \App\Domain\Authorization\Models\UserRoleAssignment::create([
+                        'user_id' => $foreman->id,
+                        'role_slug' => 'foreman',
+                        'role_type' => \App\Domain\Authorization\Models\UserRoleAssignment::TYPE_SYSTEM,
+                        'context_id' => $context->id,
+                        'is_active' => true,
+                    ]);
+                }
                 
                 $foremen->push($foreman);
             }
         }
 
-        // Генерируем активность за последние 30 дней
+        // Проверяем, есть ли уже активность за последние 30 дней
         $startDate = Carbon::now()->subDays(30);
         $endDate = Carbon::now();
+        
+        $existingActivityCount = MaterialUsageLog::whereBetween('usage_date', [$startDate, $endDate])
+            ->whereIn('user_id', $foremen->pluck('id'))
+            ->count();
+        
+        if ($existingActivityCount > 100) {
+            $this->command->info("Пропускаем создание активности прорабов. Уже существует {$existingActivityCount} записей за последние 30 дней");
+            return;
+        }
 
         // Создаем реалистичную активность для каждого прораба
+        $this->command->info("Создаем активность для {$foremen->count()} прорабов...");
+        
         foreach ($foremen as $foreman) {
             $this->generateForemanActivity($foreman, $startDate, $endDate, $faker);
         }
 
-        $this->command->info('Создана активность для ' . $foremen->count() . ' прорабов за последние 30 дней');
+        $this->command->info("✓ Создана активность для {$foremen->count()} прорабов за последние 30 дней");
     }
 
     private function generateForemanActivity(User $foreman, Carbon $startDate, Carbon $endDate, $faker): void

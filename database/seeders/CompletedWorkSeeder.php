@@ -10,7 +10,6 @@ use App\Models\User;
 use App\Models\WorkType;
 use App\Models\Organization;
 use App\Models\Contract;
-use App\Models\Role;
 use Faker\Factory as Faker;
 
 class CompletedWorkSeeder extends Seeder
@@ -25,14 +24,10 @@ class CompletedWorkSeeder extends Seeder
             throw new \Exception('Для сидирования completed_works необходима хотя бы одна организация.');
         }
 
-        // Получаем прорабов (пользователей с ролью foreman)
-        $foremanRole = Role::where('slug', Role::ROLE_FOREMAN)->first();
-        if (!$foremanRole) {
-            throw new \Exception('Роль прораба не найдена в базе данных.');
-        }
-
-        $foremenIds = User::whereHas('roles', function ($query) use ($foremanRole) {
-            $query->where('role_id', $foremanRole->id);
+        // Получаем прорабов через новую систему авторизации
+        $foremenIds = User::whereHas('roleAssignments', function ($query) {
+            $query->where('role_slug', 'foreman')
+                  ->where('is_active', true);
         })->pluck('id')->toArray();
 
         if (empty($foremenIds)) {
@@ -52,6 +47,16 @@ class CompletedWorkSeeder extends Seeder
             throw new \Exception('Для сидирования completed_works необходимы проекты и виды работ.');
         }
 
+        // Проверяем существующие записи
+        $existingCount = CompletedWork::whereIn('project_id', $projectIds)->count();
+        if ($existingCount >= 150) {
+            $this->command->info("Пропускаем создание выполненных работ. Уже существует {$existingCount} записей");
+            return;
+        }
+
+        $recordsToCreate = 150 - $existingCount;
+        $this->command->info("Создаем {$recordsToCreate} записей выполненных работ...");
+
         // Статусы выполненных работ
         $statuses = ['pending', 'approved', 'rejected', 'in_review'];
         
@@ -59,8 +64,8 @@ class CompletedWorkSeeder extends Seeder
         $startDate = Carbon::now()->subMonths(2);
         $endDate = Carbon::now();
 
-        // Создаем 150 записей выполненных работ
-        foreach (range(1, 150) as $i) {
+        // Создаем записи выполненных работ
+        foreach (range(1, $recordsToCreate) as $i) {
             $completionDate = $faker->dateTimeBetween($startDate, $endDate);
             $quantity = $faker->randomFloat(3, 0.5, 200);
             $price = $faker->randomFloat(2, 300, 8000);
@@ -97,6 +102,6 @@ class CompletedWorkSeeder extends Seeder
             ]);
         }
 
-        $this->command->info('Создано 150 записей выполненных работ');
+        $this->command->info("✓ Создано {$recordsToCreate} записей выполненных работ");
     }
 } 
