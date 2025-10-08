@@ -19,31 +19,32 @@ class BasicDataSeeder extends Seeder
     {
         $faker = Faker::create('ru_RU');
         
-        // Создаем или находим организацию
-        $organization = Organization::firstOrCreate(
-            ['id' => 1],
-            [
+        $organizations = Organization::all();
+        if ($organizations->isEmpty()) {
+            $this->command->warn('Нет организаций в базе данных. Создаю тестовую организацию...');
+            $organization = Organization::create([
                 'name' => 'Тестовая организация',
                 'email' => 'test@example.com',
                 'is_active' => true,
-            ]
-        );
+            ]);
+            $organizations = collect([$organization]);
+        }
 
-        // Создаем единицы измерения если их нет
-        $units = [
-            ['name' => 'штуки', 'short_name' => 'шт', 'type' => 'piece'],
-            ['name' => 'квадратный метр', 'short_name' => 'м²', 'type' => 'area'],
-            ['name' => 'кубический метр', 'short_name' => 'м³', 'type' => 'volume'],
-            ['name' => 'метр', 'short_name' => 'м', 'type' => 'length'],
-            ['name' => 'килограмм', 'short_name' => 'кг', 'type' => 'weight'],
-            ['name' => 'тонна', 'short_name' => 'т', 'type' => 'weight'],
-        ];
+        $this->command->info("Создание базовых данных для {$organizations->count()} организаций...");
+        
+        foreach ($organizations as $organization) {
+            $this->seedForOrganization($organization, $faker);
+        }
+    }
 
-        foreach ($units as $unitData) {
-            MeasurementUnit::firstOrCreate(
-                ['short_name' => $unitData['short_name'], 'organization_id' => $organization->id],
-                array_merge($unitData, ['organization_id' => $organization->id])
-            );
+    private function seedForOrganization(Organization $organization, $faker): void
+    {
+        // Получаем единицы измерения (создаются в MeasurementUnitSeeder)
+        $measurementUnits = MeasurementUnit::where('organization_id', $organization->id)->pluck('id', 'short_name');
+        
+        if ($measurementUnits->isEmpty()) {
+            $this->command->line("  ⊳ {$organization->name} (ID: {$organization->id}): пропущено (нет единиц измерения)");
+            return;
         }
 
         // Создаем поставщиков
@@ -96,10 +97,7 @@ class BasicDataSeeder extends Seeder
             );
         }
 
-        // Получаем единицы измерения для дальнейшего использования
-        $measurementUnits = MeasurementUnit::where('organization_id', $organization->id)->pluck('id', 'short_name');
-
-        // Создаем виды работ (ИСПРАВЛЕНО: добавлена organization_id)
+        // Создаем виды работ
         $workTypes = [
             'Земляные работы',
             'Фундаментные работы',
@@ -158,11 +156,11 @@ class BasicDataSeeder extends Seeder
             );
         }
 
-        $this->command->info('Созданы базовые данные:');
-        $this->command->info('- Используется организация: ' . $organization->name . ' (ID: ' . $organization->id . ')');
-        $this->command->info('- Проектов: ' . Project::count());
-        $this->command->info('- Видов работ: ' . WorkType::count());
-        $this->command->info('- Материалов: ' . Material::count());
-        $this->command->info('- Поставщиков: ' . Supplier::count());
+        $projectsCount = Project::where('organization_id', $organization->id)->count();
+        $workTypesCount = WorkType::where('organization_id', $organization->id)->count();
+        $materialsCount = Material::where('organization_id', $organization->id)->count();
+        $suppliersCount = Supplier::where('organization_id', $organization->id)->count();
+        
+        $this->command->line("  ✓ {$organization->name} (ID: {$organization->id}): проектов {$projectsCount}, работ {$workTypesCount}, материалов {$materialsCount}, поставщиков {$suppliersCount}");
     }
 } 
