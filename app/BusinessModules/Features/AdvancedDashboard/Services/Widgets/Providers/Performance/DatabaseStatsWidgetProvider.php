@@ -16,34 +16,94 @@ class DatabaseStatsWidgetProvider extends AbstractWidgetProvider
 
     protected function fetchData(WidgetDataRequest $request): array
     {
-        $tables = [];
-        $driver = config('database.default');
+        // Для SaaS показываем статистику ТОЛЬКО по данным организации
+        return $this->getOrganizationDataStats($request->organizationId);
+    }
 
-        try {
-            if ($driver === 'mysql') {
-                $dbName = config("database.connections.mysql.database");
-                $results = DB::select("
-                    SELECT 
-                        table_name,
-                        table_rows,
-                        ROUND(((data_length + index_length) / 1024 / 1024), 2) AS size_mb
-                    FROM information_schema.TABLES
-                    WHERE table_schema = ?
-                    ORDER BY (data_length + index_length) DESC
-                    LIMIT 10
-                ", [$dbName]);
+    protected function getOrganizationDataStats(int $organizationId): array
+    {
+        // Подсчитываем записи организации в основных таблицах
+        $stats = [
+            'projects' => [
+                'count' => DB::table('projects')
+                    ->where('organization_id', $organizationId)
+                    ->count(),
+                'active' => DB::table('projects')
+                    ->where('organization_id', $organizationId)
+                    ->whereIn('status', ['active', 'in_progress'])
+                    ->count(),
+            ],
+            'contracts' => [
+                'count' => DB::table('contracts')
+                    ->where('organization_id', $organizationId)
+                    ->count(),
+                'active' => DB::table('contracts')
+                    ->where('organization_id', $organizationId)
+                    ->where('status', 'active')
+                    ->count(),
+            ],
+            'completed_works' => [
+                'count' => DB::table('completed_works')
+                    ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+                    ->where('projects.organization_id', $organizationId)
+                    ->count(),
+                'last_30_days' => DB::table('completed_works')
+                    ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+                    ->where('projects.organization_id', $organizationId)
+                    ->where('completed_works.created_at', '>=', now()->subDays(30))
+                    ->count(),
+            ],
+            'users' => [
+                'count' => DB::table('user_projects')
+                    ->join('projects', 'user_projects.project_id', '=', 'projects.id')
+                    ->where('projects.organization_id', $organizationId)
+                    ->distinct('user_projects.user_id')
+                    ->count('user_projects.user_id'),
+            ],
+            'materials' => [
+                'count' => DB::table('materials')
+                    ->where('organization_id', $organizationId)
+                    ->count(),
+            ],
+        ];
 
-                $tables = collect($results)->map(fn($r) => [
-                    'table' => $r->table_name,
-                    'rows' => $r->table_rows,
-                    'size_mb' => $r->size_mb,
-                ])->toArray();
-            }
-        } catch (\Exception $e) {
-            $tables = [];
-        }
+        // Вычисляем рост за последние 30 дней
+        $growth = $this->calculateGrowth($organizationId);
 
-        return ['database_stats' => $tables];
+        return [
+            'database_stats' => [
+                'organization_id' => $organizationId,
+                'records_by_entity' => $stats,
+                'total_records' => array_sum([
+                    $stats['projects']['count'],
+                    $stats['contracts']['count'],
+                    $stats['completed_works']['count'],
+                    $stats['materials']['count'],
+                ]),
+                'growth_30_days' => $growth,
+                'database_health' => 'ok',
+            ],
+        ];
+    }
+
+    protected function calculateGrowth(int $organizationId): array
+    {
+        $thirtyDaysAgo = now()->subDays(30);
+        
+        return [
+            'new_projects' => DB::table('projects')
+                ->where('organization_id', $organizationId)
+                ->where('created_at', '>=', $thirtyDaysAgo)
+                ->count(),
+            'new_contracts' => DB::table('contracts')
+                ->where('organization_id', $organizationId)
+                ->where('created_at', '>=', $thirtyDaysAgo)
+                ->count(),
+            'new_works' => DB::table('completed_works')
+                ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+                ->where('projects.organization_id', $organizationId)
+                ->where('completed_works.created_at', '>=', $thirtyDaysAgo)
+                ->count(),
+        ];
     }
 }
-

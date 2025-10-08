@@ -17,39 +17,95 @@ class SystemMetricsWidgetProvider extends AbstractWidgetProvider
 
     protected function fetchData(WidgetDataRequest $request): array
     {
-        $dbConnection = config('database.default');
-        $driver = config("database.connections.{$dbConnection}.driver");
+        // Для SaaS показываем метрики использования платформы конкретной организацией
+        return $this->getOrganizationUsageMetrics($request->organizationId);
+    }
 
-        $dbSize = 'N/A';
+    protected function getOrganizationUsageMetrics(int $organizationId): array
+    {
+        $monthAgo = Carbon::now()->subMonth();
         
-        if ($driver === 'pgsql') {
-            try {
-                $result = DB::select("SELECT pg_size_pretty(pg_database_size(current_database())) as size");
-                $dbSize = $result[0]->size ?? 'N/A';
-            } catch (\Exception $e) {
-                $dbSize = 'Error';
-            }
-        } elseif ($driver === 'mysql') {
-            try {
-                $dbName = config("database.connections.{$dbConnection}.database");
-                $result = DB::select("SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb 
-                    FROM information_schema.TABLES 
-                    WHERE table_schema = ?", [$dbName]);
-                $dbSize = ($result[0]->size_mb ?? 0) . ' MB';
-            } catch (\Exception $e) {
-                $dbSize = 'Error';
-            }
-        }
+        // Объем хранимых данных
+        $dataVolume = [
+            'total_projects' => DB::table('projects')
+                ->where('organization_id', $organizationId)
+                ->count(),
+            'total_contracts' => DB::table('contracts')
+                ->where('organization_id', $organizationId)
+                ->count(),
+            'total_works' => DB::table('completed_works')
+                ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+                ->where('projects.organization_id', $organizationId)
+                ->count(),
+            'total_materials' => DB::table('materials')
+                ->where('organization_id', $organizationId)
+                ->count(),
+        ];
 
-        $tablesCount = count(DB::select('SHOW TABLES'));
+        // Активность за последний месяц
+        $monthlyActivity = [
+            'new_projects' => DB::table('projects')
+                ->where('organization_id', $organizationId)
+                ->where('created_at', '>=', $monthAgo)
+                ->count(),
+            'new_contracts' => DB::table('contracts')
+                ->where('organization_id', $organizationId)
+                ->where('created_at', '>=', $monthAgo)
+                ->count(),
+            'works_completed' => DB::table('completed_works')
+                ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+                ->where('projects.organization_id', $organizationId)
+                ->where('completed_works.created_at', '>=', $monthAgo)
+                ->count(),
+        ];
+
+        // Активные пользователи
+        $activeUsers = DB::table('completed_works')
+            ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $organizationId)
+            ->where('completed_works.created_at', '>=', $monthAgo)
+            ->distinct('completed_works.user_id')
+            ->count('completed_works.user_id');
+
+        // Использование модулей (на основе активности)
+        $modulesUsage = [
+            'projects' => DB::table('projects')
+                ->where('organization_id', $organizationId)
+                ->where('updated_at', '>=', $monthAgo)
+                ->count() > 0,
+            'contracts' => DB::table('contracts')
+                ->where('organization_id', $organizationId)
+                ->where('updated_at', '>=', $monthAgo)
+                ->count() > 0,
+            'materials' => DB::table('materials')
+                ->where('organization_id', $organizationId)
+                ->where('updated_at', '>=', $monthAgo)
+                ->count() > 0,
+        ];
 
         return [
-            'database_size' => $dbSize,
-            'tables_count' => $tablesCount,
-            'timestamp' => Carbon::now()->toIso8601String(),
-            'php_version' => PHP_VERSION,
-            'laravel_version' => app()->version(),
+            'usage_metrics' => [
+                'organization_id' => $organizationId,
+                'data_volume' => $dataVolume,
+                'monthly_activity' => $monthlyActivity,
+                'active_users_30d' => $activeUsers,
+                'modules_usage' => $modulesUsage,
+                'account_age_days' => $this->getAccountAgeDays($organizationId),
+                'status' => 'healthy',
+            ],
         ];
     }
-}
 
+    protected function getAccountAgeDays(int $organizationId): int
+    {
+        $created = DB::table('organizations')
+            ->where('id', $organizationId)
+            ->value('created_at');
+
+        if (!$created) {
+            return 0;
+        }
+
+        return Carbon::parse($created)->diffInDays(Carbon::now());
+    }
+}
