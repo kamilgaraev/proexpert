@@ -59,10 +59,11 @@ class WorkCompletionLogSeeder extends Seeder
 
         // Получаем проекты и виды работ
         $projectIds = Project::where('organization_id', $organizationId)->pluck('id')->toArray();
-        $workTypeIds = WorkType::pluck('id')->toArray();
+        $workTypeIds = WorkType::where('organization_id', $organizationId)->pluck('id')->toArray();
 
         if (empty($projectIds) || empty($workTypeIds)) {
-            throw new \Exception('Для сидирования work_completion_logs необходимы проекты и виды работ.');
+            $this->command->warn("Пропускаем создание логов работ. Нет проектов или видов работ для организации {$organizationId}");
+            return;
         }
 
         $existingCount = WorkCompletionLog::whereIn('project_id', $projectIds)->count();

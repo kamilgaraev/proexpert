@@ -40,11 +40,12 @@ class CompletedWorkSeeder extends Seeder
 
         // Получаем проекты, виды работ и контракты
         $projectIds = Project::where('organization_id', $organizationId)->pluck('id')->toArray();
-        $workTypeIds = WorkType::pluck('id')->toArray();
+        $workTypeIds = WorkType::where('organization_id', $organizationId)->pluck('id')->toArray();
         $contractIds = Contract::where('organization_id', $organizationId)->pluck('id')->toArray();
 
         if (empty($projectIds) || empty($workTypeIds)) {
-            throw new \Exception('Для сидирования completed_works необходимы проекты и виды работ.');
+            $this->command->warn("Пропускаем создание выполненных работ. Нет проектов или видов работ для организации {$organizationId}");
+            return;
         }
 
         // Проверяем существующие записи

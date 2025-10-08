@@ -49,12 +49,13 @@ class MaterialUsageLogSeeder extends Seeder
         }
 
         $projectIds = Project::where('organization_id', $organizationId)->pluck('id')->toArray();
-        $materialIds = Material::pluck('id')->toArray();
-        $supplierIds = Supplier::pluck('id')->toArray();
-        $workTypeIds = WorkType::pluck('id')->toArray();
+        $materialIds = Material::where('organization_id', $organizationId)->pluck('id')->toArray();
+        $supplierIds = Supplier::where('organization_id', $organizationId)->pluck('id')->toArray();
+        $workTypeIds = WorkType::where('organization_id', $organizationId)->pluck('id')->toArray();
 
         if (empty($projectIds) || empty($materialIds)) {
-            throw new \Exception('Для сидирования material_usage_logs необходимы проекты и материалы.');
+            $this->command->warn("Пропускаем создание логов материалов. Нет проектов или материалов для организации {$organizationId}");
+            return;
         }
 
         // Создаем больше записей для демонстрации активности
