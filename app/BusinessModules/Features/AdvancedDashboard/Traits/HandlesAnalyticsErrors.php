@@ -9,17 +9,24 @@ trait HandlesAnalyticsErrors
 {
     protected function handleAnalyticsError(\Exception $e, string $context): JsonResponse
     {
-        Log::error("Advanced Dashboard Analytics Error: {$context}", [
+        $errorDetails = [
+            'context' => $context,
             'message' => $e->getMessage(),
             'file' => $e->getFile(),
             'line' => $e->getLine(),
             'trace' => $e->getTraceAsString(),
-        ]);
+        ];
+        
+        Log::error("Advanced Dashboard Analytics Error: {$context}", $errorDetails);
 
         return response()->json([
             'success' => false,
             'message' => "Error retrieving {$context} data",
             'error' => config('app.debug') ? $e->getMessage() : null,
+            'debug_info' => config('app.debug') ? [
+                'file' => basename($e->getFile()),
+                'line' => $e->getLine(),
+            ] : null,
         ], 500);
     }
 }
