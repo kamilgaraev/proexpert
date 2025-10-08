@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\AdvancedDashboard\Services;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use App\Models\Contract;
 use App\Models\CompletedWork;
@@ -35,31 +36,35 @@ class FinancialAnalyticsService
      */
     public function getCashFlow(int $organizationId, Carbon $from, Carbon $to, ?int $projectId = null): array
     {
-        $cacheKey = "cash_flow_{$organizationId}_{$from->format('Y-m-d')}_{$to->format('Y-m-d')}_{$projectId}";
-        
-        return Cache::remember($cacheKey, $this->cacheTTL, function () use ($organizationId, $from, $to, $projectId) {
-            // Приток (доходы от контрактов)
-            $inflow = $this->calculateInflow($organizationId, $from, $to, $projectId);
+        try {
+            $cacheKey = "cash_flow_{$organizationId}_{$from->format('Y-m-d')}_{$to->format('Y-m-d')}_{$projectId}";
             
-            // Отток (расходы на материалы, работы, зарплаты)
-            $outflow = $this->calculateOutflow($organizationId, $from, $to, $projectId);
-            
-            // Разбивка по месяцам
-            $monthlyData = $this->getMonthlyBreakdown($organizationId, $from, $to, $projectId);
-            
-            return [
-                'period' => [
-                    'from' => $from->toIso8601String(),
-                    'to' => $to->toIso8601String(),
-                ],
-                'total_inflow' => $inflow,
-                'total_outflow' => $outflow,
-                'net_cash_flow' => $inflow - $outflow,
-                'monthly_breakdown' => $monthlyData,
-                'inflow_by_category' => $this->getInflowByCategory($organizationId, $from, $to, $projectId),
-                'outflow_by_category' => $this->getOutflowByCategory($organizationId, $from, $to, $projectId),
-            ];
-        });
+            return Cache::remember($cacheKey, $this->cacheTTL, function () use ($organizationId, $from, $to, $projectId) {
+                $inflow = $this->calculateInflow($organizationId, $from, $to, $projectId);
+                $outflow = $this->calculateOutflow($organizationId, $from, $to, $projectId);
+                $monthlyData = $this->getMonthlyBreakdown($organizationId, $from, $to, $projectId);
+                
+                return [
+                    'period' => [
+                        'from' => $from->toIso8601String(),
+                        'to' => $to->toIso8601String(),
+                    ],
+                    'total_inflow' => (float)$inflow,
+                    'total_outflow' => (float)$outflow,
+                    'net_cash_flow' => (float)($inflow - $outflow),
+                    'monthly_breakdown' => $monthlyData ?? [],
+                    'inflow_by_category' => $this->getInflowByCategory($organizationId, $from, $to, $projectId),
+                    'outflow_by_category' => $this->getOutflowByCategory($organizationId, $from, $to, $projectId),
+                ];
+            });
+        } catch (\Exception $e) {
+            Log::error('getCashFlow failed', [
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            throw $e;
+        }
     }
 
     /**
@@ -272,7 +277,8 @@ class FinancialAnalyticsService
             $query->where('project_id', $projectId);
         }
         
-        return $query->sum('total_amount') ?? 0;
+        $result = $query->sum('total_amount');
+        return $result ? (float)$result : 0.0;
     }
 
     /**
@@ -280,42 +286,56 @@ class FinancialAnalyticsService
      */
     protected function calculateOutflow(int $organizationId, Carbon $from, Carbon $to, ?int $projectId): float
     {
-        $materialCostsQuery = DB::table('completed_work_materials')
-            ->join('completed_works', 'completed_work_materials.completed_work_id', '=', 'completed_works.id')
-            ->join('projects', 'completed_works.project_id', '=', 'projects.id')
-            ->where('projects.organization_id', $organizationId)
-            ->whereBetween('completed_works.created_at', [$from, $to]);
-        
-        if ($projectId) {
-            $materialCostsQuery->where('completed_works.project_id', $projectId);
+        try {
+            $materialCosts = 0.0;
+            if (DB::getSchemaBuilder()->hasTable('completed_work_materials')) {
+                $materialCostsQuery = DB::table('completed_work_materials')
+                    ->join('completed_works', 'completed_work_materials.completed_work_id', '=', 'completed_works.id')
+                    ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+                    ->where('projects.organization_id', $organizationId)
+                    ->whereBetween('completed_works.created_at', [$from, $to]);
+                
+                if ($projectId) {
+                    $materialCostsQuery->where('completed_works.project_id', $projectId);
+                }
+                
+                $result = $materialCostsQuery->sum('completed_work_materials.total_amount');
+                $materialCosts = $result ? (float)$result : 0.0;
+            }
+            
+            $laborCostsQuery = DB::table('completed_works')
+                ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+                ->where('projects.organization_id', $organizationId)
+                ->whereBetween('completed_works.created_at', [$from, $to]);
+            
+            if ($projectId) {
+                $laborCostsQuery->where('completed_works.project_id', $projectId);
+            }
+            
+            $laborResult = $laborCostsQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price * 0.3'));
+            $laborCosts = $laborResult ? (float)$laborResult : 0.0;
+            
+            $contractorCostsQuery = DB::table('materials')
+                ->join('projects', 'materials.project_id', '=', 'projects.id')
+                ->where('projects.organization_id', $organizationId)
+                ->whereBetween('materials.created_at', [$from, $to])
+                ->where('materials.supplier_type', 'contractor');
+            
+            if ($projectId) {
+                $contractorCostsQuery->where('materials.project_id', $projectId);
+            }
+            
+            $contractorResult = $contractorCostsQuery->sum(DB::raw('materials.quantity * materials.price'));
+            $contractorCosts = $contractorResult ? (float)$contractorResult : 0.0;
+            
+            return $materialCosts + $laborCosts + $contractorCosts;
+        } catch (\Exception $e) {
+            Log::warning('Error calculating outflow', [
+                'error' => $e->getMessage(),
+                'organization_id' => $organizationId,
+            ]);
+            return 0.0;
         }
-        
-        $materialCosts = $materialCostsQuery->sum('completed_work_materials.total_amount') ?? 0;
-        
-        $laborCostsQuery = DB::table('completed_works')
-            ->join('projects', 'completed_works.project_id', '=', 'projects.id')
-            ->where('projects.organization_id', $organizationId)
-            ->whereBetween('completed_works.created_at', [$from, $to]);
-        
-        if ($projectId) {
-            $laborCostsQuery->where('completed_works.project_id', $projectId);
-        }
-        
-        $laborCosts = $laborCostsQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price * 0.3')) ?? 0;
-        
-        $contractorCostsQuery = DB::table('materials')
-            ->join('projects', 'materials.project_id', '=', 'projects.id')
-            ->where('projects.organization_id', $organizationId)
-            ->whereBetween('materials.created_at', [$from, $to])
-            ->where('materials.supplier_type', 'contractor');
-        
-        if ($projectId) {
-            $contractorCostsQuery->where('materials.project_id', $projectId);
-        }
-        
-        $contractorCosts = $contractorCostsQuery->sum(DB::raw('materials.quantity * materials.price')) ?? 0;
-        
-        return $materialCosts + $laborCosts + $contractorCosts;
     }
 
     /**
@@ -323,27 +343,38 @@ class FinancialAnalyticsService
      */
     protected function getMonthlyBreakdown(int $organizationId, Carbon $from, Carbon $to, ?int $projectId): array
     {
-        $months = [];
-        $current = $from->copy()->startOfMonth();
-        
-        while ($current->lte($to)) {
-            $monthEnd = $current->copy()->endOfMonth();
+        try {
+            $months = [];
+            $current = $from->copy()->startOfMonth();
+            $iterations = 0;
+            $maxIterations = 120;
             
-            $inflow = $this->calculateInflow($organizationId, $current, $monthEnd, $projectId);
-            $outflow = $this->calculateOutflow($organizationId, $current, $monthEnd, $projectId);
+            while ($current->lte($to) && $iterations < $maxIterations) {
+                $monthEnd = $current->copy()->endOfMonth();
+                
+                $inflow = $this->calculateInflow($organizationId, $current, $monthEnd, $projectId);
+                $outflow = $this->calculateOutflow($organizationId, $current, $monthEnd, $projectId);
+                
+                $months[] = [
+                    'month' => $current->format('Y-m'),
+                    'month_name' => $current->locale('ru')->translatedFormat('F Y'),
+                    'inflow' => (float)$inflow,
+                    'outflow' => (float)$outflow,
+                    'net' => (float)($inflow - $outflow),
+                ];
+                
+                $current->addMonth();
+                $iterations++;
+            }
             
-            $months[] = [
-                'month' => $current->format('Y-m'),
-                'month_name' => $current->translatedFormat('F Y'),
-                'inflow' => $inflow,
-                'outflow' => $outflow,
-                'net' => $inflow - $outflow,
-            ];
-            
-            $current->addMonth();
+            return $months;
+        } catch (\Exception $e) {
+            Log::warning('getMonthlyBreakdown failed', [
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+            ]);
+            return [];
         }
-        
-        return $months;
     }
 
     /**
@@ -358,7 +389,8 @@ class FinancialAnalyticsService
             $query->where('project_id', $projectId);
         }
         
-        $contracts = $query->sum('total_amount') ?? 0;
+        $contractsResult = $query->sum('total_amount');
+        $contracts = $contractsResult ? (float)$contractsResult : 0.0;
         
         $advancePaymentsQuery = DB::table('contracts')
             ->where('organization_id', $organizationId)
@@ -368,7 +400,8 @@ class FinancialAnalyticsService
             $advancePaymentsQuery->where('project_id', $projectId);
         }
         
-        $advancePayments = $advancePaymentsQuery->sum('advance_payment') ?? 0;
+        $advanceResult = $advancePaymentsQuery->sum('advance_payment');
+        $advancePayments = $advanceResult ? (float)$advanceResult : 0.0;
         
         $completedWorksQuery = DB::table('completed_works')
             ->join('projects', 'completed_works.project_id', '=', 'projects.id')
@@ -379,7 +412,8 @@ class FinancialAnalyticsService
             $completedWorksQuery->where('completed_works.project_id', $projectId);
         }
         
-        $workPayments = $completedWorksQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price')) ?? 0;
+        $workResult = $completedWorksQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price'));
+        $workPayments = $workResult ? (float)$workResult : 0.0;
         
         return [
             [
@@ -411,17 +445,21 @@ class FinancialAnalyticsService
      */
     protected function getOutflowByCategory(int $organizationId, Carbon $from, Carbon $to, ?int $projectId): array
     {
-        $materialCostsQuery = DB::table('completed_work_materials')
-            ->join('completed_works', 'completed_work_materials.completed_work_id', '=', 'completed_works.id')
-            ->join('projects', 'completed_works.project_id', '=', 'projects.id')
-            ->where('projects.organization_id', $organizationId)
-            ->whereBetween('completed_works.created_at', [$from, $to]);
-        
-        if ($projectId) {
-            $materialCostsQuery->where('completed_works.project_id', $projectId);
+        $materialCosts = 0.0;
+        if (DB::getSchemaBuilder()->hasTable('completed_work_materials')) {
+            $materialCostsQuery = DB::table('completed_work_materials')
+                ->join('completed_works', 'completed_work_materials.completed_work_id', '=', 'completed_works.id')
+                ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+                ->where('projects.organization_id', $organizationId)
+                ->whereBetween('completed_works.created_at', [$from, $to]);
+            
+            if ($projectId) {
+                $materialCostsQuery->where('completed_works.project_id', $projectId);
+            }
+            
+            $materialResult = $materialCostsQuery->sum('completed_work_materials.total_amount');
+            $materialCosts = $materialResult ? (float)$materialResult : 0.0;
         }
-        
-        $materialCosts = $materialCostsQuery->sum('completed_work_materials.total_amount') ?? 0;
         
         $laborCostsQuery = DB::table('completed_works')
             ->join('projects', 'completed_works.project_id', '=', 'projects.id')
@@ -432,7 +470,8 @@ class FinancialAnalyticsService
             $laborCostsQuery->where('completed_works.project_id', $projectId);
         }
         
-        $laborCosts = $laborCostsQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price * 0.3')) ?? 0;
+        $laborResult = $laborCostsQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price * 0.3'));
+        $laborCosts = $laborResult ? (float)$laborResult : 0.0;
         
         $contractorCostsQuery = DB::table('materials')
             ->join('projects', 'materials.project_id', '=', 'projects.id')
@@ -444,7 +483,8 @@ class FinancialAnalyticsService
             $contractorCostsQuery->where('materials.project_id', $projectId);
         }
         
-        $contractorCosts = $contractorCostsQuery->sum(DB::raw('materials.quantity * materials.price')) ?? 0;
+        $contractorResult = $contractorCostsQuery->sum(DB::raw('materials.quantity * materials.price'));
+        $contractorCosts = $contractorResult ? (float)$contractorResult : 0.0;
         
         $total = $materialCosts + $laborCosts + $contractorCosts;
         
@@ -720,26 +760,29 @@ class FinancialAnalyticsService
      */
     protected function calculateReceivables(int $organizationId): array
     {
-        $now = Carbon::now();
-        
-        $contracts = Contract::where('organization_id', $organizationId)
-            ->whereIn('status', ['active', 'in_progress'])
-            ->get();
-        
-        $total = 0;
-        $current = 0;
-        $overdue30 = 0;
-        $overdue60 = 0;
-        $overdue90Plus = 0;
-        $byContract = [];
-        
-        foreach ($contracts as $contract) {
-            $contractAmount = $contract->total_amount ?? 0;
-            $advancePaid = $contract->advance_payment ?? 0;
-            $workCompleted = CompletedWork::where('contract_id', $contract->id)
-                ->sum(DB::raw('quantity * unit_price')) ?? 0;
+        try {
+            $now = Carbon::now();
             
-            $receivable = $contractAmount - $advancePaid - $workCompleted;
+            $contracts = Contract::where('organization_id', $organizationId)
+                ->whereIn('status', ['active', 'in_progress'])
+                ->get();
+            
+            $total = 0.0;
+            $current = 0.0;
+            $overdue30 = 0.0;
+            $overdue60 = 0.0;
+            $overdue90Plus = 0.0;
+            $byContract = [];
+            
+            foreach ($contracts as $contract) {
+                $contractAmount = $contract->total_amount ?? 0;
+                $advancePaid = $contract->advance_payment ?? 0;
+                
+                $workCompletedResult = CompletedWork::where('contract_id', $contract->id)
+                    ->sum(DB::raw('quantity * unit_price'));
+                $workCompleted = $workCompletedResult ? (float)$workCompletedResult : 0.0;
+                
+                $receivable = $contractAmount - $advancePaid - $workCompleted;
             
             if ($receivable <= 0) {
                 continue;
@@ -787,6 +830,20 @@ class FinancialAnalyticsService
             'overdue_90_plus' => $overdue90Plus,
             'by_contract' => $byContract,
         ];
+        } catch (\Exception $e) {
+            Log::warning('calculateReceivables failed', [
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+            ]);
+            return [
+                'total' => 0.0,
+                'current' => 0.0,
+                'overdue_30' => 0.0,
+                'overdue_60' => 0.0,
+                'overdue_90_plus' => 0.0,
+                'by_contract' => [],
+            ];
+        }
     }
 
     /**
@@ -794,25 +851,26 @@ class FinancialAnalyticsService
      */
     protected function calculatePayables(int $organizationId): array
     {
-        $now = Carbon::now();
-        
-        $materials = Material::join('projects', 'materials.project_id', '=', 'projects.id')
-            ->where('projects.organization_id', $organizationId)
-            ->where('materials.status', '!=', 'paid')
-            ->select('materials.*')
-            ->get();
-        
-        $total = 0;
-        $current = 0;
-        $overdue30 = 0;
-        $overdue60 = 0;
-        $overdue90Plus = 0;
-        $bySupplier = [];
-        
-        $supplierMap = [];
-        
-        foreach ($materials as $material) {
-            $payable = ($material->quantity ?? 0) * ($material->price ?? 0);
+        try {
+            $now = Carbon::now();
+            
+            $materials = Material::join('projects', 'materials.project_id', '=', 'projects.id')
+                ->where('projects.organization_id', $organizationId)
+                ->where('materials.status', '!=', 'paid')
+                ->select('materials.*')
+                ->get();
+            
+            $total = 0.0;
+            $current = 0.0;
+            $overdue30 = 0.0;
+            $overdue60 = 0.0;
+            $overdue90Plus = 0.0;
+            $bySupplier = [];
+            
+            $supplierMap = [];
+            
+            foreach ($materials as $material) {
+                $payable = ($material->quantity ?? 0) * ($material->price ?? 0);
             
             if ($payable <= 0) {
                 continue;
@@ -872,6 +930,20 @@ class FinancialAnalyticsService
             'overdue_90_plus' => $overdue90Plus,
             'by_supplier' => $bySupplier,
         ];
+        } catch (\Exception $e) {
+            Log::warning('calculatePayables failed', [
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+            ]);
+            return [
+                'total' => 0.0,
+                'current' => 0.0,
+                'overdue_30' => 0.0,
+                'overdue_60' => 0.0,
+                'overdue_90_plus' => 0.0,
+                'by_supplier' => [],
+            ];
+        }
     }
 
     /**
