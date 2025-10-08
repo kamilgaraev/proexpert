@@ -226,7 +226,7 @@ enum WidgetType: string
 
     public function getMetadata(): array
     {
-        return match($this) {
+        $metadata = match($this) {
             self::CASH_FLOW => [
                 'name' => 'Движение денежных средств',
                 'description' => 'Анализ притока и оттока денежных средств с разбивкой по категориям и месяцам',
@@ -599,6 +599,8 @@ enum WidgetType: string
                 'min_size' => ['w' => 6, 'h' => 3],
             ],
         };
+
+        return array_merge(['id' => $this->value, 'category' => $this->getCategory()->value], $metadata);
     }
 }
 

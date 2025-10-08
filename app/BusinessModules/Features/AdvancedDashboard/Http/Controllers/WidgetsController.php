@@ -140,10 +140,20 @@ class WidgetsController extends Controller
 
     public function getRegistry(): JsonResponse
     {
+        $widgets = $this->widgetRegistry->getWidgetsMetadata();
+        $categories = $this->widgetRegistry->getCategoriesMetadata();
+        
         return response()->json([
             'success' => true,
-            'widgets' => $this->widgetRegistry->getWidgetsMetadata(),
-            'categories' => $this->widgetRegistry->getCategoriesMetadata(),
+            'data' => [
+                'widgets' => $widgets,
+                'categories' => $categories,
+                'stats' => [
+                    'total_widgets' => count($widgets),
+                    'ready_widgets' => count($widgets),
+                    'categories_count' => count($categories),
+                ],
+            ],
         ]);
     }
 
