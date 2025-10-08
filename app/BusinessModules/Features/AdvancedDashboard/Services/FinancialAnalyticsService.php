@@ -193,29 +193,23 @@ class FinancialAnalyticsService
         $cacheKey = "revenue_forecast_{$organizationId}_{$months}";
         
         return Cache::remember($cacheKey, $this->cacheTTL, function () use ($organizationId, $months) {
-            // Исторические данные за последние 6 месяцев
             $historicalFrom = Carbon::now()->subMonths(6);
             $historicalTo = Carbon::now();
             
             $historicalData = $this->getMonthlyRevenue($organizationId, $historicalFrom, $historicalTo);
-            
-            // Прогноз на основе текущих контрактов
             $contractBasedForecast = $this->getForecastFromContracts($organizationId, $months);
-            
-            // Тренд на основе исторических данных (линейная регрессия)
             $trendForecast = $this->calculateTrendForecast($historicalData, $months);
-            
-            // Комбинированный прогноз (средневзвешенное)
             $combinedForecast = $this->combineForecast($contractBasedForecast, $trendForecast);
             
             return [
+                'months' => $months,
                 'forecast_months' => $months,
                 'forecast_from' => Carbon::now()->startOfMonth()->toIso8601String(),
-                'historical_data' => $historicalData,
-                'contract_based_forecast' => $contractBasedForecast,
-                'trend_forecast' => $trendForecast,
-                'combined_forecast' => $combinedForecast,
-                'total_forecasted_revenue' => array_sum(array_column($combinedForecast, 'amount')),
+                'historical_data' => $historicalData ?? [],
+                'contract_based_forecast' => $contractBasedForecast ?? [],
+                'trend_forecast' => $trendForecast ?? [],
+                'combined_forecast' => $combinedForecast ?? [],
+                'total_forecasted_revenue' => !empty($combinedForecast) ? array_sum(array_column($combinedForecast, 'amount')) : 0.0,
                 'confidence_level' => $this->calculateConfidenceLevel($historicalData),
             ];
         });
@@ -673,44 +667,67 @@ class FinancialAnalyticsService
      */
     protected function calculateTrendForecast(array $historicalData, int $months): array
     {
-        if (empty($historicalData) || count($historicalData) < 2) {
-            return [];
-        }
-        
-        $n = count($historicalData);
-        $sumX = 0;
-        $sumY = 0;
-        $sumXY = 0;
-        $sumX2 = 0;
-        
-        foreach ($historicalData as $index => $data) {
-            $x = $index + 1;
-            $y = $data['amount'];
+        try {
+            if (empty($historicalData) || count($historicalData) < 2) {
+                return $this->getDefaultForecast($months);
+            }
             
-            $sumX += $x;
-            $sumY += $y;
-            $sumXY += $x * $y;
-            $sumX2 += $x * $x;
+            $n = count($historicalData);
+            $sumX = 0;
+            $sumY = 0;
+            $sumXY = 0;
+            $sumX2 = 0;
+            
+            foreach ($historicalData as $index => $data) {
+                $x = $index + 1;
+                $y = $data['amount'] ?? 0;
+                
+                $sumX += $x;
+                $sumY += $y;
+                $sumXY += $x * $y;
+                $sumX2 += $x * $x;
+            }
+            
+            $denominator = ($n * $sumX2 - $sumX * $sumX);
+            if ($denominator == 0) {
+                return $this->getDefaultForecast($months);
+            }
+            
+            $slope = ($n * $sumXY - $sumX * $sumY) / $denominator;
+            $intercept = ($sumY - $slope * $sumX) / $n;
+            
+            $forecast = [];
+            $current = Carbon::now()->startOfMonth();
+            
+            for ($i = 0; $i < $months; $i++) {
+                $x = $n + $i + 1;
+                $forecastAmount = $slope * $x + $intercept;
+                $forecastAmount = max(0, $forecastAmount);
+                
+                $forecast[] = [
+                    'month' => $current->copy()->addMonths($i)->format('Y-m'),
+                    'amount' => round($forecastAmount, 2),
+                ];
+            }
+            
+            return $forecast;
+        } catch (\Exception $e) {
+            Log::warning('calculateTrendForecast failed', [
+                'error' => $e->getMessage(),
+            ]);
+            return $this->getDefaultForecast($months);
         }
-        
-        $slope = ($n * $sumXY - $sumX * $sumY) / ($n * $sumX2 - $sumX * $sumX);
-        $intercept = ($sumY - $slope * $sumX) / $n;
-        
-        $avgGrowth = $slope / ($sumY / $n);
-        
+    }
+    
+    protected function getDefaultForecast(int $months): array
+    {
         $forecast = [];
         $current = Carbon::now()->startOfMonth();
-        $lastAmount = end($historicalData)['amount'];
         
         for ($i = 0; $i < $months; $i++) {
-            $x = $n + $i + 1;
-            $forecastAmount = $slope * $x + $intercept;
-            
-            $forecastAmount = max(0, $forecastAmount);
-            
             $forecast[] = [
                 'month' => $current->copy()->addMonths($i)->format('Y-m'),
-                'amount' => round($forecastAmount, 2),
+                'amount' => 0.0,
             ];
         }
         
@@ -722,7 +739,14 @@ class FinancialAnalyticsService
      */
     protected function combineForecast(array $contractBased, array $trendBased): array
     {
-        // Средневзвешенное: 70% контракты, 30% тренд
+        if (empty($contractBased)) {
+            return $trendBased;
+        }
+        
+        if (empty($trendBased)) {
+            return $contractBased;
+        }
+        
         $combined = [];
         
         foreach ($contractBased as $index => $contractData) {
@@ -731,7 +755,7 @@ class FinancialAnalyticsService
             
             $combined[] = [
                 'month' => $contractData['month'],
-                'amount' => $combinedAmount,
+                'amount' => round($combinedAmount, 2),
             ];
         }
         
