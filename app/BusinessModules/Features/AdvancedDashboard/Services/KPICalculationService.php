@@ -334,10 +334,9 @@ class KPICalculationService
      */
     protected function getRevenueGenerated(int $userId, Carbon $from, Carbon $to): float
     {
-        // Выручка от выполненных работ пользователя
         return CompletedWork::where('user_id', $userId)
             ->whereBetween('created_at', [$from, $to])
-            ->sum(DB::raw('quantity * unit_price')) ?? 0;
+            ->sum(DB::raw('quantity * price')) ?? 0;
     }
 
     /**

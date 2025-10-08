@@ -306,7 +306,7 @@ class FinancialAnalyticsService
                 $laborCostsQuery->where('completed_works.project_id', $projectId);
             }
             
-            $laborResult = $laborCostsQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price * 0.3'));
+            $laborResult = $laborCostsQuery->sum(DB::raw('completed_works.quantity * completed_works.price * 0.3'));
             $laborCosts = $laborResult ? (float)$laborResult : 0.0;
             
             $materialReceiptsQuery = DB::table('material_receipts')
@@ -406,7 +406,7 @@ class FinancialAnalyticsService
             $completedWorksQuery->where('completed_works.project_id', $projectId);
         }
         
-        $workResult = $completedWorksQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price'));
+        $workResult = $completedWorksQuery->sum(DB::raw('completed_works.quantity * completed_works.price'));
         $workPayments = $workResult ? (float)$workResult : 0.0;
         
         return [
@@ -464,7 +464,7 @@ class FinancialAnalyticsService
             $laborCostsQuery->where('completed_works.project_id', $projectId);
         }
         
-        $laborResult = $laborCostsQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price * 0.3'));
+        $laborResult = $laborCostsQuery->sum(DB::raw('completed_works.quantity * completed_works.price * 0.3'));
         $laborCosts = $laborResult ? (float)$laborResult : 0.0;
         
         $materialReceiptsQuery = DB::table('material_receipts')
@@ -803,7 +803,7 @@ class FinancialAnalyticsService
                 $advancePaid = $contract->actual_advance_amount ?? 0;
                 
                 $workCompletedResult = CompletedWork::where('contract_id', $contract->id)
-                    ->sum(DB::raw('quantity * unit_price'));
+                    ->sum(DB::raw('quantity * price'));
                 $workCompleted = $workCompletedResult ? (float)$workCompletedResult : 0.0;
                 
                 $receivable = $contractAmount - $advancePaid - $workCompleted;
