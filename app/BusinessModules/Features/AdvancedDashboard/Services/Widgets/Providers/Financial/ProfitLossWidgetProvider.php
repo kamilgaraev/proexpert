@@ -17,11 +17,26 @@ class ProfitLossWidgetProvider extends AbstractWidgetProvider
 
     public function validateRequest(WidgetDataRequest $request): bool
     {
-        return $request->hasDateRange();
+        return true;
     }
 
     protected function fetchData(WidgetDataRequest $request): array
     {
+        if (!$request->from || !$request->to) {
+            $request = new WidgetDataRequest(
+                widgetType: $request->widgetType,
+                organizationId: $request->organizationId,
+                userId: $request->userId,
+                from: now()->startOfMonth(),
+                to: now()->endOfMonth(),
+                projectId: $request->projectId,
+                contractId: $request->contractId,
+                employeeId: $request->employeeId,
+                filters: $request->filters,
+                options: $request->options,
+            );
+        }
+
         $revenue = $this->calculateRevenue($request);
         $cogs = $this->calculateCOGS($request);
         $opex = $this->calculateOpEx($request);

@@ -18,11 +18,26 @@ class CashFlowWidgetProvider extends AbstractWidgetProvider
 
     public function validateRequest(WidgetDataRequest $request): bool
     {
-        return $request->hasDateRange();
+        return true;
     }
 
     protected function fetchData(WidgetDataRequest $request): array
     {
+        if (!$request->from || !$request->to) {
+            $request = new WidgetDataRequest(
+                widgetType: $request->widgetType,
+                organizationId: $request->organizationId,
+                userId: $request->userId,
+                from: now()->startOfMonth(),
+                to: now()->endOfMonth(),
+                projectId: $request->projectId,
+                contractId: $request->contractId,
+                employeeId: $request->employeeId,
+                filters: $request->filters,
+                options: $request->options,
+            );
+        }
+        
         $inflow = $this->calculateInflow($request);
         $outflow = $this->calculateOutflow($request);
         $monthlyData = $this->getMonthlyBreakdown($request);
