@@ -45,21 +45,23 @@ class MeasurementUnitSeeder extends Seeder
                     ->where('short_name', $unit['short_name'])
                     ->exists();
 
-                DB::table('measurement_units')->updateOrInsert(
-                    [
-                        'organization_id' => $organizationId,
-                        'short_name' => $unit['short_name'],
-                    ],
-                    [
-                        'name' => $unit['name'],
-                        'updated_at' => $now,
-                        'created_at' => DB::raw('COALESCE(created_at, "' . $now->toDateTimeString() . '")'),
-                    ]
-                );
-
                 if ($exists) {
+                    DB::table('measurement_units')
+                        ->where('organization_id', $organizationId)
+                        ->where('short_name', $unit['short_name'])
+                        ->update([
+                            'name' => $unit['name'],
+                            'updated_at' => $now,
+                        ]);
                     $totalUpdated++;
                 } else {
+                    DB::table('measurement_units')->insert([
+                        'organization_id' => $organizationId,
+                        'short_name' => $unit['short_name'],
+                        'name' => $unit['name'],
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ]);
                     $totalCreated++;
                 }
             }
