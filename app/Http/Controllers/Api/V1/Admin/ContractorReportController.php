@@ -15,7 +15,6 @@ class ContractorReportController extends Controller
     public function __construct(ContractorReportService $contractorReportService)
     {
         $this->contractorReportService = $contractorReportService;
-        $this->middleware('can:view-reports');
     }
 
     /**

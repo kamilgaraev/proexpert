@@ -8,7 +8,11 @@ class CreateScheduleRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user() && $this->user()->can('view-reports');
+        if (!$this->user()) {
+            abort(401, 'Unauthorized');
+        }
+
+        return true;
     }
 
     public function rules(): array

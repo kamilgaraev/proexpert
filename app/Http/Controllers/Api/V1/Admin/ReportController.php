@@ -28,7 +28,6 @@ class ReportController extends Controller
     {
         $this->reportService = $reportService;
         $this->moduleService = $moduleService;
-        $this->middleware('can:view-reports');
     }
 
     /**
