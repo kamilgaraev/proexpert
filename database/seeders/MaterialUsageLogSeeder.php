@@ -20,19 +20,28 @@ class MaterialUsageLogSeeder extends Seeder
     {
         $faker = \Faker\Factory::create('ru_RU');
         
-        $organizationId = Organization::query()->inRandomOrder()->value('id');
-        if (!$organizationId) {
-            throw new \Exception('Для сидирования material_usage_logs необходима хотя бы одна организация.');
+        $organizations = Organization::pluck('id');
+        if ($organizations->isEmpty()) {
+            $this->command->warn('Нет организаций в базе данных. Пропускаем создание логов материалов.');
+            return;
         }
 
+        $this->command->info("Создание логов материалов для {$organizations->count()} организаций...");
+        
+        foreach ($organizations as $organizationId) {
+            $this->seedForOrganization($organizationId, $faker);
+        }
+    }
+
+    private function seedForOrganization(int $organizationId, $faker): void
+    {
         $existingCount = MaterialUsageLog::where('organization_id', $organizationId)->count();
         if ($existingCount >= 100) {
-            $this->command->info("Пропускаем создание логов материалов. Уже существует {$existingCount} записей для организации {$organizationId}");
+            $this->command->line("  ⊳ Организация {$organizationId}: пропущено (уже {$existingCount} записей)");
             return;
         }
         
         $recordsToCreate = 100 - $existingCount;
-        $this->command->info("Создаем {$recordsToCreate} записей логов материалов...");
 
         // Получаем прорабов через новую систему авторизации
         $userIds = User::whereHas('roleAssignments', function ($query) {
@@ -44,21 +53,22 @@ class MaterialUsageLogSeeder extends Seeder
             $userIds = User::where('current_organization_id', $organizationId)->pluck('id')->toArray();
         }
         
-        if (empty($userIds)) {
-            throw new \Exception('В организации нет пользователей для привязки логов материалов.');
-        }
-
         $projectIds = Project::where('organization_id', $organizationId)->pluck('id')->toArray();
         $materialIds = Material::where('organization_id', $organizationId)->pluck('id')->toArray();
         $supplierIds = Supplier::where('organization_id', $organizationId)->pluck('id')->toArray();
         $workTypeIds = WorkType::where('organization_id', $organizationId)->pluck('id')->toArray();
 
         if (empty($projectIds) || empty($materialIds)) {
-            $this->command->warn("Пропускаем создание логов материалов. Нет проектов или материалов для организации {$organizationId}");
+            $this->command->line("  ⊳ Организация {$organizationId}: пропущено (нет проектов/материалов)");
+            return;
+        }
+        
+        if (empty($userIds)) {
+            $this->command->line("  ⊳ Организация {$organizationId}: пропущено (нет пользователей)");
             return;
         }
 
-        // Создаем больше записей для демонстрации активности
+        // Создаем записи для демонстрации активности
         foreach (range(1, $recordsToCreate) as $i) {
             $operationType = $i % 2 === 0 ? 'write_off' : 'receipt';
             $quantity = rand(1, 100) + rand(0, 999) / 1000;
@@ -101,6 +111,6 @@ class MaterialUsageLogSeeder extends Seeder
             ]);
         }
 
-        $this->command->info('Создано 100 записей логов использования материалов');
+        $this->command->line("  ✓ Организация {$organizationId}: создано {$recordsToCreate} записей");
     }
 } 

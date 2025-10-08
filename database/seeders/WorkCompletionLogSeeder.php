@@ -17,12 +17,21 @@ class WorkCompletionLogSeeder extends Seeder
     {
         $faker = Faker::create('ru_RU');
         
-        // Получаем ID организации
-        $organizationId = Organization::query()->inRandomOrder()->value('id');
-        if (!$organizationId) {
-            throw new \Exception('Для сидирования work_completion_logs необходима хотя бы одна организация.');
+        $organizations = Organization::pluck('id');
+        if ($organizations->isEmpty()) {
+            $this->command->warn('Нет организаций в базе данных. Пропускаем создание логов работ.');
+            return;
         }
 
+        $this->command->info("Создание логов работ для {$organizations->count()} организаций...");
+        
+        foreach ($organizations as $organizationId) {
+            $this->seedForOrganization($organizationId, $faker);
+        }
+    }
+
+    private function seedForOrganization(int $organizationId, $faker): void
+    {
         // Получаем прорабов через новую систему авторизации
         $foremenIds = User::whereHas('roleAssignments', function ($query) {
             $query->where('role_slug', 'foreman')
@@ -62,18 +71,17 @@ class WorkCompletionLogSeeder extends Seeder
         $workTypeIds = WorkType::where('organization_id', $organizationId)->pluck('id')->toArray();
 
         if (empty($projectIds) || empty($workTypeIds)) {
-            $this->command->warn("Пропускаем создание логов работ. Нет проектов или видов работ для организации {$organizationId}");
+            $this->command->line("  ⊳ Организация {$organizationId}: пропущено (нет проектов/видов работ)");
             return;
         }
 
         $existingCount = WorkCompletionLog::whereIn('project_id', $projectIds)->count();
         if ($existingCount >= 50) {
-            $this->command->info("Пропускаем создание логов работ. Уже существует {$existingCount} записей");
+            $this->command->line("  ⊳ Организация {$organizationId}: пропущено (уже {$existingCount} записей)");
             return;
         }
-
+        
         $recordsToCreate = 50 - $existingCount;
-        $this->command->info("Создаем {$recordsToCreate} записей логов работ...");
 
         // Генерируем записи за последние 3 месяца
         $startDate = Carbon::now()->subMonths(3);
@@ -121,6 +129,6 @@ class WorkCompletionLogSeeder extends Seeder
             ]);
         }
 
-        $this->command->info("✓ Создано {$recordsToCreate} записей логов выполненных работ");
+        $this->command->line("  ✓ Организация {$organizationId}: создано {$recordsToCreate} записей");
     }
 } 

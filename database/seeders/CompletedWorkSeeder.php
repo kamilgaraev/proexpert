@@ -17,13 +17,22 @@ class CompletedWorkSeeder extends Seeder
     public function run(): void
     {
         $faker = Faker::create('ru_RU');
-        
-        // Получаем ID организации
-        $organizationId = Organization::query()->inRandomOrder()->value('id');
-        if (!$organizationId) {
-            throw new \Exception('Для сидирования completed_works необходима хотя бы одна организация.');
+
+        $organizations = Organization::pluck('id');
+        if ($organizations->isEmpty()) {
+            $this->command->warn('Нет организаций в базе данных. Пропускаем создание выполненных работ.');
+            return;
         }
 
+        $this->command->info("Создание выполненных работ для {$organizations->count()} организаций...");
+        
+        foreach ($organizations as $organizationId) {
+            $this->seedForOrganization($organizationId, $faker);
+        }
+    }
+
+    private function seedForOrganization(int $organizationId, $faker): void
+    {
         // Получаем прорабов через новую систему авторизации
         $foremenIds = User::whereHas('roleAssignments', function ($query) {
             $query->where('role_slug', 'foreman')
@@ -44,19 +53,18 @@ class CompletedWorkSeeder extends Seeder
         $contractIds = Contract::where('organization_id', $organizationId)->pluck('id')->toArray();
 
         if (empty($projectIds) || empty($workTypeIds)) {
-            $this->command->warn("Пропускаем создание выполненных работ. Нет проектов или видов работ для организации {$organizationId}");
+            $this->command->line("  ⊳ Организация {$organizationId}: пропущено (нет проектов/видов работ)");
             return;
         }
 
         // Проверяем существующие записи
         $existingCount = CompletedWork::whereIn('project_id', $projectIds)->count();
         if ($existingCount >= 150) {
-            $this->command->info("Пропускаем создание выполненных работ. Уже существует {$existingCount} записей");
+            $this->command->line("  ⊳ Организация {$organizationId}: пропущено (уже {$existingCount} записей)");
             return;
         }
-
+        
         $recordsToCreate = 150 - $existingCount;
-        $this->command->info("Создаем {$recordsToCreate} записей выполненных работ...");
 
         // Статусы выполненных работ
         $statuses = ['pending', 'approved', 'rejected', 'in_review'];
@@ -103,6 +111,6 @@ class CompletedWorkSeeder extends Seeder
             ]);
         }
 
-        $this->command->info("✓ Создано {$recordsToCreate} записей выполненных работ");
+        $this->command->line("  ✓ Организация {$organizationId}: создано {$recordsToCreate} записей");
     }
 } 

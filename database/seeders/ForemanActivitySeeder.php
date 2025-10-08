@@ -15,13 +15,22 @@ class ForemanActivitySeeder extends Seeder
     public function run(): void
     {
         $faker = Faker::create('ru_RU');
-        
-        // Получаем ID организации
-        $organizationId = Organization::query()->inRandomOrder()->value('id');
-        if (!$organizationId) {
-            throw new \Exception('Для сидирования активности прорабов необходима хотя бы одна организация.');
+
+        $organizations = Organization::pluck('id');
+        if ($organizations->isEmpty()) {
+            $this->command->warn('Нет организаций в базе данных. Пропускаем создание активности прорабов.');
+            return;
         }
 
+        $this->command->info("Создание активности прорабов для {$organizations->count()} организаций...");
+        
+        foreach ($organizations as $organizationId) {
+            $this->seedForOrganization($organizationId, $faker);
+        }
+    }
+
+    private function seedForOrganization(int $organizationId, $faker): void
+    {
         // Получаем или создаем прорабов через новую систему авторизации
         $foremen = User::whereHas('roleAssignments', function ($query) {
             $query->where('role_slug', 'foreman')
@@ -78,18 +87,15 @@ class ForemanActivitySeeder extends Seeder
             ->count();
         
         if ($existingActivityCount > 100) {
-            $this->command->info("Пропускаем создание активности прорабов. Уже существует {$existingActivityCount} записей за последние 30 дней");
+            $this->command->line("  ⊳ Организация {$organizationId}: пропущено (уже {$existingActivityCount} записей)");
             return;
         }
-
-        // Создаем реалистичную активность для каждого прораба
-        $this->command->info("Создаем активность для {$foremen->count()} прорабов...");
         
         foreach ($foremen as $foreman) {
             $this->generateForemanActivity($foreman, $startDate, $endDate, $faker);
         }
 
-        $this->command->info("✓ Создана активность для {$foremen->count()} прорабов за последние 30 дней");
+        $this->command->line("  ✓ Организация {$organizationId}: создана активность для {$foremen->count()} прорабов");
     }
 
     private function generateForemanActivity(User $foreman, Carbon $startDate, Carbon $endDate, $faker): void
