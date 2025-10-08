@@ -10,14 +10,12 @@ use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\AdvancedDashboard\Services\FinancialAnalyticsService;
 use App\BusinessModules\Features\AdvancedDashboard\Services\PredictiveAnalyticsService;
 use App\BusinessModules\Features\AdvancedDashboard\Services\KPICalculationService;
+use App\BusinessModules\Features\AdvancedDashboard\Traits\HandlesAnalyticsErrors;
 
-/**
- * Контроллер аналитики дашборда
- * 
- * Endpoints для финансовой, предиктивной и HR аналитики
- */
 class AdvancedDashboardController extends Controller
 {
+    use HandlesAnalyticsErrors;
+    
     protected FinancialAnalyticsService $financialService;
     protected PredictiveAnalyticsService $predictiveService;
     protected KPICalculationService $kpiService;
@@ -41,37 +39,41 @@ class AdvancedDashboardController extends Controller
      */
     public function getCashFlow(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'from' => 'required|date',
-            'to' => 'required|date|after_or_equal:from',
-            'project_id' => 'nullable|integer|exists:projects,id',
-        ]);
-        
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
-        
-        if (!$organizationId) {
+        try {
+            $validated = $request->validate([
+                'from' => 'required|date',
+                'to' => 'required|date|after_or_equal:from',
+                'project_id' => 'nullable|integer|exists:projects,id',
+            ]);
+            
+            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not determined',
+                ], 400);
+            }
+            
+            $from = Carbon::parse($validated['from']);
+            $to = Carbon::parse($validated['to']);
+            $projectId = $validated['project_id'] ?? null;
+            
+            $data = $this->financialService->getCashFlow(
+                $organizationId,
+                $from,
+                $to,
+                $projectId
+            );
+            
             return response()->json([
-                'success' => false,
-                'message' => 'Organization not determined',
-            ], 400);
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return $this->handleAnalyticsError($e, 'cash flow');
         }
-        
-        $from = Carbon::parse($validated['from']);
-        $to = Carbon::parse($validated['to']);
-        $projectId = $validated['project_id'] ?? null;
-        
-        $data = $this->financialService->getCashFlow(
-            $organizationId,
-            $from,
-            $to,
-            $projectId
-        );
-        
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-        ]);
     }
 
     /**
@@ -81,37 +83,41 @@ class AdvancedDashboardController extends Controller
      */
     public function getProfitLoss(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'from' => 'required|date',
-            'to' => 'required|date|after_or_equal:from',
-            'project_id' => 'nullable|integer|exists:projects,id',
-        ]);
-        
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
-        
-        if (!$organizationId) {
+        try {
+            $validated = $request->validate([
+                'from' => 'required|date',
+                'to' => 'required|date|after_or_equal:from',
+                'project_id' => 'nullable|integer|exists:projects,id',
+            ]);
+            
+            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not determined',
+                ], 400);
+            }
+            
+            $from = Carbon::parse($validated['from']);
+            $to = Carbon::parse($validated['to']);
+            $projectId = $validated['project_id'] ?? null;
+            
+            $data = $this->financialService->getProfitAndLoss(
+                $organizationId,
+                $from,
+                $to,
+                $projectId
+            );
+            
             return response()->json([
-                'success' => false,
-                'message' => 'Organization not determined',
-            ], 400);
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return $this->handleAnalyticsError($e, 'profit and loss');
         }
-        
-        $from = Carbon::parse($validated['from']);
-        $to = Carbon::parse($validated['to']);
-        $projectId = $validated['project_id'] ?? null;
-        
-        $data = $this->financialService->getProfitAndLoss(
-            $organizationId,
-            $from,
-            $to,
-            $projectId
-        );
-        
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-        ]);
     }
 
     /**
@@ -121,37 +127,41 @@ class AdvancedDashboardController extends Controller
      */
     public function getROI(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'project_id' => 'nullable|integer|exists:projects,id',
-            'from' => 'nullable|date',
-            'to' => 'nullable|date|after_or_equal:from',
-        ]);
-        
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
-        
-        if (!$organizationId) {
+        try {
+            $validated = $request->validate([
+                'project_id' => 'nullable|integer|exists:projects,id',
+                'from' => 'nullable|date',
+                'to' => 'nullable|date|after_or_equal:from',
+            ]);
+            
+            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not determined',
+                ], 400);
+            }
+            
+            $projectId = $validated['project_id'] ?? null;
+            $from = isset($validated['from']) ? Carbon::parse($validated['from']) : null;
+            $to = isset($validated['to']) ? Carbon::parse($validated['to']) : null;
+            
+            $data = $this->financialService->getROI(
+                $organizationId,
+                $projectId,
+                $from,
+                $to
+            );
+            
             return response()->json([
-                'success' => false,
-                'message' => 'Organization not determined',
-            ], 400);
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return $this->handleAnalyticsError($e, 'ROI');
         }
-        
-        $projectId = $validated['project_id'] ?? null;
-        $from = isset($validated['from']) ? Carbon::parse($validated['from']) : null;
-        $to = isset($validated['to']) ? Carbon::parse($validated['to']) : null;
-        
-        $data = $this->financialService->getROI(
-            $organizationId,
-            $projectId,
-            $from,
-            $to
-        );
-        
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-        ]);
     }
 
     /**
@@ -161,31 +171,35 @@ class AdvancedDashboardController extends Controller
      */
     public function getRevenueForecast(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'months' => 'nullable|integer|min:1|max:24',
-        ]);
-        
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
-        
-        if (!$organizationId) {
+        try {
+            $validated = $request->validate([
+                'months' => 'nullable|integer|min:1|max:24',
+            ]);
+            
+            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not determined',
+                ], 400);
+            }
+            
+            $months = $validated['months'] ?? 6;
+            
+            $data = $this->financialService->getRevenueForecast(
+                $organizationId,
+                $months
+            );
+            
             return response()->json([
-                'success' => false,
-                'message' => 'Organization not determined',
-            ], 400);
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return $this->handleAnalyticsError($e, 'revenue forecast');
         }
-        
-        $months = $validated['months'] ?? 6;
-        
-        $data = $this->financialService->getRevenueForecast(
-            $organizationId,
-            $months
-        );
-        
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-        ]);
     }
 
     /**
@@ -195,22 +209,26 @@ class AdvancedDashboardController extends Controller
      */
     public function getReceivablesPayables(Request $request): JsonResponse
     {
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
-        
-        if (!$organizationId) {
+        try {
+            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not determined',
+                ], 400);
+            }
+            
+            $data = $this->financialService->getReceivablesPayables($organizationId);
+            
             return response()->json([
-                'success' => false,
-                'message' => 'Organization not determined',
-            ], 400);
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return $this->handleAnalyticsError($e, 'receivables and payables');
         }
-        
-        $data = $this->financialService->getReceivablesPayables($organizationId);
-        
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-        ]);
     }
 
     // ==================== PREDICTIVE ANALYTICS ====================
@@ -222,18 +240,22 @@ class AdvancedDashboardController extends Controller
      */
     public function getContractForecast(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'contract_id' => 'required|integer|exists:contracts,id',
-        ]);
-        
-        $data = $this->predictiveService->predictContractCompletion(
-            $validated['contract_id']
-        );
-        
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-        ]);
+        try {
+            $validated = $request->validate([
+                'contract_id' => 'required|integer|exists:contracts,id',
+            ]);
+            
+            $data = $this->predictiveService->predictContractCompletion(
+                $validated['contract_id']
+            );
+            
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return $this->handleAnalyticsError($e, 'contract forecast');
+        }
     }
 
     /**
@@ -243,18 +265,22 @@ class AdvancedDashboardController extends Controller
      */
     public function getBudgetRisk(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'project_id' => 'required|integer|exists:projects,id',
-        ]);
-        
-        $data = $this->predictiveService->predictBudgetOverrun(
-            $validated['project_id']
-        );
-        
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-        ]);
+        try {
+            $validated = $request->validate([
+                'project_id' => 'required|integer|exists:projects,id',
+            ]);
+            
+            $data = $this->predictiveService->predictBudgetOverrun(
+                $validated['project_id']
+            );
+            
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return $this->handleAnalyticsError($e, 'budget risk');
+        }
     }
 
     /**
@@ -264,31 +290,35 @@ class AdvancedDashboardController extends Controller
      */
     public function getMaterialNeeds(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'months' => 'nullable|integer|min:1|max:12',
-        ]);
-        
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
-        
-        if (!$organizationId) {
+        try {
+            $validated = $request->validate([
+                'months' => 'nullable|integer|min:1|max:12',
+            ]);
+            
+            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not determined',
+                ], 400);
+            }
+            
+            $months = $validated['months'] ?? 3;
+            
+            $data = $this->predictiveService->predictMaterialNeeds(
+                $organizationId,
+                $months
+            );
+            
             return response()->json([
-                'success' => false,
-                'message' => 'Organization not determined',
-            ], 400);
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return $this->handleAnalyticsError($e, 'material needs');
         }
-        
-        $months = $validated['months'] ?? 3;
-        
-        $data = $this->predictiveService->predictMaterialNeeds(
-            $organizationId,
-            $months
-        );
-        
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-        ]);
     }
 
     // ==================== HR & KPI ANALYTICS ====================
@@ -300,37 +330,41 @@ class AdvancedDashboardController extends Controller
      */
     public function getKPI(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'user_id' => 'nullable|integer|exists:users,id',
-            'from' => 'required|date',
-            'to' => 'required|date|after_or_equal:from',
-        ]);
-        
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
-        
-        if (!$organizationId) {
+        try {
+            $validated = $request->validate([
+                'user_id' => 'nullable|integer|exists:users,id',
+                'from' => 'required|date',
+                'to' => 'required|date|after_or_equal:from',
+            ]);
+            
+            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not determined',
+                ], 400);
+            }
+            
+            $userId = $validated['user_id'] ?? $user?->id ?? 0;
+            $from = Carbon::parse($validated['from']);
+            $to = Carbon::parse($validated['to']);
+            
+            $data = $this->kpiService->calculateUserKPI(
+                $userId,
+                $organizationId,
+                $from,
+                $to
+            );
+            
             return response()->json([
-                'success' => false,
-                'message' => 'Organization not determined',
-            ], 400);
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return $this->handleAnalyticsError($e, 'KPI');
         }
-        
-        $userId = $validated['user_id'] ?? $user?->id ?? 0;
-        $from = Carbon::parse($validated['from']);
-        $to = Carbon::parse($validated['to']);
-        
-        $data = $this->kpiService->calculateUserKPI(
-            $userId,
-            $organizationId,
-            $from,
-            $to
-        );
-        
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-        ]);
     }
 
     /**
@@ -340,37 +374,41 @@ class AdvancedDashboardController extends Controller
      */
     public function getTopPerformers(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'from' => 'required|date',
-            'to' => 'required|date|after_or_equal:from',
-            'limit' => 'nullable|integer|min:1|max:50',
-        ]);
-        
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
-        
-        if (!$organizationId) {
+        try {
+            $validated = $request->validate([
+                'from' => 'required|date',
+                'to' => 'required|date|after_or_equal:from',
+                'limit' => 'nullable|integer|min:1|max:50',
+            ]);
+            
+            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not determined',
+                ], 400);
+            }
+            
+            $from = Carbon::parse($validated['from']);
+            $to = Carbon::parse($validated['to']);
+            $limit = $validated['limit'] ?? 10;
+            
+            $data = $this->kpiService->getTopPerformers(
+                $organizationId,
+                $from,
+                $to,
+                $limit
+            );
+            
             return response()->json([
-                'success' => false,
-                'message' => 'Organization not determined',
-            ], 400);
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return $this->handleAnalyticsError($e, 'top performers');
         }
-        
-        $from = Carbon::parse($validated['from']);
-        $to = Carbon::parse($validated['to']);
-        $limit = $validated['limit'] ?? 10;
-        
-        $data = $this->kpiService->getTopPerformers(
-            $organizationId,
-            $from,
-            $to,
-            $limit
-        );
-        
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-        ]);
     }
 
     /**
@@ -380,34 +418,38 @@ class AdvancedDashboardController extends Controller
      */
     public function getResourceUtilization(Request $request): JsonResponse
     {
-        $validated = $request->validate([
-            'from' => 'required|date',
-            'to' => 'required|date|after_or_equal:from',
-        ]);
-        
-        $user = Auth::user();
-        $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
-        
-        if (!$organizationId) {
+        try {
+            $validated = $request->validate([
+                'from' => 'required|date',
+                'to' => 'required|date|after_or_equal:from',
+            ]);
+            
+            $user = Auth::user();
+            $organizationId = $request->attributes->get('current_organization_id') ?? $user?->current_organization_id;
+            
+            if (!$organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not determined',
+                ], 400);
+            }
+            
+            $from = Carbon::parse($validated['from']);
+            $to = Carbon::parse($validated['to']);
+            
+            $data = $this->kpiService->getResourceUtilization(
+                $organizationId,
+                $from,
+                $to
+            );
+            
             return response()->json([
-                'success' => false,
-                'message' => 'Organization not determined',
-            ], 400);
+                'success' => true,
+                'data' => $data,
+            ]);
+        } catch (\Exception $e) {
+            return $this->handleAnalyticsError($e, 'resource utilization');
         }
-        
-        $from = Carbon::parse($validated['from']);
-        $to = Carbon::parse($validated['to']);
-        
-        $data = $this->kpiService->getResourceUtilization(
-            $organizationId,
-            $from,
-            $to
-        );
-        
-        return response()->json([
-            'success' => true,
-            'data' => $data,
-        ]);
     }
 }
 
