@@ -18,6 +18,19 @@ class DashboardCacheService
     protected int $defaultTTL = 300; // 5 минут
 
     /**
+     * Проверить поддержку tagged cache
+     * 
+     * @return bool
+     */
+    protected function supportsTagging(): bool
+    {
+        $driver = config('cache.default');
+        $supportedDrivers = ['redis', 'memcached'];
+        
+        return in_array($driver, $supportedDrivers);
+    }
+
+    /**
      * Кешировать данные виджета
      * 
      * @param string $key Ключ кеша
@@ -30,7 +43,7 @@ class DashboardCacheService
     {
         $ttl = $ttl ?? $this->defaultTTL;
         
-        if (empty($tags)) {
+        if (empty($tags) || !$this->supportsTagging()) {
             return Cache::put($key, $data, $ttl);
         }
         
@@ -46,7 +59,7 @@ class DashboardCacheService
      */
     public function getCachedWidget(string $key, array $tags = [])
     {
-        if (empty($tags)) {
+        if (empty($tags) || !$this->supportsTagging()) {
             return Cache::get($key);
         }
         
@@ -66,7 +79,7 @@ class DashboardCacheService
     {
         $ttl = $ttl ?? $this->defaultTTL;
         
-        if (empty($tags)) {
+        if (empty($tags) || !$this->supportsTagging()) {
             return Cache::remember($key, $ttl, $callback);
         }
         
@@ -83,6 +96,10 @@ class DashboardCacheService
      */
     public function invalidateWidgetCache(string $widgetType, ?int $organizationId = null, ?int $userId = null): void
     {
+        if (!$this->supportsTagging()) {
+            return;
+        }
+        
         $tags = ["widget:{$widgetType}"];
         
         if ($organizationId) {
@@ -104,6 +121,10 @@ class DashboardCacheService
      */
     public function invalidateUserCache(int $userId): void
     {
+        if (!$this->supportsTagging()) {
+            return;
+        }
+        
         Cache::tags(["user:{$userId}"])->flush();
     }
 
@@ -115,6 +136,10 @@ class DashboardCacheService
      */
     public function invalidateOrganizationCache(int $organizationId): void
     {
+        if (!$this->supportsTagging()) {
+            return;
+        }
+        
         Cache::tags(["org:{$organizationId}"])->flush();
     }
 
@@ -126,6 +151,10 @@ class DashboardCacheService
      */
     public function invalidateDashboardCache(int $dashboardId): void
     {
+        if (!$this->supportsTagging()) {
+            return;
+        }
+        
         Cache::tags(["dashboard:{$dashboardId}"])->flush();
     }
 
@@ -138,6 +167,10 @@ class DashboardCacheService
      */
     public function invalidateByDataType(string $dataType, ?int $organizationId = null): void
     {
+        if (!$this->supportsTagging()) {
+            return;
+        }
+        
         $tags = ["data:{$dataType}"];
         
         if ($organizationId) {
@@ -155,6 +188,10 @@ class DashboardCacheService
      */
     public function invalidateFinancialAnalytics(int $organizationId): void
     {
+        if (!$this->supportsTagging()) {
+            return;
+        }
+        
         $tags = [
             "org:{$organizationId}",
             "widget:financial",
@@ -173,6 +210,10 @@ class DashboardCacheService
      */
     public function invalidatePredictiveAnalytics(int $organizationId): void
     {
+        if (!$this->supportsTagging()) {
+            return;
+        }
+        
         $tags = [
             "org:{$organizationId}",
             "widget:predictive",
@@ -191,6 +232,10 @@ class DashboardCacheService
      */
     public function invalidateKPIAnalytics(int $organizationId): void
     {
+        if (!$this->supportsTagging()) {
+            return;
+        }
+        
         $tags = [
             "org:{$organizationId}",
             "widget:kpi",
@@ -249,6 +294,10 @@ class DashboardCacheService
      */
     public function invalidateByCategory(string $category, ?int $organizationId = null): void
     {
+        if (!$this->supportsTagging()) {
+            return;
+        }
+        
         $tags = ["advanced_dashboard", "widget_data", $category];
         
         if ($organizationId) {
@@ -265,6 +314,11 @@ class DashboardCacheService
      */
     public function flushAllDashboardCache(): void
     {
+        if (!$this->supportsTagging()) {
+            Cache::flush();
+            return;
+        }
+        
         Cache::tags([
             'advanced_dashboard',
             'widget_data',
