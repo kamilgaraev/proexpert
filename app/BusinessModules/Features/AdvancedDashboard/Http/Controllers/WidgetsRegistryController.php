@@ -34,7 +34,7 @@ class WidgetsRegistryController extends Controller
             ],
         ]);
     }
-
+    
     public function getWidgetInfo(string $widgetId): JsonResponse
     {
         try {
@@ -42,14 +42,14 @@ class WidgetsRegistryController extends Controller
             $provider = $this->widgetRegistry->getProvider($widgetType);
             
             if (!$provider) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Widget not found',
-                ], 404);
-            }
-            
             return response()->json([
-                'success' => true,
+                'success' => false,
+                'message' => 'Widget not found',
+            ], 404);
+        }
+        
+        return response()->json([
+            'success' => true,
                 'data' => $provider->getMetadata(),
             ]);
         } catch (\ValueError $e) {

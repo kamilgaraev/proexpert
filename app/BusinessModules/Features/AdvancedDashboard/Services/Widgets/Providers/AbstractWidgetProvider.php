@@ -33,7 +33,13 @@ abstract class AbstractWidgetProvider implements WidgetProviderInterface
 
     public function getMetadata(): array
     {
-        return $this->getType()->getMetadata();
+        $metadata = $this->getType()->getMetadata();
+        
+        return array_merge([
+            'id' => $this->getType()->value,
+            'type' => $this->getType()->value,
+            'category' => $this->getType()->getCategory()->value,
+        ], $metadata);
     }
 
     public function validateRequest(WidgetDataRequest $request): bool
