@@ -304,25 +304,45 @@ class DashboardLayoutService
     public function getAvailableTemplates(): array
     {
         return [
-            'admin' => [
-                'name' => 'Административный дашборд',
-                'description' => 'Общий обзор всех проектов и контрактов',
-                'icon' => 'chart-bar',
-            ],
-            'finance' => [
-                'name' => 'Финансовый дашборд',
-                'description' => 'Финансовая аналитика и прогнозы',
+            'financial' => [
+                'name' => 'Финансовая аналитика',
+                'description' => 'Финансовые показатели, прогнозы и рентабельность',
                 'icon' => 'dollar-sign',
             ],
-            'technical' => [
-                'name' => 'Технический дашборд',
-                'description' => 'Выполненные работы и материалы',
-                'icon' => 'tools',
+            'projects' => [
+                'name' => 'Проекты',
+                'description' => 'Управление и аналитика проектов',
+                'icon' => 'folder',
+            ],
+            'contracts' => [
+                'name' => 'Контракты',
+                'description' => 'Анализ контрактов и платежей',
+                'icon' => 'file-text',
+            ],
+            'materials' => [
+                'name' => 'Материалы',
+                'description' => 'Учет и прогнозирование материалов',
+                'icon' => 'package',
             ],
             'hr' => [
-                'name' => 'HR дашборд',
-                'description' => 'KPI сотрудников и загрузка ресурсов',
+                'name' => 'HR и KPI',
+                'description' => 'Аналитика персонала и эффективности',
                 'icon' => 'users',
+            ],
+            'predictive' => [
+                'name' => 'Предиктивная аналитика',
+                'description' => 'Прогнозы и анализ рисков',
+                'icon' => 'trending-up',
+            ],
+            'activity' => [
+                'name' => 'Активность',
+                'description' => 'История действий и события системы',
+                'icon' => 'activity',
+            ],
+            'performance' => [
+                'name' => 'Производительность',
+                'description' => 'Мониторинг использования системы',
+                'icon' => 'zap',
             ],
         ];
     }
@@ -396,31 +416,9 @@ class DashboardLayoutService
     protected function getTemplateConfig(string $template): ?array
     {
         $templates = [
-            'admin' => [
-                'name' => 'Административный дашборд',
-                'description' => 'Общий обзор всех проектов и контрактов',
-                'layout' => $this->getDefaultLayout(),
-                'widgets' => [
-                    [
-                        'id' => 'contracts-overview',
-                        'type' => 'contracts_overview',
-                        'position' => ['x' => 0, 'y' => 0, 'w' => 6, 'h' => 2],
-                    ],
-                    [
-                        'id' => 'projects-status',
-                        'type' => 'projects_status',
-                        'position' => ['x' => 6, 'y' => 0, 'w' => 6, 'h' => 2],
-                    ],
-                    [
-                        'id' => 'recent-activity',
-                        'type' => 'recent_activity',
-                        'position' => ['x' => 0, 'y' => 2, 'w' => 12, 'h' => 3],
-                    ],
-                ],
-            ],
-            'finance' => [
-                'name' => 'Финансовый дашборд',
-                'description' => 'Финансовая аналитика и прогнозы',
+            'financial' => [
+                'name' => 'Финансовая аналитика',
+                'description' => 'Финансовые показатели, прогнозы и рентабельность',
                 'layout' => $this->getDefaultLayout(),
                 'widgets' => [
                     [
@@ -443,38 +441,112 @@ class DashboardLayoutService
                         'type' => 'revenue_forecast',
                         'position' => ['x' => 6, 'y' => 3, 'w' => 6, 'h' => 3],
                     ],
+                    [
+                        'id' => 'financial-health',
+                        'type' => 'financial_health',
+                        'position' => ['x' => 0, 'y' => 6, 'w' => 6, 'h' => 3],
+                    ],
                 ],
             ],
-            'technical' => [
-                'name' => 'Технический дашборд',
-                'description' => 'Выполненные работы и материалы',
+            'projects' => [
+                'name' => 'Проекты',
+                'description' => 'Управление и аналитика проектов',
                 'layout' => $this->getDefaultLayout(),
                 'widgets' => [
                     [
-                        'id' => 'completed-works',
-                        'type' => 'completed_works',
+                        'id' => 'projects-overview',
+                        'type' => 'projects_overview',
+                        'position' => ['x' => 0, 'y' => 0, 'w' => 6, 'h' => 2],
+                    ],
+                    [
+                        'id' => 'projects-status',
+                        'type' => 'projects_status',
+                        'position' => ['x' => 6, 'y' => 0, 'w' => 6, 'h' => 2],
+                    ],
+                    [
+                        'id' => 'projects-timeline',
+                        'type' => 'projects_timeline',
+                        'position' => ['x' => 0, 'y' => 2, 'w' => 12, 'h' => 4],
+                    ],
+                    [
+                        'id' => 'projects-budget',
+                        'type' => 'projects_budget',
+                        'position' => ['x' => 0, 'y' => 6, 'w' => 6, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'projects-risks',
+                        'type' => 'projects_risks',
+                        'position' => ['x' => 6, 'y' => 6, 'w' => 6, 'h' => 3],
+                    ],
+                ],
+            ],
+            'contracts' => [
+                'name' => 'Контракты',
+                'description' => 'Анализ контрактов и платежей',
+                'layout' => $this->getDefaultLayout(),
+                'widgets' => [
+                    [
+                        'id' => 'contracts-overview',
+                        'type' => 'contracts_overview',
+                        'position' => ['x' => 0, 'y' => 0, 'w' => 6, 'h' => 2],
+                    ],
+                    [
+                        'id' => 'contracts-status',
+                        'type' => 'contracts_status',
+                        'position' => ['x' => 6, 'y' => 0, 'w' => 6, 'h' => 2],
+                    ],
+                    [
+                        'id' => 'contracts-payments',
+                        'type' => 'contracts_payments',
+                        'position' => ['x' => 0, 'y' => 2, 'w' => 12, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'contracts-performance',
+                        'type' => 'contracts_performance',
+                        'position' => ['x' => 0, 'y' => 5, 'w' => 6, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'contracts-upcoming',
+                        'type' => 'contracts_upcoming',
+                        'position' => ['x' => 6, 'y' => 5, 'w' => 6, 'h' => 3],
+                    ],
+                ],
+            ],
+            'materials' => [
+                'name' => 'Материалы',
+                'description' => 'Учет и прогнозирование материалов',
+                'layout' => $this->getDefaultLayout(),
+                'widgets' => [
+                    [
+                        'id' => 'materials-inventory',
+                        'type' => 'materials_inventory',
                         'position' => ['x' => 0, 'y' => 0, 'w' => 6, 'h' => 3],
                     ],
                     [
-                        'id' => 'materials-usage',
-                        'type' => 'materials_usage',
+                        'id' => 'materials-consumption',
+                        'type' => 'materials_consumption',
                         'position' => ['x' => 6, 'y' => 0, 'w' => 6, 'h' => 3],
                     ],
                     [
-                        'id' => 'low-stock',
-                        'type' => 'low_stock',
-                        'position' => ['x' => 0, 'y' => 3, 'w' => 12, 'h' => 2],
+                        'id' => 'materials-low-stock',
+                        'type' => 'materials_low_stock',
+                        'position' => ['x' => 0, 'y' => 3, 'w' => 12, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'materials-forecast',
+                        'type' => 'materials_forecast',
+                        'position' => ['x' => 0, 'y' => 6, 'w' => 12, 'h' => 4],
                     ],
                 ],
             ],
             'hr' => [
-                'name' => 'HR дашборд',
-                'description' => 'KPI сотрудников и загрузка ресурсов',
+                'name' => 'HR и KPI',
+                'description' => 'Аналитика персонала и эффективности',
                 'layout' => $this->getDefaultLayout(),
                 'widgets' => [
                     [
-                        'id' => 'kpi',
-                        'type' => 'kpi',
+                        'id' => 'employee-kpi',
+                        'type' => 'employee_kpi',
                         'position' => ['x' => 0, 'y' => 0, 'w' => 6, 'h' => 3],
                     ],
                     [
@@ -485,7 +557,98 @@ class DashboardLayoutService
                     [
                         'id' => 'resource-utilization',
                         'type' => 'resource_utilization',
-                        'position' => ['x' => 0, 'y' => 3, 'w' => 12, 'h' => 3],
+                        'position' => ['x' => 0, 'y' => 3, 'w' => 12, 'h' => 4],
+                    ],
+                    [
+                        'id' => 'team-performance',
+                        'type' => 'team_performance',
+                        'position' => ['x' => 0, 'y' => 7, 'w' => 12, 'h' => 4],
+                    ],
+                ],
+            ],
+            'predictive' => [
+                'name' => 'Предиктивная аналитика',
+                'description' => 'Прогнозы и анализ рисков',
+                'layout' => $this->getDefaultLayout(),
+                'widgets' => [
+                    [
+                        'id' => 'budget-risk',
+                        'type' => 'budget_risk',
+                        'position' => ['x' => 0, 'y' => 0, 'w' => 6, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'deadline-risk',
+                        'type' => 'deadline_risk',
+                        'position' => ['x' => 6, 'y' => 0, 'w' => 6, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'cash-flow-forecast',
+                        'type' => 'cash_flow_forecast',
+                        'position' => ['x' => 0, 'y' => 3, 'w' => 12, 'h' => 4],
+                    ],
+                    [
+                        'id' => 'trend-analysis',
+                        'type' => 'trend_analysis',
+                        'position' => ['x' => 0, 'y' => 7, 'w' => 12, 'h' => 4],
+                    ],
+                ],
+            ],
+            'activity' => [
+                'name' => 'Активность',
+                'description' => 'История действий и события системы',
+                'layout' => $this->getDefaultLayout(),
+                'widgets' => [
+                    [
+                        'id' => 'recent-activity',
+                        'type' => 'recent_activity',
+                        'position' => ['x' => 0, 'y' => 0, 'w' => 12, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'system-events',
+                        'type' => 'system_events',
+                        'position' => ['x' => 0, 'y' => 3, 'w' => 6, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'user-actions',
+                        'type' => 'user_actions',
+                        'position' => ['x' => 6, 'y' => 3, 'w' => 6, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'audit-log',
+                        'type' => 'audit_log',
+                        'position' => ['x' => 0, 'y' => 6, 'w' => 12, 'h' => 4],
+                    ],
+                ],
+            ],
+            'performance' => [
+                'name' => 'Производительность',
+                'description' => 'Мониторинг использования системы',
+                'layout' => $this->getDefaultLayout(),
+                'widgets' => [
+                    [
+                        'id' => 'system-metrics',
+                        'type' => 'system_metrics',
+                        'position' => ['x' => 0, 'y' => 0, 'w' => 6, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'api-performance',
+                        'type' => 'api_performance',
+                        'position' => ['x' => 6, 'y' => 0, 'w' => 6, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'database-stats',
+                        'type' => 'database_stats',
+                        'position' => ['x' => 0, 'y' => 3, 'w' => 6, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'cache-stats',
+                        'type' => 'cache_stats',
+                        'position' => ['x' => 6, 'y' => 3, 'w' => 6, 'h' => 3],
+                    ],
+                    [
+                        'id' => 'response-times',
+                        'type' => 'response_times',
+                        'position' => ['x' => 0, 'y' => 6, 'w' => 12, 'h' => 4],
                     ],
                 ],
             ],

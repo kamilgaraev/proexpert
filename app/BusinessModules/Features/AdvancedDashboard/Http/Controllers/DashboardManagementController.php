@@ -70,7 +70,7 @@ class DashboardManagementController extends Controller
             'layout' => 'nullable|array',
             'widgets' => 'nullable|array',
             'filters' => 'nullable|array',
-            'template' => 'nullable|string|in:admin,finance,technical,hr,custom',
+            'template' => 'nullable|string|in:financial,projects,contracts,materials,hr,predictive,activity,performance,custom',
             'refresh_interval' => 'nullable|integer|min:30|max:3600',
             'enable_realtime' => 'nullable|boolean',
             'visibility' => 'nullable|string|in:private,team,organization',
@@ -125,7 +125,7 @@ class DashboardManagementController extends Controller
     public function createFromTemplate(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'template' => 'required|string|in:admin,finance,technical,hr',
+            'template' => 'required|string|in:financial,projects,contracts,materials,hr,predictive,activity,performance',
             'name' => 'nullable|string|max:255',
         ]);
         
