@@ -241,6 +241,24 @@ class DashboardCacheService
     }
 
     /**
+     * Инвалидировать кеш по категории виджетов
+     * 
+     * @param string $category Категория (financial, projects, contracts, materials, hr, predictive, activity, performance)
+     * @param int|null $organizationId ID организации
+     * @return void
+     */
+    public function invalidateByCategory(string $category, ?int $organizationId = null): void
+    {
+        $tags = ["advanced_dashboard", "widget_data", $category];
+        
+        if ($organizationId) {
+            $tags[] = "org:{$organizationId}";
+        }
+        
+        Cache::tags($tags)->flush();
+    }
+
+    /**
      * Очистить весь кеш дашбордов (использовать осторожно!)
      * 
      * @return void
@@ -248,15 +266,16 @@ class DashboardCacheService
     public function flushAllDashboardCache(): void
     {
         Cache::tags([
-            'widget:financial',
-            'widget:predictive',
-            'widget:kpi',
-            'widget:hr',
-            'data:contracts',
-            'data:projects',
-            'data:completed_works',
-            'data:materials',
-            'data:users',
+            'advanced_dashboard',
+            'widget_data',
+            'financial',
+            'projects',
+            'contracts',
+            'materials',
+            'hr',
+            'predictive',
+            'activity',
+            'performance',
         ])->flush();
     }
 

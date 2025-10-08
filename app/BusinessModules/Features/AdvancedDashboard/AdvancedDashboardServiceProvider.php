@@ -34,40 +34,102 @@ class AdvancedDashboardServiceProvider extends ServiceProvider
 
     protected function registerServices(): void
     {
-        // Финансовая аналитика
         $this->app->singleton(
-            \App\BusinessModules\Features\AdvancedDashboard\Services\FinancialAnalyticsService::class
+            \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\WidgetRegistry::class
         );
         
-        // Предиктивная аналитика
         $this->app->singleton(
-            \App\BusinessModules\Features\AdvancedDashboard\Services\PredictiveAnalyticsService::class
+            \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\WidgetService::class
         );
         
-        // KPI расчеты
-        $this->app->singleton(
-            \App\BusinessModules\Features\AdvancedDashboard\Services\KPICalculationService::class
-        );
-        
-        // Управление layout дашборда
         $this->app->singleton(
             \App\BusinessModules\Features\AdvancedDashboard\Services\DashboardLayoutService::class
         );
         
-        // Алерты
         $this->app->singleton(
             \App\BusinessModules\Features\AdvancedDashboard\Services\AlertsService::class
         );
         
-        // Экспорт
         $this->app->singleton(
             \App\BusinessModules\Features\AdvancedDashboard\Services\DashboardExportService::class
         );
         
-        // Кеширование
         $this->app->singleton(
             \App\BusinessModules\Features\AdvancedDashboard\Services\DashboardCacheService::class
         );
+
+        $this->registerWidgetProviders();
+    }
+
+    protected function registerWidgetProviders(): void
+    {
+        $registry = $this->app->make(\App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\WidgetRegistry::class);
+
+        $providers = [
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Financial\CashFlowWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Financial\ProfitLossWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Financial\ROIWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Financial\RevenueForecastWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Financial\ReceivablesPayablesWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Financial\ExpenseBreakdownWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Financial\FinancialHealthWidgetProvider(),
+
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Projects\ProjectsOverviewWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Projects\ProjectsStatusWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Projects\ProjectsTimelineWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Projects\ProjectsBudgetWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Projects\ProjectsCompletionWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Projects\ProjectsRisksWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Projects\ProjectsMapWidgetProvider(),
+
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Contracts\ContractsOverviewWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Contracts\ContractsStatusWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Contracts\ContractsPaymentsWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Contracts\ContractsPerformanceWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Contracts\ContractsUpcomingWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Contracts\ContractsCompletionForecastWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Contracts\ContractsByContractorWidgetProvider(),
+
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Materials\MaterialsInventoryWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Materials\MaterialsConsumptionWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Materials\MaterialsForecastWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Materials\MaterialsLowStockWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Materials\MaterialsTopUsedWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Materials\MaterialsByProjectWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Materials\MaterialsSuppliersWidgetProvider(),
+
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\HR\EmployeeKPIWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\HR\TopPerformersWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\HR\ResourceUtilizationWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\HR\EmployeeWorkloadWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\HR\EmployeeAttendanceWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\HR\EmployeeEfficiencyWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\HR\TeamPerformanceWidgetProvider(),
+
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Predictive\BudgetRiskWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Predictive\DeadlineRiskWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Predictive\ResourceDemandWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Predictive\CashFlowForecastWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Predictive\ProjectCompletionWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Predictive\CostOverrunWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Predictive\TrendAnalysisWidgetProvider(),
+
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Activity\RecentActivityWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Activity\SystemEventsWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Activity\UserActionsWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Activity\NotificationsWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Activity\AuditLogWidgetProvider(),
+
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Performance\SystemMetricsWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Performance\ApiPerformanceWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Performance\DatabaseStatsWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Performance\CacheStatsWidgetProvider(),
+            new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Performance\ResponseTimesWidgetProvider(),
+        ];
+
+        foreach ($providers as $provider) {
+            $registry->register($provider);
+        }
     }
 
     protected function loadRoutes(): void
