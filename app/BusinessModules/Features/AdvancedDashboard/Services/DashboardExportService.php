@@ -8,6 +8,9 @@ use Carbon\Carbon;
 use App\Services\LogService;
 use App\BusinessModules\Features\AdvancedDashboard\Models\Dashboard;
 use App\BusinessModules\Features\AdvancedDashboard\Models\ScheduledReport;
+use App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\WidgetService;
+use App\BusinessModules\Features\AdvancedDashboard\Enums\WidgetType;
+use App\BusinessModules\Features\AdvancedDashboard\DTOs\WidgetDataRequest;
 use Barryvdh\DomPDF\Facade\Pdf;
 
 /**
@@ -21,18 +24,11 @@ use Barryvdh\DomPDF\Facade\Pdf;
  */
 class DashboardExportService
 {
-    protected FinancialAnalyticsService $financialService;
-    protected PredictiveAnalyticsService $predictiveService;
-    protected KPICalculationService $kpiService;
+    protected WidgetService $widgetService;
 
-    public function __construct(
-        FinancialAnalyticsService $financialService,
-        PredictiveAnalyticsService $predictiveService,
-        KPICalculationService $kpiService
-    ) {
-        $this->financialService = $financialService;
-        $this->predictiveService = $predictiveService;
-        $this->kpiService = $kpiService;
+    public function __construct(WidgetService $widgetService)
+    {
+        $this->widgetService = $widgetService;
     }
 
     /**
@@ -216,40 +212,29 @@ class DashboardExportService
      */
     protected function getWidgetData(string $widgetType, int $organizationId, Carbon $from, Carbon $to, array $filters): array
     {
-        $projectId = $filters['project_id'] ?? null;
-        
-        switch ($widgetType) {
-            case 'cash_flow':
-                return $this->financialService->getCashFlow($organizationId, $from, $to, $projectId);
+        try {
+            $widgetTypeEnum = WidgetType::from($widgetType);
             
-            case 'profit_loss':
-                return $this->financialService->getProfitAndLoss($organizationId, $from, $to, $projectId);
+            $request = new WidgetDataRequest(
+                widgetType: $widgetTypeEnum,
+                organizationId: $organizationId,
+                from: $from,
+                to: $to,
+                projectId: $filters['project_id'] ?? null,
+                contractId: $filters['contract_id'] ?? null,
+                employeeId: $filters['employee_id'] ?? null,
+                filters: $filters,
+                options: $filters['options'] ?? []
+            );
             
-            case 'roi':
-                return $this->financialService->getROI($organizationId, $projectId, $from, $to);
+            $response = $this->widgetService->getWidgetData($widgetTypeEnum, $request);
             
-            case 'revenue_forecast':
-                $months = $filters['forecast_months'] ?? 6;
-                return $this->financialService->getRevenueForecast($organizationId, $months);
+            return $response->data;
             
-            case 'receivables_payables':
-                return $this->financialService->getReceivablesPayables($organizationId);
-            
-            case 'budget_risk':
-                if ($projectId) {
-                    return $this->predictiveService->predictBudgetOverrun($projectId);
-                }
-                return $this->predictiveService->getOrganizationForecast($organizationId);
-            
-            case 'kpi':
-            case 'top_performers':
-                return $this->kpiService->getTopPerformers($organizationId, $from, $to, 10);
-            
-            case 'resource_utilization':
-                return $this->kpiService->getResourceUtilization($organizationId, $from, $to);
-            
-            default:
-                return ['message' => 'Widget type not supported for export'];
+        } catch (\ValueError $e) {
+            return ['error' => 'Unsupported widget type: ' . $widgetType];
+        } catch (\Exception $e) {
+            return ['error' => 'Failed to get widget data: ' . $e->getMessage()];
         }
     }
 

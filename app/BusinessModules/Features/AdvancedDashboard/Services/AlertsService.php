@@ -7,7 +7,6 @@ use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use App\BusinessModules\Features\AdvancedDashboard\Models\DashboardAlert;
 use App\BusinessModules\Features\AdvancedDashboard\Events\AlertTriggered;
-use App\BusinessModules\Features\AdvancedDashboard\Services\KPICalculationService;
 use App\Models\Contract;
 use App\Models\Project;
 use App\Models\Material;
@@ -399,20 +398,25 @@ class AlertsService
             return false;
         }
         
-        $kpiService = app(KPICalculationService::class);
-        
         $from = Carbon::now()->startOfMonth();
         $to = Carbon::now();
         
         try {
-            $kpiData = $kpiService->calculateUserKPI(
-                $alert->target_entity_id,
-                $alert->organization_id,
-                $from,
-                $to
-            );
+            $worksCount = DB::table('completed_works')
+                ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+                ->where('projects.organization_id', $alert->organization_id)
+                ->where('completed_works.user_id', $alert->target_entity_id)
+                ->whereBetween('completed_works.created_at', [$from, $to])
+                ->count();
             
-            $kpiValue = $kpiData['overall_kpi'] ?? 0;
+            $worksValue = DB::table('completed_works')
+                ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+                ->where('projects.organization_id', $alert->organization_id)
+                ->where('completed_works.user_id', $alert->target_entity_id)
+                ->whereBetween('completed_works.created_at', [$from, $to])
+                ->sum(DB::raw('completed_works.quantity * completed_works.price'));
+            
+            $kpiValue = $worksCount > 0 ? ($worksValue / $worksCount) : 0;
             $threshold = $alert->threshold_value ?? 60;
             
             return $this->compareValues($kpiValue, $threshold, $alert->comparison_operator);
