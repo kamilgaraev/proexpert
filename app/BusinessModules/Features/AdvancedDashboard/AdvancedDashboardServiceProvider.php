@@ -35,7 +35,10 @@ class AdvancedDashboardServiceProvider extends ServiceProvider
     protected function registerServices(): void
     {
         $this->app->singleton(
-            \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\WidgetRegistry::class
+            \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\WidgetRegistry::class,
+            function ($app) {
+                return \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\WidgetRegistry::getInstance();
+            }
         );
         
         $this->app->singleton(
@@ -63,7 +66,7 @@ class AdvancedDashboardServiceProvider extends ServiceProvider
 
     protected function registerWidgetProviders(): void
     {
-        $registry = $this->app->make(\App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\WidgetRegistry::class);
+        $registry = \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\WidgetRegistry::getInstance();
 
         $providers = [
             new \App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Financial\CashFlowWidgetProvider(),
