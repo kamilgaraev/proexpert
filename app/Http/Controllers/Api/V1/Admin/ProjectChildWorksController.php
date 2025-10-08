@@ -7,7 +7,6 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use App\Services\Project\CrossOrgWorkReadService;
 use App\Models\Project;
-use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 
 class ProjectChildWorksController extends Controller
@@ -33,8 +32,34 @@ class ProjectChildWorksController extends Controller
         try {
             $project = Project::findOrFail($projectId);
 
-            // Авторизация через политику
-            Gate::authorize('view', $project);
+            $user = $request->user();
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized',
+                ], 401);
+            }
+
+            $hasPermission = $user->hasPermission('projects.view_child_works', [
+                'organization_id' => $user->current_organization_id
+            ]);
+
+            $currentOrgId = $user->current_organization_id;
+
+            $isHeadOrganization = $hasPermission && $user->organizations()
+                ->where('organizations.id', $project->organization_id)
+                ->exists();
+
+            $isAttachedOrganization = $project->organizations()
+                ->where('organizations.id', $currentOrgId)
+                ->exists();
+
+            if (!$isHeadOrganization && !$isAttachedOrganization) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Access denied',
+                ], 403);
+            }
 
             $filters = $request->only([
                 'child_organization_id',
