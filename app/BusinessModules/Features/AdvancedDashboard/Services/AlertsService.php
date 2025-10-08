@@ -233,8 +233,8 @@ class AlertsService
                 'status' => $record->status,
                 'trigger_value' => $record->trigger_value,
                 'message' => $record->message,
-                'triggered_at' => Carbon::parse($record->triggered_at)->toISOString(),
-                'resolved_at' => $record->resolved_at ? Carbon::parse($record->resolved_at)->toISOString() : null,
+                'triggered_at' => Carbon::parse($record->triggered_at)->toIso8601String(),
+                'resolved_at' => $record->resolved_at ? Carbon::parse($record->resolved_at)->toIso8601String() : null,
                 'trigger_data' => json_decode($record->trigger_data, true),
             ];
         }
@@ -243,8 +243,8 @@ class AlertsService
             'alert_id' => $alert->id,
             'alert_name' => $alert->name,
             'total_triggers' => $alert->trigger_count,
-            'last_triggered_at' => $alert->last_triggered_at?->toISOString(),
-            'last_checked_at' => $alert->last_checked_at?->toISOString(),
+            'last_triggered_at' => $alert->last_triggered_at?->toIso8601String(),
+            'last_checked_at' => $alert->last_checked_at?->toIso8601String(),
             'is_triggered' => $alert->is_triggered,
             'history' => $formattedHistory,
             'history_count' => count($formattedHistory),

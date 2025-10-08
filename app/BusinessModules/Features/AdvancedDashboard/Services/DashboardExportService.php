@@ -184,8 +184,8 @@ class DashboardExportService
         $data = [
             'dashboard' => $dashboard,
             'period' => [
-                'from' => $from->toISOString(),
-                'to' => $to->toISOString(),
+                'from' => $from->toIso8601String(),
+                'to' => $to->toIso8601String(),
             ],
             'widgets_data' => [],
         ];

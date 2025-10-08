@@ -71,8 +71,8 @@ class PredictiveAnalyticsService
                 'contract_id' => $contractId,
                 'contract_name' => $contract->name ?? 'N/A',
                 'current_progress' => $currentProgress,
-                'planned_completion_date' => $plannedCompletionDate?->toISOString(),
-                'estimated_completion_date' => $estimatedCompletionDate?->toISOString(),
+                'planned_completion_date' => $plannedCompletionDate?->toIso8601String(),
+                'estimated_completion_date' => $estimatedCompletionDate?->toIso8601String(),
                 'deviation_days' => $deviation,
                 'risk_level' => $risk,
                 'confidence' => $this->calculateConfidence($progressHistory),
@@ -267,7 +267,7 @@ class PredictiveAnalyticsService
             $history = [];
             foreach ($historyRecords as $record) {
                 $history[] = [
-                    'date' => Carbon::parse($record->recorded_at)->toISOString(),
+                    'date' => Carbon::parse($record->recorded_at)->toIso8601String(),
                     'progress' => (float) $record->progress,
                 ];
             }
@@ -288,7 +288,7 @@ class PredictiveAnalyticsService
             $date = $startDate->copy()->addDays($i);
             
             $history[] = [
-                'date' => $date->toISOString(),
+                'date' => $date->toIso8601String(),
                 'progress' => min(100, round($progress, 2)),
             ];
         }

@@ -65,8 +65,8 @@ class KPICalculationService
                 'user_id' => $userId,
                 'user_name' => $user->name,
                 'period' => [
-                    'from' => $from->toISOString(),
-                    'to' => $to->toISOString(),
+                    'from' => $from->toIso8601String(),
+                    'to' => $to->toIso8601String(),
                 ],
                 'metrics' => [
                     'completed_works_count' => $completedWorks,
@@ -123,8 +123,8 @@ class KPICalculationService
             
             return [
                 'period' => [
-                    'from' => $from->toISOString(),
-                    'to' => $to->toISOString(),
+                    'from' => $from->toIso8601String(),
+                    'to' => $to->toIso8601String(),
                 ],
                 'total_employees' => count($performers),
                 'top_performers' => $topPerformers,
@@ -172,8 +172,8 @@ class KPICalculationService
             
             return [
                 'period' => [
-                    'from' => $from->toISOString(),
-                    'to' => $to->toISOString(),
+                    'from' => $from->toIso8601String(),
+                    'to' => $to->toIso8601String(),
                 ],
                 'total_employees' => count($utilization),
                 'average_utilization' => $this->calculateAverageUtilization($utilization),

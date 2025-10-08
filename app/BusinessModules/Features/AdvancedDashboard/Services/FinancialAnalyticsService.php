@@ -49,8 +49,8 @@ class FinancialAnalyticsService
             
             return [
                 'period' => [
-                    'from' => $from->toISOString(),
-                    'to' => $to->toISOString(),
+                    'from' => $from->toIso8601String(),
+                    'to' => $to->toIso8601String(),
                 ],
                 'total_inflow' => $inflow,
                 'total_outflow' => $outflow,
@@ -96,8 +96,8 @@ class FinancialAnalyticsService
             
             return [
                 'period' => [
-                    'from' => $from->toISOString(),
-                    'to' => $to->toISOString(),
+                    'from' => $from->toIso8601String(),
+                    'to' => $to->toIso8601String(),
                 ],
                 'revenue' => $revenue,
                 'cost_of_goods_sold' => $cogs,
@@ -160,8 +160,8 @@ class FinancialAnalyticsService
             
             return [
                 'period' => [
-                    'from' => $from->toISOString(),
-                    'to' => $to->toISOString(),
+                    'from' => $from->toIso8601String(),
+                    'to' => $to->toIso8601String(),
                 ],
                 'total_investment' => $totalInvestment,
                 'total_profit' => $totalProfit,
@@ -205,7 +205,7 @@ class FinancialAnalyticsService
             
             return [
                 'forecast_months' => $months,
-                'forecast_from' => Carbon::now()->startOfMonth()->toISOString(),
+                'forecast_from' => Carbon::now()->startOfMonth()->toIso8601String(),
                 'historical_data' => $historicalData,
                 'contract_based_forecast' => $contractBasedForecast,
                 'trend_forecast' => $trendForecast,
@@ -234,13 +234,13 @@ class FinancialAnalyticsService
             $payables = $this->calculatePayables($organizationId);
             
             return [
-                'as_of_date' => Carbon::now()->toISOString(),
+                'as_of_date' => Carbon::now()->toIso8601String(),
                 'receivables' => [
                     'total' => $receivables['total'],
-                    'current' => $receivables['current'], // 0-30 дней
-                    'overdue_30' => $receivables['overdue_30'], // 30-60 дней
-                    'overdue_60' => $receivables['overdue_60'], // 60-90 дней
-                    'overdue_90_plus' => $receivables['overdue_90_plus'], // 90+ дней
+                    'current' => $receivables['current'],
+                    'overdue_30' => $receivables['overdue_30'],
+                    'overdue_60' => $receivables['overdue_60'],
+                    'overdue_90_plus' => $receivables['overdue_90_plus'],
                     'by_contract' => $receivables['by_contract'],
                 ],
                 'payables' => [
@@ -771,7 +771,7 @@ class FinancialAnalyticsService
                 'contract_id' => $contract->id,
                 'contract_name' => $contract->name ?? "Контракт #{$contract->id}",
                 'amount' => $receivable,
-                'due_date' => $paymentDueDate->toISOString(),
+                'due_date' => $paymentDueDate->toIso8601String(),
                 'days_overdue' => max(0, abs($daysOverdue)),
                 'status' => $status,
             ];
@@ -855,7 +855,7 @@ class FinancialAnalyticsService
                 'material_id' => $material->id,
                 'material_name' => $material->name ?? "Материал #{$material->id}",
                 'amount' => $payable,
-                'due_date' => $paymentDueDate->toISOString(),
+                'due_date' => $paymentDueDate->toIso8601String(),
                 'days_overdue' => max(0, abs($daysOverdue)),
                 'status' => $status,
             ];
