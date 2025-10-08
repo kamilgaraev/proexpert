@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\Organization;
 use App\Services\DaDataService;
 use App\Services\Logging\LoggingService;
+use Illuminate\Support\Facades\Auth as AuthFacade;
 use Illuminate\Support\Facades\Log;
 
 class OrganizationVerificationService
@@ -119,7 +120,7 @@ class OrganizationVerificationService
             'organization_name' => $organization->name,
             'verification_score' => $verificationResults['verification_score'],
             'overall_status' => $verificationResults['overall_status'],
-            'performed_by' => auth()->id() ?? 'system'
+            'performed_by' => AuthFacade::id() ?? 'system'
         ]);
         
         // SECURITY: Логируем изменение статуса верификации
@@ -169,7 +170,7 @@ class OrganizationVerificationService
                 'organization_id' => $organization->id,
                 'updated_fields' => array_keys($updates),
                 'data_source' => 'dadata',
-                'performed_by' => auth()->id() ?? 'system'
+                'performed_by' => AuthFacade::id() ?? 'system'
             ]);
             
             Log::info('Organization updated with DaData info', [
@@ -179,8 +180,12 @@ class OrganizationVerificationService
         }
     }
 
-    private function determineOverallStatus(int $score): string
+    private function determineOverallStatus(int $score, bool $hasVerificationData = false): string
     {
+        if (!$hasVerificationData) {
+            return 'pending';
+        }
+        
         if ($score >= 90) {
             return 'verified';
         } elseif ($score >= 70) {
@@ -239,7 +244,7 @@ class OrganizationVerificationService
     public function getVerificationStatusText(string $status): string
     {
         return match($status) {
-            'verified' => 'Верифицирована',
+            'verified' => 'Полностью верифицирована',
             'partially_verified' => 'Частично верифицирована', 
             'needs_review' => 'Требует проверки',
             'failed' => 'Верификация не пройдена',
@@ -467,9 +472,12 @@ class OrganizationVerificationService
         $currentScore = $organization->verification_score > 0 
             ? $organization->verification_score 
             : $this->calculateBasicScore($organization);
+        
+        // Проверяем наличие данных верификации
+        $hasVerificationData = !empty($organization->verification_data) && is_array($organization->verification_data);
             
-        // Определяем статус на основе текущего рейтинга
-        $currentStatus = $organization->verification_status ?: $this->determineOverallStatus($currentScore);
+        // Определяем статус на основе текущего рейтинга и наличия верификации
+        $currentStatus = $organization->verification_status ?: $this->determineOverallStatus($currentScore, $hasVerificationData);
         $statusText = $this->getVerificationStatusText($currentStatus);
 
         return [

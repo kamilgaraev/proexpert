@@ -216,7 +216,7 @@ class Organization extends Model
     public function getVerificationStatusTextAttribute(): string
     {
         return match($this->verification_status) {
-            'verified' => 'Верифицирована',
+            'verified' => 'Полностью верифицирована',
             'partially_verified' => 'Частично верифицирована',
             'needs_review' => 'Требует проверки',
             'failed' => 'Верификация не пройдена',
