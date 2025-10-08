@@ -33,7 +33,14 @@ class WidgetsController extends Controller
             ], 400);
         }
 
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization context required',
+            ], 400);
+        }
 
         $widgetRequest = new WidgetDataRequest(
             widgetType: $widgetType,
@@ -66,7 +73,15 @@ class WidgetsController extends Controller
             'widgets.*.type' => 'required|string',
         ]);
 
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization context required',
+            ], 400);
+        }
+        
         $userId = $request->user()->id;
 
         $results = [];
