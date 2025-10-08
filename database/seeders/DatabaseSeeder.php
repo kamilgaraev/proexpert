@@ -29,9 +29,6 @@ class DatabaseSeeder extends Seeder
     {
         $this->command->info('┌─ СИСТЕМНЫЕ ДАННЫЕ');
         
-        $this->command->info('│  ├─ Роли и права...');
-        $this->call(RolePermissionSeeder::class);
-        
         $this->command->info('│  ├─ Единицы измерения...');
         $this->call(MeasurementUnitSeeder::class);
         
