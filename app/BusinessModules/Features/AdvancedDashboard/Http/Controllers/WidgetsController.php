@@ -41,15 +41,22 @@ class WidgetsController extends Controller
             userId: $request->user()->id,
             projectId: $request->input('project_id'),
             contractId: $request->input('contract_id'),
+            employeeId: $request->input('employee_id'),
             from: $request->has('from') ? Carbon::parse($request->input('from')) : null,
             to: $request->has('to') ? Carbon::parse($request->input('to')) : null,
             filters: $request->input('filters', []),
             options: $request->input('options', []),
         );
 
-        $response = $this->widgetService->getWidgetData($widgetType, $widgetRequest);
-
-        return response()->json($response->toArray());
+        try {
+            $response = $this->widgetService->getWidgetData($widgetType, $widgetRequest);
+            return response()->json($response->toArray());
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error fetching widget data: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function getBatch(Request $request): JsonResponse

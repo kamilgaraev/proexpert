@@ -198,6 +198,7 @@ Route::prefix('v1/admin')->name('admin.')->group(function () {
         require __DIR__ . '/api/v1/admin/site_requests.php';
         require __DIR__ . '/api/v1/admin/schedule.php';
         require __DIR__ . '/api/v1/admin/custom-reports.php';
+        require __DIR__ . '/api/v1/admin/advanced_dashboard.php';
     });
 });
 
