@@ -315,18 +315,18 @@ class FinancialAnalyticsService
             $laborResult = $laborCostsQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price * 0.3'));
             $laborCosts = $laborResult ? (float)$laborResult : 0.0;
             
-            $contractorCostsQuery = DB::table('materials')
-                ->join('projects', 'materials.project_id', '=', 'projects.id')
+            $materialReceiptsQuery = DB::table('material_receipts')
+                ->join('projects', 'material_receipts.project_id', '=', 'projects.id')
                 ->where('projects.organization_id', $organizationId)
-                ->whereBetween('materials.created_at', [$from, $to])
-                ->where('materials.supplier_type', 'contractor');
+                ->whereBetween('material_receipts.receipt_date', [$from, $to])
+                ->whereIn('material_receipts.status', ['confirmed']);
             
             if ($projectId) {
-                $contractorCostsQuery->where('materials.project_id', $projectId);
+                $materialReceiptsQuery->where('material_receipts.project_id', $projectId);
             }
             
-            $contractorResult = $contractorCostsQuery->sum(DB::raw('materials.quantity * materials.price'));
-            $contractorCosts = $contractorResult ? (float)$contractorResult : 0.0;
+            $materialReceiptsResult = $materialReceiptsQuery->sum('material_receipts.total_amount');
+            $contractorCosts = $materialReceiptsResult ? (float)$materialReceiptsResult : 0.0;
             
             return $materialCosts + $laborCosts + $contractorCosts;
         } catch (\Exception $e) {
@@ -400,7 +400,7 @@ class FinancialAnalyticsService
             $advancePaymentsQuery->where('project_id', $projectId);
         }
         
-        $advanceResult = $advancePaymentsQuery->sum('advance_payment');
+        $advanceResult = $advancePaymentsQuery->sum('actual_advance_amount');
         $advancePayments = $advanceResult ? (float)$advanceResult : 0.0;
         
         $completedWorksQuery = DB::table('completed_works')
@@ -473,18 +473,18 @@ class FinancialAnalyticsService
         $laborResult = $laborCostsQuery->sum(DB::raw('completed_works.quantity * completed_works.unit_price * 0.3'));
         $laborCosts = $laborResult ? (float)$laborResult : 0.0;
         
-        $contractorCostsQuery = DB::table('materials')
-            ->join('projects', 'materials.project_id', '=', 'projects.id')
+        $materialReceiptsQuery = DB::table('material_receipts')
+            ->join('projects', 'material_receipts.project_id', '=', 'projects.id')
             ->where('projects.organization_id', $organizationId)
-            ->whereBetween('materials.created_at', [$from, $to])
-            ->where('materials.supplier_type', 'contractor');
+            ->whereBetween('material_receipts.receipt_date', [$from, $to])
+            ->whereIn('material_receipts.status', ['confirmed']);
         
         if ($projectId) {
-            $contractorCostsQuery->where('materials.project_id', $projectId);
+            $materialReceiptsQuery->where('material_receipts.project_id', $projectId);
         }
         
-        $contractorResult = $contractorCostsQuery->sum(DB::raw('materials.quantity * materials.price'));
-        $contractorCosts = $contractorResult ? (float)$contractorResult : 0.0;
+        $materialReceiptsResult = $materialReceiptsQuery->sum('material_receipts.total_amount');
+        $contractorCosts = $materialReceiptsResult ? (float)$materialReceiptsResult : 0.0;
         
         $total = $materialCosts + $laborCosts + $contractorCosts;
         
@@ -776,7 +776,7 @@ class FinancialAnalyticsService
             
             foreach ($contracts as $contract) {
                 $contractAmount = $contract->total_amount ?? 0;
-                $advancePaid = $contract->advance_payment ?? 0;
+                $advancePaid = $contract->actual_advance_amount ?? 0;
                 
                 $workCompletedResult = CompletedWork::where('contract_id', $contract->id)
                     ->sum(DB::raw('quantity * unit_price'));
@@ -854,10 +854,12 @@ class FinancialAnalyticsService
         try {
             $now = Carbon::now();
             
-            $materials = Material::join('projects', 'materials.project_id', '=', 'projects.id')
+            $materialReceipts = DB::table('material_receipts')
+                ->join('projects', 'material_receipts.project_id', '=', 'projects.id')
+                ->join('suppliers', 'material_receipts.supplier_id', '=', 'suppliers.id')
                 ->where('projects.organization_id', $organizationId)
-                ->where('materials.status', '!=', 'paid')
-                ->select('materials.*')
+                ->whereIn('material_receipts.status', ['confirmed'])
+                ->select('material_receipts.*', 'suppliers.name as supplier_name')
                 ->get();
             
             $total = 0.0;
@@ -869,8 +871,8 @@ class FinancialAnalyticsService
             
             $supplierMap = [];
             
-            foreach ($materials as $material) {
-                $payable = ($material->quantity ?? 0) * ($material->price ?? 0);
+            foreach ($materialReceipts as $receipt) {
+                $payable = $receipt->total_amount ?? 0;
             
             if ($payable <= 0) {
                 continue;
@@ -878,11 +880,9 @@ class FinancialAnalyticsService
             
             $total += $payable;
             
-            $supplier = $material->supplier ?? 'Неизвестный поставщик';
+            $supplier = $receipt->supplier_name ?? 'Неизвестный поставщик';
             
-            $paymentDueDate = $material->payment_due_date 
-                ? Carbon::parse($material->payment_due_date) 
-                : Carbon::parse($material->created_at)->addDays(30);
+            $paymentDueDate = Carbon::parse($receipt->receipt_date)->addDays(30);
             
             $daysOverdue = $now->diffInDays($paymentDueDate, false);
             
@@ -910,8 +910,8 @@ class FinancialAnalyticsService
             
             $supplierMap[$supplier]['total_amount'] += $payable;
             $supplierMap[$supplier]['items'][] = [
-                'material_id' => $material->id,
-                'material_name' => $material->name ?? "Материал #{$material->id}",
+                'receipt_id' => $receipt->id,
+                'document_number' => $receipt->document_number ?? "Поступление #{$receipt->id}",
                 'amount' => $payable,
                 'due_date' => $paymentDueDate->toIso8601String(),
                 'days_overdue' => max(0, abs($daysOverdue)),
