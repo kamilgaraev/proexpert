@@ -40,24 +40,20 @@ class ProjectChildWorksController extends Controller
                 ], 401);
             }
 
-            $hasPermission = $user->hasPermission('projects.view_child_works', [
-                'organization_id' => $user->current_organization_id
-            ]);
-
             $currentOrgId = $user->current_organization_id;
 
-            $isHeadOrganization = $hasPermission && $user->organizations()
-                ->where('organizations.id', $project->organization_id)
-                ->exists();
-
-            $isAttachedOrganization = $project->organizations()
-                ->where('organizations.id', $currentOrgId)
-                ->exists();
-
-            if (!$isHeadOrganization && !$isAttachedOrganization) {
+            if ($project->organization_id !== $currentOrgId) {
+                Log::warning('[ProjectChildWorksController] Access denied', [
+                    'user_id' => $user->id,
+                    'project_id' => $projectId,
+                    'project_org_id' => $project->organization_id,
+                    'user_current_org_id' => $currentOrgId,
+                    'reason' => 'Project does not belong to user current organization',
+                ]);
+                
                 return response()->json([
                     'success' => false,
-                    'message' => 'Access denied',
+                    'message' => 'Access denied. Project does not belong to your current organization.',
                 ], 403);
             }
 

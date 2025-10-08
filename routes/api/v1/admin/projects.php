@@ -50,7 +50,9 @@ Route::post('/projects/{projectId}/organizations/{organizationId}', [ProjectOrga
 Route::delete('/projects/{projectId}/organizations/{organizationId}', [ProjectOrganizationController::class, 'detach'])->name('projects.organizations.detach');
 
 // Получить детализированные работы дочерних организаций
-Route::get('/projects/{id}/child-works', [ProjectChildWorksController::class, 'index'])->name('projects.child-works.index');
+Route::get('/projects/{id}/child-works', [ProjectChildWorksController::class, 'index'])
+    ->middleware('authorize:admin.projects.view')
+    ->name('projects.child-works.index');
 
 // Статистика (если понадобится)
 // Route::get('projects/{project}/statistics', [ProjectController::class, 'statistics'])->name('projects.statistics'); 
