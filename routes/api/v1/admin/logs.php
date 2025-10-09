@@ -22,4 +22,7 @@ Route::prefix('logs')->name('logs.')->group(function () {
     Route::get('work-completion', [LogViewController::class, 'getWorkLogs'])
         ->middleware('authorize:system-logs.work_completion.view')
         ->name('work_completion.index');
+    Route::get('system', [LogViewController::class, 'getSystemLogs'])
+        ->middleware('authorize:system-logs.system.view')
+        ->name('system.index');
 }); 

@@ -61,4 +61,30 @@ class LogViewController extends Controller
             return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при запросе логов работ.'], 500);
         }
     }
+
+    public function getSystemLogs(Request $request): JsonResponse
+    {
+        try {
+            $logs = $this->logViewingService->getSystemLogs($request);
+            return response()->json([
+                'success' => true,
+                'data' => $logs['data'],
+                'pagination' => [
+                    'current_page' => $logs['current_page'],
+                    'per_page' => $logs['per_page'],
+                    'total' => $logs['total'],
+                    'last_page' => $logs['last_page'],
+                ]
+            ]);
+        } catch (BusinessLogicException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
+        } catch (\Throwable $e) {
+            Log::error('[LogViewController@getSystemLogs] Unexpected error', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+            return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при запросе системных логов.'], 500);
+        }
+    }
 } 

@@ -136,4 +136,137 @@ class LogViewingService
             throw new BusinessLogicException('Внутренняя ошибка сервера при получении логов работ.', 500, $e);
         }
     }
+
+    public function getSystemLogs(Request $request): array
+    {
+        try {
+            $organizationId = $this->getCurrentOrgId($request);
+            
+            $category = $request->query('category', 'all');
+            $level = $request->query('level');
+            $event = $request->query('event');
+            $dateFrom = $request->query('date_from');
+            $dateTo = $request->query('date_to');
+            $userId = $request->query('user_id');
+            $page = (int) $request->query('page', 1);
+            $perPage = (int) $request->query('per_page', 15);
+
+            $allowedCategories = ['all', 'audit', 'business', 'security'];
+            if (!in_array($category, $allowedCategories)) {
+                $category = 'all';
+            }
+
+            $logs = $this->readStructuredLogs($organizationId, $category, [
+                'level' => $level,
+                'event' => $event,
+                'date_from' => $dateFrom,
+                'date_to' => $dateTo,
+                'user_id' => $userId,
+            ]);
+
+            $total = count($logs);
+            $lastPage = (int) ceil($total / $perPage);
+            $offset = ($page - 1) * $perPage;
+            
+            $paginatedLogs = array_slice($logs, $offset, $perPage);
+
+            return [
+                'data' => $paginatedLogs,
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'last_page' => $lastPage,
+            ];
+        } catch (BusinessLogicException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            Log::error('[LogViewingService@getSystemLogs] Unexpected error', [
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+            throw new BusinessLogicException('Внутренняя ошибка сервера при получении системных логов.', 500, $e);
+        }
+    }
+
+    protected function readStructuredLogs(int $organizationId, string $category, array $filters): array
+    {
+        $logs = [];
+        $categories = $category === 'all' ? ['audit', 'business', 'security'] : [$category];
+        
+        foreach ($categories as $cat) {
+            $logPath = storage_path("logs/{$cat}");
+            
+            if (!is_dir($logPath)) {
+                continue;
+            }
+
+            $files = glob($logPath . '/*.log');
+            if ($files === false) {
+                continue;
+            }
+
+            rsort($files);
+            $filesToRead = array_slice($files, 0, 7);
+
+            foreach ($filesToRead as $file) {
+                $handle = fopen($file, 'r');
+                if (!$handle) {
+                    continue;
+                }
+
+                while (($line = fgets($handle)) !== false) {
+                    try {
+                        $logEntry = json_decode($line, true);
+                        
+                        if (!$logEntry || !isset($logEntry['organization_id'])) {
+                            continue;
+                        }
+
+                        if ((int) $logEntry['organization_id'] !== $organizationId) {
+                            continue;
+                        }
+
+                        if (!empty($filters['level']) && $logEntry['level'] !== $filters['level']) {
+                            continue;
+                        }
+
+                        if (!empty($filters['event']) && !str_contains($logEntry['event'] ?? '', $filters['event'])) {
+                            continue;
+                        }
+
+                        if (!empty($filters['user_id']) && (int) ($logEntry['user_id'] ?? 0) !== (int) $filters['user_id']) {
+                            continue;
+                        }
+
+                        if (!empty($filters['date_from']) || !empty($filters['date_to'])) {
+                            $logDate = Carbon::parse($logEntry['timestamp'] ?? '');
+                            
+                            if (!empty($filters['date_from']) && $logDate->lt(Carbon::parse($filters['date_from'])->startOfDay())) {
+                                continue;
+                            }
+                            
+                            if (!empty($filters['date_to']) && $logDate->gt(Carbon::parse($filters['date_to'])->endOfDay())) {
+                                continue;
+                            }
+                        }
+
+                        $logEntry['category'] = $logEntry['category'] ?? $cat;
+                        $logs[] = $logEntry;
+                        
+                    } catch (\Exception $e) {
+                        continue;
+                    }
+                }
+
+                fclose($handle);
+            }
+        }
+
+        usort($logs, function ($a, $b) {
+            return ($b['timestamp'] ?? '') <=> ($a['timestamp'] ?? '');
+        });
+
+        return $logs;
+    }
 } 
