@@ -95,6 +95,11 @@ class UserContext
      */
     public function getUserId(): ?int
     {
+        $user = Auth::user();
+        if ($user && isset($user->id)) {
+            return $user->id;
+        }
+        
         return $this->userId;
     }
 
@@ -103,7 +108,28 @@ class UserContext
      */
     public function getOrganizationId(): ?int
     {
-        return $this->organizationId;
+        if (request()) {
+            $requestOrgId = request()->attributes->get('current_organization_id');
+            if ($requestOrgId) {
+                return (int) $requestOrgId;
+            }
+        }
+        
+        if ($this->organizationId) {
+            return $this->organizationId;
+        }
+        
+        $contextOrgId = OrganizationContext::getOrganizationId();
+        if ($contextOrgId) {
+            return $contextOrgId;
+        }
+        
+        $user = Auth::user();
+        if ($user && method_exists($user, 'current_organization_id')) {
+            return $user->current_organization_id;
+        }
+        
+        return null;
     }
 
     /**
