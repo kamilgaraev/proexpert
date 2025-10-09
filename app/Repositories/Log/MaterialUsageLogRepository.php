@@ -113,52 +113,62 @@ class MaterialUsageLogRepository extends BaseRepository implements MaterialUsage
         string $sortDirection = 'desc'
     ): LengthAwarePaginator
     {
-        $query = $this->model->with(['project', 'material.measurementUnit', 'user', 'supplier', 'workType']) // ДОБАВЛЕНЫ supplier и workType
-            ->whereHas('project', function ($q) use ($organizationId) {
-                $q->where('organization_id', $organizationId);
-            });
+        $allowedSortColumns = [
+            'id', 'usage_date', 'created_at', 'updated_at', 
+            'quantity', 'unit_price', 'total_price', 'operation_type'
+        ];
+        
+        if (!in_array($sortBy, $allowedSortColumns)) {
+            $sortBy = 'usage_date';
+        }
+        
+        $sortDirection = strtolower($sortDirection) === 'asc' ? 'asc' : 'desc';
 
-        // Применяем фильтры
+        $query = $this->model
+            ->with(['project:id,name,organization_id', 'material.measurementUnit:id,short_name', 'user:id,name', 'supplier:id,name', 'workType:id,name'])
+            ->join('projects', 'material_usage_logs.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $organizationId)
+            ->select('material_usage_logs.*');
+
         if (!empty($filters['project_id'])) {
-            $query->where('project_id', $filters['project_id']);
+            $query->where('material_usage_logs.project_id', $filters['project_id']);
         }
         if (!empty($filters['material_id'])) {
-            $query->where('material_id', $filters['material_id']);
+            $query->where('material_usage_logs.material_id', $filters['material_id']);
         }
         if (!empty($filters['user_id'])) {
-            $query->where('user_id', $filters['user_id']);
+            $query->where('material_usage_logs.user_id', $filters['user_id']);
         }
         if (!empty($filters['date_from'])) {
-            $query->where('usage_date', '>=', $filters['date_from']);
+            $query->where('material_usage_logs.usage_date', '>=', $filters['date_from']);
         }
         if (!empty($filters['date_to'])) {
-            $query->where('usage_date', '<=', $filters['date_to']);
+            $query->where('material_usage_logs.usage_date', '<=', $filters['date_to']);
         }
         if (!empty($filters['supplier_id'])) {
-            $query->where('supplier_id', $filters['supplier_id']);
+            $query->where('material_usage_logs.supplier_id', $filters['supplier_id']);
         }
         if (!empty($filters['work_type_id'])) {
-            $query->where('work_type_id', $filters['work_type_id']);
+            $query->where('material_usage_logs.work_type_id', $filters['work_type_id']);
         }
         if (!empty($filters['operation_type'])) {
-            $query->where('operation_type', $filters['operation_type']);
+            $query->where('material_usage_logs.operation_type', $filters['operation_type']);
         }
         if (isset($filters['total_price_from'])) {
-            $query->where('total_price', '>=', $filters['total_price_from']);
+            $query->where('material_usage_logs.total_price', '>=', $filters['total_price_from']);
         }
         if (isset($filters['total_price_to'])) {
-            $query->where('total_price', '<=', $filters['total_price_to']);
+            $query->where('material_usage_logs.total_price', '<=', $filters['total_price_to']);
         }
         if (isset($filters['has_photo'])) {
             if ($filters['has_photo']) {
-                $query->whereNotNull('photo_path');
+                $query->whereNotNull('material_usage_logs.photo_path');
             } else {
-                $query->whereNull('photo_path');
+                $query->whereNull('material_usage_logs.photo_path');
             }
         }
 
-        // TODO: Добавить валидацию $sortBy
-        $query->orderBy($sortBy, $sortDirection);
+        $query->orderBy('material_usage_logs.' . $sortBy, $sortDirection);
 
         return $query->paginate($perPage);
     }

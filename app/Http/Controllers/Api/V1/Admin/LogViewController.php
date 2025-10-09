@@ -19,7 +19,6 @@ class LogViewController extends Controller
     public function __construct(LogViewingService $logViewingService)
     {
         $this->logViewingService = $logViewingService;
-        $this->middleware('can:view-operation-logs'); // Применяем Gate
     }
 
     /**

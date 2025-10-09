@@ -41,7 +41,8 @@ class MaterialUsageLogResource extends JsonResource
             'work_type_name' => $this->whenLoaded('workType', fn() => $this->resource->workType?->name),
             'usage_date' => $this->resource->usage_date,
             'notes' => $this->resource->notes,
-            'photo_url' => $this->resource->photo_url,
+            'photo_path' => $this->resource->photo_path,
+            'photo_url' => $this->when($this->resource->photo_path, fn() => $this->resource->getImageUrl('photo_path', null, false)),
             'created_at' => $this->resource->created_at?->toISOString(),
             'updated_at' => $this->resource->updated_at?->toISOString(),
         ];

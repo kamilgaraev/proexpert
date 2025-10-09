@@ -58,7 +58,7 @@ class MaterialUsageLog extends Model
     ];
 
     protected $appends = [
-        'photo_url' // <--- Добавляем аксессор в вывод JSON
+        'photo_url'
     ];
 
     /**

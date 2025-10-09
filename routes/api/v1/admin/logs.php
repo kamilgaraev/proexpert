@@ -13,9 +13,13 @@ use App\Http\Controllers\Api\V1\Admin\LogViewController;
 */
 
 // Группа уже защищена middleware стеком авторизации админки
-// в RouteServiceProvider. Дополнительно контроллер проверяет 'can:view-operation-logs'.
+// в RouteServiceProvider. Дополнительно проверяются права на просмотр логов.
 
 Route::prefix('logs')->name('logs.')->group(function () {
-    Route::get('material-usage', [LogViewController::class, 'getMaterialLogs'])->name('material_usage.index');
-    Route::get('work-completion', [LogViewController::class, 'getWorkLogs'])->name('work_completion.index');
+    Route::get('material-usage', [LogViewController::class, 'getMaterialLogs'])
+        ->middleware('authorize:logs.material_usage.view')
+        ->name('material_usage.index');
+    Route::get('work-completion', [LogViewController::class, 'getWorkLogs'])
+        ->middleware('authorize:logs.work_completion.view')
+        ->name('work_completion.index');
 }); 
