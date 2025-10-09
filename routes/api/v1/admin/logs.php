@@ -17,9 +17,9 @@ use App\Http\Controllers\Api\V1\Admin\LogViewController;
 
 Route::prefix('logs')->name('logs.')->group(function () {
     Route::get('material-usage', [LogViewController::class, 'getMaterialLogs'])
-        ->middleware('authorize:logs.material_usage.view')
+        ->middleware('authorize:system-logs.material_usage.view')
         ->name('material_usage.index');
     Route::get('work-completion', [LogViewController::class, 'getWorkLogs'])
-        ->middleware('authorize:logs.work_completion.view')
+        ->middleware('authorize:system-logs.work_completion.view')
         ->name('work_completion.index');
 }); 

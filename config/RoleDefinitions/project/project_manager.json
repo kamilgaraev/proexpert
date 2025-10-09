@@ -81,7 +81,7 @@
       "personal_files.delete", "report_files.view"
     ],
     "system-logs": [
-      "logs.material_usage.view", "logs.work_completion.view", "logs.filter", "logs.search"
+      "system-logs.material_usage.view", "system-logs.work_completion.view", "system-logs.filter", "system-logs.search"
     ],
     "rate-management": [
       "rate_coefficients.view", "rate_coefficients.apply", "rate_coefficients.export"

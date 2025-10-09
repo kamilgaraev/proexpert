@@ -65,7 +65,7 @@
       "personal_files.view", "personal_files.create_folder", "personal_files.upload"
     ],
     "system-logs": [
-      "logs.material_usage.view", "logs.work_completion.view"
+      "system-logs.material_usage.view", "system-logs.work_completion.view"
     ],
     "rate-management": [
       "rate_coefficients.view", "rate_coefficients.apply"

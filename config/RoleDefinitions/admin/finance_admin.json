@@ -30,7 +30,7 @@
     "time-tracking": ["time-tracking.view"],
     "contractor-portal": ["contractor_invitations.view", "contractor_invitations.stats"],
     "file-management": ["personal_files.view", "report_files.view"],
-    "system-logs": ["logs.material_usage.view", "logs.export"],
+    "system-logs": ["system-logs.material_usage.view", "system-logs.export"],
     "rate-management": ["rate_coefficients.view", "rate_coefficients.create", "rate_coefficients.edit", "rate_coefficients.export"],
     "report-templates": ["report_templates.view", "report_templates.create", "report_templates.export"],
     "data-filters": ["filters.contracts.view", "filters.export"],
