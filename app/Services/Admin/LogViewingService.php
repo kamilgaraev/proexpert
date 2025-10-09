@@ -192,54 +192,72 @@ class LogViewingService
     protected function readStructuredLogs(int $organizationId, string $category, array $filters): array
     {
         $logs = [];
-        $categories = $category === 'all' ? ['audit', 'business', 'security'] : [$category];
+        $targetCategories = $category === 'all' ? ['AUDIT', 'BUSINESS', 'SECURITY'] : [strtoupper($category)];
         
-        foreach ($categories as $cat) {
-            $logPath = storage_path("logs/{$cat}");
-            
-            if (!is_dir($logPath)) {
+        $logFiles = glob(storage_path('logs/*.log'));
+        if ($logFiles === false) {
+            return [];
+        }
+
+        rsort($logFiles);
+        $filesToRead = array_slice($logFiles, 0, 7);
+
+        foreach ($filesToRead as $file) {
+            $handle = fopen($file, 'r');
+            if (!$handle) {
                 continue;
             }
 
-            $files = glob($logPath . '/*.log');
-            if ($files === false) {
-                continue;
-            }
+            while (($line = fgets($handle)) !== false) {
+                try {
+                    if (strpos($line, '{') === false) {
+                        continue;
+                    }
 
-            rsort($files);
-            $filesToRead = array_slice($files, 0, 7);
+                    $jsonStart = strpos($line, '{');
+                    $jsonPart = substr($line, $jsonStart);
+                    $logEntry = json_decode($jsonPart, true);
+                    
+                    if (!$logEntry || !isset($logEntry['category'])) {
+                        continue;
+                    }
 
-            foreach ($filesToRead as $file) {
-                $handle = fopen($file, 'r');
-                if (!$handle) {
-                    continue;
-                }
+                    if (!in_array($logEntry['category'], $targetCategories)) {
+                        continue;
+                    }
 
-                while (($line = fgets($handle)) !== false) {
-                    try {
-                        $logEntry = json_decode($line, true);
-                        
-                        if (!$logEntry || !isset($logEntry['organization_id'])) {
-                            continue;
+                    $logOrgId = $logEntry['organization_id'] ?? null;
+                    
+                    if ($logOrgId === null) {
+                        $contextOrgId = $logEntry['context']['organization_id'] ?? null;
+                        if ($contextOrgId !== null) {
+                            $logOrgId = $contextOrgId;
                         }
+                    }
 
-                        if ((int) $logEntry['organization_id'] !== $organizationId) {
-                            continue;
-                        }
+                    if ($logOrgId !== null && (int) $logOrgId !== $organizationId) {
+                        continue;
+                    }
 
-                        if (!empty($filters['level']) && $logEntry['level'] !== $filters['level']) {
-                            continue;
-                        }
+                    if ($logOrgId === null) {
+                        continue;
+                    }
 
-                        if (!empty($filters['event']) && !str_contains($logEntry['event'] ?? '', $filters['event'])) {
-                            continue;
-                        }
+                    if (!empty($filters['level']) && ($logEntry['level'] ?? '') !== strtoupper($filters['level'])) {
+                        continue;
+                    }
 
-                        if (!empty($filters['user_id']) && (int) ($logEntry['user_id'] ?? 0) !== (int) $filters['user_id']) {
-                            continue;
-                        }
+                    if (!empty($filters['event']) && !str_contains($logEntry['event'] ?? '', $filters['event'])) {
+                        continue;
+                    }
 
-                        if (!empty($filters['date_from']) || !empty($filters['date_to'])) {
+                    $logUserId = $logEntry['user_id'] ?? $logEntry['context']['user_id'] ?? null;
+                    if (!empty($filters['user_id']) && (int) ($logUserId ?? 0) !== (int) $filters['user_id']) {
+                        continue;
+                    }
+
+                    if (!empty($filters['date_from']) || !empty($filters['date_to'])) {
+                        try {
                             $logDate = Carbon::parse($logEntry['timestamp'] ?? '');
                             
                             if (!empty($filters['date_from']) && $logDate->lt(Carbon::parse($filters['date_from'])->startOfDay())) {
@@ -249,24 +267,25 @@ class LogViewingService
                             if (!empty($filters['date_to']) && $logDate->gt(Carbon::parse($filters['date_to'])->endOfDay())) {
                                 continue;
                             }
+                        } catch (\Exception $e) {
+                            continue;
                         }
-
-                        $logEntry['category'] = $logEntry['category'] ?? $cat;
-                        $logs[] = $logEntry;
-                        
-                    } catch (\Exception $e) {
-                        continue;
                     }
-                }
 
-                fclose($handle);
+                    $logs[] = $logEntry;
+                    
+                } catch (\Exception $e) {
+                    continue;
+                }
             }
+
+            fclose($handle);
         }
 
         usort($logs, function ($a, $b) {
             return ($b['timestamp'] ?? '') <=> ($a['timestamp'] ?? '');
         });
 
-        return $logs;
+        return array_slice($logs, 0, 1000);
     }
 } 
