@@ -224,11 +224,32 @@ class AIAssistantService
             $output .= "📄 ДЕТАЛИ КОНТРАКТА:\n\n";
             $output .= "Номер: {$c['number']}\n";
             $output .= "Дата: {$c['date']}\n";
-            $output .= "Тип: {$c['type']}\n";
-            $output .= "Предмет: {$c['subject']}\n";
+            if (isset($c['type'])) {
+                $output .= "Тип: {$c['type']}\n";
+            }
+            if ($c['subject']) {
+                $output .= "Предмет: {$c['subject']}\n";
+            }
             $output .= "Статус: {$c['status']}\n";
-            $output .= "Сумма: " . number_format($c['total_amount'], 2, '.', ' ') . " руб.\n";
-            $output .= "Сроки: с {$c['start_date']} по {$c['end_date']}\n\n";
+            $output .= "Сумма контракта: " . number_format($c['total_amount'], 2, '.', ' ') . " руб.\n";
+            
+            // Показываем ГП и плановый аванс явно
+            if ($c['gp_percentage'] > 0) {
+                $gpAmount = $c['total_amount'] * $c['gp_percentage'] / 100;
+                $output .= "Валовая прибыль (ГП): {$c['gp_percentage']}% = " . number_format($gpAmount, 2, '.', ' ') . " руб.\n";
+            }
+            if ($c['planned_advance'] > 0) {
+                $output .= "Плановый аванс: " . number_format($c['planned_advance'], 2, '.', ' ') . " руб.\n";
+            }
+            
+            $output .= "Сроки: с {$c['start_date']} по {$c['end_date']}\n";
+            if ($c['payment_terms']) {
+                $output .= "Условия оплаты: {$c['payment_terms']}\n";
+            }
+            if ($c['notes']) {
+                $output .= "Примечания: {$c['notes']}\n";
+            }
+            $output .= "\n";
             
             $output .= "👷 ПОДРЯДЧИК:\n";
             $output .= "  Название: {$value['contractor']['name']}\n";
@@ -238,6 +259,9 @@ class AIAssistantService
             }
             if ($value['contractor']['email']) {
                 $output .= "  Email: {$value['contractor']['email']}\n";
+            }
+            if ($value['contractor']['address']) {
+                $output .= "  Адрес: {$value['contractor']['address']}\n";
             }
             $output .= "\n";
             
@@ -249,32 +273,36 @@ class AIAssistantService
             }
             
             $f = $value['financial'];
-            $output .= "💰 ФИНАНСЫ:\n";
-            $output .= "  Сумма контракта: " . number_format($f['total_amount'], 2, '.', ' ') . " руб.\n";
-            $output .= "  Выполнено работ (акты): " . number_format($f['total_acted'], 2, '.', ' ') . " руб.\n";
+            $output .= "💰 ФИНАНСЫ И ВЫПОЛНЕНИЕ:\n";
+            $output .= "  Сумма контракта: " . number_format($f['total_amount'], 2, '.', ' ') . " руб. (100%)\n";
+            $output .= "  Выполнено работ по актам: " . number_format($f['total_acted'], 2, '.', ' ') . " руб.\n";
             $output .= "  Выставлено счетов: " . number_format($f['total_invoiced'], 2, '.', ' ') . " руб.\n";
-            $output .= "  Оплачено: " . number_format($f['total_paid'], 2, '.', ' ') . " руб.\n";
+            $output .= "  Оплачено по счетам: " . number_format($f['total_paid'], 2, '.', ' ') . " руб.\n";
             $output .= "  Остаток к оплате: " . number_format($f['remaining'], 2, '.', ' ') . " руб.\n";
-            $output .= "  Процент выполнения: {$f['completion_percentage']}%\n\n";
+            $output .= "  Процент выполнения работ: {$f['completion_percentage']}%\n\n";
             
             if ($value['acts']['count'] > 0) {
-                $output .= "📝 АКТЫ ({$value['acts']['count']}):\n";
+                $output .= "📝 АКТЫ ВЫПОЛНЕННЫХ РАБОТ ({$value['acts']['count']}):\n";
                 foreach ($value['acts']['list'] as $act) {
-                    $output .= "  - №{$act['number']} от {$act['date']}: " . number_format($act['amount'], 2, '.', ' ') . " руб. ({$act['status']})\n";
+                    $output .= "  - Акт №{$act['number']} от {$act['date']}: " . number_format($act['amount'], 2, '.', ' ') . " руб. (статус: {$act['status']})\n";
                 }
                 $output .= "\n";
+            } else {
+                $output .= "📝 АКТЫ: пока нет актов выполненных работ\n\n";
             }
             
             if ($value['invoices']['count'] > 0) {
-                $output .= "💳 СЧЕТА ({$value['invoices']['count']}):\n";
+                $output .= "💳 СЧЕТА НА ОПЛАТУ ({$value['invoices']['count']}):\n";
                 foreach ($value['invoices']['list'] as $invoice) {
-                    $output .= "  - №{$invoice['number']} от {$invoice['date']}: " . number_format($invoice['amount'], 2, '.', ' ') . " руб. ({$invoice['status']})";
+                    $output .= "  - Счет №{$invoice['number']} от {$invoice['date']}: " . number_format($invoice['amount'], 2, '.', ' ') . " руб. (статус: {$invoice['status']})";
                     if ($invoice['payment_date']) {
                         $output .= " - оплачен {$invoice['payment_date']}";
                     }
                     $output .= "\n";
                 }
                 $output .= "\n";
+            } else {
+                $output .= "💳 СЧЕТА: пока нет выставленных счетов\n\n";
             }
         }
         
