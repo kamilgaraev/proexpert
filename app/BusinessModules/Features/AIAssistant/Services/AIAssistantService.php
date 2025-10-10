@@ -451,6 +451,57 @@ class AIAssistantService
             $output .= "Общая стоимость: " . number_format($value['total_inventory_value'], 2, '.', ' ') . " руб.\n\n";
         }
         
+        // Отчеты
+        if ($key === 'generate_report' && isset($value['report_type'])) {
+            $output .= "📊 ОТЧЕТ СФОРМИРОВАН\n\n";
+            $output .= "Тип: " . ($value['report_type'] ?? '') . "\n";
+            $output .= "Период: " . ($value['period'] ?? '') . "\n";
+            $output .= "С: " . ($value['period_start'] ?? '') . " по " . ($value['period_end'] ?? '') . "\n\n";
+            
+            // Показываем основные данные в зависимости от типа
+            if ($value['report_type'] === 'materials_expenses' && isset($value['total_amount'])) {
+                $output .= "💰 Общая сумма расходов: " . number_format($value['total_amount'], 2, '.', ' ') . " руб.\n";
+                $output .= "📦 Позиций: " . ($value['items_count'] ?? 0) . "\n\n";
+            }
+            
+            if ($value['report_type'] === 'contractor_payments' && isset($value['total_paid'])) {
+                $output .= "💰 Выплачено подрядчикам: " . number_format($value['total_paid'], 2, '.', ' ') . " руб.\n";
+                $output .= "👷 Подрядчиков: " . ($value['contractors_count'] ?? 0) . "\n";
+                $output .= "💳 Платежей: " . ($value['payments_count'] ?? 0) . "\n\n";
+            }
+            
+            if ($value['report_type'] === 'project_financials' && isset($value['total_spent'])) {
+                $output .= "💰 Потрачено за период: " . number_format($value['total_spent'], 2, '.', ' ') . " руб.\n";
+                $output .= "🏗️ Проектов: " . ($value['projects_count'] ?? 0) . "\n\n";
+            }
+            
+            if ($value['report_type'] === 'completed_works' && isset($value['total_amount'])) {
+                $output .= "💰 Сумма работ: " . number_format($value['total_amount'], 2, '.', ' ') . " руб.\n";
+                $output .= "🔨 Записей: " . ($value['works_count'] ?? 0) . "\n\n";
+            }
+            
+            if ($value['report_type'] === 'contracts_summary' && isset($value['total_amount'])) {
+                $output .= "💰 Общая сумма контрактов: " . number_format($value['total_amount'], 2, '.', ' ') . " руб.\n";
+                $output .= "📄 Контрактов: " . ($value['contracts_count'] ?? 0) . "\n\n";
+            }
+            
+            if ($value['report_type'] === 'general_financial' && isset($value['summary'])) {
+                $s = $value['summary'];
+                $output .= "📊 Финансовая сводка:\n";
+                $output .= "  Выполнено работ: " . number_format($s['completed_works'], 2, '.', ' ') . " руб.\n";
+                $output .= "  Расходы на материалы: " . number_format($s['materials_expenses'], 2, '.', ' ') . " руб.\n";
+                $output .= "  Выплаты подрядчикам: " . number_format($s['contractor_payments'], 2, '.', ' ') . " руб.\n";
+                $output .= "  Чистый результат: " . number_format($s['net_result'], 2, '.', ' ') . " руб.\n\n";
+            }
+            
+            // Ссылка на PDF
+            if (isset($value['pdf_url'])) {
+                $output .= "📥 СКАЧАТЬ PDF:\n";
+                $output .= $value['pdf_url'] . "\n\n";
+                $output .= "Ссылка действительна 24 часа.\n\n";
+            }
+        }
+        
         // Если ничего не распознали - просто JSON
         if (empty($output)) {
             $output .= strtoupper($key) . ":\n";

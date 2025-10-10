@@ -115,6 +115,9 @@ class ContextBuilder
             'organization_info' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetOrganizationInfoAction::class,
             'help' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetHelpAction::class,
             'greeting' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\GetProjectStatusAction::class, // Используем статус проектов
+            
+            // Отчеты
+            'generate_report' => \App\BusinessModules\Features\AIAssistant\Actions\Reports\GenerateCustomReportAction::class,
         ];
 
         return $actionMap[$intent] ?? null;
@@ -138,6 +141,11 @@ class ContextBuilder
             if (isset($conversationContext['last_projects'][$index])) {
                 $params['project_id'] = $conversationContext['last_projects'][$index]['id'];
             }
+        }
+        
+        // Для отчетов передаем весь query
+        if ($intent === 'generate_report') {
+            $params['query'] = $query;
         }
         
         return $params;
