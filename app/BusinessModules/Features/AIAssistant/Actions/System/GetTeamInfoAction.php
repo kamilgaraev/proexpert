@@ -4,6 +4,8 @@ namespace App\BusinessModules\Features\AIAssistant\Actions\System;
 
 use App\Models\Organization;
 use App\Models\User;
+use App\Domain\Authorization\Models\AuthorizationContext;
+use Illuminate\Support\Facades\DB;
 
 class GetTeamInfoAction
 {
@@ -15,33 +17,39 @@ class GetTeamInfoAction
             return ['error' => 'Organization not found'];
         }
 
-        // Получаем всех пользователей организации
+        $context = AuthorizationContext::getOrganizationContext($organizationId);
+        
+        if (!$context) {
+            return ['error' => 'Organization context not found'];
+        }
+
         $users = User::whereHas('organizations', function ($query) use ($organizationId) {
-            $query->where('organizations.id', $organizationId);
+            $query->where('organizations.id', $organizationId)
+                  ->where('organization_user.is_active', true);
         })
-        ->with(['roles' => function ($query) use ($organizationId) {
-            $query->where('organization_id', $organizationId);
-        }])
         ->get()
-        ->map(function ($user) {
+        ->map(function ($user) use ($context) {
+            $roles = $user->getRoles($context);
+            $roleNames = $roles->pluck('role_slug')->toArray();
+            
             return [
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
-                'phone' => $user->phone,
-                'roles' => $user->roles->map(fn($role) => $role->name)->toArray(),
+                'phone' => $user->phone ?? null,
+                'roles' => $roleNames,
             ];
         });
 
-        // Группировка по ролям
         $byRole = $users->groupBy(function ($user) {
             return $user['roles'][0] ?? 'Без роли';
-        });
+        })->map->count();
 
         return [
             'total_users' => $users->count(),
-            'users' => $users->toArray(),
-            'by_role' => $byRole->map->count()->toArray(),
+            'users' => $users->values()->toArray(),
+            'by_role' => $byRole->toArray(),
+            'organization_name' => $organization->name,
         ];
     }
 }

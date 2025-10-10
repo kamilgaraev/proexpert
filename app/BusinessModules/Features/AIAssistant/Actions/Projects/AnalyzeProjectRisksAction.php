@@ -2,57 +2,133 @@
 
 namespace App\BusinessModules\Features\AIAssistant\Actions\Projects;
 
-use App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Projects\ProjectsRisksWidgetProvider;
-use App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Predictive\DeadlineRiskWidgetProvider;
-use App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Predictive\BudgetRiskWidgetProvider;
-use App\BusinessModules\Features\AdvancedDashboard\DTOs\WidgetDataRequest;
-use App\BusinessModules\Features\AdvancedDashboard\Enums\WidgetType;
+use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
 
 class AnalyzeProjectRisksAction
 {
-    protected ProjectsRisksWidgetProvider $risksProvider;
-    protected DeadlineRiskWidgetProvider $deadlineRiskProvider;
-    protected BudgetRiskWidgetProvider $budgetRiskProvider;
-
-    public function __construct(
-        ProjectsRisksWidgetProvider $risksProvider,
-        DeadlineRiskWidgetProvider $deadlineRiskProvider,
-        BudgetRiskWidgetProvider $budgetRiskProvider
-    ) {
-        $this->risksProvider = $risksProvider;
-        $this->deadlineRiskProvider = $deadlineRiskProvider;
-        $this->budgetRiskProvider = $budgetRiskProvider;
-    }
-
     public function execute(int $organizationId, ?array $params = []): array
     {
-        $risksRequest = new WidgetDataRequest(
-            widgetType: WidgetType::PROJECTS_RISKS,
-            organizationId: $organizationId,
-            filters: $params['filters'] ?? [],
-        );
+        $projectId = $params['project_id'] ?? null;
+        $today = Carbon::today();
+        $warningDays = 30;
 
-        $deadlineRequest = new WidgetDataRequest(
-            widgetType: WidgetType::DEADLINE_RISK,
-            organizationId: $organizationId,
-            filters: $params['filters'] ?? [],
-        );
+        $projects = DB::table('projects')
+            ->leftJoin('completed_works', function($join) {
+                $join->on('projects.id', '=', 'completed_works.project_id')
+                     ->where('completed_works.status', '=', 'confirmed')
+                     ->whereNull('completed_works.deleted_at');
+            })
+            ->where('projects.organization_id', $organizationId)
+            ->where('projects.status', '!=', 'completed')
+            ->where('projects.status', '!=', 'cancelled')
+            ->where('projects.is_archived', false)
+            ->whereNull('projects.deleted_at')
+            ->when($projectId, function($query, $id) {
+                return $query->where('projects.id', $id);
+            })
+            ->select(
+                'projects.id',
+                'projects.name',
+                'projects.status',
+                'projects.budget_amount',
+                'projects.start_date',
+                'projects.end_date',
+                DB::raw('COALESCE(SUM(completed_works.total_amount), 0) as spent')
+            )
+            ->groupBy(
+                'projects.id',
+                'projects.name',
+                'projects.status',
+                'projects.budget_amount',
+                'projects.start_date',
+                'projects.end_date'
+            )
+            ->get();
 
-        $budgetRequest = new WidgetDataRequest(
-            widgetType: WidgetType::BUDGET_RISK,
-            organizationId: $organizationId,
-            filters: $params['filters'] ?? [],
-        );
+        $deadlineRisks = [];
+        $budgetRisks = [];
+        $allRisks = [];
 
-        $risks = $this->risksProvider->getData($risksRequest);
-        $deadlineRisks = $this->deadlineRiskProvider->getData($deadlineRequest);
-        $budgetRisks = $this->budgetRiskProvider->getData($budgetRequest);
+        foreach ($projects as $project) {
+            $risks = [];
+            $riskLevel = 'low';
+
+            $budget = (float)($project->budget_amount ?? 0);
+            $spent = (float)$project->spent;
+            $budgetPercentage = $budget > 0 ? ($spent / $budget) * 100 : 0;
+
+            if ($project->end_date) {
+                $endDate = Carbon::parse($project->end_date);
+                $daysRemaining = $today->diffInDays($endDate, false);
+
+                if ($daysRemaining < 0) {
+                    $risks[] = 'Срок выполнения прошел на ' . abs($daysRemaining) . ' дн.';
+                    $riskLevel = 'high';
+                    $deadlineRisks[] = [
+                        'id' => $project->id,
+                        'name' => $project->name,
+                        'end_date' => $project->end_date,
+                        'days_overdue' => abs($daysRemaining),
+                    ];
+                } elseif ($daysRemaining <= $warningDays) {
+                    $risks[] = 'До дедлайна осталось ' . $daysRemaining . ' дн.';
+                    if ($riskLevel === 'low') {
+                        $riskLevel = 'medium';
+                    }
+                    $deadlineRisks[] = [
+                        'id' => $project->id,
+                        'name' => $project->name,
+                        'end_date' => $project->end_date,
+                        'days_remaining' => $daysRemaining,
+                    ];
+                }
+            }
+
+            if ($budgetPercentage >= 100) {
+                $risks[] = 'Бюджет превышен на ' . round($budgetPercentage - 100, 2) . '%';
+                $riskLevel = 'high';
+                $budgetRisks[] = [
+                    'id' => $project->id,
+                    'name' => $project->name,
+                    'budget' => $budget,
+                    'spent' => $spent,
+                    'percentage_used' => round($budgetPercentage, 2),
+                ];
+            } elseif ($budgetPercentage >= 80) {
+                $risks[] = 'Потрачено ' . round($budgetPercentage, 2) . '% бюджета';
+                if ($riskLevel === 'low') {
+                    $riskLevel = 'medium';
+                }
+                $budgetRisks[] = [
+                    'id' => $project->id,
+                    'name' => $project->name,
+                    'budget' => $budget,
+                    'spent' => $spent,
+                    'percentage_used' => round($budgetPercentage, 2),
+                ];
+            }
+
+            if (!empty($risks)) {
+                $allRisks[] = [
+                    'id' => $project->id,
+                    'name' => $project->name,
+                    'status' => $project->status,
+                    'risk_level' => $riskLevel,
+                    'risks' => $risks,
+                    'budget_percentage' => round($budgetPercentage, 2),
+                    'end_date' => $project->end_date,
+                ];
+            }
+        }
 
         return [
-            'projects_at_risk' => $risks->data['at_risk_count'] ?? 0,
-            'deadline_risks' => $deadlineRisks->data['projects'] ?? [],
-            'budget_risks' => $budgetRisks->data['projects'] ?? [],
-            'total_risks' => ($risks->data['at_risk_count'] ?? 0),
+            'projects_at_risk' => count($allRisks),
+            'deadline_risks_count' => count($deadlineRisks),
+            'budget_risks_count' => count($budgetRisks),
+            'deadline_risks' => $deadlineRisks,
+            'budget_risks' => $budgetRisks,
+            'all_risks' => $allRisks,
         ];
     }
 }
