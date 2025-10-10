@@ -20,7 +20,7 @@ class ContextBuilder
         $this->logging = $logging;
     }
 
-    public function buildContext(string $query, int $organizationId, ?int $userId = null, ?string $previousIntent = null): array
+    public function buildContext(string $query, int $organizationId, ?int $userId = null, ?string $previousIntent = null, ?array $conversationContext = []): array
     {
         // Распознаем намерение с учетом предыдущего контекста
         $intent = $this->intentRecognizer->recognize($query, $previousIntent);
@@ -38,7 +38,7 @@ class ContextBuilder
         ];
 
         // Выполнение Actions на основе распознанного намерения
-        $actionResult = $this->executeAction($intent, $organizationId, $query, $userId);
+        $actionResult = $this->executeAction($intent, $organizationId, $query, $userId, $conversationContext);
         
         if ($actionResult) {
             $context[$intent] = $actionResult;
@@ -47,7 +47,7 @@ class ContextBuilder
         return $context;
     }
 
-    protected function executeAction(string $intent, int $organizationId, string $query, ?int $userId = null): ?array
+    protected function executeAction(string $intent, int $organizationId, string $query, ?int $userId = null, array $conversationContext = []): ?array
     {
         $actionClass = $this->getActionClass($intent);
         
@@ -59,7 +59,7 @@ class ContextBuilder
             $action = app($actionClass);
             
             // Извлекаем параметры из запроса при необходимости
-            $params = $this->extractParams($intent, $query);
+            $params = $this->extractParams($intent, $query, $conversationContext);
             
             // Добавляем user_id в параметры для Actions, которым это нужно
             if ($userId) {
@@ -116,10 +116,27 @@ class ContextBuilder
         return $actionMap[$intent] ?? null;
     }
 
-    protected function extractParams(string $intent, string $query): array
+    protected function extractParams(string $intent, string $query, array $conversationContext = []): array
     {
         // Используем универсальный метод извлечения всех параметров
-        return $this->intentRecognizer->extractAllParams($query);
+        $params = $this->intentRecognizer->extractAllParams($query);
+        
+        // Умная обработка порядковых номеров из последних списков
+        if (isset($params['contract_id']) && $params['contract_id'] <= 10 && isset($conversationContext['last_contracts'])) {
+            $index = $params['contract_id'] - 1;
+            if (isset($conversationContext['last_contracts'][$index])) {
+                $params['contract_id'] = $conversationContext['last_contracts'][$index]['id'];
+            }
+        }
+        
+        if (isset($params['project_id']) && $params['project_id'] <= 10 && isset($conversationContext['last_projects'])) {
+            $index = $params['project_id'] - 1;
+            if (isset($conversationContext['last_projects'][$index])) {
+                $params['project_id'] = $conversationContext['last_projects'][$index]['id'];
+            }
+        }
+        
+        return $params;
     }
 
     public function getOrganizationContext(int $organizationId): array

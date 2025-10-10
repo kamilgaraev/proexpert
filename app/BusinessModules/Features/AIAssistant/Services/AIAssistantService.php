@@ -55,12 +55,26 @@ class AIAssistantService
         // Получаем предыдущий intent из контекста диалога для лучшего распознавания
         $previousIntent = $conversation->context['last_intent'] ?? null;
 
-        $context = $this->contextBuilder->buildContext($query, $organizationId, $user->id, $previousIntent);
+        // Передаем текущий контекст разговора для работы со списками
+        $conversationContext = $conversation->context ?? [];
+        $context = $this->contextBuilder->buildContext($query, $organizationId, $user->id, $previousIntent, $conversationContext);
 
-        // Сохраняем текущий intent в контекст диалога
+        // Сохраняем текущий intent и данные в контекст диалога
         $currentIntent = $context['intent'] ?? null;
         if ($currentIntent) {
-            $conversation->context = array_merge($conversation->context ?? [], ['last_intent' => $currentIntent]);
+            $contextToSave = ['last_intent' => $currentIntent];
+            
+            // Если был возвращен список контрактов - сохраняем его в контекст
+            if (isset($context['contract_details']['show_list']) && $context['contract_details']['show_list']) {
+                $contextToSave['last_contracts'] = $context['contract_details']['contracts'] ?? [];
+            }
+            
+            // Если был возвращен список проектов - сохраняем его в контекст
+            if (isset($context['project_search']['projects'])) {
+                $contextToSave['last_projects'] = $context['project_search']['projects'] ?? [];
+            }
+            
+            $conversation->context = array_merge($conversation->context ?? [], $contextToSave);
             $conversation->save();
         }
 
