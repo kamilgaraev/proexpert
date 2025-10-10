@@ -97,24 +97,8 @@ class ContextBuilder
 
     protected function extractParams(string $intent, string $query): array
     {
-        $params = [];
-        
-        // Извлечение параметров в зависимости от намерения
-        switch ($intent) {
-            case 'contract_search':
-            case 'contract_details':
-                // Попытка извлечь номер контракта
-                if (preg_match('/№\s*(\d+[\/\-]\d+)/', $query, $matches)) {
-                    $params['contract_number'] = $matches[1];
-                }
-                // Попытка извлечь название контрагента
-                if (preg_match('/с\s+([А-Яа-яA-Za-z\s]+)(?:\s|$|,|\.)/u', $query, $matches)) {
-                    $params['contractor_name'] = trim($matches[1]);
-                }
-                break;
-        }
-        
-        return $params;
+        // Используем универсальный метод извлечения всех параметров
+        return $this->intentRecognizer->extractAllParams($query);
     }
 
     public function getOrganizationContext(int $organizationId): array
