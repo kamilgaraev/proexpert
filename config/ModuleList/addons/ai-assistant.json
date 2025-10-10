@@ -1,0 +1,64 @@
+{
+  "name": "AI Ассистент",
+  "slug": "ai-assistant",
+  "version": "1.0.0",
+  "type": "addon",
+  "billing_model": "subscription",
+  "category": "ai",
+  "description": "Умный помощник с искусственным интеллектом для анализа проектов, генерации отчетов и автоматизации рутинных задач",
+  
+  "class_name": "App\\BusinessModules\\Features\\AIAssistant\\AIAssistantModule",
+  "service_provider": "App\\BusinessModules\\Features\\AIAssistant\\AIAssistantServiceProvider",
+  
+  "pricing": {
+    "base_price": 3990,
+    "currency": "RUB",
+    "included_in_plans": ["enterprise"],
+    "duration_days": 30,
+    "trial_days": 14
+  },
+  
+  "permissions": [
+    "ai_assistant.chat",
+    "ai_assistant.reports.generate",
+    "ai_assistant.analytics.view",
+    "ai_assistant.settings.manage",
+    "ai_assistant.usage.view"
+  ],
+  
+  "features": [
+    "Чат-ассистент с контекстом проектов",
+    "Генерация отчетов и аналитики",
+    "Умные рекомендации по оптимизации",
+    "Предупреждения о рисках",
+    "Поиск по базе знаний",
+    "Real-time уведомления",
+    "История диалогов",
+    "Интеграция с существующей аналитикой"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_ai_requests_per_month": 5000,
+    "conversation_history_days": 90,
+    "max_file_upload_mb": 10,
+    "max_concurrent_chats": 10
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "bot",
+  "display_order": 99
+}
+
