@@ -1,6 +1,6 @@
 # AI Assistant Module
 
-Модуль умного ассистента на базе GPT-4o-mini для анализа проектов, генерации отчетов и автоматизации задач.
+Модуль умного ассистента на базе YandexGPT / GPT-4o-mini для анализа проектов, генерации отчетов и автоматизации задач.
 
 ## Возможности
 
@@ -10,18 +10,72 @@
 - Лимиты на уровне организации
 - История диалогов
 - Трекинг использования и расходов
+- **Поддержка YandexGPT и OpenAI** - легкое переключение через конфигурацию
+
+## Поддерживаемые LLM провайдеры
+
+### YandexGPT (рекомендуется для России) ✅
+- ✅ Работает без VPN из России
+- ✅ Отличное понимание русского языка
+- ✅ Доступная цена: ~₽400 за 1M токенов
+- ✅ YandexGPT 5.1 Pro - последняя модель
+
+### OpenAI (международный)
+- Требует VPN из России
+- GPT-4o-mini: ~$0.15 за 1M токенов
+- Отличное качество на английском
 
 ## Установка
 
-### 1. Настройка окружения
+### 1. Выбор провайдера
 
-Добавьте в `.env`:
+#### Вариант A: YandexGPT (рекомендуется)
+
+**Получение API ключа:**
+
+1. Перейдите в [Yandex Cloud Console](https://console.cloud.yandex.ru/)
+2. Создайте **сервисный аккаунт** (Сервисные аккаунты → Создать)
+3. Назначьте роль **`ai.languageModels.user`**
+4. Создайте **API-ключ** (Ключи API → Создать новый ключ → API-ключ)
+5. Скопируйте API-ключ (показывается один раз!)
+6. Найдите **Folder ID** в URL консоли: `https://console.cloud.yandex.ru/folders/YOUR_FOLDER_ID`
+
+**Настройка `.env`:**
 
 ```env
-# OpenAI API
+# LLM Provider
+LLM_PROVIDER=yandex
+
+# YandexGPT Configuration
+YANDEX_API_KEY=AQVN...ваш-ключ
+YANDEX_FOLDER_ID=b1gbo06r4m40cdun9dg
+YANDEX_MODEL_URI=gpt://b1gbo06r4m40cdun9dg/yandexgpt/latest
+YANDEX_MAX_TOKENS=2000
+YANDEX_TEMPERATURE=0.7
+
+# AI Assistant
+AI_ASSISTANT_ENABLED=true
+AI_ASSISTANT_DEFAULT_LIMIT=5000
+AI_ASSISTANT_CACHE_TTL=3600
+```
+
+**Доступные модели YandexGPT:**
+- `yandexgpt/latest` - YandexGPT 5.1 (рекомендуется)
+- `yandexgpt-lite/latest` - облегченная версия (дешевле)
+
+#### Вариант B: OpenAI
+
+**Настройка `.env`:**
+
+```env
+# LLM Provider
+LLM_PROVIDER=openai
+
+# OpenAI Configuration
 OPENAI_API_KEY=sk-your-api-key-here
 OPENAI_MODEL=gpt-4o-mini
 OPENAI_MAX_TOKENS=2000
+OPENAI_TEMPERATURE=0.7
 
 # AI Assistant
 AI_ASSISTANT_ENABLED=true

@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\AIAssistant;
 use Illuminate\Support\ServiceProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\YandexGPTProvider;
 
 class AIAssistantServiceProvider extends ServiceProvider
 {
@@ -14,7 +15,16 @@ class AIAssistantServiceProvider extends ServiceProvider
             __DIR__.'/config/ai-assistant.php', 'ai-assistant'
         );
 
-        $this->app->singleton(LLMProviderInterface::class, OpenAIProvider::class);
+        // Динамический выбор LLM провайдера на основе конфигурации
+        $this->app->singleton(LLMProviderInterface::class, function ($app) {
+            $provider = config('ai-assistant.llm.provider', 'yandex');
+            
+            return match($provider) {
+                'yandex' => $app->make(YandexGPTProvider::class),
+                'openai' => $app->make(OpenAIProvider::class),
+                default => $app->make(YandexGPTProvider::class),
+            };
+        });
     }
 
     public function boot(): void
