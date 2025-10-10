@@ -211,24 +211,71 @@ class RequestLoggingMiddleware
 
         // Логировать ошибки
         if ($exception) {
-            $this->loggingService->technical('http.request_exception', [
+            $statusCode = ($exception instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) ? $exception->getStatusCode() : 500;
+            
+            $exceptionData = [
                 'method' => $request->method(),
                 'uri' => $request->getRequestUri(),
                 'exception_class' => get_class($exception),
                 'exception_message' => $exception->getMessage(),
-                'status_code' => ($exception instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) ? $exception->getStatusCode() : 500
-            ], 'error');
+                'exception_code' => $exception->getCode(),
+                'exception_file' => $exception->getFile(),
+                'exception_line' => $exception->getLine(),
+                'status_code' => $statusCode,
+                'request_data' => [
+                    'query' => $request->query->all(),
+                    'body_size' => strlen($request->getContent()),
+                    'headers' => [
+                        'content-type' => $request->header('Content-Type'),
+                        'accept' => $request->header('Accept'),
+                    ]
+                ]
+            ];
+            
+            if ($statusCode >= 500) {
+                $exceptionData['stack_trace'] = $exception->getTraceAsString();
+                $exceptionData['previous_exception'] = $exception->getPrevious() ? [
+                    'class' => get_class($exception->getPrevious()),
+                    'message' => $exception->getPrevious()->getMessage(),
+                    'file' => $exception->getPrevious()->getFile(),
+                    'line' => $exception->getPrevious()->getLine(),
+                ] : null;
+            }
+            
+            $this->loggingService->technical('http.request_exception', $exceptionData, 'error');
+            
         } elseif ($response && $response->getStatusCode() >= 500) {
-            $this->loggingService->technical('http.server_error', [
+            $errorContext = [
                 'method' => $request->method(),
                 'uri' => $request->getRequestUri(),
-                'status_code' => $response->getStatusCode()
-            ], 'error');
+                'status_code' => $response->getStatusCode(),
+                'request_data' => [
+                    'query' => $request->query->all(),
+                    'body_size' => strlen($request->getContent()),
+                    'ip' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ],
+                'response_preview' => substr($response->getContent(), 0, 500),
+            ];
+            
+            if ($request->user()) {
+                $errorContext['user_data'] = [
+                    'id' => $request->user()->id,
+                    'email' => $request->user()->email ?? null,
+                ];
+            }
+            
+            $this->loggingService->technical('http.server_error', $errorContext, 'error');
+            
         } elseif ($response && $response->getStatusCode() >= 400) {
             $this->loggingService->technical('http.client_error', [
                 'method' => $request->method(),
                 'uri' => $request->getRequestUri(),
-                'status_code' => $response->getStatusCode()
+                'status_code' => $response->getStatusCode(),
+                'request_data' => [
+                    'query' => $request->query->all(),
+                    'body_size' => strlen($request->getContent()),
+                ]
             ], 'warning');
         }
     }

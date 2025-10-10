@@ -191,6 +191,7 @@ class Handler extends ExceptionHandler
     {
         $request = request();
         $user = $request->user();
+        $statusCode = $exception instanceof HttpExceptionInterface ? $exception->getStatusCode() : 500;
         
         $exceptionContext = [
             'exception_class' => get_class($exception),
@@ -200,12 +201,33 @@ class Handler extends ExceptionHandler
             'exception_code' => $exception->getCode(),
             'request_method' => $request->method(),
             'request_uri' => $request->getRequestUri(),
+            'request_data' => [
+                'query' => $request->query->all(),
+                'input_keys' => array_keys($request->all()),
+                'body_size' => strlen($request->getContent()),
+            ],
             'user_id' => $user?->id,
             'organization_id' => $request->attributes->get('current_organization_id'),
             'user_agent' => $request->header('User-Agent'),
             'ip_address' => $request->ip(),
-            'stack_trace_hash' => md5($exception->getTraceAsString())
+            'stack_trace_hash' => md5($exception->getTraceAsString()),
+            'status_code' => $statusCode,
         ];
+        
+        if ($statusCode >= 500) {
+            $exceptionContext['stack_trace'] = $exception->getTraceAsString();
+            $exceptionContext['trace_array'] = array_slice($exception->getTrace(), 0, 10);
+            
+            if ($exception->getPrevious()) {
+                $exceptionContext['previous_exception'] = [
+                    'class' => get_class($exception->getPrevious()),
+                    'message' => $exception->getPrevious()->getMessage(),
+                    'file' => $exception->getPrevious()->getFile(),
+                    'line' => $exception->getPrevious()->getLine(),
+                    'trace' => array_slice($exception->getPrevious()->getTrace(), 0, 5),
+                ];
+            }
+        }
 
         // Категоризация исключений по типам
         if ($exception instanceof ValidationException) {
