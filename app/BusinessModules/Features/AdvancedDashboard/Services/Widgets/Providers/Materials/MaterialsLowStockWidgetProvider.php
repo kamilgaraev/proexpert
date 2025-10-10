@@ -25,7 +25,7 @@ class MaterialsLowStockWidgetProvider extends AbstractWidgetProvider
             ->select(
                 'materials.id',
                 'materials.name',
-                DB::raw('SUM(material_balances.quantity) as total_quantity')
+                DB::raw('SUM(material_balances.available_quantity) as total_quantity')
             )
             ->groupBy('materials.id', 'materials.name')
             ->having('total_quantity', '<=', $threshold)
