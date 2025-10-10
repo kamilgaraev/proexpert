@@ -50,15 +50,30 @@
 ## 🔌 API Endpoints
 
 ### Базовый URL
+
+**Для Личного кабинета (ЛК):**
 ```
 https://your-domain.com/api/v1/ai-assistant
 ```
 
+**Для Админ-панели:**
+```
+https://your-domain.com/api/v1/admin/ai-assistant
+```
+
 ### Авторизация
-Все запросы требуют токен авторизации:
+
+**Для ЛК:**
 ```
 Authorization: Bearer YOUR_ACCESS_TOKEN
 ```
+
+**Для Админ-панели:**
+```
+Authorization: Bearer YOUR_ADMIN_ACCESS_TOKEN
+```
+
+> **Примечание:** API endpoints идентичны для обоих интерфейсов, отличается только префикс (`/api/v1/ai-assistant` vs `/api/v1/admin/ai-assistant`)
 
 ---
 
@@ -66,7 +81,9 @@ Authorization: Bearer YOUR_ACCESS_TOKEN
 
 ### 1. Отправить сообщение AI
 
-**Endpoint:** `POST /api/v1/ai-assistant/chat`
+**Endpoint:** 
+- ЛК: `POST /api/v1/ai-assistant/chat`
+- Админ: `POST /api/v1/admin/ai-assistant/chat`
 
 **Описание:** Отправляет сообщение AI и получает ответ. Создает новый диалог или продолжает существующий.
 
@@ -130,7 +147,9 @@ Authorization: Bearer YOUR_ACCESS_TOKEN
 
 ### 2. Получить список диалогов
 
-**Endpoint:** `GET /api/v1/ai-assistant/conversations`
+**Endpoint:** 
+- ЛК: `GET /api/v1/ai-assistant/conversations`
+- Админ: `GET /api/v1/admin/ai-assistant/conversations`
 
 **Описание:** Получить список всех диалогов текущего пользователя (последние сверху).
 
@@ -173,7 +192,9 @@ GET /api/v1/ai-assistant/conversations?page=1&per_page=10
 
 ### 3. Получить историю диалога
 
-**Endpoint:** `GET /api/v1/ai-assistant/conversations/{id}`
+**Endpoint:** 
+- ЛК: `GET /api/v1/ai-assistant/conversations/{id}`
+- Админ: `GET /api/v1/admin/ai-assistant/conversations/{id}`
 
 **Описание:** Получить полную историю конкретного диалога со всеми сообщениями.
 
@@ -237,7 +258,9 @@ GET /api/v1/ai-assistant/conversations/123
 
 ### 4. Удалить диалог
 
-**Endpoint:** `DELETE /api/v1/ai-assistant/conversations/{id}`
+**Endpoint:** 
+- ЛК: `DELETE /api/v1/ai-assistant/conversations/{id}`
+- Админ: `DELETE /api/v1/admin/ai-assistant/conversations/{id}`
 
 **Описание:** Удалить диалог и всю его историю.
 
@@ -266,7 +289,9 @@ DELETE /api/v1/ai-assistant/conversations/123
 
 ### 5. Статистика использования
 
-**Endpoint:** `GET /api/v1/ai-assistant/usage`
+**Endpoint:** 
+- ЛК: `GET /api/v1/ai-assistant/usage`
+- Админ: `GET /api/v1/admin/ai-assistant/usage`
 
 **Описание:** Получить статистику использования AI-ассистента для организации (текущий месяц).
 

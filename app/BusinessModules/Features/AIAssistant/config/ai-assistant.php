@@ -17,8 +17,8 @@ return [
         // YandexGPT Configuration
         'yandex' => [
             'api_key' => env('YANDEX_API_KEY'),
-            'folder_id' => env('YANDEX_FOLDER_ID'),
-            'model_uri' => env('YANDEX_MODEL_URI', 'gpt://b1gbo06r4m40cdun9dg/yandexgpt/latest'),
+            'folder_id' => env('YANDEX_FOLDER_ID', 'b1gbp06r4m40cduru9dg'),
+            'model_uri' => env('YANDEX_MODEL_URI', 'gpt://b1gbp06r4m40cduru9dg/yandexgpt/latest'),
             'max_tokens' => env('YANDEX_MAX_TOKENS', 2000),
             'temperature' => env('YANDEX_TEMPERATURE', 0.7),
         ],

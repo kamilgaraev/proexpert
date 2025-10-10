@@ -48,8 +48,8 @@ LLM_PROVIDER=yandex
 
 # YandexGPT Configuration
 YANDEX_API_KEY=AQVN...ваш-ключ
-YANDEX_FOLDER_ID=b1gbo06r4m40cdun9dg
-YANDEX_MODEL_URI=gpt://b1gbo06r4m40cdun9dg/yandexgpt/latest
+YANDEX_FOLDER_ID=b1gbp06r4m40cduru9dg
+YANDEX_MODEL_URI=gpt://b1gbp06r4m40cduru9dg/yandexgpt/latest
 YANDEX_MAX_TOKENS=2000
 YANDEX_TEMPERATURE=0.7
 
