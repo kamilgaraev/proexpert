@@ -33,7 +33,7 @@ return [
     */
 
     'deprecations' => [
-        'channel' => env('LOG_DEPRECATIONS_CHANNEL', 'null'),
+        'channel' => env('LOG_DEPRECATIONS_CHANNEL', 'deprecations'),
         'trace' => env('LOG_DEPRECATIONS_TRACE', false),
     ],
 
@@ -210,6 +210,12 @@ return [
                 'dateFormat' => 'Y-m-d H:i:s.u',
             ],
             'permission' => 0644,
+        ],
+
+        'deprecations' => [
+            'driver' => 'single',
+            'path' => storage_path('logs/deprecations.log'),
+            'level' => 'warning',
         ],
 
     ],

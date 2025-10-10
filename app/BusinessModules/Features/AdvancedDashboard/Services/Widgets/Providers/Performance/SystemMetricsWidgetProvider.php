@@ -106,6 +106,6 @@ class SystemMetricsWidgetProvider extends AbstractWidgetProvider
             return 0;
         }
 
-        return Carbon::parse($created)->diffInDays(Carbon::now());
+        return (int) Carbon::parse($created)->diffInDays(Carbon::now());
     }
 }
