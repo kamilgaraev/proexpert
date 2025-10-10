@@ -147,6 +147,8 @@ class IntentRecognizer
         'contract_details' => [
             'контракт №',
             'договор №',
+            'контракту',  // "по 1 контракту"
+            'договору',   // "по договору"
             'давай контракт',
             'давай договор',
             'дай контракт',
@@ -158,7 +160,9 @@ class IntentRecognizer
             'нужен контракт',
             'нужен договор',
             'детали контракт',
-            'подробности договор',
+            'детальн информацию', // "детальную информацию"
+            'подробн информацию', // "подробную информацию"
+            'подробност', // "подробности"
             'информация о контракт',
             'информацию по контракт',
             'информация по контракт',
@@ -177,6 +181,10 @@ class IntentRecognizer
             'хочу узнать про контракт',
             'а что там с контракт',
             'а по контракт',
+            'полн информацию по контракт',
+            'полную по контракт',
+            'всю по контракт',
+            'всю информацию по контракт',
         ],
         
         // Остатки материалов
@@ -370,8 +378,27 @@ class IntentRecognizer
             'что спрашивать',
             'что можно узнать',
             'помоги',
-            'подскажи',
             'не понимаю',
+        ],
+        
+        // Приветствия и статус
+        'greeting' => [
+            'привет',
+            'здравствуй',
+            'добрый день',
+            'доброе утро',
+            'добрый вечер',
+            'как дела',
+            'как идет',
+            'как там',
+            'что нового',
+            'как работа',
+            'что у нас',
+            'ну как',
+            'как успехи',
+            'все ок',
+            'все нормально',
+            'как проекты',
         ],
         
         // Общие вопросы
@@ -382,20 +409,21 @@ class IntentRecognizer
      * Приоритеты интентов (чем больше число, тем выше приоритет при конфликте)
      */
     protected array $intentPriority = [
-        'contract_details' => 10,     // Самый специфичный
+        'contract_details' => 12,     // Максимальный приоритет для детали контракта
         'project_details' => 10,      // Детали проекта
         'project_risks' => 9,
         'project_budget' => 8,
+        'help' => 8,                  // Помощь - высокий приоритет
         'material_forecast' => 7,
+        'user_info' => 7,             // Информация о пользователе
         'material_stock' => 6,
         'project_search' => 6,        // Поиск проектов
-        'contract_search' => 5,
-        'project_status' => 4,
-        'analytics' => 3,
-        'user_info' => 7,             // Информация о пользователе
         'team_info' => 6,             // Информация о команде
+        'contract_search' => 5,
         'organization_info' => 5,     // Информация об организации
-        'help' => 8,                  // Помощь - высокий приоритет
+        'project_status' => 4,
+        'greeting' => 3,              // Приветствия
+        'analytics' => 3,
         'general' => 1,               // Самый общий
     ];
 
@@ -418,15 +446,28 @@ class IntentRecognizer
             return $previousIntent;
         }
 
+        // Явное определение типа по ключевым словам
+        $hasContract = (mb_strpos($query, 'контракт') !== false || mb_strpos($query, 'договор') !== false);
+        $hasProject = (mb_strpos($query, 'проект') !== false);
+
         // Собираем все совпавшие интенты с их приоритетами
         foreach ($this->patterns as $intent => $keywords) {
             foreach ($keywords as $keyword) {
                 if (mb_strpos($query, $keyword) !== false) {
                     $priority = $this->intentPriority[$intent] ?? 0;
                     
+                    // Бонус за явное упоминание типа объекта
+                    $typeBonus = 0;
+                    if ($hasContract && strpos($intent, 'contract') !== false) {
+                        $typeBonus = 50; // Огромный бонус для контрактов когда явно упомянут
+                    }
+                    if ($hasProject && strpos($intent, 'project') !== false && !$hasContract) {
+                        $typeBonus = 50; // Бонус для проектов когда явно упомянут (и нет контракта)
+                    }
+                    
                     // Учитываем длину ключевого слова (длиннее = специфичнее)
                     $keywordLength = mb_strlen($keyword);
-                    $score = $priority * 10 + $keywordLength;
+                    $score = $priority * 10 + $keywordLength + $typeBonus;
                     
                     if (!isset($matches[$intent]) || $matches[$intent] < $score) {
                         $matches[$intent] = $score;
