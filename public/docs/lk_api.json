@@ -5587,6 +5587,11 @@
             "type": "string",
             "enum": [
               "smr",
+              "general_construction",
+              "finishing",
+              "installation",
+              "design",
+              "consultation",
               "supply",
               "services",
               "rent",

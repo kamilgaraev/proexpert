@@ -38,7 +38,7 @@ properties:
     type: string
     nullable: true
     description: Категория видов работ по контракту.
-    enum: [general_construction, finishing, installation, design, consultation]
+    enum: [smr, general_construction, finishing, installation, design, consultation, supply, services, rent, other]
     example: "finishing"
   payment_terms:
     type: string

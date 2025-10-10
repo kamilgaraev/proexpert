@@ -217,7 +217,7 @@ components:
         work_type_category:
           type: string
           nullable: true
-          # enum: [smr, supply, services, rent, other] # Use actual enums from your project
+          enum: [smr, general_construction, finishing, installation, design, consultation, supply, services, rent, other]
           description: "Категория работ по контракту"
         payment_terms:
           type: string
@@ -286,8 +286,8 @@ components:
         work_type_category:
           type: string
           nullable: true
-          description: "Категория вида работ (ПИР, СМР и т.д.)"
-          # enum: [PIR, SMR, EquipmentSupply, Other] # Example, уточнить по Enum
+          enum: [smr, general_construction, finishing, installation, design, consultation, supply, services, rent, other]
+          description: "Категория вида работ (smr=СМР, general_construction=Общестроительные, finishing=Отделочные, installation=Монтажные, design=Проектирование, consultation=Консультации, supply=Поставка, services=Услуги, rent=Аренда, other=Прочие)"
         payment_terms: { type: string, nullable: true, description: "Условия оплаты" }
         total_amount: { type: number, format: float, description: "Общая сумма по контракту", minimum: 0 }
         gp_percentage: { type: number, format: float, nullable: true, description: "Процент ГП (Генерального подряда)", minimum: 0, maximum: 100 }
@@ -319,8 +319,8 @@ components:
         work_type_category:
           type: string
           nullable: true
-          description: "Категория вида работ (ПИР, СМР и т.д.)"
-          # enum: [PIR, SMR, EquipmentSupply, Other]
+          enum: [smr, general_construction, finishing, installation, design, consultation, supply, services, rent, other]
+          description: "Категория вида работ (smr=СМР, general_construction=Общестроительные, finishing=Отделочные, installation=Монтажные, design=Проектирование, consultation=Консультации, supply=Поставка, services=Услуги, rent=Аренда, other=Прочие)"
         payment_terms: { type: string, nullable: true, description: "Условия оплаты" }
         total_amount: { type: number, format: float, description: "Общая сумма по контракту", minimum: 0, nullable: true }
         gp_percentage: { type: number, format: float, nullable: true, description: "Процент ГП (Генерального подряда)", minimum: 0, maximum: 100 }
@@ -357,9 +357,8 @@ components:
         work_type_category:
           type: string # from ContractBase
           nullable: true
-          description: "Категория вида работ (ПИР, СМР и т.д.)"
-          # enum: [PIR, SMR, EquipmentSupply, Other]
-        # work_type_category_label: {type: string, readOnly: true, nullable: true, description: "Человекочитаемая категория работ"} # If API provides
+          enum: [smr, supply, services, rent, other]
+          description: "Категория вида работ (smr=СМР, supply=Поставка, services=Услуги, rent=Аренда, other=Прочие)"
         payment_terms: { type: string, nullable: true, description: "Условия оплаты" } # from ContractBase
         total_amount: { type: number, format: float, description: "Общая сумма по контракту" } # from ContractBase
         gp_percentage: { type: number, format: float, nullable: true, description: "Процент ГП (Генерального подряда)" } # from ContractBase
