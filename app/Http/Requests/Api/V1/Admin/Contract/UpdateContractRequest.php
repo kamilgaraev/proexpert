@@ -24,69 +24,79 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
 
     public function rules(): array
     {
-        // $organizationId = Auth::user()->organization_id;
-        // Правила похожи на Store, но могут отличаться (например, 'sometimes' вместо 'required')
         return [
             'project_id' => ['sometimes', 'nullable', 'integer', 'exists:projects,id'],
-            'contractor_id' => ['sometimes', 'required', 'integer', 'exists:contractors,id'],
-            'parent_contract_id' => ['nullable', 'integer', new ParentContractValid], 
-            'number' => ['sometimes', 'required', 'string', 'max:255'],
-            'date' => ['sometimes', 'required', 'date_format:Y-m-d'],
-            // поле type больше не используется
+            'contractor_id' => ['sometimes', 'nullable', 'integer', 'exists:contractors,id'],
+            'parent_contract_id' => ['sometimes', 'nullable', 'integer', new ParentContractValid], 
+            'number' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
             'subject' => ['sometimes', 'nullable', 'string'],
             'work_type_category' => ['sometimes', 'nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'payment_terms' => ['sometimes', 'nullable', 'string'],
-            'total_amount' => ['sometimes', 'required', 'numeric', 'min:0'],
+            'total_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'gp_percentage' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
             'planned_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'actual_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'status' => ['sometimes', 'required', new Enum(ContractStatusEnum::class)],
+            'status' => ['sometimes', 'nullable', new Enum(ContractStatusEnum::class)],
             'start_date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
             'end_date' => ['sometimes', 'nullable', 'date_format:Y-m-d', 'after_or_equal:start_date'],
             'notes' => ['sometimes', 'nullable', 'string'],
-            // Временное поле
-            'organization_id_for_update' => ['sometimes', 'integer'] 
         ];
     }
 
     public function toDto(): ContractDTO
     {
-        // Важно: ContractDTO ожидает все поля. Если какие-то поля не пришли в запросе на обновление,
-        // нужно либо передавать null/значения по умолчанию, либо загрузить существующую модель
-        // и смержить с validated() данными. 
-        // Для простоты пока используем validated(), предполагая, что клиент пришлет все нужные поля 
-        // или ContractDTO сможет обработать отсутствующие.
-
-        // Более правильный подход для Update был бы такой:
-        // 1. Загрузить текущую модель Contract.
-        // 2. Создать DTO из модели.
-        // 3. Смержить DTO с $this->validated() данными.
-        // Но для этого ContractDTO должен быть более гибким или иметь метод merge.
-
-        // Пока упрощенный вариант, аналогичный Store. Подразумевает, что клиент шлет все поля или DTO это обработает.
-        // Это приведет к ошибке, если ContractDTO требует поля, которые не были отправлены и не являются nullable.
-        // Наш ContractDTO имеет nullable поля, так что это может сработать, но нужно быть осторожным.
-
+        $contractId = $this->route('contractId');
+        $user = $this->user();
+        $organizationId = $this->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        $contract = \App\Models\Contract::where('id', $contractId)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
         $validatedData = $this->validated();
 
         return new ContractDTO(
-            project_id: $validatedData['project_id'] ?? null, // Пример обработки отсутствующих ключей
-            contractor_id: $validatedData['contractor_id'], // Предполагаем, что это поле всегда будет (из-за 'required')
-            parent_contract_id: $validatedData['parent_contract_id'] ?? null,
-            number: $validatedData['number'],
-            date: $validatedData['date'],
-            // поле type больше не используется
-            subject: $validatedData['subject'] ?? null,
-            work_type_category: isset($validatedData['work_type_category']) ? ContractWorkTypeCategoryEnum::from($validatedData['work_type_category']) : null,
-            payment_terms: $validatedData['payment_terms'] ?? null,
-            total_amount: (float) ($validatedData['total_amount'] ?? 0), // Должно быть, если 'required'
-            gp_percentage: isset($validatedData['gp_percentage']) ? (float) $validatedData['gp_percentage'] : null,
-            planned_advance_amount: isset($validatedData['planned_advance_amount']) ? (float) $validatedData['planned_advance_amount'] : null,
-            actual_advance_amount: isset($validatedData['actual_advance_amount']) ? (float) $validatedData['actual_advance_amount'] : null,
-            status: ContractStatusEnum::from($validatedData['status']),
-            start_date: $validatedData['start_date'] ?? null,
-            end_date: $validatedData['end_date'] ?? null,
-            notes: $validatedData['notes'] ?? null
+            project_id: $validatedData['project_id'] ?? $contract->project_id,
+            contractor_id: $validatedData['contractor_id'] ?? $contract->contractor_id,
+            parent_contract_id: array_key_exists('parent_contract_id', $validatedData) 
+                ? $validatedData['parent_contract_id'] 
+                : $contract->parent_contract_id,
+            number: $validatedData['number'] ?? $contract->number,
+            date: $validatedData['date'] ?? $contract->date->format('Y-m-d'),
+            subject: array_key_exists('subject', $validatedData) 
+                ? $validatedData['subject'] 
+                : $contract->subject,
+            work_type_category: isset($validatedData['work_type_category']) 
+                ? ContractWorkTypeCategoryEnum::from($validatedData['work_type_category']) 
+                : $contract->work_type_category,
+            payment_terms: array_key_exists('payment_terms', $validatedData) 
+                ? $validatedData['payment_terms'] 
+                : $contract->payment_terms,
+            total_amount: isset($validatedData['total_amount']) 
+                ? (float) $validatedData['total_amount'] 
+                : (float) $contract->total_amount,
+            gp_percentage: array_key_exists('gp_percentage', $validatedData) 
+                ? ($validatedData['gp_percentage'] !== null ? (float) $validatedData['gp_percentage'] : null)
+                : $contract->gp_percentage,
+            planned_advance_amount: array_key_exists('planned_advance_amount', $validatedData) 
+                ? ($validatedData['planned_advance_amount'] !== null ? (float) $validatedData['planned_advance_amount'] : null)
+                : $contract->planned_advance_amount,
+            actual_advance_amount: array_key_exists('actual_advance_amount', $validatedData) 
+                ? ($validatedData['actual_advance_amount'] !== null ? (float) $validatedData['actual_advance_amount'] : null)
+                : $contract->actual_advance_amount,
+            status: isset($validatedData['status']) 
+                ? ContractStatusEnum::from($validatedData['status']) 
+                : $contract->status,
+            start_date: array_key_exists('start_date', $validatedData) 
+                ? $validatedData['start_date'] 
+                : ($contract->start_date ? $contract->start_date->format('Y-m-d') : null),
+            end_date: array_key_exists('end_date', $validatedData) 
+                ? $validatedData['end_date'] 
+                : ($contract->end_date ? $contract->end_date->format('Y-m-d') : null),
+            notes: array_key_exists('notes', $validatedData) 
+                ? $validatedData['notes'] 
+                : $contract->notes
         );
     }
 } 

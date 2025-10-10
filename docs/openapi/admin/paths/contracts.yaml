@@ -267,6 +267,9 @@
   put:
     tags: [Contracts]
     summary: Обновить контракт
+    description: |
+      Обновляет данные контракта. Все поля опциональны - можно отправить только те поля, которые нужно изменить.
+      Поля, не указанные в запросе, сохранят свои текущие значения.
     parameters:
       - in: path
         name: id
@@ -278,16 +281,48 @@
       content:
         application/json:
           schema:
-            $ref: '../components/schemas/ContractCreateRequest.yaml'
+            $ref: '../components/schemas/ContractUpdateRequest.yaml'
     responses:
       "200":
-        description: Обновлено
+        description: Контракт успешно обновлен
         content:
           application/json:
             schema:
               $ref: '../components/schemas/ContractResponse.yaml'
+      "400":
+        description: Некорректные данные
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Некорректные данные"
+                error:
+                  type: string
+                  example: "Invalid contractor_id"
+      "404":
+        description: Контракт не найден
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "Контракт не найден"
       "422":
-        description: Неверный запрос
+        description: Ошибка валидации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                errors:
+                  type: object
   delete:
     tags: [Contracts]
     summary: Удалить контракт

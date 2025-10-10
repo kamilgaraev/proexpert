@@ -1,5 +1,9 @@
 type: object
 description: Схема для обновления контракта. Все поля опциональны, так как используется частичное обновление.
+example:
+  status: "completed"
+  end_date: "2025-10-12"
+  notes: "Контракт завершен досрочно"
 properties:
   project_id:
     type: integer

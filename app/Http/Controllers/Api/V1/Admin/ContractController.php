@@ -20,6 +20,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Exception;
 
 class ContractController extends Controller
@@ -127,8 +128,18 @@ class ContractController extends Controller
             $contractDTO = $request->toDto();
             $contract = $this->contractService->updateContract($contractId, $organizationId, $contractDTO);
             return new ContractResource($contract);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => 'Некорректные данные', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to update contract', 'error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
+            Log::error('Ошибка обновления контракта', [
+                'contract_id' => $contractId,
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json(['message' => 'Не удалось обновить контракт', 'error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
