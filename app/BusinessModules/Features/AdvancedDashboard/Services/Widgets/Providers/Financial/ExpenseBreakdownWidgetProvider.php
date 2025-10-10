@@ -116,33 +116,96 @@ class ExpenseBreakdownWidgetProvider extends AbstractWidgetProvider
 
     protected function getExpensesByProject(WidgetDataRequest $request): array
     {
-        $projects = DB::table('projects')
-            ->where('organization_id', $request->organizationId)
-            ->whereBetween('created_at', [$request->from, $request->to])
-            ->select('id', 'name')
+        $materialsByProject = [];
+        $laborByProject = [];
+        $contractorsByProject = [];
+
+        if (DB::getSchemaBuilder()->hasTable('completed_work_materials')) {
+            $materials = DB::table('completed_work_materials')
+                ->join('completed_works', 'completed_work_materials.completed_work_id', '=', 'completed_works.id')
+                ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+                ->where('projects.organization_id', $request->organizationId)
+                ->whereBetween('completed_works.created_at', [$request->from, $request->to])
+                ->when($request->projectId, fn($q) => $q->where('completed_works.project_id', $request->projectId))
+                ->select(
+                    'projects.id as project_id',
+                    'projects.name as project_name',
+                    DB::raw('SUM(completed_work_materials.total_amount) as total')
+                )
+                ->groupBy('projects.id', 'projects.name')
+                ->get();
+
+            foreach ($materials as $item) {
+                $materialsByProject[$item->project_id] = [
+                    'name' => $item->project_name,
+                    'amount' => (float)$item->total
+                ];
+            }
+        }
+
+        $labor = DB::table('completed_works')
+            ->join('projects', 'completed_works.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $request->organizationId)
+            ->whereBetween('completed_works.created_at', [$request->from, $request->to])
+            ->when($request->projectId, fn($q) => $q->where('completed_works.project_id', $request->projectId))
+            ->select(
+                'projects.id as project_id',
+                'projects.name as project_name',
+                DB::raw('SUM(completed_works.quantity * completed_works.price * 0.3) as total')
+            )
+            ->groupBy('projects.id', 'projects.name')
             ->get();
 
+        foreach ($labor as $item) {
+            $laborByProject[$item->project_id] = [
+                'name' => $item->project_name,
+                'amount' => (float)$item->total
+            ];
+        }
+
+        $contractors = DB::table('material_receipts')
+            ->join('projects', 'material_receipts.project_id', '=', 'projects.id')
+            ->where('projects.organization_id', $request->organizationId)
+            ->whereBetween('material_receipts.receipt_date', [$request->from, $request->to])
+            ->whereIn('material_receipts.status', ['confirmed'])
+            ->when($request->projectId, fn($q) => $q->where('material_receipts.project_id', $request->projectId))
+            ->select(
+                'projects.id as project_id',
+                'projects.name as project_name',
+                DB::raw('SUM(material_receipts.total_amount) as total')
+            )
+            ->groupBy('projects.id', 'projects.name')
+            ->get();
+
+        foreach ($contractors as $item) {
+            $contractorsByProject[$item->project_id] = [
+                'name' => $item->project_name,
+                'amount' => (float)$item->total
+            ];
+        }
+
+        $allProjectIds = array_unique(array_merge(
+            array_keys($materialsByProject),
+            array_keys($laborByProject),
+            array_keys($contractorsByProject)
+        ));
+
         $results = [];
-
-        foreach ($projects as $project) {
-            $projectRequest = new WidgetDataRequest(
-                widgetType: $request->widgetType,
-                organizationId: $request->organizationId,
-                userId: $request->userId,
-                from: $request->from,
-                to: $request->to,
-                projectId: $project->id,
-            );
-
-            $materials = $this->getMaterialCosts($projectRequest);
-            $labor = $this->getLaborCosts($projectRequest);
-            $contractors = $this->getContractorCosts($projectRequest);
+        foreach ($allProjectIds as $projectId) {
+            $materials = $materialsByProject[$projectId]['amount'] ?? 0;
+            $labor = $laborByProject[$projectId]['amount'] ?? 0;
+            $contractors = $contractorsByProject[$projectId]['amount'] ?? 0;
             $total = $materials + $labor + $contractors;
 
             if ($total > 0) {
+                $projectName = $materialsByProject[$projectId]['name'] 
+                    ?? $laborByProject[$projectId]['name'] 
+                    ?? $contractorsByProject[$projectId]['name'] 
+                    ?? 'Unknown';
+
                 $results[] = [
-                    'project_id' => $project->id,
-                    'project_name' => $project->name,
+                    'project_id' => $projectId,
+                    'project_name' => $projectName,
                     'total' => $total,
                     'materials' => $materials,
                     'labor' => $labor,
