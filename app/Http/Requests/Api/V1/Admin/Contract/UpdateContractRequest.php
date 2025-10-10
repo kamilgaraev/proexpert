@@ -46,7 +46,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
 
     public function toDto(): ContractDTO
     {
-        $contractId = $this->route('contractId');
+        $contractId = $this->route('contract');
         $user = $this->user();
         $organizationId = $this->attributes->get('current_organization_id') ?? $user->current_organization_id;
         

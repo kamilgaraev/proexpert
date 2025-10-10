@@ -100,24 +100,24 @@ class ContractController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(int $contractId, Request $request)
+    public function show(int $contract, Request $request)
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
-        $contract = $this->contractService->getContractById($contractId, $organizationId);
-        if (!$contract) {
+        $contractData = $this->contractService->getContractById($contract, $organizationId);
+        if (!$contractData) {
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
-        return new ContractResource($contract);
+        return new ContractResource($contractData);
     }
 
     /**
      * Update the specified resource in storage.
      */
-    public function update(UpdateContractRequest $request, int $contractId)
+    public function update(UpdateContractRequest $request, int $contract)
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
@@ -126,15 +126,15 @@ class ContractController extends Controller
         }
         try {
             $contractDTO = $request->toDto();
-            $contract = $this->contractService->updateContract($contractId, $organizationId, $contractDTO);
-            return new ContractResource($contract);
+            $updatedContract = $this->contractService->updateContract($contract, $organizationId, $contractDTO);
+            return new ContractResource($updatedContract);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => 'Некорректные данные', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
         } catch (Exception $e) {
             Log::error('Ошибка обновления контракта', [
-                'contract_id' => $contractId,
+                'contract_id' => $contract,
                 'organization_id' => $organizationId,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -146,7 +146,7 @@ class ContractController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(int $contractId, Request $request)
+    public function destroy(int $contract, Request $request)
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
@@ -154,7 +154,7 @@ class ContractController extends Controller
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
         try {
-            $this->contractService->deleteContract($contractId, $organizationId);
+            $this->contractService->deleteContract($contract, $organizationId);
             return response()->json(null, Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to delete contract', 'error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
@@ -164,7 +164,7 @@ class ContractController extends Controller
     /**
      * Получить аналитику по контракту
      */
-    public function analytics(int $contractId, Request $request): JsonResponse
+    public function analytics(int $contract, Request $request): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
@@ -173,7 +173,7 @@ class ContractController extends Controller
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
 
-        $contract = $this->contractService->getContractById($contractId, $organizationId);
+        $contract = $this->contractService->getContractById($contract, $organizationId);
         
         if (!$contract) {
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
@@ -204,7 +204,7 @@ class ContractController extends Controller
     /**
      * Получить выполненные работы по контракту
      */
-    public function completedWorks(int $contractId, Request $request): JsonResponse
+    public function completedWorks(int $contract, Request $request): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
@@ -213,7 +213,7 @@ class ContractController extends Controller
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
 
-        $contract = $this->contractService->getContractById($contractId, $organizationId);
+        $contract = $this->contractService->getContractById($contract, $organizationId);
         
         if (!$contract) {
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
@@ -234,7 +234,7 @@ class ContractController extends Controller
     /**
      * Получить полную информацию по контракту (все данные в одном запросе)
      */
-    public function fullDetails(int $contractId, Request $request): JsonResponse
+    public function fullDetails(int $contract, Request $request): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
@@ -244,7 +244,7 @@ class ContractController extends Controller
         }
 
         try {
-            $fullDetails = $this->contractService->getFullContractDetails($contractId, $organizationId);
+            $fullDetails = $this->contractService->getFullContractDetails($contract, $organizationId);
             $contract = $fullDetails['contract'];
             
             return response()->json([
@@ -271,7 +271,7 @@ class ContractController extends Controller
         }
     }
 
-    public function attachToParent(AttachToParentContractRequest $request, int $contractId): JsonResponse
+    public function attachToParent(AttachToParentContractRequest $request, int $contract): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
@@ -282,7 +282,7 @@ class ContractController extends Controller
 
         try {
             $parentContractId = $request->input('parent_contract_id');
-            $contract = $this->contractService->attachToParentContract($contractId, $organizationId, $parentContractId);
+            $contract = $this->contractService->attachToParentContract($contract, $organizationId, $parentContractId);
             
             return response()->json([
                 'success' => true,
@@ -298,7 +298,7 @@ class ContractController extends Controller
         }
     }
 
-    public function detachFromParent(DetachFromParentContractRequest $request, int $contractId): JsonResponse
+    public function detachFromParent(DetachFromParentContractRequest $request, int $contract): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
@@ -308,7 +308,7 @@ class ContractController extends Controller
         }
 
         try {
-            $contract = $this->contractService->detachFromParentContract($contractId, $organizationId);
+            $contract = $this->contractService->detachFromParentContract($contract, $organizationId);
             
             return response()->json([
                 'success' => true,
