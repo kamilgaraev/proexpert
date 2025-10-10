@@ -50,7 +50,8 @@
     "data-filters": ["*"],
     "dashboard-widgets": ["*"],
     "schedule-management": ["*"],
-    "advanced-dashboard": ["*"]
+    "advanced-dashboard": ["*"],
+    "ai-assistant": ["*"]
   },
   
   "interface_access": ["lk", "admin", "mobile"],
