@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPaymentController;
+use App\Http\Controllers\Api\V1\Admin\Contract\ContractSpecificationController;
 
 // Маршруты для Контрактов
 // Префикс 'admin' и middleware применяются в главном файле routes/api.php
@@ -46,5 +47,17 @@ Route::group(['prefix' => 'contracts/{contract}/performance-acts'], function () 
 Route::apiResource('contracts.payments', ContractPaymentController::class)
     ->shallow()
     ->parameters(['payments' => 'payment']);
+
+// Маршруты для Спецификаций контрактов
+Route::group(['prefix' => 'contracts/{contract}/specifications'], function () {
+    Route::get('/', [ContractSpecificationController::class, 'index'])
+        ->name('contracts.specifications.index');
+    Route::post('/', [ContractSpecificationController::class, 'store'])
+        ->name('contracts.specifications.store');
+    Route::post('attach', [ContractSpecificationController::class, 'attach'])
+        ->name('contracts.specifications.attach');
+    Route::delete('{specification}', [ContractSpecificationController::class, 'destroy'])
+        ->name('contracts.specifications.destroy');
+});
 
 ?> 
