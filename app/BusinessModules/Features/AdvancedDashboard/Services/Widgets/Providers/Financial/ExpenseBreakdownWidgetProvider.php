@@ -233,7 +233,7 @@ class ExpenseBreakdownWidgetProvider extends AbstractWidgetProvider
             ->whereBetween('completed_works.created_at', [$request->from, $request->to])
             ->when($request->projectId, fn($q) => $q->where('completed_works.project_id', $request->projectId))
             ->select(
-                DB::raw('COALESCE(materials.category, "Прочее") as category'),
+                DB::raw("COALESCE(materials.category, 'Прочее') as category"),
                 DB::raw('SUM(completed_work_materials.total_amount) as total')
             )
             ->groupBy('category')
