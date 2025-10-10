@@ -52,7 +52,17 @@ class AIAssistantService
 
         $this->conversationManager->addMessage($conversation, 'user', $query);
 
-        $context = $this->contextBuilder->buildContext($query, $organizationId);
+        // Получаем предыдущий intent из контекста диалога для лучшего распознавания
+        $previousIntent = $conversation->context['last_intent'] ?? null;
+
+        $context = $this->contextBuilder->buildContext($query, $organizationId, $user->id, $previousIntent);
+
+        // Сохраняем текущий intent в контекст диалога
+        $currentIntent = $context['intent'] ?? null;
+        if ($currentIntent) {
+            $conversation->context = array_merge($conversation->context ?? [], ['last_intent' => $currentIntent]);
+            $conversation->save();
+        }
 
         $messages = $this->buildMessages($conversation, $context);
 

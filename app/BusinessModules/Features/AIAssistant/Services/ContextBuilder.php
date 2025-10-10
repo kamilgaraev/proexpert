@@ -20,22 +20,25 @@ class ContextBuilder
         $this->logging = $logging;
     }
 
-    public function buildContext(string $query, int $organizationId): array
+    public function buildContext(string $query, int $organizationId, ?int $userId = null, ?string $previousIntent = null): array
     {
-        $intent = $this->intentRecognizer->recognize($query);
+        // Распознаем намерение с учетом предыдущего контекста
+        $intent = $this->intentRecognizer->recognize($query, $previousIntent);
         
         $this->logging->technical('ai.intent.recognized', [
             'intent' => $intent,
+            'previous_intent' => $previousIntent,
             'query' => $query,
             'organization_id' => $organizationId,
         ]);
         
         $context = [
+            'intent' => $intent,  // Сохраняем распознанный intent
             'organization' => $this->getOrganizationContext($organizationId),
         ];
 
         // Выполнение Actions на основе распознанного намерения
-        $actionResult = $this->executeAction($intent, $organizationId, $query);
+        $actionResult = $this->executeAction($intent, $organizationId, $query, $userId);
         
         if ($actionResult) {
             $context[$intent] = $actionResult;
@@ -44,7 +47,7 @@ class ContextBuilder
         return $context;
     }
 
-    protected function executeAction(string $intent, int $organizationId, string $query): ?array
+    protected function executeAction(string $intent, int $organizationId, string $query, ?int $userId = null): ?array
     {
         $actionClass = $this->getActionClass($intent);
         
@@ -57,6 +60,11 @@ class ContextBuilder
             
             // Извлекаем параметры из запроса при необходимости
             $params = $this->extractParams($intent, $query);
+            
+            // Добавляем user_id в параметры для Actions, которым это нужно
+            if ($userId) {
+                $params['user_id'] = $userId;
+            }
             
             $result = $action->execute($organizationId, $params);
             
@@ -83,13 +91,24 @@ class ContextBuilder
     protected function getActionClass(string $intent): ?string
     {
         $actionMap = [
+            // Проекты
             'project_status' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\GetProjectStatusAction::class,
             'project_budget' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\GetProjectBudgetAction::class,
             'project_risks' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\AnalyzeProjectRisksAction::class,
+            
+            // Контракты
             'contract_search' => \App\BusinessModules\Features\AIAssistant\Actions\Contracts\SearchContractsAction::class,
             'contract_details' => \App\BusinessModules\Features\AIAssistant\Actions\Contracts\GetContractDetailsAction::class,
+            
+            // Материалы
             'material_stock' => \App\BusinessModules\Features\AIAssistant\Actions\Materials\CheckMaterialStockAction::class,
             'material_forecast' => \App\BusinessModules\Features\AIAssistant\Actions\Materials\ForecastMaterialNeedsAction::class,
+            
+            // Системная информация
+            'user_info' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetUserInfoAction::class,
+            'team_info' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetTeamInfoAction::class,
+            'organization_info' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetOrganizationInfoAction::class,
+            'help' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetHelpAction::class,
         ];
 
         return $actionMap[$intent] ?? null;
