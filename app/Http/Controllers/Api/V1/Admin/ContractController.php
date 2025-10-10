@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Services\Contract\ContractService;
-use App\Http\Requests\Api\V1\Admin\Contract\StoreContractRequest; // Создадим позже
-use App\Http\Requests\Api\V1\Admin\Contract\UpdateContractRequest; // Создадим позже
+use App\Http\Requests\Api\V1\Admin\Contract\StoreContractRequest;
+use App\Http\Requests\Api\V1\Admin\Contract\UpdateContractRequest;
+use App\Http\Requests\Api\V1\Admin\Contract\AttachToParentContractRequest;
+use App\Http\Requests\Api\V1\Admin\Contract\DetachFromParentContractRequest;
 use App\Http\Resources\Api\V1\Admin\Contract\ContractResource; // Создадим позже
 use App\Http\Resources\Api\V1\Admin\Contract\ContractCollection; // Создадим позже
 use App\Http\Resources\Api\V1\Admin\Contract\ContractMiniResource;
@@ -255,6 +257,59 @@ class ContractController extends Controller
             ]);
         } catch (Exception $e) {
             return response()->json(['message' => $e->getMessage()], Response::HTTP_NOT_FOUND);
+        }
+    }
+
+    public function attachToParent(AttachToParentContractRequest $request, int $contractId): JsonResponse
+    {
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
+
+        try {
+            $parentContractId = $request->input('parent_contract_id');
+            $contract = $this->contractService->attachToParentContract($contractId, $organizationId, $parentContractId);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Контракт успешно привязан к родительскому контракту',
+                'data' => new ContractResource($contract)
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при привязке контракта',
+                'error' => $e->getMessage()
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
+
+    public function detachFromParent(DetachFromParentContractRequest $request, int $contractId): JsonResponse
+    {
+        $user = $request->user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return response()->json(['message' => 'Не определён контекст организации'], 400);
+        }
+
+        try {
+            $contract = $this->contractService->detachFromParentContract($contractId, $organizationId);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Контракт успешно отвязан от родительского контракта',
+                'data' => new ContractResource($contract)
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при отвязке контракта',
+                'error' => $e->getMessage()
+            ], Response::HTTP_BAD_REQUEST);
         }
     }
 } 

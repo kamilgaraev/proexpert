@@ -506,5 +506,99 @@ class ContractService
         })->toArray();
     }
 
+    public function attachToParentContract(int $contractId, int $organizationId, int $parentContractId): Contract
+    {
+        $this->logging->business('contract.parent.attach.started', [
+            'contract_id' => $contractId,
+            'organization_id' => $organizationId,
+            'parent_contract_id' => $parentContractId,
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $contract = $this->contractRepository->findAccessible($contractId, $organizationId);
+            
+            if (!$contract) {
+                throw new Exception('Контракт не найден');
+            }
+
+            $parentContract = $this->contractRepository->findAccessible($parentContractId, $organizationId);
+            
+            if (!$parentContract) {
+                throw new Exception('Родительский контракт не найден');
+            }
+
+            if ($contract->parent_contract_id === $parentContractId) {
+                throw new Exception('Контракт уже привязан к этому родительскому контракту');
+            }
+
+            $contract->parent_contract_id = $parentContractId;
+            $contract->save();
+
+            DB::commit();
+
+            $this->logging->business('contract.parent.attach.success', [
+                'contract_id' => $contractId,
+                'parent_contract_id' => $parentContractId,
+            ]);
+
+            return $contract->fresh(['contractor', 'project', 'parentContract']);
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            
+            $this->logging->technical('contract.parent.attach.failed', [
+                'contract_id' => $contractId,
+                'parent_contract_id' => $parentContractId,
+                'error' => $e->getMessage()
+            ], 'error');
+
+            throw $e;
+        }
+    }
+
+    public function detachFromParentContract(int $contractId, int $organizationId): Contract
+    {
+        $this->logging->business('contract.parent.detach.started', [
+            'contract_id' => $contractId,
+            'organization_id' => $organizationId,
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $contract = $this->contractRepository->findAccessible($contractId, $organizationId);
+            
+            if (!$contract) {
+                throw new Exception('Контракт не найден');
+            }
+
+            if (!$contract->parent_contract_id) {
+                throw new Exception('Контракт не привязан к родительскому контракту');
+            }
+
+            $oldParentId = $contract->parent_contract_id;
+            $contract->parent_contract_id = null;
+            $contract->save();
+
+            DB::commit();
+
+            $this->logging->business('contract.parent.detach.success', [
+                'contract_id' => $contractId,
+                'old_parent_contract_id' => $oldParentId,
+            ]);
+
+            return $contract->fresh(['contractor', 'project', 'parentContract']);
+
+        } catch (Exception $e) {
+            DB::rollBack();
+            
+            $this->logging->technical('contract.parent.detach.failed', [
+                'contract_id' => $contractId,
+                'error' => $e->getMessage()
+            ], 'error');
+
+            throw $e;
+        }
+    }
 
 }

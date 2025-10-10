@@ -530,4 +530,164 @@
         content:
           application/json:
             schema:
-              $ref: '../components/schemas/ContractPaymentResponse.yaml' 
+              $ref: '../components/schemas/ContractPaymentResponse.yaml'
+
+/contracts/{id}/attach-parent:
+  post:
+    tags: [Contracts]
+    summary: Привязать контракт к родительскому контракту
+    description: |
+      Связывает текущий контракт с родительским контрактом.
+      Выполняется валидация:
+      - Родительский контракт должен существовать и принадлежать той же организации
+      - Не должно быть циклических ссылок
+      - Контракт не должен быть уже привязан к указанному родителю
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID контракта, который нужно привязать
+        example: 15
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - parent_contract_id
+            properties:
+              parent_contract_id:
+                type: integer
+                description: ID родительского контракта
+                example: 10
+          examples:
+            attach_example:
+              summary: Привязка субподрядного контракта к генподрядному
+              value:
+                parent_contract_id: 10
+    responses:
+      "200":
+        description: Контракт успешно привязан к родительскому контракту
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    message:
+                      type: string
+                      example: "Контракт успешно привязан к родительскому контракту"
+                    data:
+                      $ref: '../components/schemas/Contract.yaml'
+            example:
+              success: true
+              message: "Контракт успешно привязан к родительскому контракту"
+              data:
+                id: 15
+                number: "СП-2024/005"
+                parent_contract_id: 10
+                parent_contract:
+                  id: 10
+                  number: "ГП-2024/001"
+                  total_amount: 5000000.00
+      "400":
+        description: Ошибка при привязке контракта
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка при привязке контракта"
+                error:
+                  type: string
+                  example: "Контракт уже привязан к этому родительскому контракту"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Контракт или родительский контракт не найден
+      "422":
+        description: Ошибка валидации
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  example: "The given data was invalid."
+                errors:
+                  type: object
+                  example:
+                    parent_contract_id: ["Циклическая ссылка на родительский контракт."]
+
+/contracts/{id}/detach-parent:
+  delete:
+    tags: [Contracts]
+    summary: Отвязать контракт от родительского контракта
+    description: |
+      Удаляет связь между текущим контрактом и его родительским контрактом.
+      Контракт должен быть привязан к родительскому контракту.
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: integer
+        description: ID контракта, который нужно отвязать
+        example: 15
+    responses:
+      "200":
+        description: Контракт успешно отвязан от родительского контракта
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '../components/schemas/ApiResponse.yaml'
+                - type: object
+                  properties:
+                    message:
+                      type: string
+                      example: "Контракт успешно отвязан от родительского контракта"
+                    data:
+                      $ref: '../components/schemas/Contract.yaml'
+            example:
+              success: true
+              message: "Контракт успешно отвязан от родительского контракта"
+              data:
+                id: 15
+                number: "СП-2024/005"
+                parent_contract_id: null
+                parent_contract: null
+      "400":
+        description: Ошибка при отвязке контракта
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: false
+                message:
+                  type: string
+                  example: "Ошибка при отвязке контракта"
+                error:
+                  type: string
+                  example: "Контракт не привязан к родительскому контракту"
+      "401":
+        $ref: '../components/responses/UnauthorizedError.yaml'
+      "403":
+        $ref: '../components/responses/ForbiddenError.yaml'
+      "404":
+        description: Контракт не найден 
