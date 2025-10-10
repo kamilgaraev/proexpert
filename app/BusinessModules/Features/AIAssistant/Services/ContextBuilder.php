@@ -72,6 +72,9 @@ class ContextBuilder
                 'action' => $actionClass,
                 'intent' => $intent,
                 'organization_id' => $organizationId,
+                'params' => $params,
+                'result_keys' => $result ? array_keys($result) : [],
+                'has_data' => !empty($result),
                 'success' => true,
             ]);
             

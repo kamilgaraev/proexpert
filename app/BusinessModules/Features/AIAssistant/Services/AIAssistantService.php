@@ -58,6 +58,14 @@ class AIAssistantService
         // Передаем текущий контекст разговора для работы со списками
         $conversationContext = $conversation->context ?? [];
         $context = $this->contextBuilder->buildContext($query, $organizationId, $user->id, $previousIntent, $conversationContext);
+        
+        // Логируем что получили из Actions
+        $this->logging->technical('ai.context.built', [
+            'organization_id' => $organizationId,
+            'intent' => $context['intent'] ?? 'unknown',
+            'context_keys' => array_keys($context),
+            'has_action_data' => count($context) > 2, // больше чем intent и organization
+        ]);
 
         // Сохраняем текущий intent и данные в контекст диалога
         $currentIntent = $context['intent'] ?? null;
