@@ -151,7 +151,8 @@ class AIAssistantService
         $systemPrompt = $this->contextBuilder->buildSystemPrompt();
         
         if (!empty($context)) {
-            $systemPrompt .= "\n\nКонтекст:\n" . json_encode($context, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+            $contextText = $this->formatContextForLLM($context);
+            $systemPrompt .= "\n\n" . $contextText;
         }
 
         $messages[] = [
@@ -166,6 +167,155 @@ class AIAssistantService
         }
 
         return $messages;
+    }
+    
+    protected function formatContextForLLM(array $context): string
+    {
+        $formatted = "=== КОНТЕКСТ С ДАННЫМИ ИЗ БАЗЫ ===\n\n";
+        
+        foreach ($context as $key => $value) {
+            if ($key === 'intent' || $key === 'organization') {
+                continue;
+            }
+            
+            $formatted .= $this->formatContextSection($key, $value);
+        }
+        
+        return $formatted;
+    }
+    
+    protected function formatContextSection(string $key, $value): string
+    {
+        if (!is_array($value)) {
+            return "";
+        }
+        
+        $output = "";
+        
+        // Контракты - список
+        if ($key === 'contract_search' && isset($value['contracts'])) {
+            $output .= "📋 СПИСОК КОНТРАКТОВ:\n";
+            foreach ($value['contracts'] as $i => $contract) {
+                $num = $i + 1;
+                $output .= "  {$num}. Контракт №{$contract['number']} от {$contract['date']}\n";
+                $output .= "     Подрядчик: {$contract['contractor']['name']}\n";
+                $output .= "     Сумма: " . number_format($contract['total_amount'], 2, '.', ' ') . " руб.\n";
+                $output .= "     Статус: {$contract['status']}\n";
+                if ($contract['project']) {
+                    $output .= "     Проект: {$contract['project']['name']}\n";
+                }
+                $output .= "\n";
+            }
+            $output .= "Всего контрактов: {$value['total']}\n";
+            $output .= "Общая сумма: " . number_format($value['total_amount'], 2, '.', ' ') . " руб.\n\n";
+        }
+        
+        // Детали контракта
+        if ($key === 'contract_details' && !isset($value['show_list'])) {
+            $c = $value['contract'];
+            $output .= "📄 ДЕТАЛИ КОНТРАКТА:\n\n";
+            $output .= "Номер: {$c['number']}\n";
+            $output .= "Дата: {$c['date']}\n";
+            $output .= "Тип: {$c['type']}\n";
+            $output .= "Предмет: {$c['subject']}\n";
+            $output .= "Статус: {$c['status']}\n";
+            $output .= "Сумма: " . number_format($c['total_amount'], 2, '.', ' ') . " руб.\n";
+            $output .= "Сроки: с {$c['start_date']} по {$c['end_date']}\n\n";
+            
+            $output .= "👷 ПОДРЯДЧИК:\n";
+            $output .= "  Название: {$value['contractor']['name']}\n";
+            $output .= "  ИНН: {$value['contractor']['inn']}\n";
+            if ($value['contractor']['phone']) {
+                $output .= "  Телефон: {$value['contractor']['phone']}\n";
+            }
+            if ($value['contractor']['email']) {
+                $output .= "  Email: {$value['contractor']['email']}\n";
+            }
+            $output .= "\n";
+            
+            if ($value['project']) {
+                $output .= "🏗️ ПРОЕКТ:\n";
+                $output .= "  Название: {$value['project']['name']}\n";
+                $output .= "  Адрес: {$value['project']['address']}\n";
+                $output .= "  Статус: {$value['project']['status']}\n\n";
+            }
+            
+            $f = $value['financial'];
+            $output .= "💰 ФИНАНСЫ:\n";
+            $output .= "  Сумма контракта: " . number_format($f['total_amount'], 2, '.', ' ') . " руб.\n";
+            $output .= "  Выполнено работ (акты): " . number_format($f['total_acted'], 2, '.', ' ') . " руб.\n";
+            $output .= "  Выставлено счетов: " . number_format($f['total_invoiced'], 2, '.', ' ') . " руб.\n";
+            $output .= "  Оплачено: " . number_format($f['total_paid'], 2, '.', ' ') . " руб.\n";
+            $output .= "  Остаток к оплате: " . number_format($f['remaining'], 2, '.', ' ') . " руб.\n";
+            $output .= "  Процент выполнения: {$f['completion_percentage']}%\n\n";
+            
+            if ($value['acts']['count'] > 0) {
+                $output .= "📝 АКТЫ ({$value['acts']['count']}):\n";
+                foreach ($value['acts']['list'] as $act) {
+                    $output .= "  - №{$act['number']} от {$act['date']}: " . number_format($act['amount'], 2, '.', ' ') . " руб. ({$act['status']})\n";
+                }
+                $output .= "\n";
+            }
+            
+            if ($value['invoices']['count'] > 0) {
+                $output .= "💳 СЧЕТА ({$value['invoices']['count']}):\n";
+                foreach ($value['invoices']['list'] as $invoice) {
+                    $output .= "  - №{$invoice['number']} от {$invoice['date']}: " . number_format($invoice['amount'], 2, '.', ' ') . " руб. ({$invoice['status']})";
+                    if ($invoice['payment_date']) {
+                        $output .= " - оплачен {$invoice['payment_date']}";
+                    }
+                    $output .= "\n";
+                }
+                $output .= "\n";
+            }
+        }
+        
+        // Список для выбора
+        if ($key === 'contract_details' && isset($value['show_list'])) {
+            $output .= "📋 ДОСТУПНЫЕ КОНТРАКТЫ (выберите один):\n";
+            foreach ($value['contracts'] as $i => $contract) {
+                $num = $i + 1;
+                $output .= "  {$num}. Контракт №{$contract['number']} - {$contract['contractor']} - " . number_format($contract['amount'], 2, '.', ' ') . " руб.\n";
+            }
+            $output .= "\n";
+        }
+        
+        // Материалы
+        if ($key === 'material_stock' && isset($value['materials'])) {
+            $output .= "📦 ОСТАТКИ МАТЕРИАЛОВ:\n\n";
+            
+            if ($value['low_stock_count'] > 0) {
+                $output .= "⚠️ НИЗКИЕ ОСТАТКИ ({$value['low_stock_count']}):\n";
+                foreach ($value['low_stock_items'] as $m) {
+                    $output .= "  - {$m['name']}: {$m['available']} {$m['unit']} (зарезерв.: {$m['reserved']})\n";
+                }
+                $output .= "\n";
+            }
+            
+            $output .= "ВСЕ МАТЕРИАЛЫ (топ-20):\n";
+            $shown = 0;
+            foreach ($value['materials'] as $m) {
+                if ($shown >= 20) break;
+                $output .= "  - {$m['name']}: {$m['available']} {$m['unit']}";
+                if ($m['reserved'] > 0) {
+                    $output .= " (зарезерв.: {$m['reserved']})";
+                }
+                $output .= " - " . number_format($m['value'], 2, '.', ' ') . " руб.\n";
+                $shown++;
+            }
+            
+            $output .= "\n";
+            $output .= "Итого материалов: {$value['total_materials']}\n";
+            $output .= "Общая стоимость: " . number_format($value['total_inventory_value'], 2, '.', ' ') . " руб.\n\n";
+        }
+        
+        // Если ничего не распознали - просто JSON
+        if (empty($output)) {
+            $output .= strtoupper($key) . ":\n";
+            $output .= json_encode($value, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n\n";
+        }
+        
+        return $output;
     }
 }
 
