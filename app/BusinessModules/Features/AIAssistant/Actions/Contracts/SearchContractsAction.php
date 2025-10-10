@@ -2,51 +2,104 @@
 
 namespace App\BusinessModules\Features\AIAssistant\Actions\Contracts;
 
-use App\Repositories\ContractRepository;
-use App\Models\Contract;
+use Illuminate\Support\Facades\DB;
 
 class SearchContractsAction
 {
-    protected ContractRepository $contractRepository;
-
-    public function __construct(ContractRepository $contractRepository)
-    {
-        $this->contractRepository = $contractRepository;
-    }
-
     public function execute(int $organizationId, ?array $params = []): array
     {
-        $query = Contract::where('organization_id', $organizationId);
+        $query = DB::table('contracts')
+            ->join('contractors', 'contracts.contractor_id', '=', 'contractors.id')
+            ->leftJoin('projects', 'contracts.project_id', '=', 'projects.id')
+            ->where('contracts.organization_id', $organizationId)
+            ->whereNull('contracts.deleted_at');
 
         if (isset($params['status'])) {
-            $query->where('status', $params['status']);
+            $query->where('contracts.status', $params['status']);
         }
 
         if (isset($params['contractor_id'])) {
-            $query->where('contractor_id', $params['contractor_id']);
+            $query->where('contracts.contractor_id', $params['contractor_id']);
         }
 
         if (isset($params['project_id'])) {
-            $query->where('project_id', $params['project_id']);
+            $query->where('contracts.project_id', $params['project_id']);
         }
 
-        $contracts = $query->with(['contractor', 'project'])
-            ->limit($params['limit'] ?? 10)
+        if (isset($params['type'])) {
+            $query->where('contracts.type', $params['type']);
+        }
+
+        if (isset($params['contractor_name'])) {
+            $query->where('contractors.name', 'ILIKE', '%' . $params['contractor_name'] . '%');
+        }
+
+        if (isset($params['number'])) {
+            $query->where('contracts.number', 'ILIKE', '%' . $params['number'] . '%');
+        }
+
+        $contracts = $query
+            ->select(
+                'contracts.id',
+                'contracts.number',
+                'contracts.date',
+                'contracts.type',
+                'contracts.subject',
+                'contracts.status',
+                'contracts.total_amount',
+                'contracts.start_date',
+                'contracts.end_date',
+                'contracts.gp_percentage',
+                'contracts.planned_advance_amount',
+                'contractors.id as contractor_id',
+                'contractors.name as contractor_name',
+                'contractors.inn as contractor_inn',
+                'projects.id as project_id',
+                'projects.name as project_name'
+            )
+            ->orderByDesc('contracts.date')
+            ->limit($params['limit'] ?? 20)
             ->get();
 
+        $statusCounts = $contracts->groupBy('status')
+            ->map(fn($group) => count($group))
+            ->toArray();
+
+        $typeCounts = $contracts->groupBy('type')
+            ->map(fn($group) => count($group))
+            ->toArray();
+
         return [
-            'total' => $contracts->count(),
+            'total' => count($contracts),
             'contracts' => $contracts->map(function ($contract) {
                 return [
                     'id' => $contract->id,
                     'number' => $contract->number,
-                    'status' => $contract->status->value ?? $contract->status,
-                    'total_amount' => $contract->total_amount,
-                    'contractor' => $contract->contractor->name ?? null,
-                    'project' => $contract->project->name ?? null,
+                    'date' => $contract->date,
+                    'type' => $contract->type,
+                    'subject' => $contract->subject,
+                    'status' => $contract->status,
+                    'total_amount' => (float)$contract->total_amount,
+                    'gp_percentage' => (float)($contract->gp_percentage ?? 0),
+                    'planned_advance' => (float)($contract->planned_advance_amount ?? 0),
+                    'start_date' => $contract->start_date,
+                    'end_date' => $contract->end_date,
+                    'contractor' => [
+                        'id' => $contract->contractor_id,
+                        'name' => $contract->contractor_name,
+                        'inn' => $contract->contractor_inn,
+                    ],
+                    'project' => $contract->project_id ? [
+                        'id' => $contract->project_id,
+                        'name' => $contract->project_name,
+                    ] : null,
                 ];
             })->toArray(),
+            'by_status' => $statusCounts,
+            'by_type' => $typeCounts,
+            'total_amount' => round($contracts->sum('total_amount'), 2),
         ];
     }
 }
+
 

@@ -92,6 +92,8 @@ class ContextBuilder
     {
         $actionMap = [
             // Проекты
+            'project_details' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\GetProjectDetailsAction::class,
+            'project_search' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\SearchProjectsAction::class,
             'project_status' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\GetProjectStatusAction::class,
             'project_budget' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\GetProjectBudgetAction::class,
             'project_risks' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\AnalyzeProjectRisksAction::class,
