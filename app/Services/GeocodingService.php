@@ -68,16 +68,16 @@ class GeocodingService
                     'status' => $response->status(),
                     'address' => $address,
                 ]);
-                return null;
+                return $this->fallbackGeocode($address);
             }
 
             $data = $response->json();
             
             if (empty($data)) {
-                Log::info("Nominatim: No results found for address", [
+                Log::info("Nominatim: No results found for full address, trying fallback", [
                     'address' => $address,
                 ]);
-                return null;
+                return $this->fallbackGeocode($address);
             }
 
             if (isset($data[0]['lat'], $data[0]['lon'])) {
@@ -92,6 +92,60 @@ class GeocodingService
                 'address' => $address,
                 'error' => $e->getMessage(),
             ]);
+        }
+
+        return $this->fallbackGeocode($address);
+    }
+
+    private function fallbackGeocode(string $address): ?array
+    {
+        $parts = array_map('trim', explode(',', $address));
+        
+        if (count($parts) < 2) {
+            return null;
+        }
+
+        $fallbackQueries = [
+            implode(', ', array_slice($parts, 1, 2)),
+            $parts[1] ?? null,
+        ];
+
+        foreach ($fallbackQueries as $query) {
+            if (!$query) continue;
+
+            try {
+                sleep(1);
+                
+                $response = Http::timeout($this->timeout)
+                    ->withHeaders([
+                        'User-Agent' => 'ProHelper/1.0 (Laravel Application)',
+                    ])
+                    ->get('https://nominatim.openstreetmap.org/search', [
+                        'q' => $query . ', Россия',
+                        'format' => 'json',
+                        'limit' => 1,
+                        'addressdetails' => 1,
+                    ]);
+
+                if ($response->successful()) {
+                    $data = $response->json();
+                    if (!empty($data) && isset($data[0]['lat'], $data[0]['lon'])) {
+                        Log::info("Fallback geocoding successful", [
+                            'original' => $address,
+                            'fallback_query' => $query,
+                            'found' => $data[0]['display_name'],
+                        ]);
+                        
+                        return [
+                            'latitude' => (float) $data[0]['lat'],
+                            'longitude' => (float) $data[0]['lon'],
+                            'formatted_address' => $data[0]['display_name'] ?? $address,
+                        ];
+                    }
+                }
+            } catch (\Exception $e) {
+                continue;
+            }
         }
 
         return null;
