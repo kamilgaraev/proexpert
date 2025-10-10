@@ -6,6 +6,7 @@ use App\BusinessModules\Features\AdvancedDashboard\Services\Widgets\Providers\Ab
 use App\BusinessModules\Features\AdvancedDashboard\Enums\WidgetType;
 use App\BusinessModules\Features\AdvancedDashboard\DTOs\WidgetDataRequest;
 use App\Services\GeocodingService;
+use App\Models\Project;
 use Illuminate\Support\Facades\DB;
 
 class ProjectsMapWidgetProvider extends AbstractWidgetProvider
@@ -17,49 +18,35 @@ class ProjectsMapWidgetProvider extends AbstractWidgetProvider
 
     protected function fetchData(WidgetDataRequest $request): array
     {
-        $projects = DB::table('projects')
-            ->leftJoin('contracts', function ($join) {
-                $join->on('projects.id', '=', 'contracts.project_id')
-                    ->whereNull('contracts.deleted_at')
-                    ->whereNull('contracts.parent_contract_id');
-            })
-            ->leftJoin('contractors', 'contracts.contractor_id', '=', 'contractors.id')
-            ->where('projects.organization_id', $request->organizationId)
-            ->whereNotNull('projects.address')
-            ->select(
-                'projects.id',
-                'projects.name',
-                'projects.address',
-                'projects.latitude',
-                'projects.longitude',
-                'projects.status',
-                'projects.budget_amount',
-                'projects.start_date',
-                'projects.end_date',
-                'projects.site_area_m2',
-                DB::raw('MAX(contractors.name) as contractor_name')
-            )
-            ->groupBy(
-                'projects.id',
-                'projects.name',
-                'projects.address',
-                'projects.latitude',
-                'projects.longitude',
-                'projects.status',
-                'projects.budget_amount',
-                'projects.start_date',
-                'projects.end_date',
-                'projects.site_area_m2'
-            )
-            ->get();
+        $projects = Project::with(['contracts' => function ($query) {
+                $query->whereNull('parent_contract_id')
+                      ->with('contractor');
+            }])
+            ->where('organization_id', $request->organizationId)
+            ->whereNotNull('address')
+            ->get()
+            ->map(function ($project) {
+                $mainContract = $project->contracts->first();
+                
+                return (object) [
+                    'id' => $project->id,
+                    'name' => $project->name,
+                    'address' => $project->address,
+                    'latitude' => $project->latitude,
+                    'longitude' => $project->longitude,
+                    'status' => $project->status,
+                    'budget_amount' => $project->budget_amount,
+                    'start_date' => $project->start_date?->format('Y-m-d'),
+                    'end_date' => $project->end_date?->format('Y-m-d'),
+                    'site_area_m2' => $project->site_area_m2,
+                    'contractor_name' => $mainContract?->contractor?->name,
+                ];
+            });
 
         $locations = [];
         $coordinates = [];
 
         foreach ($projects as $project) {
-            $lat = $project->latitude ? (float) $project->latitude : null;
-            $lng = $project->longitude ? (float) $project->longitude : null;
-
             $completionPercentage = $this->calculateCompletion($project->id);
 
             $location = [
@@ -68,9 +55,9 @@ class ProjectsMapWidgetProvider extends AbstractWidgetProvider
                 'address' => $project->address,
                 'status' => $project->status,
                 'budget' => (float)$project->budget_amount,
-                'coordinates' => ($lat && $lng) ? [
-                    'lat' => $lat,
-                    'lng' => $lng,
+                'coordinates' => ($project->latitude && $project->longitude) ? [
+                    'lat' => (float) $project->latitude,
+                    'lng' => (float) $project->longitude,
                 ] : null,
                 'contractor_name' => $project->contractor_name,
                 'start_date' => $project->start_date,
@@ -81,8 +68,11 @@ class ProjectsMapWidgetProvider extends AbstractWidgetProvider
 
             $locations[] = $location;
 
-            if ($lat && $lng) {
-                $coordinates[] = ['lat' => $lat, 'lng' => $lng];
+            if ($project->latitude && $project->longitude) {
+                $coordinates[] = [
+                    'lat' => (float) $project->latitude,
+                    'lng' => (float) $project->longitude
+                ];
             }
         }
 
