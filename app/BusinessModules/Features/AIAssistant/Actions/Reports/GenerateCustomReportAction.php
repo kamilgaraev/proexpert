@@ -139,12 +139,13 @@ class GenerateCustomReportAction
         
         $data = $query->select(
                 'materials.name as material_name',
+                'materials.default_price',
                 'measurement_units.name as unit',
                 'projects.name as project_name',
                 DB::raw('SUM(material_write_offs.quantity) as total_quantity'),
-                DB::raw('SUM(material_write_offs.total_amount) as total_amount')
+                DB::raw('SUM(material_write_offs.quantity * COALESCE(materials.default_price, 0)) as total_amount')
             )
-            ->groupBy('materials.id', 'materials.name', 'measurement_units.name', 'projects.id', 'projects.name')
+            ->groupBy('materials.id', 'materials.name', 'materials.default_price', 'measurement_units.name', 'projects.id', 'projects.name')
             ->orderByDesc('total_amount')
             ->get();
         
@@ -177,7 +178,7 @@ class GenerateCustomReportAction
             ->leftJoin('projects', 'contracts.project_id', '=', 'projects.id')
             ->where('contracts.organization_id', $organizationId)
             ->whereBetween('contract_payments.payment_date', [$period['start'], $period['end']])
-            ->whereNull('contract_payments.deleted_at')
+            ->whereNull('contracts.deleted_at')
             ->select(
                 'contractors.name as contractor_name',
                 'contracts.number as contract_number',
@@ -363,23 +364,24 @@ class GenerateCustomReportAction
     {
         // Общий финансовый отчет - доходы/расходы
         $materials = DB::table('material_write_offs')
-            ->where('organization_id', $organizationId)
-            ->whereBetween('write_off_date', [$period['start'], $period['end']])
-            ->whereNull('deleted_at')
-            ->sum('total_amount');
+            ->join('materials', 'material_write_offs.material_id', '=', 'materials.id')
+            ->where('material_write_offs.organization_id', $organizationId)
+            ->whereBetween('material_write_offs.write_off_date', [$period['start'], $period['end']])
+            ->whereNull('material_write_offs.deleted_at')
+            ->sum(DB::raw('material_write_offs.quantity * COALESCE(materials.default_price, 0)'));
         
         $works = DB::table('completed_works')
             ->where('organization_id', $organizationId)
             ->where('status', 'confirmed')
             ->whereBetween('work_date', [$period['start'], $period['end']])
-            ->whereNull('deleted_at')
+            ->whereNull('completed_works.deleted_at')
             ->sum('total_amount');
         
         $payments = DB::table('contract_payments')
             ->join('contracts', 'contract_payments.contract_id', '=', 'contracts.id')
             ->where('contracts.organization_id', $organizationId)
             ->whereBetween('contract_payments.payment_date', [$period['start'], $period['end']])
-            ->whereNull('contract_payments.deleted_at')
+            ->whereNull('contracts.deleted_at')
             ->sum('contract_payments.amount');
         
         return [
