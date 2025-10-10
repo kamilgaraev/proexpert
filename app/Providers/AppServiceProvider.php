@@ -13,9 +13,11 @@ use App\Services\RateCoefficient\RateCoefficientService;
 use App\Models\Models\Log\MaterialUsageLog;
 use App\Models\CompletedWork;
 use App\Models\MaterialReceipt;
+use App\Models\Project;
 use App\Observers\MaterialUsageLogObserver;
 use App\Observers\CompletedWorkObserver;
 use App\Observers\MaterialReceiptObserver;
+use App\Observers\ProjectObserver;
 use App\Modules\Core\ModuleScanner;
 use App\Modules\Core\ModuleRegistry;
 use App\Modules\Core\BillingEngine;
@@ -108,12 +110,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Регистрируем observers для автоматической синхронизации данных
         MaterialUsageLog::observe(MaterialUsageLogObserver::class);
         CompletedWork::observe(CompletedWorkObserver::class);
         MaterialReceipt::observe(MaterialReceiptObserver::class);
-        
-        // Автоматическое сканирование модулей отключено для производительности
-        // Используйте команду: php artisan modules:scan для обновления модулей
+        Project::observe(ProjectObserver::class);
     }
 } 

@@ -18,6 +18,9 @@ class Project extends Model
         'organization_id',
         'name',
         'address',
+        'latitude',
+        'longitude',
+        'geocoded_at',
         'description',
         'customer',
         'designer',
@@ -50,6 +53,9 @@ class Project extends Model
         'contract_date' => 'date',
         'budget_amount' => 'decimal:2',
         'site_area_m2' => 'decimal:2',
+        'latitude' => 'decimal:7',
+        'longitude' => 'decimal:7',
+        'geocoded_at' => 'datetime',
     ];
 
     /**

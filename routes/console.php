@@ -120,5 +120,13 @@ Schedule::command('custom-reports:cleanup-executions --days=90')
     })
     ->appendOutputTo(storage_path('logs/schedule-custom-reports-cleanup.log'));
 
-// Если команда billing:process-renewals также должна быть здесь, ее можно добавить аналогично:
-// Schedule::command('billing:process-renewals')->dailyAt('02:00');
+Artisan::command('projects:geocode-help', function () {
+    $this->info('Available geocoding command:');
+    $this->info('  php artisan projects:geocode [options]');
+    $this->newLine();
+    $this->info('Options:');
+    $this->info('  --force              Force re-geocode all projects even if they already have coordinates');
+    $this->info('  --organization=ID    Geocode projects only for specific organization ID');
+    $this->info('  --limit=N            Limit the number of projects to geocode');
+    $this->info('  --delay=N            Delay in seconds between geocoding requests (default: 1)');
+})->purpose('Show help for geocoding projects command');
