@@ -58,14 +58,27 @@ class ContractController extends Controller
             'number', 
             'date_from', 
             'date_to',
+            'start_date_from',      // Дата начала работ от
+            'start_date_to',        // Дата начала работ до
+            'end_date_from',        // Дата окончания работ от
+            'end_date_to',          // Дата окончания работ до
             'completion_from',      // Процент выполнения от
             'completion_to',        // Процент выполнения до
             'amount_from',          // Сумма контракта от
             'amount_to',            // Сумма контракта до
+            'gp_percentage_from',   // Процент ГП от
+            'gp_percentage_to',     // Процент ГП до
+            'work_type_category',   // Категория работ
+            'has_advance',          // Наличие аванса (boolean)
+            'advance_paid_status',  // Статус выплаты аванса: paid/partial/not_paid
+            'has_parent',           // Наличие родительского контракта (boolean)
+            'has_children',         // Наличие дочерних контрактов (boolean)
             'requiring_attention',  // Требуют внимания
             'is_nearing_limit',     // Приближаются к лимиту
             'is_overdue',           // Просроченные
-            'search'                // Поиск по номеру/названию
+            'search',               // Общий поиск по номеру/проекту/подрядчику
+            'contractor_search',    // Поиск по подрядчику (имя, ИНН, КПП, email, телефон)
+            'project_search'        // Поиск по проекту (название, адрес, код)
         ]);
         
         $sortBy = $request->input('sort_by', 'created_at');

@@ -30,20 +30,42 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         if (!empty($filters['contractor_id'])) {
             $query->where('contracts.contractor_id', $filters['contractor_id']);
         }
+        
         if (!empty($filters['project_id'])) {
             $query->where('contracts.project_id', $filters['project_id']);
         }
+        
         if (!empty($filters['status'])) {
-            $query->where('contracts.status', $filters['status']);
+            if (is_array($filters['status'])) {
+                $query->whereIn('contracts.status', $filters['status']);
+            } else {
+                $query->where('contracts.status', $filters['status']);
+            }
         }
+        
         if (!empty($filters['number'])) {
             $query->where('contracts.number', 'ilike', '%' . $filters['number'] . '%');
         }
+        
         if (!empty($filters['date_from'])) {
             $query->whereDate('contracts.date', '>=', $filters['date_from']);
         }
         if (!empty($filters['date_to'])) {
             $query->whereDate('contracts.date', '<=', $filters['date_to']);
+        }
+
+        // Фильтры по датам начала/окончания работ
+        if (!empty($filters['start_date_from'])) {
+            $query->whereDate('contracts.start_date', '>=', $filters['start_date_from']);
+        }
+        if (!empty($filters['start_date_to'])) {
+            $query->whereDate('contracts.start_date', '<=', $filters['start_date_to']);
+        }
+        if (!empty($filters['end_date_from'])) {
+            $query->whereDate('contracts.end_date', '>=', $filters['end_date_from']);
+        }
+        if (!empty($filters['end_date_to'])) {
+            $query->whereDate('contracts.end_date', '<=', $filters['end_date_to']);
         }
 
         // Фильтры по суммам
@@ -52,6 +74,81 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         }
         if (!empty($filters['amount_to'])) {
             $query->where('contracts.total_amount', '<=', $filters['amount_to']);
+        }
+        
+        // Фильтр по проценту ГП
+        if (isset($filters['gp_percentage_from'])) {
+            $query->where('contracts.gp_percentage', '>=', $filters['gp_percentage_from']);
+        }
+        if (isset($filters['gp_percentage_to'])) {
+            $query->where('contracts.gp_percentage', '<=', $filters['gp_percentage_to']);
+        }
+        
+        // Фильтр по категории работ
+        if (!empty($filters['work_type_category'])) {
+            if (is_array($filters['work_type_category'])) {
+                $query->whereIn('contracts.work_type_category', $filters['work_type_category']);
+            } else {
+                $query->where('contracts.work_type_category', $filters['work_type_category']);
+            }
+        }
+        
+        // Фильтр по наличию аванса
+        if (isset($filters['has_advance'])) {
+            if ($filters['has_advance']) {
+                $query->where('contracts.planned_advance_amount', '>', 0);
+            } else {
+                $query->where(function($q) {
+                    $q->whereNull('contracts.planned_advance_amount')
+                      ->orWhere('contracts.planned_advance_amount', '=', 0);
+                });
+            }
+        }
+        
+        // Фильтр по статусу выплаты аванса
+        if (isset($filters['advance_paid_status'])) {
+            if ($filters['advance_paid_status'] === 'paid') {
+                $query->whereRaw('contracts.actual_advance_amount >= contracts.planned_advance_amount')
+                      ->where('contracts.planned_advance_amount', '>', 0);
+            } elseif ($filters['advance_paid_status'] === 'partial') {
+                $query->whereRaw('contracts.actual_advance_amount > 0 AND contracts.actual_advance_amount < contracts.planned_advance_amount')
+                      ->where('contracts.planned_advance_amount', '>', 0);
+            } elseif ($filters['advance_paid_status'] === 'not_paid') {
+                $query->where(function($q) {
+                    $q->where('contracts.actual_advance_amount', '=', 0)
+                      ->orWhereNull('contracts.actual_advance_amount');
+                })->where('contracts.planned_advance_amount', '>', 0);
+            }
+        }
+        
+        // Фильтр по наличию родительского контракта
+        if (isset($filters['has_parent'])) {
+            if ($filters['has_parent']) {
+                $query->whereNotNull('contracts.parent_contract_id');
+            } else {
+                $query->whereNull('contracts.parent_contract_id');
+            }
+        }
+        
+        // Фильтр по наличию дочерних контрактов
+        if (isset($filters['has_children'])) {
+            if ($filters['has_children']) {
+                $query->whereExists(function($subQuery) use ($organizationId) {
+                    $subQuery->select(DB::raw(1))
+                        ->from('contracts as child')
+                        ->whereColumn('child.parent_contract_id', 'contracts.id')
+                        ->where('child.organization_id', $organizationId)
+                        ->whereNull('child.deleted_at');
+                });
+            } else {
+                $query->whereNotExists(function($subQuery) use ($organizationId) {
+                    $subQuery->select(DB::raw(1))
+                        ->from('contracts as child')
+                        ->whereColumn('child.parent_contract_id', 'contracts.id')
+                        ->where('child.organization_id', $organizationId)
+                        ->whereNull('child.deleted_at');
+                });
+            }
         }
 
         // Фильтры по проценту выполнения (через подзапрос)
@@ -100,16 +197,49 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
                   ->where('contracts.status', 'active');
         }
 
-        // Поиск по номеру или названию проекта
+        // Расширенный поиск по подрядчику
+        if (!empty($filters['contractor_search'])) {
+            $search = $filters['contractor_search'];
+            $query->whereHas('contractor', function ($contractorQuery) use ($search) {
+                $contractorQuery->where(function($q) use ($search) {
+                    $q->where('name', 'ilike', '%' . $search . '%')
+                      ->orWhere('inn', 'like', '%' . $search . '%')
+                      ->orWhere('kpp', 'like', '%' . $search . '%')
+                      ->orWhere('email', 'ilike', '%' . $search . '%')
+                      ->orWhere('phone', 'like', '%' . $search . '%');
+                });
+            });
+        }
+        
+        // Поиск по проекту
+        if (!empty($filters['project_search'])) {
+            $search = $filters['project_search'];
+            $query->whereHas('project', function ($projectQuery) use ($search) {
+                $projectQuery->where(function($q) use ($search) {
+                    $q->where('name', 'ilike', '%' . $search . '%')
+                      ->orWhere('address', 'ilike', '%' . $search . '%')
+                      ->orWhere('code', 'ilike', '%' . $search . '%');
+                });
+            });
+        }
+        
+        // Общий поиск по номеру контракта, названию проекта и подрядчику
         if (!empty($filters['search'])) {
             $search = $filters['search'];
             $query->where(function ($q) use ($search) {
                 $q->where('contracts.number', 'ilike', '%' . $search . '%')
+                  ->orWhere('contracts.subject', 'ilike', '%' . $search . '%')
                   ->orWhereHas('project', function ($projectQuery) use ($search) {
-                      $projectQuery->where('name', 'ilike', '%' . $search . '%');
+                      $projectQuery->where(function($pq) use ($search) {
+                          $pq->where('name', 'ilike', '%' . $search . '%')
+                             ->orWhere('code', 'ilike', '%' . $search . '%');
+                      });
                   })
                   ->orWhereHas('contractor', function ($contractorQuery) use ($search) {
-                      $contractorQuery->where('name', 'ilike', '%' . $search . '%');
+                      $contractorQuery->where(function($cq) use ($search) {
+                          $cq->where('name', 'ilike', '%' . $search . '%')
+                             ->orWhere('inn', 'like', '%' . $search . '%');
+                      });
                   });
             });
         }

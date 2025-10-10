@@ -5,6 +5,7 @@
     description: |
       Возвращает пагинированный список контрактов организации с возможностью фильтрации по множественным критериям.
       Включает связанные данные: подрядчика, проект, родительский контракт.
+      Поддерживает поиск по подрядчикам (имя, ИНН, КПП, email), проектам, суммам и датам.
     parameters:
       - in: query
         name: contractor_id
@@ -13,18 +14,47 @@
         description: Фильтр по ID подрядчика
         example: 3
       - in: query
+        name: contractor_search
+        schema:
+          type: string
+        description: Поиск по подрядчику (имя, ИНН, КПП, email, телефон)
+        example: "ИП Рыкунов"
+      - in: query
         name: project_id
         schema:
           type: integer
         description: Фильтр по ID проекта
         example: 5
       - in: query
-        name: status
+        name: project_search
         schema:
           type: string
-          enum: [draft, active, completed, terminated, on_hold]
-        description: Фильтр по статусу контракта
+        description: Поиск по проекту (название, адрес, код)
+        example: "Торговый центр"
+      - in: query
+        name: status
+        schema:
+          oneOf:
+            - type: string
+              enum: [draft, active, completed, terminated, on_hold]
+            - type: array
+              items:
+                type: string
+                enum: [draft, active, completed, terminated, on_hold]
+        description: Фильтр по статусу контракта (один или несколько)
         example: "active"
+      - in: query
+        name: work_type_category
+        schema:
+          oneOf:
+            - type: string
+              enum: [general_construction, finishing, installation, design, consultation]
+            - type: array
+              items:
+                type: string
+                enum: [general_construction, finishing, installation, design, consultation]
+        description: Фильтр по категории работ (один или несколько)
+        example: "general_construction"
       - in: query
         name: number
         schema:
@@ -44,6 +74,34 @@
           type: string
           format: date
         description: Дата заключения до (включительно)
+        example: "2024-12-31"
+      - in: query
+        name: start_date_from
+        schema:
+          type: string
+          format: date
+        description: Дата начала работ от
+        example: "2024-01-01"
+      - in: query
+        name: start_date_to
+        schema:
+          type: string
+          format: date
+        description: Дата начала работ до
+        example: "2024-12-31"
+      - in: query
+        name: end_date_from
+        schema:
+          type: string
+          format: date
+        description: Дата окончания работ от
+        example: "2024-01-01"
+      - in: query
+        name: end_date_to
+        schema:
+          type: string
+          format: date
+        description: Дата окончания работ до
         example: "2024-12-31"
       - in: query
         name: completion_from
@@ -73,6 +131,45 @@
           format: float
         description: Сумма контракта до
         example: 5000000.00
+      - in: query
+        name: gp_percentage_from
+        schema:
+          type: number
+          format: float
+        description: Процент ГП от
+        example: 10.0
+      - in: query
+        name: gp_percentage_to
+        schema:
+          type: number
+          format: float
+        description: Процент ГП до
+        example: 25.0
+      - in: query
+        name: has_advance
+        schema:
+          type: boolean
+        description: Фильтр по наличию аванса
+        example: true
+      - in: query
+        name: advance_paid_status
+        schema:
+          type: string
+          enum: [paid, partial, not_paid]
+        description: Статус выплаты аванса (paid - полностью выплачен, partial - частично, not_paid - не выплачен)
+        example: "partial"
+      - in: query
+        name: has_parent
+        schema:
+          type: boolean
+        description: Фильтр по наличию родительского контракта
+        example: false
+      - in: query
+        name: has_children
+        schema:
+          type: boolean
+        description: Фильтр по наличию дочерних контрактов
+        example: true
       - in: query
         name: requiring_attention
         schema:
