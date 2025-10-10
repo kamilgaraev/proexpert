@@ -37,9 +37,20 @@ class ProjectsMapWidgetProvider extends AbstractWidgetProvider
                 'projects.start_date',
                 'projects.end_date',
                 'projects.site_area_m2',
-                DB::raw('contractors.name as contractor_name')
+                DB::raw('MAX(contractors.name) as contractor_name')
             )
-            ->groupBy('projects.id')
+            ->groupBy(
+                'projects.id',
+                'projects.name',
+                'projects.address',
+                'projects.latitude',
+                'projects.longitude',
+                'projects.status',
+                'projects.budget_amount',
+                'projects.start_date',
+                'projects.end_date',
+                'projects.site_area_m2'
+            )
             ->get();
 
         $locations = [];
