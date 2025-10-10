@@ -234,12 +234,18 @@ class AIAssistantService
             $output .= "Сумма контракта: " . number_format($c['total_amount'], 2, '.', ' ') . " руб.\n";
             
             // Показываем ГП и плановый аванс явно
-            if ($c['gp_percentage'] > 0) {
-                $gpAmount = $c['total_amount'] * $c['gp_percentage'] / 100;
-                $output .= "Валовая прибыль (ГП): {$c['gp_percentage']}% = " . number_format($gpAmount, 2, '.', ' ') . " руб.\n";
+            if (isset($c['gp_percentage']) && $c['gp_percentage'] > 0) {
+                $output .= "Валовая прибыль (ГП): {$c['gp_percentage']}% = " . number_format($c['gp_amount'], 2, '.', ' ') . " руб.\n";
+                $output .= "Сумма с ГП: " . number_format($c['total_amount_with_gp'], 2, '.', ' ') . " руб.\n";
             }
-            if ($c['planned_advance'] > 0) {
+            if (isset($c['planned_advance']) && $c['planned_advance'] > 0) {
                 $output .= "Плановый аванс: " . number_format($c['planned_advance'], 2, '.', ' ') . " руб.\n";
+                if (isset($c['actual_advance']) && $c['actual_advance'] > 0) {
+                    $output .= "Фактически выдано авансом: " . number_format($c['actual_advance'], 2, '.', ' ') . " руб.\n";
+                    if (isset($c['remaining_advance']) && $c['remaining_advance'] > 0) {
+                        $output .= "Остаток аванса к выдаче: " . number_format($c['remaining_advance'], 2, '.', ' ') . " руб.\n";
+                    }
+                }
             }
             
             $output .= "Сроки: с {$c['start_date']} по {$c['end_date']}\n";
@@ -329,8 +335,44 @@ class AIAssistantService
             if ($p['description']) {
                 $output .= "Описание: {$p['description']}\n";
             }
-            $output .= "Сроки: с {$p['start_date']} по {$p['end_date']}\n";
-            $output .= "Архивирован: " . ($p['is_archived'] ? 'Да' : 'Нет') . "\n\n";
+            $output .= "\n";
+            
+            // Заказчик и контракт
+            if (!empty($p['customer']) || !empty($p['customer_organization'])) {
+                $output .= "👤 ЗАКАЗЧИК:\n";
+                if (!empty($p['customer'])) {
+                    $output .= "  Название: {$p['customer']}\n";
+                }
+                if (!empty($p['customer_organization'])) {
+                    $output .= "  Организация: {$p['customer_organization']}\n";
+                }
+                if (!empty($p['customer_representative'])) {
+                    $output .= "  Представитель: {$p['customer_representative']}\n";
+                }
+                if (!empty($p['contract_number'])) {
+                    $output .= "  Договор с заказчиком: №{$p['contract_number']}";
+                    if (!empty($p['contract_date'])) {
+                        $output .= " от {$p['contract_date']}";
+                    }
+                    $output .= "\n";
+                }
+                if (!empty($p['designer'])) {
+                    $output .= "  Проектировщик: {$p['designer']}\n";
+                }
+                $output .= "\n";
+            }
+            
+            $output .= "📅 СРОКИ:\n";
+            $output .= "  Начало: {$p['start_date']}\n";
+            $output .= "  Окончание: {$p['end_date']}\n";
+            if (isset($p['days_remaining'])) {
+                if ($p['is_overdue']) {
+                    $output .= "  ⚠️ Просрочен на " . abs($p['days_remaining']) . " дней\n";
+                } else {
+                    $output .= "  Осталось: {$p['days_remaining']} дней\n";
+                }
+            }
+            $output .= "  Архивирован: " . ($p['is_archived'] ? 'Да' : 'Нет') . "\n\n";
             
             $output .= "💰 БЮДЖЕТ:\n";
             $output .= "  Плановый бюджет: " . number_format($p['budget_amount'], 2, '.', ' ') . " руб.\n";
@@ -347,11 +389,21 @@ class AIAssistantService
             }
             
             if (!empty($value['contracts'])) {
-                $output .= "📄 КОНТРАКТЫ (" . count($value['contracts']) . "):\n";
+                $output .= "📄 КОНТРАКТЫ С ПОДРЯДЧИКАМИ (" . count($value['contracts']) . "):\n";
                 foreach ($value['contracts'] as $contract) {
                     $output .= "  - №{$contract['number']} от {$contract['date']}: " . number_format($contract['total_amount'], 2, '.', ' ') . " руб. ({$contract['status']})\n";
+                    if (isset($contract['contractor_name'])) {
+                        $output .= "    Подрядчик: {$contract['contractor_name']}\n";
+                    }
                 }
                 $output .= "\n";
+            }
+            
+            if (isset($value['materials'])) {
+                $output .= "📦 МАТЕРИАЛЫ НА ПРОЕКТЕ:\n";
+                $output .= "  Типов материалов: {$value['materials']['types_count']}\n";
+                $output .= "  Всего на складе: " . number_format($value['materials']['total_quantity'], 2, '.', ' ') . "\n";
+                $output .= "  Зарезервировано: " . number_format($value['materials']['reserved_quantity'], 2, '.', ' ') . "\n\n";
             }
         }
         

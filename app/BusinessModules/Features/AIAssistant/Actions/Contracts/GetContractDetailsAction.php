@@ -61,6 +61,7 @@ class GetContractDetailsAction
 
         // Проверяем есть ли колонка type в таблице
         $hasTypeColumn = DB::getSchemaBuilder()->hasColumn('contracts', 'type');
+        $hasActualAdvance = DB::getSchemaBuilder()->hasColumn('contracts', 'actual_advance_amount');
         
         $contract = $query
             ->select(
@@ -125,7 +126,11 @@ class GetContractDetailsAction
                 'payment_terms' => $contract->payment_terms,
                 'total_amount' => (float)$contract->total_amount,
                 'gp_percentage' => (float)($contract->gp_percentage ?? 0),
+                'gp_amount' => ($contract->gp_percentage > 0) ? round($contract->total_amount * $contract->gp_percentage / 100, 2) : 0,
+                'total_amount_with_gp' => ($contract->gp_percentage > 0) ? round($contract->total_amount * (1 + $contract->gp_percentage / 100), 2) : (float)$contract->total_amount,
                 'planned_advance' => (float)($contract->planned_advance_amount ?? 0),
+                'actual_advance' => (float)($contract->actual_advance_amount ?? 0),
+                'remaining_advance' => max(0, ($contract->planned_advance_amount ?? 0) - ($contract->actual_advance_amount ?? 0)),
                 'start_date' => $contract->start_date,
                 'end_date' => $contract->end_date,
                 'notes' => $contract->notes,

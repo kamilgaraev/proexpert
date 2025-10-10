@@ -70,6 +70,8 @@ class GetProjectDetailsAction
                 'contracts.status',
                 'contracts.total_amount',
                 'contracts.date',
+                'contracts.start_date',
+                'contracts.end_date',
                 'contractors.name as contractor_name'
             )
             ->get();
@@ -123,31 +125,26 @@ class GetProjectDetailsAction
                 'reserved_quantity' => (float)($materialStats->reserved_materials ?? 0),
                 'types_count' => (int)($materialStats->materials_types ?? 0),
             ],
-            'team' => [
-                'members_count' => count($teamMembers),
-                'members' => $teamMembers->map(function($member) {
-                    return [
-                        'id' => $member->id,
-                        'name' => $member->name,
-                        'email' => $member->email,
-                        'role' => $member->role,
-                    ];
-                })->toArray(),
-            ],
-            'contracts' => [
-                'count' => count($contracts),
-                'total_amount' => $contracts->sum('total_amount'),
-                'list' => $contracts->map(function($contract) {
-                    return [
-                        'id' => $contract->id,
-                        'number' => $contract->number,
-                        'status' => $contract->status,
-                        'amount' => (float)$contract->total_amount,
-                        'date' => $contract->date,
-                        'contractor' => $contract->contractor_name,
-                    ];
-                })->toArray(),
-            ],
+            'team_members' => $teamMembers->map(function($member) {
+                return [
+                    'id' => $member->id,
+                    'name' => $member->name,
+                    'email' => $member->email,
+                    'role' => $member->role,
+                ];
+            })->toArray(),
+            'contracts' => $contracts->map(function($contract) {
+                return [
+                    'id' => $contract->id,
+                    'number' => $contract->number,
+                    'status' => $contract->status,
+                    'total_amount' => (float)$contract->total_amount,
+                    'date' => $contract->date,
+                    'start_date' => $contract->start_date,
+                    'end_date' => $contract->end_date,
+                    'contractor_name' => $contract->contractor_name,
+                ];
+            })->toArray(),
         ];
     }
 }
