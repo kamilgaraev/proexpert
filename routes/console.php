@@ -120,6 +120,16 @@ Schedule::command('custom-reports:cleanup-executions --days=90')
     })
     ->appendOutputTo(storage_path('logs/schedule-custom-reports-cleanup.log'));
 
+// Автоматическое геокодирование проектов без координат (раз в день)
+Schedule::command('projects:geocode --limit=50 --delay=2')
+    ->dailyAt('04:30')
+    ->withoutOverlapping(120)
+    ->runInBackground()
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled projects:geocode command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-projects-geocode.log'));
+
 Artisan::command('projects:geocode-help', function () {
     $this->info('Available geocoding command:');
     $this->info('  php artisan projects:geocode [options]');
@@ -129,4 +139,9 @@ Artisan::command('projects:geocode-help', function () {
     $this->info('  --organization=ID    Geocode projects only for specific organization ID');
     $this->info('  --limit=N            Limit the number of projects to geocode');
     $this->info('  --delay=N            Delay in seconds between geocoding requests (default: 1)');
+    $this->newLine();
+    $this->info('Examples:');
+    $this->info('  php artisan projects:geocode');
+    $this->info('  php artisan projects:geocode --organization=1 --limit=10');
+    $this->info('  php artisan projects:geocode --force --delay=3');
 })->purpose('Show help for geocoding projects command');
