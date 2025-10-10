@@ -86,15 +86,22 @@ class GeocodeProjectsCommand extends Command
                         ]);
 
                     $successCount++;
+                    
+                    if ($this->option('verbose')) {
+                        $this->newLine();
+                        $this->info("✓ Project #{$project->id}: {$result['latitude']}, {$result['longitude']}");
+                    }
                 } else {
                     $failedCount++;
                     $this->newLine();
                     $this->warn("Failed to geocode project #{$project->id}: {$project->name}");
+                    $this->line("  Address: {$project->address}");
                 }
             } catch (\Exception $e) {
                 $failedCount++;
                 $this->newLine();
                 $this->error("Error geocoding project #{$project->id}: {$e->getMessage()}");
+                $this->line("  Address: {$project->address}");
             }
 
             $bar->advance();

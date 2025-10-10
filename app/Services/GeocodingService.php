@@ -50,27 +50,48 @@ class GeocodingService
 
     private function geocodeWithNominatim(string $address): ?array
     {
-        $response = Http::timeout($this->timeout)
-            ->retry($this->retryTimes, 1000)
-            ->withHeaders([
-                'User-Agent' => 'ProHelper/1.0 (Laravel Application)',
-            ])
-            ->get('https://nominatim.openstreetmap.org/search', [
-                'q' => $address,
-                'format' => 'json',
-                'limit' => 1,
-                'addressdetails' => 1,
-            ]);
+        try {
+            $response = Http::timeout($this->timeout)
+                ->retry($this->retryTimes, 1000)
+                ->withHeaders([
+                    'User-Agent' => 'ProHelper/1.0 (Laravel Application)',
+                ])
+                ->get('https://nominatim.openstreetmap.org/search', [
+                    'q' => $address,
+                    'format' => 'json',
+                    'limit' => 1,
+                    'addressdetails' => 1,
+                ]);
 
-        if ($response->successful() && $response->json()) {
+            if ($response->failed()) {
+                Log::warning("Nominatim API returned error", [
+                    'status' => $response->status(),
+                    'address' => $address,
+                ]);
+                return null;
+            }
+
             $data = $response->json();
-            if (!empty($data) && isset($data[0]['lat'], $data[0]['lon'])) {
+            
+            if (empty($data)) {
+                Log::info("Nominatim: No results found for address", [
+                    'address' => $address,
+                ]);
+                return null;
+            }
+
+            if (isset($data[0]['lat'], $data[0]['lon'])) {
                 return [
                     'latitude' => (float) $data[0]['lat'],
                     'longitude' => (float) $data[0]['lon'],
                     'formatted_address' => $data[0]['display_name'] ?? $address,
                 ];
             }
+        } catch (\Exception $e) {
+            Log::warning("Nominatim geocoding exception", [
+                'address' => $address,
+                'error' => $e->getMessage(),
+            ]);
         }
 
         return null;
