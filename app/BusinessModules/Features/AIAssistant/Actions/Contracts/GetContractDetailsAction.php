@@ -59,6 +59,9 @@ class GetContractDetailsAction
             $query->where('contracts.number', 'ILIKE', '%' . $contractNumber . '%');
         }
 
+        // Проверяем есть ли колонка type в таблице
+        $hasTypeColumn = DB::getSchemaBuilder()->hasColumn('contracts', 'type');
+        
         $contract = $query
             ->select(
                 'contracts.*',
@@ -112,11 +115,10 @@ class GetContractDetailsAction
 
         return [
             'show_list' => false,
-            'contract' => [
+            'contract' => array_merge([
                 'id' => $contract->id,
                 'number' => $contract->number,
                 'date' => $contract->date,
-                'type' => $contract->type,
                 'subject' => $contract->subject,
                 'status' => $contract->status,
                 'work_type_category' => $contract->work_type_category,
@@ -127,7 +129,7 @@ class GetContractDetailsAction
                 'start_date' => $contract->start_date,
                 'end_date' => $contract->end_date,
                 'notes' => $contract->notes,
-            ],
+            ], $hasTypeColumn ? ['type' => $contract->type ?? 'contract'] : []),
             'contractor' => [
                 'id' => $contract->contractor_id,
                 'name' => $contract->contractor_name,

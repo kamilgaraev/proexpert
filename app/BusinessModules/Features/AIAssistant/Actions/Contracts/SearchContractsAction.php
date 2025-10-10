@@ -38,25 +38,33 @@ class SearchContractsAction
             $query->where('contracts.number', 'ILIKE', '%' . $params['number'] . '%');
         }
 
+        // Проверяем есть ли колонка type в таблице
+        $hasTypeColumn = DB::getSchemaBuilder()->hasColumn('contracts', 'type');
+        
+        $selectColumns = [
+            'contracts.id',
+            'contracts.number',
+            'contracts.date',
+            'contracts.subject',
+            'contracts.status',
+            'contracts.total_amount',
+            'contracts.start_date',
+            'contracts.end_date',
+            'contracts.gp_percentage',
+            'contracts.planned_advance_amount',
+            'contractors.id as contractor_id',
+            'contractors.name as contractor_name',
+            'contractors.inn as contractor_inn',
+            'projects.id as project_id',
+            'projects.name as project_name'
+        ];
+        
+        if ($hasTypeColumn) {
+            $selectColumns[] = 'contracts.type';
+        }
+        
         $contracts = $query
-            ->select(
-                'contracts.id',
-                'contracts.number',
-                'contracts.date',
-                'contracts.type',
-                'contracts.subject',
-                'contracts.status',
-                'contracts.total_amount',
-                'contracts.start_date',
-                'contracts.end_date',
-                'contracts.gp_percentage',
-                'contracts.planned_advance_amount',
-                'contractors.id as contractor_id',
-                'contractors.name as contractor_name',
-                'contractors.inn as contractor_inn',
-                'projects.id as project_id',
-                'projects.name as project_name'
-            )
+            ->select($selectColumns)
             ->orderByDesc('contracts.date')
             ->limit($params['limit'] ?? 20)
             ->get();
@@ -65,18 +73,20 @@ class SearchContractsAction
             ->map(fn($group) => count($group))
             ->toArray();
 
-        $typeCounts = $contracts->groupBy('type')
-            ->map(fn($group) => count($group))
-            ->toArray();
+        $typeCounts = [];
+        if ($hasTypeColumn) {
+            $typeCounts = $contracts->groupBy('type')
+                ->map(fn($group) => count($group))
+                ->toArray();
+        }
 
         return [
             'total' => count($contracts),
-            'contracts' => $contracts->map(function ($contract) {
-                return [
+            'contracts' => $contracts->map(function ($contract) use ($hasTypeColumn) {
+                $data = [
                     'id' => $contract->id,
                     'number' => $contract->number,
                     'date' => $contract->date,
-                    'type' => $contract->type,
                     'subject' => $contract->subject,
                     'status' => $contract->status,
                     'total_amount' => (float)$contract->total_amount,
@@ -94,6 +104,12 @@ class SearchContractsAction
                         'name' => $contract->project_name,
                     ] : null,
                 ];
+                
+                if ($hasTypeColumn) {
+                    $data['type'] = $contract->type ?? 'contract';
+                }
+                
+                return $data;
             })->toArray(),
             'by_status' => $statusCounts,
             'by_type' => $typeCounts,

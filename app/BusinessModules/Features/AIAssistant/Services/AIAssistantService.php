@@ -288,6 +288,60 @@ class AIAssistantService
             $output .= "\n";
         }
         
+        // Детали проекта
+        if ($key === 'project_details' && isset($value['project'])) {
+            $p = $value['project'];
+            $output .= "🏗️ ДЕТАЛИ ПРОЕКТА:\n\n";
+            $output .= "ID: {$p['id']}\n";
+            $output .= "Название: {$p['name']}\n";
+            if ($p['address']) {
+                $output .= "Адрес: {$p['address']}\n";
+            }
+            $output .= "Статус: {$p['status']}\n";
+            if ($p['description']) {
+                $output .= "Описание: {$p['description']}\n";
+            }
+            $output .= "Сроки: с {$p['start_date']} по {$p['end_date']}\n";
+            $output .= "Архивирован: " . ($p['is_archived'] ? 'Да' : 'Нет') . "\n\n";
+            
+            $output .= "💰 БЮДЖЕТ:\n";
+            $output .= "  Плановый бюджет: " . number_format($p['budget_amount'], 2, '.', ' ') . " руб.\n";
+            $output .= "  Потрачено: " . number_format($p['spent_amount'], 2, '.', ' ') . " руб.\n";
+            $output .= "  Остаток: " . number_format($p['remaining_budget'], 2, '.', ' ') . " руб.\n";
+            $output .= "  Использовано: {$p['budget_percentage_used']}%\n\n";
+            
+            if (!empty($value['team_members'])) {
+                $output .= "👥 КОМАНДА (" . count($value['team_members']) . "):\n";
+                foreach ($value['team_members'] as $member) {
+                    $output .= "  - {$member['name']} ({$member['role']}) - {$member['email']}\n";
+                }
+                $output .= "\n";
+            }
+            
+            if (!empty($value['contracts'])) {
+                $output .= "📄 КОНТРАКТЫ (" . count($value['contracts']) . "):\n";
+                foreach ($value['contracts'] as $contract) {
+                    $output .= "  - №{$contract['number']} от {$contract['date']}: " . number_format($contract['total_amount'], 2, '.', ' ') . " руб. ({$contract['status']})\n";
+                }
+                $output .= "\n";
+            }
+        }
+        
+        // Список проектов
+        if ($key === 'project_search' && isset($value['projects'])) {
+            $output .= "🏗️ СПИСОК ПРОЕКТОВ:\n\n";
+            foreach ($value['projects'] as $i => $project) {
+                $num = $i + 1;
+                $output .= "  {$num}. {$project['name']}\n";
+                $output .= "     Адрес: {$project['address']}\n";
+                $output .= "     Статус: {$project['status']}\n";
+                $output .= "     Бюджет: " . number_format($project['budget'], 2, '.', ' ') . " руб.\n";
+                $output .= "     Сроки: с {$project['start_date']} по {$project['end_date']}\n";
+                $output .= "\n";
+            }
+            $output .= "Всего проектов: {$value['total_projects']}\n\n";
+        }
+        
         // Материалы
         if ($key === 'material_stock' && isset($value['materials'])) {
             $output .= "📦 ОСТАТКИ МАТЕРИАЛОВ:\n\n";
