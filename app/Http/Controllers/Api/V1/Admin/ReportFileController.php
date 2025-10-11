@@ -46,8 +46,11 @@ class ReportFileController extends Controller
         $dateFrom  = isset($params['date_from']) ? Carbon::parse($params['date_from'])->startOfDay() : null;
         $dateTo    = isset($params['date_to']) ? Carbon::parse($params['date_to'])->endOfDay() : null;
 
+        // Получаем текущую организацию
+        $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
+
         // Формируем запрос к БД
-        $query = ReportFile::query();
+        $query = ReportFile::query()->where('organization_id', $org->id);
         if ($typeFilter) {
             $query->where('type', $typeFilter);
         }
@@ -97,16 +100,23 @@ class ReportFileController extends Controller
         /** @var FileService $fs */
         $fs = app(FileService::class);
         $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
+
+        // Проверяем, что файл принадлежит текущей организации
+        $file = ReportFile::where('path', $path)->where('organization_id', $org->id)->first();
+        if (!$file) {
+            return response()->json(['message' => 'File not found or access denied.'], 404);
+        }
+
         $storage = $fs->disk($org);
 
         if (!$storage->exists($path)) {
             // всё равно пытаемся удалить запись из БД
-            ReportFile::where('path', $path)->delete();
+            $file->delete();
             return response()->json(['message' => 'File not found.'], 404);
         }
 
         $storage->delete($path);
-        ReportFile::where('path', $path)->delete();
+        $file->delete();
 
         return response()->json(['message' => 'File deleted.']);
     }
@@ -124,9 +134,11 @@ class ReportFileController extends Controller
         }
 
         $path = $this->decodeKey($key);
-        $file = ReportFile::where('path', $path)->first();
+        $org = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
+
+        $file = ReportFile::where('path', $path)->where('organization_id', $org->id)->first();
         if (!$file) {
-            return response()->json(['message' => 'File not found.'], 404);
+            return response()->json(['message' => 'File not found or access denied.'], 404);
         }
 
         $file->name = $validator->validated()['name'];

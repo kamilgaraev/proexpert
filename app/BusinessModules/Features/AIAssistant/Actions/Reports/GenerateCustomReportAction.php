@@ -418,16 +418,26 @@ class GenerateCustomReportAction
         // Получаем PDF как строку
         $pdfContent = $pdf->output();
         
-        // Формируем путь в S3 с префиксом организации
-        $s3Path = "org-{$organizationId}/ai-reports/{$fileName}";
-        
+        // Формируем путь в S3 с иерархической структурой
+        $reportTypeFolder = match($data['report_type']) {
+            'materials_expenses' => 'materials',
+            'contractor_payments' => 'contractors',
+            'project_financials' => 'projects',
+            'completed_works' => 'works',
+            'contracts_summary' => 'contracts',
+            'general_financial' => 'general',
+            default => 'other'
+        };
+
+        $s3Path = "org-{$organizationId}/ai-reports/{$reportTypeFolder}/{$fileName}";
+
         // Сохраняем в S3
         /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
         $disk = Storage::disk('s3');
         $disk->put($s3Path, $pdfContent);
 
-        // Генерируем безопасный токен для скачивания через наше приложение
-        return $this->generateSecureDownloadUrl($organizationId, $s3Path);
+        // Генерируем presigned URL для Yandex Cloud Storage
+        return $this->generatePresignedUrl($s3Path);
     }
     
     protected function generateReportHTML(array $data): string
@@ -646,37 +656,41 @@ class GenerateCustomReportAction
         return $html;
     }
 
-    /**
-     * Генерирует безопасную ссылку для скачивания через наше приложение
-     */
-    protected function generateSecureDownloadUrl(int $organizationId, string $s3Path): string
-    {
-        // Генерируем токен с данными о файле
-        $token = $this->generateDownloadToken($organizationId, $s3Path);
-
-        // Формируем URL через наше приложение
-        $baseUrl = config('app.url');
-        return "{$baseUrl}/api/v1/admin/ai-reports/download/{$token}";
-    }
 
     /**
-     * Генерирует токен для безопасного скачивания файла
+     * Генерирует presigned URL для Yandex Cloud Storage
      */
-    protected function generateDownloadToken(int $organizationId, string $s3Path): string
+    protected function generatePresignedUrl(string $s3Path): string
     {
-        // Создаем уникальный токен с данными о файле
-        $data = [
-            'organization_id' => $organizationId,
-            's3_path' => $s3Path,
-            'expires_at' => now()->addHours(24)->timestamp,
-            'created_at' => now()->timestamp,
-        ];
+        try {
+            // Используем тот же подход, что и в Laravel filesystem
+            /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
+            $disk = Storage::disk('s3');
 
-        // Шифруем данные
-        $encrypted = encrypt($data);
+            // Генерируем presigned URL на 24 часа
+            $temporaryUrl = $disk->temporaryUrl($s3Path, now()->addDay());
 
-        // Кодируем в base64 для URL
-        return base64_encode($encrypted);
+            Log::debug('AI Report presigned URL generated', [
+                'path' => $s3Path,
+                'url' => $temporaryUrl,
+                'expires_at' => now()->addDay()->toISOString(),
+            ]);
+
+            return $temporaryUrl;
+
+        } catch (\Exception $e) {
+            Log::error('AI Report presigned URL failed', [
+                'path' => $s3Path,
+                'error' => $e->getMessage(),
+            ]);
+
+            // Fallback: возвращаем публичный URL если presigned не работает
+            $config = config('filesystems.disks.s3');
+            $endpoint = $config['endpoint'] ?? 'https://storage.yandexcloud.net';
+            $bucket = $config['bucket'] ?? 'prohelper-storage';
+
+            return rtrim($endpoint, '/') . '/' . $bucket . '/' . $s3Path;
+        }
     }
 }
 
