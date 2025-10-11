@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\Storage;
 use Carbon\Carbon;
 use Barryvdh\DomPDF\Facade\Pdf;
 use App\Services\Storage\FileService;
+use Aws\S3\S3Client;
+use Illuminate\Support\Facades\Config;
 
 class GenerateCustomReportAction
 {
@@ -423,17 +425,9 @@ class GenerateCustomReportAction
         /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
         $disk = Storage::disk('s3');
         $disk->put($s3Path, $pdfContent);
-        
-        // Генерируем временную ссылку на 24 часа
-        try {
-            // @phpstan-ignore-next-line
-            $temporaryUrl = $disk->temporaryUrl($s3Path, now()->addHours(24));
-            return $temporaryUrl;
-        } catch (\Exception $e) {
-            // Если временная ссылка не работает, возвращаем постоянную
-            // @phpstan-ignore-next-line
-            return $disk->url($s3Path);
-        }
+
+        // Генерируем presigned URL для Yandex Cloud Storage
+        return $this->generatePresignedUrl($s3Path);
     }
     
     protected function generateReportHTML(array $data): string
@@ -650,6 +644,47 @@ class GenerateCustomReportAction
         $html .= '</div>';
         
         return $html;
+    }
+
+    /**
+     * Генерирует presigned URL для Yandex Cloud Storage
+     */
+    protected function generatePresignedUrl(string $s3Path): string
+    {
+        $config = Config::get('filesystems.disks.s3');
+
+        $s3Client = new S3Client([
+            'region' => $config['region'] ?? 'ru-central1',
+            'version' => 'latest',
+            'credentials' => [
+                'key' => $config['key'] ?? '',
+                'secret' => $config['secret'] ?? '',
+            ],
+            'endpoint' => $config['endpoint'] ?? 'https://storage.yandexcloud.net',
+            'use_path_style_endpoint' => $config['use_path_style_endpoint'] ?? false,
+        ]);
+
+        $bucket = $config['bucket'] ?? 'prohelper-storage';
+
+        try {
+            // Генерируем presigned URL на 24 часа
+            $cmd = $s3Client->getCommand('GetObject', [
+                'Bucket' => $bucket,
+                'Key' => $s3Path,
+            ]);
+
+            $request = $s3Client->createPresignedRequest($cmd, '+24 hours');
+            return (string) $request->getUri();
+
+        } catch (\Exception $e) {
+            // Fallback: пытаемся использовать публичный URL
+            $endpoint = $config['endpoint'] ?? 'https://storage.yandexcloud.net';
+            $bucket = $config['bucket'] ?? 'prohelper-storage';
+
+            // Для Yandex Cloud Storage публичный URL имеет формат:
+            // https://storage.yandexcloud.net/{bucket}/{key}
+            return rtrim($endpoint, '/') . '/' . $bucket . '/' . $s3Path;
+        }
     }
 }
 
