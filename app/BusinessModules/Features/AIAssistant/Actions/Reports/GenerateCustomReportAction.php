@@ -222,7 +222,7 @@ class GenerateCustomReportAction
             ->leftJoin('completed_works', function($join) use ($period) {
                 $join->on('projects.id', '=', 'completed_works.project_id')
                     ->where('completed_works.status', '=', 'confirmed')
-                    ->whereBetween('completed_works.work_date', [$period['start'], $period['end']])
+                    ->whereBetween('completed_works.completion_date', [$period['start'], $period['end']])
                     ->whereNull('completed_works.deleted_at');
             })
             ->where('projects.organization_id', $organizationId)
@@ -275,7 +275,7 @@ class GenerateCustomReportAction
             ->leftJoin('contracts', 'completed_works.contract_id', '=', 'contracts.id')
             ->where('completed_works.organization_id', $organizationId)
             ->where('completed_works.status', 'confirmed')
-            ->whereBetween('completed_works.work_date', [$period['start'], $period['end']])
+            ->whereBetween('completed_works.completion_date', [$period['start'], $period['end']])
             ->whereNull('completed_works.deleted_at');
         
         if ($projectId) {
@@ -375,8 +375,8 @@ class GenerateCustomReportAction
         $works = DB::table('completed_works')
             ->where('organization_id', $organizationId)
             ->where('status', 'confirmed')
-            ->whereBetween('work_date', [$period['start'], $period['end']])
-            ->whereNull('completed_works.deleted_at')
+            ->whereBetween('completion_date', [$period['start'], $period['end']])
+            ->whereNull('deleted_at')
             ->sum('total_amount');
         
         $payments = DB::table('contract_payments')
