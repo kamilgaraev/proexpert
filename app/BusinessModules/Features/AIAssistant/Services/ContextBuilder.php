@@ -165,9 +165,17 @@ class ContextBuilder
 
     protected function extractParams(string $intent, string $query, array $conversationContext = []): array
     {
+        // Специальная обработка для массового создания единиц измерения
+        if ($intent === 'mass_create_measurement_units') {
+            $params = [
+                'units' => $this->intentRecognizer->extractMeasurementUnitsList($query)
+            ];
+            return $params;
+        }
+
         // Используем универсальный метод извлечения всех параметров
         $params = $this->intentRecognizer->extractAllParams($query);
-        
+
         // Умная обработка порядковых номеров из последних списков
         if (isset($params['contract_id']) && $params['contract_id'] <= 10 && isset($conversationContext['last_contracts'])) {
             $index = $params['contract_id'] - 1;
@@ -175,19 +183,19 @@ class ContextBuilder
                 $params['contract_id'] = $conversationContext['last_contracts'][$index]['id'];
             }
         }
-        
+
         if (isset($params['project_id']) && $params['project_id'] <= 10 && isset($conversationContext['last_projects'])) {
             $index = $params['project_id'] - 1;
             if (isset($conversationContext['last_projects'][$index])) {
                 $params['project_id'] = $conversationContext['last_projects'][$index]['id'];
             }
         }
-        
+
         // Для отчетов передаем весь query
         if ($intent === 'generate_report') {
             $params['query'] = $query;
         }
-        
+
         return $params;
     }
 

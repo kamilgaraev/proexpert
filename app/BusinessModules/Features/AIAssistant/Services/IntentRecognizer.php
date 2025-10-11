@@ -907,7 +907,65 @@ class IntentRecognizer
         
         return null;
     }
-    
+
+    /**
+     * Извлекает список единиц измерения из запроса на массовое создание
+     */
+    public function extractMeasurementUnitsList(string $query): array
+    {
+        $units = [];
+
+        // Ищем паттерн после ключевых слов создания
+        if (preg_match('/единиц[^:]*:\s*(.+)$/ui', $query, $matches)) {
+            $unitsText = trim($matches[1]);
+        } elseif (preg_match('/единицы[^:]*:\s*(.+)$/ui', $query, $matches)) {
+            $unitsText = trim($matches[1]);
+        } else {
+            return $units; // Не нашли паттерн
+        }
+
+        if (!isset($unitsText)) {
+            return $units;
+        }
+
+        // Разбираем список единиц, разделенных запятыми
+        $unitStrings = preg_split('/\s*,\s*/', $unitsText);
+
+        foreach ($unitStrings as $unitString) {
+            $unitString = trim($unitString);
+
+            // Ищем паттерн "название (сокращение)" или "название сокращение"
+            if (preg_match('/^(.+?)\s*\(([^)]+)\)$/', $unitString, $matches)) {
+                // Формат: название (сокращение)
+                $name = trim($matches[1]);
+                $shortName = trim($matches[2]);
+            } elseif (preg_match('/^(.+?)\s+(.+)$/', $unitString, $matches)) {
+                // Формат: название сокращение
+                $name = trim($matches[1]);
+                $shortName = trim($matches[2]);
+            } else {
+                // Не можем разобрать - пропускаем
+                continue;
+            }
+
+            // Валидация
+            if (empty($name) || empty($shortName) ||
+                strlen($name) > 255 || strlen($shortName) > 50) {
+                continue;
+            }
+
+            $units[] = [
+                'name' => $name,
+                'short_name' => $shortName,
+                'type' => 'other', // По умолчанию
+                'description' => null,
+                'is_default' => false
+            ];
+        }
+
+        return $units;
+    }
+
     /**
      * Извлекает временной период из запроса
      */
