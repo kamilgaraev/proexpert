@@ -32,7 +32,8 @@ class GetMeasurementUnitsAction
             return [
                 'id' => $unit->id,
                 'name' => $unit->name,
-                'short_name' => $unit->short_name,
+                'short_name' => $unit->short_name, // Внутреннее поле модели
+                'code' => $unit->short_name, // Для совместимости с API
                 'type' => $unit->type,
                 'description' => $unit->description,
                 'is_default' => $unit->is_default,

@@ -7,6 +7,7 @@ use App\BusinessModules\Features\AIAssistant\Services\ActionResult;
 use App\DTOs\MeasurementUnit\MeasurementUnitDTO;
 use App\Models\User;
 use App\Services\MeasurementUnit\MeasurementUnitService;
+use App\Services\Logging\LoggingService;
 
 /**
  * Действие обновления единицы измерения через ИИ
@@ -17,7 +18,7 @@ class UpdateMeasurementUnitAction extends WriteAction
     protected string $operation = 'update';
 
     public function __construct(
-        $logging,
+        LoggingService $logging,
         private MeasurementUnitService $measurementUnitService
     ) {
         parent::__construct($logging);

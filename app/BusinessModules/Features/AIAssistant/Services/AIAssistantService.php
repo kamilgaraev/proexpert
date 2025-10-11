@@ -561,9 +561,10 @@ class AIAssistantService
         if ($key === 'measurement_units_list' && isset($value['units'])) {
             $output .= "📋 ЕДИНИЦЫ ИЗМЕРЕНИЯ:\n\n";
             foreach ($value['units'] as $unit) {
+                $code = $unit['code'] ?? $unit['short_name'] ?? '';
                 $default = $unit['is_default'] ? ' (по умолчанию)' : '';
                 $system = $unit['is_system'] ? ' (системная)' : '';
-                $output .= "• {$unit['name']} ({$unit['short_name']}){$default}{$system}\n";
+                $output .= "• {$unit['name']} ({$code}){$default}{$system}\n";
             }
             $output .= "\nВсего: {$value['total']} единиц\n\n";
         }

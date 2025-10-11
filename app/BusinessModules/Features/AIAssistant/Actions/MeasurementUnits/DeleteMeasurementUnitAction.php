@@ -6,6 +6,7 @@ use App\BusinessModules\Features\AIAssistant\Services\WriteAction;
 use App\BusinessModules\Features\AIAssistant\Services\ActionResult;
 use App\Models\User;
 use App\Services\MeasurementUnit\MeasurementUnitService;
+use App\Services\Logging\LoggingService;
 
 /**
  * Действие удаления единицы измерения через ИИ
@@ -16,7 +17,7 @@ class DeleteMeasurementUnitAction extends WriteAction
     protected string $operation = 'delete';
 
     public function __construct(
-        $logging,
+        LoggingService $logging,
         private MeasurementUnitService $measurementUnitService
     ) {
         parent::__construct($logging);
