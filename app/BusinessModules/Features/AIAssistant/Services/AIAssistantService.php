@@ -538,6 +538,36 @@ class AIAssistantService
             $output .= "\n✅ Готово! Единица измерения \"{$value['name']}\" создана.\n\n";
         }
 
+        if ($key === 'mass_create_measurement_units' && isset($value['created_count'])) {
+            $output .= "✅ МАССОВОЕ СОЗДАНИЕ ЕДИНИЦ ИЗМЕРЕНИЯ:\n\n";
+            $output .= "Запрошено: {$value['total_requested']} единиц\n";
+            $output .= "Создано: {$value['created_count']} единиц\n";
+
+            if ($value['errors_count'] > 0) {
+                $output .= "Ошибок: {$value['errors_count']}\n\n";
+            } else {
+                $output .= "\n";
+            }
+
+            if (!empty($value['created_units'])) {
+                $output .= "СОЗДАННЫЕ ЕДИНИЦЫ:\n";
+                foreach ($value['created_units'] as $unit) {
+                    $output .= "• {$unit['name']} ({$unit['short_name']}) - ID: {$unit['id']}\n";
+                }
+                $output .= "\n";
+            }
+
+            if (!empty($value['errors'])) {
+                $output .= "ОШИБКИ:\n";
+                foreach ($value['errors'] as $error) {
+                    $output .= "• Единица {$error['index']}: {$error['error']}\n";
+                }
+                $output .= "\n";
+            }
+
+            $output .= "✅ Готово! Обработано {$value['total_requested']} единиц измерения.\n\n";
+        }
+
         if ($key === 'update_measurement_unit' && isset($value['name'])) {
             $output .= "✅ ОБНОВЛЕНА ЕДИНИЦА ИЗМЕРЕНИЯ:\n\n";
             $output .= "ID: {$value['id']}\n";
@@ -605,6 +635,7 @@ class AIAssistantService
     {
         return in_array($intent, [
             'create_measurement_unit',
+            'mass_create_measurement_units',
             'update_measurement_unit',
             'delete_measurement_unit',
             // Здесь можно добавить другие write intents в будущем

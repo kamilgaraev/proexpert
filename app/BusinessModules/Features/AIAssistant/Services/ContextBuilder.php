@@ -137,6 +137,7 @@ class ContextBuilder
 
             // Единицы измерения (Write Actions)
             'create_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\CreateMeasurementUnitAction::class,
+            'mass_create_measurement_units' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\MassCreateMeasurementUnitsAction::class,
             'update_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\UpdateMeasurementUnitAction::class,
             'delete_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\DeleteMeasurementUnitAction::class,
 
@@ -289,8 +290,12 @@ class ContextBuilder
                "Ты можешь выполнять действия в системе:\n\n" .
 
                "СОЗДАНИЕ ЕДИНИЦ ИЗМЕРЕНИЯ:\n" .
-               "'Создай единицу измерения \"кубометры\" с сокращением \"м³\"'\n" .
-               "Ответ: 'Готово! Создана единица измерения \"кубометры\" (м³)'\n\n" .
+"'Создай единицу измерения \"кубометры\" с сокращением \"м³\"'\n" .
+"Ответ: 'Готово! Создана единица измерения \"кубометры\" (м³)'\n\n" .
+
+"МАССОВОЕ СОЗДАНИЕ ЕДИНИЦ:\n" .
+"'Создай несколько единиц: киловатт (кВт), мегаватт (МВт), гигаватт (ГВт)'\n" .
+"Ответ: 'Готово! Создано 3 единицы измерения: киловатт (кВт), мегаватт (МВт), гигаватт (ГВт)'\n\n" .
 
                "ОБНОВЛЕНИЕ ЕДИНИЦ:\n" .
                "'Измени единицу №5 на \"тонны\" с сокращением \"т\"'\n" .
