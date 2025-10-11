@@ -619,6 +619,55 @@ class AIAssistantService
             $output .= "\n";
         }
 
+        // Справка о возможностях
+        if ($key === 'help' && isset($value['capabilities'])) {
+            $output .= "🤖 ВОЗМОЖНОСТИ ИИ АССИСТЕНТА PROHELPER\n\n";
+            $output .= "Версия: {$value['version']}\n\n";
+
+            foreach ($value['capabilities'] as $categoryKey => $category) {
+                $output .= "{$category['title']}\n";
+                $output .= str_repeat('─', mb_strlen($category['title'])) . "\n";
+                $output .= "{$category['description']}\n\n";
+
+                foreach ($category['capabilities'] as $capability) {
+                    $output .= "• {$capability['title']}\n";
+                    if (isset($capability['examples']) && !empty($capability['examples'])) {
+                        $output .= "  Примеры:\n";
+                        foreach ($capability['examples'] as $example) {
+                            $output .= "  - \"{$example}\"\n";
+                        }
+                    }
+                    $output .= "\n";
+                }
+            }
+
+            if (!empty($value['examples'])) {
+                $output .= "💡 ПОПУЛЯРНЫЕ ЗАПРОСЫ:\n";
+                foreach ($value['examples'] as $example) {
+                    $output .= "• {$example}\n";
+                }
+                $output .= "\n";
+            }
+
+            if (!empty($value['tips'])) {
+                $output .= "📝 СОВЕТЫ:\n";
+                foreach ($value['tips'] as $tip) {
+                    $output .= "• {$tip}\n";
+                }
+                $output .= "\n";
+            }
+
+            if (!empty($value['limitations'])) {
+                $output .= "⚠️ ОГРАНИЧЕНИЯ:\n";
+                foreach ($value['limitations'] as $limitation) {
+                    $output .= "• {$limitation}\n";
+                }
+                $output .= "\n";
+            }
+
+            $output .= "🔄 Возможности регулярно обновляются!\n\n";
+        }
+
         // Если ничего не распознали - просто JSON
         if (empty($output)) {
             $output .= strtoupper($key) . ":\n";
