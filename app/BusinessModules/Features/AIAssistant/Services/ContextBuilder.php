@@ -4,6 +4,7 @@ namespace App\BusinessModules\Features\AIAssistant\Services;
 
 use App\Models\Organization;
 use App\Models\Project;
+use App\Models\User;
 use App\Services\Logging\LoggingService;
 use Illuminate\Support\Facades\Cache;
 
@@ -37,8 +38,14 @@ class ContextBuilder
             'organization' => $this->getOrganizationContext($organizationId),
         ];
 
+        // Получаем пользователя для Write Actions
+        $user = null;
+        if ($userId) {
+            $user = User::find($userId);
+        }
+
         // Выполнение Actions на основе распознанного намерения
-        $actionResult = $this->executeAction($intent, $organizationId, $query, $userId, $conversationContext);
+        $actionResult = $this->executeAction($intent, $organizationId, $query, $user, $conversationContext);
         
         if ($actionResult) {
             $context[$intent] = $actionResult;
@@ -47,7 +54,7 @@ class ContextBuilder
         return $context;
     }
 
-    protected function executeAction(string $intent, int $organizationId, string $query, ?int $userId = null, array $conversationContext = []): ?array
+    protected function executeAction(string $intent, int $organizationId, string $query, ?User $user = null, array $conversationContext = []): ?array
     {
         $actionClass = $this->getActionClass($intent);
         
@@ -57,16 +64,31 @@ class ContextBuilder
 
         try {
             $action = app($actionClass);
-            
+
             // Извлекаем параметры из запроса при необходимости
             $params = $this->extractParams($intent, $query, $conversationContext);
-            
-            // Добавляем user_id в параметры для Actions, которым это нужно
-            if ($userId) {
-                $params['user_id'] = $userId;
+
+            // Определяем тип Action и выполняем соответствующим образом
+            $isWriteAction = $this->isWriteAction($actionClass);
+
+            if ($isWriteAction) {
+                // Write Action - передаем пользователя
+                if (!$user) {
+                    throw new \Exception('User is required for write actions');
+                }
+                $result = $action->execute($organizationId, $params, $user);
+                // Для Write Actions результат - это ActionResult, а не массив
+                if ($result instanceof ActionResult) {
+                    return $result->isSuccess() ? $result->getData() : null;
+                }
+                return $result;
+            } else {
+                // Read Action - добавляем user_id в параметры
+                if ($user) {
+                    $params['user_id'] = $user->id;
+                }
+                $result = $action->execute($organizationId, $params);
             }
-            
-            $result = $action->execute($organizationId, $params);
             
             $this->logging->technical('ai.action.executed', [
                 'action' => $actionClass,
@@ -100,27 +122,44 @@ class ContextBuilder
             'project_status' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\GetProjectStatusAction::class,
             'project_budget' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\GetProjectBudgetAction::class,
             'project_risks' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\AnalyzeProjectRisksAction::class,
-            
+
             // Контракты
             'contract_search' => \App\BusinessModules\Features\AIAssistant\Actions\Contracts\SearchContractsAction::class,
             'contract_details' => \App\BusinessModules\Features\AIAssistant\Actions\Contracts\GetContractDetailsAction::class,
-            
+
             // Материалы
             'material_stock' => \App\BusinessModules\Features\AIAssistant\Actions\Materials\CheckMaterialStockAction::class,
             'material_forecast' => \App\BusinessModules\Features\AIAssistant\Actions\Materials\ForecastMaterialNeedsAction::class,
-            
+
+            // Единицы измерения (Read Actions)
+            'measurement_units_list' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\GetMeasurementUnitsAction::class,
+            'measurement_unit_details' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\GetMeasurementUnitDetailsAction::class,
+
+            // Единицы измерения (Write Actions)
+            'create_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\CreateMeasurementUnitAction::class,
+            'update_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\UpdateMeasurementUnitAction::class,
+            'delete_measurement_unit' => \App\BusinessModules\Features\AIAssistant\Actions\MeasurementUnits\DeleteMeasurementUnitAction::class,
+
             // Системная информация
             'user_info' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetUserInfoAction::class,
             'team_info' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetTeamInfoAction::class,
             'organization_info' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetOrganizationInfoAction::class,
             'help' => \App\BusinessModules\Features\AIAssistant\Actions\System\GetHelpAction::class,
             'greeting' => \App\BusinessModules\Features\AIAssistant\Actions\Projects\GetProjectStatusAction::class, // Используем статус проектов
-            
+
             // Отчеты
             'generate_report' => \App\BusinessModules\Features\AIAssistant\Actions\Reports\GenerateCustomReportAction::class,
         ];
 
         return $actionMap[$intent] ?? null;
+    }
+
+    /**
+     * Определяет, является ли Action Write Action
+     */
+    protected function isWriteAction(string $actionClass): bool
+    {
+        return is_subclass_of($actionClass, WriteAction::class);
     }
 
     protected function extractParams(string $intent, string $query, array $conversationContext = []): array
@@ -245,6 +284,25 @@ class ContextBuilder
                "Вопрос: 'Сделай отчет за октябрь'\n" .
                "Ответ: 'Готово! За октябрь расходов не было. [Скачать PDF отчет](https://...)'\n" .
                "🔴 ВАЖНО: Ссылки показывай в markdown формате: [текст](url)\n\n" .
+
+               "ДЕЙСТВИЯ В СИСТЕМЕ:\n" .
+               "Ты можешь выполнять действия в системе:\n\n" .
+
+               "СОЗДАНИЕ ЕДИНИЦ ИЗМЕРЕНИЯ:\n" .
+               "'Создай единицу измерения \"кубометры\" с сокращением \"м³\"'\n" .
+               "Ответ: 'Готово! Создана единица измерения \"кубометры\" (м³)'\n\n" .
+
+               "ОБНОВЛЕНИЕ ЕДИНИЦ:\n" .
+               "'Измени единицу №5 на \"тонны\" с сокращением \"т\"'\n" .
+               "Ответ: 'Готово! Единица №5 теперь \"тонны\" (т)'\n\n" .
+
+               "УДАЛЕНИЕ ЕДИНИЦ:\n" .
+               "'Удали единицу №3'\n" .
+               "Ответ: 'Готово! Единица №3 удалена'\n\n" .
+
+               "ПОКАЗ ЕДИНИЦ:\n" .
+               "'Какие есть единицы измерения?'\n" .
+               "Ответ: 'У нас есть: килограммы (кг), метры (м), штуки (шт), кубометры (м³)...'\n\n" .
                
                "❌ ЗАПРЕЩЕНО говорить:\n" .
                "- 'В системе зарегистрировано'\n" .

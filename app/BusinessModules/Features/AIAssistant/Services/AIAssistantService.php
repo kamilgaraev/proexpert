@@ -69,19 +69,31 @@ class AIAssistantService
 
         // Сохраняем текущий intent и данные в контекст диалога
         $currentIntent = $context['intent'] ?? null;
+        $executedAction = null;
+
         if ($currentIntent) {
             $contextToSave = ['last_intent' => $currentIntent];
-            
+
             // Если был возвращен список контрактов - сохраняем его в контекст
             if (isset($context['contract_details']['show_list']) && $context['contract_details']['show_list']) {
                 $contextToSave['last_contracts'] = $context['contract_details']['contracts'] ?? [];
             }
-            
+
             // Если был возвращен список проектов - сохраняем его в контекст
             if (isset($context['project_search']['projects'])) {
                 $contextToSave['last_projects'] = $context['project_search']['projects'] ?? [];
             }
-            
+
+            // Если был выполнен Write Action - сохраняем информацию о действии
+            if ($this->isWriteIntent($currentIntent) && isset($context[$currentIntent])) {
+                $executedAction = [
+                    'type' => $currentIntent,
+                    'result' => $context[$currentIntent],
+                    'timestamp' => now()->toISOString(),
+                ];
+                $contextToSave['last_executed_action'] = $executedAction;
+            }
+
             $conversation->context = array_merge($conversation->context ?? [], $contextToSave);
             $conversation->save();
         }
@@ -116,7 +128,7 @@ class AIAssistantService
                 'cost_rub' => $cost,
             ]);
 
-            return [
+            $result = [
                 'conversation_id' => $conversation->id,
                 'message' => [
                     'id' => $assistantMessage->id,
@@ -127,6 +139,13 @@ class AIAssistantService
                 'tokens_used' => $response['tokens_used'],
                 'usage' => $this->usageTracker->getUsageStats($organizationId),
             ];
+
+            // Добавляем информацию о выполненном действии
+            if ($executedAction) {
+                $result['executed_action'] = $executedAction;
+            }
+
+            return $result;
 
         } catch (\Exception $e) {
             $this->logging->technical('ai.assistant.error', [
@@ -503,7 +522,72 @@ class AIAssistantService
                 $output .= "⚠️ Используй markdown формат [текст](url) для кликабельной ссылки!\n\n";
             }
         }
-        
+
+        // Результаты Write Actions
+        if ($key === 'create_measurement_unit' && isset($value['name'])) {
+            $output .= "✅ СОЗДАНА ЕДИНИЦА ИЗМЕРЕНИЯ:\n\n";
+            $output .= "ID: {$value['id']}\n";
+            $output .= "Название: {$value['name']}\n";
+            $output .= "Сокращение: {$value['short_name']}\n";
+            if (isset($value['type'])) {
+                $output .= "Тип: {$value['type']}\n";
+            }
+            if (isset($value['is_default']) && $value['is_default']) {
+                $output .= "По умолчанию: Да\n";
+            }
+            $output .= "\n✅ Готово! Единица измерения \"{$value['name']}\" создана.\n\n";
+        }
+
+        if ($key === 'update_measurement_unit' && isset($value['name'])) {
+            $output .= "✅ ОБНОВЛЕНА ЕДИНИЦА ИЗМЕРЕНИЯ:\n\n";
+            $output .= "ID: {$value['id']}\n";
+            $output .= "Название: {$value['name']}\n";
+            $output .= "Сокращение: {$value['short_name']}\n";
+            if (isset($value['type'])) {
+                $output .= "Тип: {$value['type']}\n";
+            }
+            $output .= "\n✅ Готово! Единица измерения обновлена.\n\n";
+        }
+
+        if ($key === 'delete_measurement_unit' && isset($value['name'])) {
+            $output .= "✅ УДАЛЕНА ЕДИНИЦА ИЗМЕРЕНИЯ:\n\n";
+            $output .= "ID: {$value['id']}\n";
+            $output .= "Название: {$value['name']}\n";
+            $output .= "Сокращение: {$value['short_name']}\n";
+            $output .= "\n✅ Готово! Единица измерения удалена.\n\n";
+        }
+
+        // Список единиц измерения
+        if ($key === 'measurement_units_list' && isset($value['units'])) {
+            $output .= "📋 ЕДИНИЦЫ ИЗМЕРЕНИЯ:\n\n";
+            foreach ($value['units'] as $unit) {
+                $default = $unit['is_default'] ? ' (по умолчанию)' : '';
+                $system = $unit['is_system'] ? ' (системная)' : '';
+                $output .= "• {$unit['name']} ({$unit['short_name']}){$default}{$system}\n";
+            }
+            $output .= "\nВсего: {$value['total']} единиц\n\n";
+        }
+
+        // Детали единицы измерения
+        if ($key === 'measurement_unit_details' && isset($value['name'])) {
+            $output .= "📄 ДЕТАЛИ ЕДИНИЦЫ ИЗМЕРЕНИЯ:\n\n";
+            $output .= "ID: {$value['id']}\n";
+            $output .= "Название: {$value['name']}\n";
+            $output .= "Сокращение: {$value['short_name']}\n";
+            $output .= "Тип: {$value['type']}\n";
+            if ($value['description']) {
+                $output .= "Описание: {$value['description']}\n";
+            }
+            $output .= "По умолчанию: " . ($value['is_default'] ? 'Да' : 'Нет') . "\n";
+            $output .= "Системная: " . ($value['is_system'] ? 'Да' : 'Нет') . "\n";
+            $output .= "Материалов: {$value['materials_count']}\n";
+            $output .= "Видов работ: {$value['work_types_count']}\n";
+            if ($value['created_at']) {
+                $output .= "Создана: {$value['created_at']}\n";
+            }
+            $output .= "\n";
+        }
+
         // Если ничего не распознали - просто JSON
         if (empty($output)) {
             $output .= strtoupper($key) . ":\n";
@@ -511,6 +595,19 @@ class AIAssistantService
         }
         
         return $output;
+    }
+
+    /**
+     * Определяет, является ли intent Write Intent
+     */
+    protected function isWriteIntent(string $intent): bool
+    {
+        return in_array($intent, [
+            'create_measurement_unit',
+            'update_measurement_unit',
+            'delete_measurement_unit',
+            // Здесь можно добавить другие write intents в будущем
+        ]);
     }
 }
 
