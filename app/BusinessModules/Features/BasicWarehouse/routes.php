@@ -1,6 +1,7 @@
 <?php
 
 use App\BusinessModules\Features\BasicWarehouse\Controllers\InventoryController;
+use App\BusinessModules\Features\BasicWarehouse\Controllers\ProjectAllocationController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseController;
 use App\BusinessModules\Features\BasicWarehouse\Controllers\WarehouseOperationsController;
 use Illuminate\Support\Facades\Route;
@@ -50,6 +51,16 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
                 Route::post('/{id}/complete', [InventoryController::class, 'complete']);
                 Route::post('/{id}/approve', [InventoryController::class, 'approve']);
             });
+        });
+        
+        // Распределение материалов по проектам
+        Route::prefix('project-allocations')->name('project-allocations.')->group(function () {
+            Route::post('/', [ProjectAllocationController::class, 'allocate'])
+                ->name('allocate');
+            Route::delete('/{id}', [ProjectAllocationController::class, 'deallocate'])
+                ->name('deallocate');
+            Route::get('/project/{projectId}', [ProjectAllocationController::class, 'getProjectAllocations'])
+                ->name('project');
         });
     });
 

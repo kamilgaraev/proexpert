@@ -162,6 +162,7 @@ class WarehouseController extends Controller
             'warehouse_id' => $id,
             'asset_type' => $request->input('asset_type'),
             'low_stock' => $request->boolean('low_stock'),
+            'project_id' => $request->input('project_id'), // Фильтр по проекту
         ];
         
         $balances = $this->warehouseService->getStockData($organizationId, $filters);

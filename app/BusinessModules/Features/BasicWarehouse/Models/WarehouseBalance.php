@@ -81,6 +81,15 @@ class WarehouseBalance extends Model
     }
 
     /**
+     * Получить распределения по проектам
+     */
+    public function projectAllocations(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(WarehouseProjectAllocation::class, 'warehouse_id', 'warehouse_id')
+            ->where('material_id', $this->material_id);
+    }
+
+    /**
      * Scope для низких остатков
      */
     public function scopeLowStock($query)

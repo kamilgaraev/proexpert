@@ -407,10 +407,17 @@ class WarehouseService implements WarehouseReportDataProvider
             $query->lowStock();
         }
 
+        // Фильтр по проекту
+        if (isset($filters['project_id'])) {
+            $query->whereHas('projectAllocations', function ($q) use ($filters) {
+                $q->where('project_id', $filters['project_id']);
+            });
+        }
+
         $balances = $query->get();
 
-        return $balances->map(function ($balance) {
-            return [
+        return $balances->map(function ($balance) use ($filters) {
+            $result = [
                 'warehouse_id' => $balance->warehouse_id,
                 'warehouse_name' => $balance->warehouse->name,
                 'material_id' => $balance->material_id,
@@ -430,6 +437,31 @@ class WarehouseService implements WarehouseReportDataProvider
                 'location_code' => $balance->location_code,
                 'last_movement_at' => $balance->last_movement_at?->toDateTimeString(),
             ];
+
+            // Добавляем информацию о распределении по проектам
+            $allocations = \App\BusinessModules\Features\BasicWarehouse\Models\WarehouseProjectAllocation::where('warehouse_id', $balance->warehouse_id)
+                ->where('material_id', $balance->material_id)
+                ->with('project:id,name')
+                ->get();
+
+            if ($allocations->isNotEmpty()) {
+                $result['project_allocations'] = $allocations->map(function ($allocation) {
+                    return [
+                        'project_id' => $allocation->project_id,
+                        'project_name' => $allocation->project->name,
+                        'allocated_quantity' => (float)$allocation->allocated_quantity,
+                    ];
+                })->toArray();
+
+                $result['allocated_total'] = $allocations->sum('allocated_quantity');
+                $result['unallocated_quantity'] = (float)$balance->available_quantity - $result['allocated_total'];
+            } else {
+                $result['project_allocations'] = [];
+                $result['allocated_total'] = 0;
+                $result['unallocated_quantity'] = (float)$balance->available_quantity;
+            }
+
+            return $result;
         })->toArray();
     }
 

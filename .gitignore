@@ -34,4 +34,8 @@ scripts/nginx-config-lk.conf
 /public/docs/mobile_api.html
 /public/docs/mobile_api.json
 app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
-YANDEX_S3_SETUP.md
+
+# Markdown documentation files
+*.md
+!README.md
+!CHANGELOG.md

@@ -15,9 +15,10 @@ use App\Models\CompletedWork;
 use App\Models\MaterialReceipt;
 use App\Models\Project;
 use App\Models\Organization;
-use App\Observers\MaterialUsageLogObserver;
+// ОТКЛЮЧЕНЫ: переключились на warehouse_balances
+// use App\Observers\MaterialUsageLogObserver;
 use App\Observers\CompletedWorkObserver;
-use App\Observers\MaterialReceiptObserver;
+// use App\Observers\MaterialReceiptObserver;
 use App\Observers\ProjectObserver;
 use App\Observers\OrganizationObserver;
 use App\Modules\Core\ModuleScanner;
@@ -116,9 +117,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        MaterialUsageLog::observe(MaterialUsageLogObserver::class);
+        // ОТКЛЮЧЕНЫ: переключились на warehouse_balances вместо material_balances
+        // MaterialUsageLog::observe(MaterialUsageLogObserver::class);
         CompletedWork::observe(CompletedWorkObserver::class);
-        MaterialReceipt::observe(MaterialReceiptObserver::class);
+        // MaterialReceipt::observe(MaterialReceiptObserver::class);
         Project::observe(ProjectObserver::class);
         Organization::observe(OrganizationObserver::class);
         \App\Models\OrganizationModuleActivation::observe(\App\Observers\OrganizationModuleActivationObserver::class);

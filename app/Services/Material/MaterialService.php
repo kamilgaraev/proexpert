@@ -216,21 +216,31 @@ class MaterialService
      */
     public function getMaterialBalancesForProject(int $organizationId, int $projectId): \Illuminate\Support\Collection
     {
-        // Сначала пытаемся получить из MaterialBalance (быстро)
-        $balances = MaterialBalance::where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->with(['material.measurementUnit'])
+        // Переключено на warehouse_balances - показываем агрегированные данные со всех складов организации
+        $balances = DB::table('warehouse_balances')
+            ->join('organization_warehouses', 'warehouse_balances.warehouse_id', '=', 'organization_warehouses.id')
+            ->join('materials', 'warehouse_balances.material_id', '=', 'materials.id')
+            ->leftJoin('measurement_units', 'materials.measurement_unit_id', '=', 'measurement_units.id')
+            ->where('warehouse_balances.organization_id', $organizationId)
+            ->where('organization_warehouses.is_active', true)
+            ->select(
+                'materials.id as material_id',
+                'materials.name as material_name',
+                'materials.measurement_unit_id',
+                'measurement_units.short_name as measurement_unit_symbol',
+                DB::raw('SUM(warehouse_balances.available_quantity) as current_balance')
+            )
+            ->groupBy('materials.id', 'materials.name', 'materials.measurement_unit_id', 'measurement_units.short_name')
             ->get();
 
-        // Если есть записи в MaterialBalance, используем их
         if ($balances->isNotEmpty()) {
             return $balances->map(function ($balance) {
                 return [
                     'material_id' => $balance->material_id,
-                    'material_name' => $balance->material?->name,
-                    'measurement_unit_id' => $balance->material?->measurementUnit?->id,
-                    'measurement_unit_symbol' => $balance->material?->measurementUnit?->short_name,
-                    'current_balance' => (float) $balance->available_quantity,
+                    'material_name' => $balance->material_name,
+                    'measurement_unit_id' => $balance->measurement_unit_id,
+                    'measurement_unit_symbol' => $balance->measurement_unit_symbol,
+                    'current_balance' => (float) $balance->current_balance,
                 ];
             });
         }
@@ -277,33 +287,31 @@ class MaterialService
                 throw new BusinessLogicException('Материал не найден.', 404);
             }
 
-            $query = DB::table('material_balances as mb')
-                ->join('projects as p', 'mb.project_id', '=', 'p.id')
-                ->leftJoin('materials as m', 'mb.material_id', '=', 'm.id')
+            // Переключено на warehouse_balances
+            $query = DB::table('warehouse_balances as wb')
+                ->join('organization_warehouses as w', 'wb.warehouse_id', '=', 'w.id')
+                ->leftJoin('materials as m', 'wb.material_id', '=', 'm.id')
                 ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
-                ->where('mb.material_id', $materialId)
+                ->where('wb.material_id', $materialId)
+                ->where('w.is_active', true)
                 ->select([
-                    'mb.id',
-                    'mb.project_id',
-                    'p.name as project_name',
-                    'p.status as project_status',
-                    'mb.available_quantity',
-                    'mb.reserved_quantity',
-                    'mb.average_price',
-                    'mb.last_update_date',
-                    'mb.additional_info',
+                    'wb.id',
+                    'wb.warehouse_id',
+                    'w.name as warehouse_name',
+                    'w.warehouse_type',
+                    'wb.available_quantity',
+                    'wb.reserved_quantity',
+                    'wb.average_price',
+                    'wb.last_movement_at as last_update_date',
                     'mu.short_name as unit',
-                    DB::raw('(mb.available_quantity - mb.reserved_quantity) as free_quantity'),
-                    'mb.updated_at'
+                    DB::raw('wb.available_quantity as free_quantity')
                 ]);
 
-            if ($projectId) {
-                $query->where('mb.project_id', $projectId);
-            }
+            // Удалена фильтрация по project_id, так как теперь используем склады
 
-            $allowedSortBy = ['project_name', 'available_quantity', 'reserved_quantity', 'free_quantity', 'average_price', 'last_update_date', 'updated_at'];
+            $allowedSortBy = ['warehouse_name', 'available_quantity', 'reserved_quantity', 'free_quantity', 'average_price', 'last_update_date'];
             if (!in_array($sortBy, $allowedSortBy)) {
-                $sortBy = 'updated_at';
+                $sortBy = 'last_update_date';
             }
 
             if (!in_array(strtolower($sortDirection), ['asc', 'desc'])) {
@@ -316,7 +324,6 @@ class MaterialService
 
             return [
                 'data' => collect($paginatedResults->items())->map(function ($item) {
-                    $item->additional_info = $item->additional_info ? json_decode($item->additional_info, true) : null;
                     return $item;
                 })->toArray(),
                 'links' => [

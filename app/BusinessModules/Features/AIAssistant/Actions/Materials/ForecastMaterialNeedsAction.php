@@ -41,14 +41,16 @@ class ForecastMaterialNeedsAction
             ->orderByDesc('total_used')
             ->get();
 
-        $currentStock = DB::table('material_balances')
-            ->join('projects', 'material_balances.project_id', '=', 'projects.id')
-            ->where('projects.organization_id', $organizationId)
+        // Переключено на warehouse_balances - суммируем по всем складам организации
+        $currentStock = DB::table('warehouse_balances')
+            ->join('organization_warehouses', 'warehouse_balances.warehouse_id', '=', 'organization_warehouses.id')
+            ->where('warehouse_balances.organization_id', $organizationId)
+            ->where('organization_warehouses.is_active', true)
             ->select(
-                'material_balances.material_id',
-                DB::raw('SUM(material_balances.available_quantity) as available')
+                'warehouse_balances.material_id',
+                DB::raw('SUM(warehouse_balances.available_quantity) as available')
             )
-            ->groupBy('material_balances.material_id')
+            ->groupBy('warehouse_balances.material_id')
             ->pluck('available', 'material_id');
 
         $forecast = [];

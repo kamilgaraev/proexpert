@@ -18,14 +18,17 @@ class MaterialsLowStockWidgetProvider extends AbstractWidgetProvider
     {
         $threshold = $request->getParam('threshold', 10);
 
-        $lowStock = DB::table('material_balances')
-            ->join('projects', 'material_balances.project_id', '=', 'projects.id')
-            ->join('materials', 'material_balances.material_id', '=', 'materials.id')
-            ->where('projects.organization_id', $request->organizationId)
+        // Переключено на warehouse_balances вместо material_balances
+        $lowStock = DB::table('warehouse_balances')
+            ->join('organization_warehouses', 'warehouse_balances.warehouse_id', '=', 'organization_warehouses.id')
+            ->join('materials', 'warehouse_balances.material_id', '=', 'materials.id')
+            ->where('warehouse_balances.organization_id', $request->organizationId)
+            ->where('organization_warehouses.is_active', true)
             ->select(
                 'materials.id',
                 'materials.name',
-                DB::raw('SUM(material_balances.available_quantity) as total_quantity')
+                DB::raw('SUM(warehouse_balances.available_quantity) as total_quantity'),
+                DB::raw('MIN(warehouse_balances.min_stock_level) as min_stock')
             )
             ->groupBy('materials.id', 'materials.name')
             ->having('total_quantity', '<=', $threshold)

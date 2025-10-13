@@ -40,8 +40,11 @@ class GetProjectDetailsAction
             )
             ->first();
 
-        $materialStats = DB::table('material_balances')
-            ->where('project_id', $projectId)
+        // Переключено на warehouse_balances - показываем материалы со всех складов организации
+        $materialStats = DB::table('warehouse_balances')
+            ->join('organization_warehouses', 'warehouse_balances.warehouse_id', '=', 'organization_warehouses.id')
+            ->where('warehouse_balances.organization_id', $organizationId)
+            ->where('organization_warehouses.is_active', true)
             ->select(
                 DB::raw('SUM(available_quantity) as total_materials'),
                 DB::raw('SUM(reserved_quantity) as reserved_materials'),
