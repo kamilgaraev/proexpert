@@ -43,11 +43,12 @@ class OrgBucketService
         $mainBucket = config('filesystems.disks.s3.bucket', 'prohelper-storage');
         
         // Если у организации уже указан бакет, обновляем на основной
+        // Используем updateQuietly чтобы не триггерить Observer повторно
         if ($organization->s3_bucket !== $mainBucket) {
             $organization->forceFill([
                 's3_bucket' => $mainBucket,
                 'bucket_region' => 'ru-central1',
-            ])->save();
+            ])->saveQuietly();
         }
 
         // Папка создается автоматически при первой загрузке файла
@@ -110,7 +111,7 @@ class OrgBucketService
                 'old' => $regionOriginal,
                 'new' => $region,
             ]);
-            $organization->forceFill(['bucket_region' => substr($region, 0, 120)])->save();
+            $organization->forceFill(['bucket_region' => substr($region, 0, 120)])->saveQuietly();
         }
         
         $config = Config::get('filesystems.disks.s3');

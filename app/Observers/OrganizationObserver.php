@@ -11,12 +11,36 @@ class OrganizationObserver
 {
     /**
      * Handle the Organization "created" event.
-     * Автоматически активируем базовый склад для новой организации
+     * Автоматически настраиваем S3 бакет и активируем базовый склад для новой организации
      */
     public function created(Organization $organization): void
     {
+        // Устанавливаем S3 бакет, если не установлен
+        $this->setupS3Bucket($organization);
+        
         // Активируем базовый склад по умолчанию
         $this->activateBasicWarehouse($organization);
+    }
+
+    /**
+     * Настроить S3 бакет для организации
+     */
+    protected function setupS3Bucket(Organization $organization): void
+    {
+        // Если s3_bucket уже установлен при создании, ничего не делаем
+        if ($organization->s3_bucket) {
+            return;
+        }
+
+        // Устанавливаем общий бакет для всех организаций
+        $mainBucket = config('filesystems.disks.s3.bucket', 'prohelper-storage');
+        
+        $organization->forceFill([
+            's3_bucket' => $mainBucket,
+            'bucket_region' => 'ru-central1',
+        ])->saveQuietly();
+
+        Log::info("S3 бакет автоматически установлен для организации {$organization->id}: {$mainBucket}");
     }
 
     /**
