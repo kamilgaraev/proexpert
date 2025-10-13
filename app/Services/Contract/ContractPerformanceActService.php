@@ -55,9 +55,10 @@ class ContractPerformanceActService
 
         $contract = $this->getContractOrFail($contractId, $organizationId);
 
-        // Создаем акт без суммы (сумма рассчитается на основе работ)
+        // Создаем акт со значением суммы по умолчанию (будет пересчитана на основе работ)
         $actData = $actDTO->toArray();
         $actData['contract_id'] = $contract->id;
+        $actData['amount'] = 0; // Временная сумма, будет пересчитана
 
         $act = $this->actRepository->create($actData);
 

@@ -41,7 +41,8 @@ class StoreContractPerformanceActRequest extends FormRequest
             description: $this->validated('description'),
             is_approved: $this->validated('is_approved', true),
             approval_date: $this->validated('approval_date'),
-            completed_works: $this->validated('completed_works', [])
+            completed_works: $this->validated('completed_works', []),
+            amount: 0 // Сумма будет рассчитана автоматически на основе работ
         );
     }
 } 

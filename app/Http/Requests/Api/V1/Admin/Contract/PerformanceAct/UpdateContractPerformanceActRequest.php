@@ -47,7 +47,8 @@ class UpdateContractPerformanceActRequest extends FormRequest
             description: $validatedData['description'] ?? null,
             is_approved: $this->has('is_approved') ? $this->boolean('is_approved') : true, // true по умолчанию, если не передано
             approval_date: $validatedData['approval_date'] ?? null,
-            completed_works: $validatedData['completed_works'] ?? []
+            completed_works: $validatedData['completed_works'] ?? [],
+            amount: 0 // Сумма будет пересчитана автоматически на основе работ
         );
     }
 } 
