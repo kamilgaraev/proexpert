@@ -47,8 +47,7 @@ return new class extends Migration
             // Индексы
             $table->index(['organization_id', 'is_main'], 'idx_org_warehouses_main');
             $table->index(['organization_id', 'is_active'], 'idx_org_warehouses_active');
-            $table->index(['organization_id', 'code'], 'idx_org_warehouses_code');
-            $table->unique(['organization_id', 'code'], 'unique_org_warehouse_code');
+            $table->unique(['organization_id', 'code'], 'unq_org_warehouses_code');
         });
     }
 

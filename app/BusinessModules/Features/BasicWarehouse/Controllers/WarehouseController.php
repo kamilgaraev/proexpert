@@ -38,9 +38,17 @@ class WarehouseController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
+        $organizationId = $request->user()->organization_id;
+        
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'code' => 'required|string|max:50',
+            'code' => [
+                'required',
+                'string',
+                'max:50',
+                \Illuminate\Validation\Rule::unique('organization_warehouses', 'code')
+                    ->where('organization_id', $organizationId)
+            ],
             'warehouse_type' => 'nullable|in:central,project,external',
             'description' => 'nullable|string',
             'address' => 'nullable|string',
@@ -52,8 +60,6 @@ class WarehouseController extends Controller
             'settings' => 'nullable|array',
             'storage_conditions' => 'nullable|array',
         ]);
-
-        $organizationId = $request->user()->organization_id;
         
         $warehouse = \App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse::create([
             'organization_id' => $organizationId,
@@ -97,9 +103,18 @@ class WarehouseController extends Controller
      */
     public function update(Request $request, int $id): JsonResponse
     {
+        $organizationId = $request->user()->organization_id;
+        
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
-            'code' => 'sometimes|string|max:50',
+            'code' => [
+                'sometimes',
+                'string',
+                'max:50',
+                \Illuminate\Validation\Rule::unique('organization_warehouses', 'code')
+                    ->where('organization_id', $organizationId)
+                    ->ignore($id)
+            ],
             'warehouse_type' => 'sometimes|in:central,project,external',
             'description' => 'nullable|string',
             'address' => 'nullable|string',
