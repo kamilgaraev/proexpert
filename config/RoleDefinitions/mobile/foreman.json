@@ -82,6 +82,11 @@
     ],
     "schedule-management": [
       "schedule.view", "schedule.notifications"
+    ],
+    "basic-warehouse": [
+      "warehouse.view",
+      "warehouse.receipts",
+      "warehouse.write_offs"
     ]
   },
   

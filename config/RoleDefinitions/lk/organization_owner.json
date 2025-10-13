@@ -51,7 +51,9 @@
     "dashboard-widgets": ["*"],
     "schedule-management": ["*"],
     "advanced-dashboard": ["*"],
-    "ai-assistant": ["*"]
+    "ai-assistant": ["*"],
+    "basic-warehouse": ["*"],
+    "advanced-warehouse": ["*"]
   },
   
   "interface_access": ["lk", "admin", "mobile"],
@@ -60,6 +62,7 @@
     "can_manage_roles": [
       "organization_admin",
       "accountant", 
+      "supplier",
       "viewer",
       "project_manager",
       "foreman",

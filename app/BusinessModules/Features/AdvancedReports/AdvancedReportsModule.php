@@ -88,7 +88,11 @@ class AdvancedReportsModule implements ModuleInterface, BillableInterface, Confi
             'advanced_reports.custom_reports',
             'advanced_reports.automated_reports',
             'advanced_reports.api_access',
-            'advanced_reports.unlimited_export'
+            'advanced_reports.unlimited_export',
+            'advanced_reports.warehouse_analytics',
+            'advanced_reports.warehouse_forecasts',
+            'advanced_reports.warehouse_turnover',
+            'advanced_reports.warehouse_abc_analysis'
         ];
     }
 
@@ -104,7 +108,11 @@ class AdvancedReportsModule implements ModuleInterface, BillableInterface, Confi
             'API доступ к отчетам',
             'Неограниченный экспорт данных',
             'Интеграция с BI системами',
-            'Дашборды в реальном времени'
+            'Дашборды в реальном времени',
+            'Аналитика оборачиваемости активов',
+            'Прогноз потребности в материалах',
+            'ABC/XYZ анализ запасов',
+            'Складская бизнес-аналитика'
         ];
     }
 

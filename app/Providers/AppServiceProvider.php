@@ -14,10 +14,12 @@ use App\Models\Models\Log\MaterialUsageLog;
 use App\Models\CompletedWork;
 use App\Models\MaterialReceipt;
 use App\Models\Project;
+use App\Models\Organization;
 use App\Observers\MaterialUsageLogObserver;
 use App\Observers\CompletedWorkObserver;
 use App\Observers\MaterialReceiptObserver;
 use App\Observers\ProjectObserver;
+use App\Observers\OrganizationObserver;
 use App\Modules\Core\ModuleScanner;
 use App\Modules\Core\ModuleRegistry;
 use App\Modules\Core\BillingEngine;
@@ -103,6 +105,10 @@ class AppServiceProvider extends ServiceProvider
         $this->app->register(\App\BusinessModules\Enterprise\MultiOrganization\Reporting\ReportingServiceProvider::class);
         $this->app->register(\App\BusinessModules\Enterprise\MultiOrganization\Core\MultiOrganizationEventServiceProvider::class);
         $this->app->register(\App\BusinessModules\Addons\MaterialAnalytics\MaterialAnalyticsServiceProvider::class);
+        
+        // Регистрируем складские модули
+        $this->app->register(\App\BusinessModules\Features\BasicWarehouse\BasicWarehouseServiceProvider::class);
+        $this->app->register(\App\BusinessModules\Features\AdvancedWarehouse\AdvancedWarehouseServiceProvider::class);
     }
 
     /**
@@ -114,5 +120,6 @@ class AppServiceProvider extends ServiceProvider
         CompletedWork::observe(CompletedWorkObserver::class);
         MaterialReceipt::observe(MaterialReceiptObserver::class);
         Project::observe(ProjectObserver::class);
+        Organization::observe(OrganizationObserver::class);
     }
 } 

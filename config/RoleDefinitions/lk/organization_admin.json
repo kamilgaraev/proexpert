@@ -136,6 +136,31 @@
       "advanced-dashboard.export.pdf",
       "advanced-dashboard.export.excel",
       "advanced-dashboard.export.scheduled_reports"
+    ],
+    "basic-warehouse": [
+      "warehouse.view",
+      "warehouse.manage_stock",
+      "warehouse.receipts",
+      "warehouse.write_offs",
+      "warehouse.transfers",
+      "warehouse.inventory",
+      "warehouse.reports"
+    ],
+    "advanced-warehouse": [
+      "advanced_warehouse.view",
+      "advanced_warehouse.multiple_warehouses",
+      "advanced_warehouse.zones",
+      "advanced_warehouse.barcode",
+      "advanced_warehouse.rfid",
+      "advanced_warehouse.qr_codes",
+      "advanced_warehouse.batch_tracking",
+      "advanced_warehouse.serial_tracking",
+      "advanced_warehouse.reservations",
+      "advanced_warehouse.auto_reorder",
+      "advanced_warehouse.analytics",
+      "advanced_warehouse.forecasts",
+      "advanced_warehouse.mobile_scanner",
+      "advanced_warehouse.api_access"
     ]
   },
   
@@ -143,6 +168,7 @@
   
   "hierarchy": {
     "can_manage_roles": [
+      "supplier",
       "viewer",
       "project_manager", 
       "foreman",

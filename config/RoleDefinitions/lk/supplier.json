@@ -1,0 +1,107 @@
+{
+  "name": "Снабженец",
+  "slug": "supplier",
+  "version": "1.0.0",
+  "context": "organization",
+  "interface": "lk",
+  "description": "Управление складом, закупками и снабжением",
+  
+  "system_permissions": [
+    "organization.view",
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "materials": [
+      "materials.view",
+      "materials.edit",
+      "materials.create",
+      "materials.import",
+      "materials.export",
+      "materials.balances.view"
+    ],
+    "suppliers": [
+      "suppliers.view",
+      "suppliers.create",
+      "suppliers.edit"
+    ],
+    "catalog-management": [
+      "materials.view",
+      "materials.create",
+      "materials.edit",
+      "materials.import",
+      "materials.export",
+      "materials.balances.view",
+      "suppliers.view",
+      "suppliers.create",
+      "suppliers.edit",
+      "measurement_units.view"
+    ],
+    "material-analytics": [
+      "materials.analytics.summary",
+      "materials.analytics.usage_by_projects",
+      "materials.analytics.usage_by_suppliers",
+      "materials.analytics.low_stock",
+      "materials.analytics.most_used",
+      "materials.analytics.cost_history",
+      "materials.analytics.movement_report",
+      "materials.analytics.inventory_report"
+    ],
+    "file-management": [
+      "personal_files.view",
+      "personal_files.upload"
+    ],
+    "system-logs": [
+      "system-logs.material_usage.view",
+      "system-logs.filter",
+      "system-logs.search"
+    ],
+    "report-templates": [
+      "report_templates.view"
+    ],
+    "data-filters": [
+      "filters.custom.create",
+      "filters.custom.save",
+      "filters.export"
+    ],
+    "basic-warehouse": [
+      "warehouse.view",
+      "warehouse.manage_stock",
+      "warehouse.receipts",
+      "warehouse.write_offs",
+      "warehouse.transfers",
+      "warehouse.inventory",
+      "warehouse.reports"
+    ],
+    "advanced-warehouse": [
+      "advanced_warehouse.view",
+      "advanced_warehouse.multiple_warehouses",
+      "advanced_warehouse.zones",
+      "advanced_warehouse.barcode",
+      "advanced_warehouse.rfid",
+      "advanced_warehouse.qr_codes",
+      "advanced_warehouse.batch_tracking",
+      "advanced_warehouse.serial_tracking",
+      "advanced_warehouse.reservations",
+      "advanced_warehouse.auto_reorder",
+      "advanced_warehouse.analytics",
+      "advanced_warehouse.forecasts",
+      "advanced_warehouse.mobile_scanner"
+    ]
+  },
+  
+  "interface_access": ["lk"],
+  
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": [
+      "supplier",
+      "organization_admin",
+      "organization_owner",
+      "system_admin",
+      "super_admin"
+    ]
+  }
+}
+

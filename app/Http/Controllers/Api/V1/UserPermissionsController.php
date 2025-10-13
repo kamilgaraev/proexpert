@@ -218,7 +218,13 @@ class UserPermissionsController extends Controller
             // Используем существующий AccessController
             $accessController = app(\App\Modules\Core\AccessController::class);
             $modules = $accessController->getActiveModules($organizationId);
-            return is_array($modules) ? $modules : $modules->toArray();
+            
+            // ВАЖНО: values() сбрасывает ключи массива, чтобы JSON вернулся как массив [], а не объект {}
+            if ($modules instanceof \Illuminate\Support\Collection) {
+                return $modules->values()->toArray();
+            }
+            
+            return is_array($modules) ? array_values($modules) : [];
         } catch (\Exception $e) {
             Log::warning('Failed to get active modules', [
                 'organization_id' => $organizationId,

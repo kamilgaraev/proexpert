@@ -83,7 +83,10 @@ class BasicReportsModule implements ModuleInterface, ConfigurableInterface
             'basic_reports.work_completion', 
             'basic_reports.project_summary',
             'basic_reports.export_excel',
-            'basic_reports.export_pdf'
+            'basic_reports.export_pdf',
+            'basic_reports.warehouse_stock',
+            'basic_reports.warehouse_movements',
+            'basic_reports.warehouse_inventory'
         ];
     }
 
@@ -93,6 +96,9 @@ class BasicReportsModule implements ModuleInterface, ConfigurableInterface
             'Отчет по использованию материалов',
             'Отчет по выполненным работам', 
             'Сводка по статусам проектов',
+            'Отчет по остаткам на складе',
+            'Отчет по движению активов',
+            'Акты инвентаризации',
             'Экспорт в Excel и PDF',
             'Фильтрация по датам',
             'Базовая аналитика'

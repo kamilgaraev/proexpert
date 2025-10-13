@@ -113,6 +113,8 @@
 ### Структура файлов
 ```
 app/BusinessModules/Features/AIAssistant/
+├── Config/
+│   └── ai-capabilities.php           # Полное описание возможностей ИИ
 ├── Services/
 │   ├── ActionResult.php              # Результаты действий
 │   ├── WriteAction.php               # Базовый класс Write Actions

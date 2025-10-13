@@ -582,4 +582,199 @@ class ReportService
             'generated_at' => Carbon::now(),
         ];
     }
+
+    /**
+     * Генерация отчета по остаткам на складе
+     * Использует данные из BasicWarehouse через WarehouseReportDataProvider
+     * 
+     * @param int $organizationId ID организации
+     * @param array $filters Фильтры (warehouse_id, asset_type, category, low_stock)
+     * @return array Данные отчета
+     */
+    public function generateWarehouseStockReport(int $organizationId, array $filters = []): array
+    {
+        // Получаем сервис склада
+        $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
+        
+        // Получаем данные через интерфейс WarehouseReportDataProvider
+        $stockData = $warehouseService->getStockData($organizationId, $filters);
+        
+        // BUSINESS: Генерация отчета по остаткам
+        $this->logging->business('report.warehouse_stock.generated', [
+            'organization_id' => $organizationId,
+            'filters_applied' => count($filters),
+            'data_rows_count' => count($stockData),
+            'user_id' => request()->user()?->id
+        ]);
+        
+        return [
+            'title' => 'Отчет по остаткам на складе',
+            'data' => $stockData,
+            'filters' => $filters,
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
+    /**
+     * Генерация отчета по движению активов
+     * Использует данные из BasicWarehouse через WarehouseReportDataProvider
+     * 
+     * @param int $organizationId ID организации
+     * @param array $filters Фильтры (date_from, date_to, asset_type, warehouse_id, movement_type)
+     * @return array Данные отчета
+     */
+    public function generateWarehouseMovementsReport(int $organizationId, array $filters = []): array
+    {
+        // Получаем сервис склада
+        $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
+        
+        // Получаем данные через интерфейс WarehouseReportDataProvider
+        $movementsData = $warehouseService->getMovementsData($organizationId, $filters);
+        
+        // BUSINESS: Генерация отчета по движению
+        $this->logging->business('report.warehouse_movements.generated', [
+            'organization_id' => $organizationId,
+            'filters_applied' => count($filters),
+            'data_rows_count' => count($movementsData),
+            'user_id' => request()->user()?->id
+        ]);
+        
+        return [
+            'title' => 'Отчет по движению активов',
+            'data' => $movementsData,
+            'filters' => $filters,
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
+    /**
+     * Генерация отчета инвентаризации
+     * Использует данные из BasicWarehouse через WarehouseReportDataProvider
+     * 
+     * @param int $organizationId ID организации
+     * @param array $filters Фильтры (date_from, date_to, warehouse_id, status)
+     * @return array Данные отчета
+     */
+    public function generateWarehouseInventoryReport(int $organizationId, array $filters = []): array
+    {
+        // Получаем сервис склада
+        $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
+        
+        // Получаем данные через интерфейс WarehouseReportDataProvider
+        $inventoryData = $warehouseService->getInventoryData($organizationId, $filters);
+        
+        // BUSINESS: Генерация отчета инвентаризации
+        $this->logging->business('report.warehouse_inventory.generated', [
+            'organization_id' => $organizationId,
+            'filters_applied' => count($filters),
+            'data_rows_count' => count($inventoryData),
+            'user_id' => request()->user()?->id
+        ]);
+        
+        return [
+            'title' => 'Отчет инвентаризации',
+            'data' => $inventoryData,
+            'filters' => $filters,
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
+    /**
+     * Генерация аналитики оборачиваемости активов
+     * Только для AdvancedWarehouse + AdvancedReports
+     * 
+     * @param int $organizationId ID организации
+     * @param array $filters Фильтры (date_from, date_to, asset_ids, warehouse_id)
+     * @return array Данные аналитики
+     */
+    public function generateWarehouseTurnoverAnalytics(int $organizationId, array $filters = []): array
+    {
+        // Получаем сервис продвинутого склада (будет создан в следующих этапах)
+        // Пока используем BasicWarehouse который возвращает заглушку
+        $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
+        
+        // Получаем данные через интерфейс WarehouseReportDataProvider
+        $turnoverData = $warehouseService->getTurnoverAnalytics($organizationId, $filters);
+        
+        // BUSINESS: Генерация аналитики оборачиваемости
+        $this->logging->business('report.warehouse_turnover.generated', [
+            'organization_id' => $organizationId,
+            'filters_applied' => count($filters),
+            'data_rows_count' => count($turnoverData),
+            'user_id' => request()->user()?->id
+        ]);
+        
+        return [
+            'title' => 'Аналитика оборачиваемости активов',
+            'data' => $turnoverData,
+            'filters' => $filters,
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
+    /**
+     * Генерация прогноза потребности в материалах
+     * Только для AdvancedWarehouse + AdvancedReports
+     * 
+     * @param int $organizationId ID организации
+     * @param array $filters Фильтры (horizon_days, asset_ids)
+     * @return array Данные прогноза
+     */
+    public function generateWarehouseForecastReport(int $organizationId, array $filters = []): array
+    {
+        // Получаем сервис продвинутого склада (будет создан в следующих этапах)
+        // Пока используем BasicWarehouse который возвращает заглушку
+        $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
+        
+        // Получаем данные через интерфейс WarehouseReportDataProvider
+        $forecastData = $warehouseService->getForecastData($organizationId, $filters);
+        
+        // BUSINESS: Генерация прогноза
+        $this->logging->business('report.warehouse_forecast.generated', [
+            'organization_id' => $organizationId,
+            'filters_applied' => count($filters),
+            'horizon_days' => $filters['horizon_days'] ?? 90,
+            'user_id' => request()->user()?->id
+        ]);
+        
+        return [
+            'title' => 'Прогноз потребности в материалах',
+            'data' => $forecastData,
+            'filters' => $filters,
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
+    /**
+     * Генерация ABC/XYZ анализа запасов
+     * Только для AdvancedWarehouse + AdvancedReports
+     * 
+     * @param int $organizationId ID организации
+     * @param array $filters Фильтры (date_from, date_to, warehouse_id)
+     * @return array Данные ABC/XYZ анализа
+     */
+    public function generateWarehouseAbcXyzAnalysis(int $organizationId, array $filters = []): array
+    {
+        // Получаем сервис продвинутого склада (будет создан в следующих этапах)
+        // Пока используем BasicWarehouse который возвращает заглушку
+        $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
+        
+        // Получаем данные через интерфейс WarehouseReportDataProvider
+        $abcXyzData = $warehouseService->getAbcXyzAnalysis($organizationId, $filters);
+        
+        // BUSINESS: Генерация ABC/XYZ анализа
+        $this->logging->business('report.warehouse_abc_xyz.generated', [
+            'organization_id' => $organizationId,
+            'filters_applied' => count($filters),
+            'data_rows_count' => count($abcXyzData),
+            'user_id' => request()->user()?->id
+        ]);
+        
+        return [
+            'title' => 'ABC/XYZ анализ запасов',
+            'data' => $abcXyzData,
+            'filters' => $filters,
+            'generated_at' => Carbon::now(),
+        ];
+    }
 } 
