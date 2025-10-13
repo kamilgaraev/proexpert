@@ -3,6 +3,10 @@
   "slug": "advanced-warehouse",
   "version": "1.0.0",
   "description": "Продвинутое складское управление с штрихкодами, RFID, аналитикой и автоматизацией",
+  
+  "class_name": "App\\BusinessModules\\Features\\AdvancedWarehouse\\AdvancedWarehouseModule",
+  "service_provider": "App\\BusinessModules\\Features\\AdvancedWarehouse\\AdvancedWarehouseServiceProvider",
+  
   "type": "feature",
   "category": "warehouse",
   "icon": "warehouse-advanced",

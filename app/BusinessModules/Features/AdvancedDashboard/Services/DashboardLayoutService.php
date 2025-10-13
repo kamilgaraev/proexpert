@@ -244,7 +244,7 @@ class DashboardLayoutService
     {
         $cacheKey = "user_dashboards_{$userId}_{$organizationId}_{$includeShared}";
         
-        return Cache::remember($cacheKey, 600, function () use ($userId, $organizationId, $includeShared) {
+        return Cache::remember($cacheKey, 60, function () use ($userId, $organizationId, $includeShared) {
             if ($includeShared) {
                 return Dashboard::visible($userId, $organizationId)
                     ->orderBy('is_default', 'desc')

@@ -3,6 +3,10 @@
   "slug": "basic-warehouse",
   "version": "1.0.0",
   "description": "Базовое складское управление с учетом всех типов активов",
+  
+  "class_name": "App\\BusinessModules\\Features\\BasicWarehouse\\BasicWarehouseModule",
+  "service_provider": "App\\BusinessModules\\Features\\BasicWarehouse\\BasicWarehouseServiceProvider",
+  
   "type": "feature",
   "category": "warehouse",
   "icon": "warehouse",
