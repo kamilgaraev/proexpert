@@ -30,6 +30,9 @@ class AdvancedDashboardServiceProvider extends ServiceProvider
         
         // Регистрируем события и слушателей
         $this->registerEvents();
+        
+        // Регистрируем observers
+        $this->registerObservers();
     }
 
     protected function registerServices(): void
@@ -182,6 +185,14 @@ class AdvancedDashboardServiceProvider extends ServiceProvider
         Event::listen(
             \App\BusinessModules\Features\AdvancedDashboard\Events\CompletedWorkDataChanged::class,
             \App\BusinessModules\Features\AdvancedDashboard\Listeners\InvalidateKPICache::class
+        );
+    }
+
+    protected function registerObservers(): void
+    {
+        // Регистрируем observer для автоматической инвалидации кеша
+        \App\BusinessModules\Features\AdvancedDashboard\Models\Dashboard::observe(
+            \App\BusinessModules\Features\AdvancedDashboard\Observers\DashboardObserver::class
         );
     }
 }

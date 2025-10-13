@@ -163,6 +163,14 @@ class DashboardLayoutService
             'visibility' => $visibility,
         ]);
         
+        // Очищаем кеш владельца
+        $this->clearUserDashboardCache($dashboard->user_id, $dashboard->organization_id);
+        
+        // Очищаем кеш для всех пользователей, с которыми расшарили
+        foreach ($userIds as $userId) {
+            $this->clearUserDashboardCache($userId, $dashboard->organization_id);
+        }
+        
         return $dashboard->fresh();
     }
 
@@ -176,11 +184,22 @@ class DashboardLayoutService
     {
         $dashboard = Dashboard::findOrFail($dashboardId);
         
+        // Сохраняем список пользователей до очистки
+        $sharedWithUsers = $dashboard->shared_with ?? [];
+        
         $dashboard->update([
             'is_shared' => false,
             'shared_with' => [],
             'visibility' => 'private',
         ]);
+        
+        // Очищаем кеш владельца
+        $this->clearUserDashboardCache($dashboard->user_id, $dashboard->organization_id);
+        
+        // Очищаем кеш для всех пользователей, у которых был доступ
+        foreach ($sharedWithUsers as $userId) {
+            $this->clearUserDashboardCache($userId, $dashboard->organization_id);
+        }
         
         return $dashboard->fresh();
     }
@@ -243,20 +262,16 @@ class DashboardLayoutService
     public function getUserDashboards(int $userId, int $organizationId, bool $includeShared = true)
     {
         $cacheKey = "user_dashboards_{$userId}_{$organizationId}_{$includeShared}";
+        $tags = $this->getDashboardCacheTags($userId, $organizationId);
+        
+        if ($this->supportsTaggedCache()) {
+            return Cache::tags($tags)->remember($cacheKey, 60, function () use ($userId, $organizationId, $includeShared) {
+                return $this->fetchUserDashboards($userId, $organizationId, $includeShared);
+            });
+        }
         
         return Cache::remember($cacheKey, 60, function () use ($userId, $organizationId, $includeShared) {
-            if ($includeShared) {
-                return Dashboard::visible($userId, $organizationId)
-                    ->orderBy('is_default', 'desc')
-                    ->orderBy('created_at', 'desc')
-                    ->get();
-            }
-            
-            return Dashboard::forUser($userId)
-                ->forOrganization($organizationId)
-                ->orderBy('is_default', 'desc')
-                ->orderBy('created_at', 'desc')
-                ->get();
+            return $this->fetchUserDashboards($userId, $organizationId, $includeShared);
         });
     }
 
@@ -270,8 +285,18 @@ class DashboardLayoutService
     public function getDefaultDashboard(int $userId, int $organizationId): ?Dashboard
     {
         $cacheKey = "default_dashboard_{$userId}_{$organizationId}";
+        $tags = $this->getDashboardCacheTags($userId, $organizationId);
         
-        return Cache::remember($cacheKey, 600, function () use ($userId, $organizationId) {
+        if ($this->supportsTaggedCache()) {
+            return Cache::tags($tags)->remember($cacheKey, 60, function () use ($userId, $organizationId) {
+                return Dashboard::forUser($userId)
+                    ->forOrganization($organizationId)
+                    ->default()
+                    ->first();
+            });
+        }
+        
+        return Cache::remember($cacheKey, 60, function () use ($userId, $organizationId) {
             return Dashboard::forUser($userId)
                 ->forOrganization($organizationId)
                 ->default()
@@ -388,13 +413,68 @@ class DashboardLayoutService
     }
 
     /**
+     * Очистить кеш дашбордов (публичный метод для контроллеров)
+     */
+    public function clearDashboardCache(int $userId, int $organizationId): void
+    {
+        $this->clearUserDashboardCache($userId, $organizationId);
+    }
+
+    /**
      * Очистить кеш дашбордов пользователя
      */
     protected function clearUserDashboardCache(int $userId, int $organizationId): void
     {
-        Cache::forget("user_dashboards_{$userId}_{$organizationId}_true");
-        Cache::forget("user_dashboards_{$userId}_{$organizationId}_false");
-        Cache::forget("default_dashboard_{$userId}_{$organizationId}");
+        if ($this->supportsTaggedCache()) {
+            // Используем tagged cache для полной инвалидации
+            $tags = $this->getDashboardCacheTags($userId, $organizationId);
+            Cache::tags($tags)->flush();
+        } else {
+            // Fallback для драйверов без поддержки тегов
+            Cache::forget("user_dashboards_{$userId}_{$organizationId}_true");
+            Cache::forget("user_dashboards_{$userId}_{$organizationId}_false");
+            Cache::forget("default_dashboard_{$userId}_{$organizationId}");
+        }
+    }
+
+    /**
+     * Проверить поддержку tagged cache
+     */
+    protected function supportsTaggedCache(): bool
+    {
+        $driver = config('cache.default');
+        return in_array($driver, ['redis', 'memcached']);
+    }
+
+    /**
+     * Получить теги для кеширования дашбордов
+     */
+    protected function getDashboardCacheTags(int $userId, int $organizationId): array
+    {
+        return [
+            "dashboards",
+            "user:{$userId}",
+            "org:{$organizationId}",
+        ];
+    }
+
+    /**
+     * Получить дашборды пользователя из БД
+     */
+    protected function fetchUserDashboards(int $userId, int $organizationId, bool $includeShared): \Illuminate\Database\Eloquent\Collection
+    {
+        if ($includeShared) {
+            return Dashboard::visible($userId, $organizationId)
+                ->orderBy('is_default', 'desc')
+                ->orderBy('created_at', 'desc')
+                ->get();
+        }
+        
+        return Dashboard::forUser($userId)
+            ->forOrganization($organizationId)
+            ->orderBy('is_default', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->get();
     }
 
     /**

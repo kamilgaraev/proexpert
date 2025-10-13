@@ -247,6 +247,9 @@ class DashboardManagementController extends Controller
         
         $dashboard->update($validated);
         
+        // Инвалидация кеша после обновления
+        $this->layoutService->clearDashboardCache($dashboard->user_id, $dashboard->organization_id);
+        
         LogService::info('Dashboard updated', [
             'dashboard_id' => $dashboard->id,
         ]);
