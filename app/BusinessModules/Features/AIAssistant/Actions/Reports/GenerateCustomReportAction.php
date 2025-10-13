@@ -669,7 +669,7 @@ class GenerateCustomReportAction
             $s3Client = new S3Client([
                 'version' => 'latest',
                 'region' => $config['region'] ?? 'ru-central1',
-                'endpoint' => "https://{$bucket}.storage.yandexcloud.net",
+                'endpoint' => 'https://storage.yandexcloud.net',
                 'use_path_style_endpoint' => false,
                 'credentials' => [
                     'key' => $config['key'],
