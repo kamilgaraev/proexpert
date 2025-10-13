@@ -18,7 +18,7 @@ class OfficialMaterialUsageReportRequest extends FormRequest
             abort(401, 'Unauthorized');
         }
 
-        $organizationId = $this->attributes->get('current_organization_id');
+        $organizationId = $this->attributes->get('current_organization_id') ?? $this->user()->current_organization_id;
         if (!$organizationId) {
             abort(403, 'Контекст организации не определен');
         }
@@ -28,7 +28,7 @@ class OfficialMaterialUsageReportRequest extends FormRequest
 
     public function rules(): array
     {
-        $organizationId = $this->attributes->get('current_organization_id');
+        $organizationId = $this->attributes->get('current_organization_id') ?? $this->user()->current_organization_id;
 
         return [
             'project_id' => [
