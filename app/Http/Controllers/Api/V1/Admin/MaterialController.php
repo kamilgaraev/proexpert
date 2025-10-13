@@ -135,6 +135,65 @@ class MaterialController extends Controller
         }
     }
 
+    /**
+     * Автокомплит для материалов (для "умного прихода")
+     */
+    public function autocomplete(Request $request): JsonResponse
+    {
+        try {
+            $search = $request->query('q', '');
+            $limit = min((int)$request->query('limit', 20), 50);
+            $organizationId = $this->getOrganizationId($request);
+            
+            if (!$organizationId) {
+                return response()->json(['success' => false, 'message' => 'Organization ID не найден'], 400);
+            }
+            
+            $materials = Material::where('organization_id', $organizationId)
+                ->where('is_active', true)
+                ->where(function($query) use ($search) {
+                    $query->where('name', 'ilike', "%{$search}%")
+                          ->orWhere('code', 'ilike', "%{$search}%");
+                })
+                ->with('measurementUnit:id,name,short_name')
+                ->select([
+                    'id',
+                    'name',
+                    'code',
+                    'category',
+                    'measurement_unit_id',
+                    'default_price',
+                    'additional_properties',
+                ])
+                ->limit($limit)
+                ->orderBy('name')
+                ->get();
+            
+            return response()->json([
+                'success' => true,
+                'data' => $materials->map(function($material) {
+                    return [
+                        'id' => $material->id,
+                        'name' => $material->name,
+                        'code' => $material->code,
+                        'category' => $material->category,
+                        'asset_type' => $material->additional_properties['asset_type'] ?? 'material',
+                        'measurement_unit_id' => $material->measurement_unit_id,
+                        'measurement_unit' => $material->measurementUnit ? [
+                            'id' => $material->measurementUnit->id,
+                            'name' => $material->measurementUnit->name,
+                            'short_name' => $material->measurementUnit->short_name,
+                        ] : null,
+                        'default_price' => (float)$material->default_price,
+                    ];
+                }),
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error in MaterialController@autocomplete', ['message' => $e->getMessage()]);
+            return response()->json(['success' => false, 'message' => 'Ошибка при поиске материалов'], 500);
+        }
+    }
+
     public function getMaterialBalances(int $id, Request $request): JsonResponse
     {
         try {

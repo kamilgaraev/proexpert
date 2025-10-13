@@ -48,6 +48,9 @@ Route::get('/materials/import-template', [MaterialController::class, 'downloadIm
 // Поиск материалов (alias для index с параметрами q, limit)
 Route::get('/materials/search', [MaterialController::class, 'index'])->name('materials.search');
 
+// Автокомплит для материалов (для умного прихода)
+Route::get('/materials/autocomplete', [MaterialController::class, 'autocomplete'])->name('materials.autocomplete');
+
 Route::apiResource('materials', MaterialController::class);
 
 Route::apiResource('suppliers', SupplierController::class);

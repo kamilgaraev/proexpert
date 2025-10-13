@@ -449,7 +449,7 @@ class ProjectService
         }
     }
 
-    public function getProjectMaterials(int $id, int $perPage = 15, ?string $search = null, string $sortBy = 'created_at', string $sortDirection = 'desc'): array
+    public function getProjectMaterials(int $id, int $perPage = 15, ?string $search = null, string $sortBy = 'allocated_quantity', string $sortDirection = 'desc'): array
     {
         $project = $this->projectRepository->find($id);
         if (!$project) {
@@ -457,33 +457,53 @@ class ProjectService
         }
 
         try {
-            $query = DB::table('material_usage_logs as mul')
-                ->join('materials as m', 'mul.material_id', '=', 'm.id')
+            // СКЛАДСКАЯ СИСТЕМА: показываем материалы, распределенные на проект + доступный остаток на складах
+            $query = DB::table('warehouse_project_allocations as wpa')
+                ->join('materials as m', 'wpa.material_id', '=', 'm.id')
+                ->join('organization_warehouses as w', 'wpa.warehouse_id', '=', 'w.id')
                 ->leftJoin('measurement_units as mu', 'm.measurement_unit_id', '=', 'mu.id')
-                ->leftJoin('suppliers as s', 'mul.supplier_id', '=', 's.id')
-                ->where('mul.project_id', $id)
+                ->leftJoin('users as u', 'wpa.allocated_by_user_id', '=', 'u.id')
+                // Подтягиваем общий остаток материала на всех складах организации
+                ->leftJoin(DB::raw('(
+                    SELECT 
+                        wb.material_id,
+                        wb.organization_id,
+                        SUM(wb.available_quantity) as total_warehouse_available,
+                        AVG(wb.average_price) as avg_price
+                    FROM warehouse_balances wb
+                    JOIN organization_warehouses ow ON wb.warehouse_id = ow.id
+                    WHERE ow.is_active = true
+                    GROUP BY wb.material_id, wb.organization_id
+                ) as warehouse_totals'), function($join) {
+                    $join->on('wpa.material_id', '=', 'warehouse_totals.material_id')
+                         ->on('wpa.organization_id', '=', 'warehouse_totals.organization_id');
+                })
+                ->where('wpa.project_id', $id)
                 ->select([
+                    'wpa.id as allocation_id',
                     'm.id as material_id',
                     'm.name as material_name',
                     'm.code as material_code',
                     'mu.short_name as unit',
-                    's.name as supplier_name',
-                    DB::raw("SUM(CASE WHEN mul.operation_type = 'receipt' THEN mul.quantity ELSE 0 END) as total_received"),
-                    DB::raw("SUM(CASE WHEN mul.operation_type = 'write_off' THEN mul.quantity ELSE 0 END) as total_used"),
-                    DB::raw("SUM(CASE WHEN mul.operation_type = 'receipt' THEN mul.quantity ELSE 0 END) - SUM(CASE WHEN mul.operation_type = 'write_off' THEN mul.quantity ELSE 0 END) as current_balance"),
-                    DB::raw('AVG(mul.unit_price) as average_price'),
-                    DB::raw('MAX(mul.usage_date) as last_operation_date')
-                ])
-                ->groupBy(['m.id', 'm.name', 'm.code', 'mu.short_name', 's.name']);
+                    'w.name as warehouse_name',
+                    'w.id as warehouse_id',
+                    'wpa.allocated_quantity as allocated_quantity',
+                    DB::raw('COALESCE(warehouse_totals.total_warehouse_available, 0) as warehouse_available_total'),
+                    DB::raw('COALESCE(warehouse_totals.avg_price, m.default_price, 0) as average_price'),
+                    'wpa.allocated_at as last_operation_date',
+                    'u.name as allocated_by',
+                    'wpa.notes'
+                ]);
 
             if ($search) {
                 $query->where(function($q) use ($search) {
                     $q->where('m.name', 'like', "%{$search}%")
-                      ->orWhere('m.code', 'like', "%{$search}%");
+                      ->orWhere('m.code', 'like', "%{$search}%")
+                      ->orWhere('w.name', 'like', "%{$search}%");
                 });
             }
 
-            $allowedSortBy = ['material_name', 'material_code', 'total_received', 'total_used', 'current_balance', 'last_operation_date'];
+            $allowedSortBy = ['material_name', 'material_code', 'warehouse_name', 'allocated_quantity', 'warehouse_available_total', 'last_operation_date'];
             if (!in_array($sortBy, $allowedSortBy)) {
                 $sortBy = 'last_operation_date';
             }
@@ -497,7 +517,24 @@ class ProjectService
             $paginatedResults = $query->paginate($perPage);
 
             return [
-                'data' => $paginatedResults->items(),
+                'data' => collect($paginatedResults->items())->map(function($item) {
+                    return [
+                        'allocation_id' => $item->allocation_id,
+                        'material_id' => $item->material_id,
+                        'material_name' => $item->material_name,
+                        'material_code' => $item->material_code,
+                        'unit' => $item->unit,
+                        'warehouse_name' => $item->warehouse_name,
+                        'warehouse_id' => $item->warehouse_id,
+                        'allocated_quantity' => (float)$item->allocated_quantity, // Распределено на проект
+                        'warehouse_available_total' => (float)$item->warehouse_available_total, // Доступно на всех складах
+                        'average_price' => (float)$item->average_price,
+                        'allocated_value' => (float)$item->allocated_quantity * (float)$item->average_price,
+                        'last_operation_date' => $item->last_operation_date,
+                        'allocated_by' => $item->allocated_by,
+                        'notes' => $item->notes,
+                    ];
+                }),
                 'links' => [
                     'first' => $paginatedResults->url(1),
                     'last' => $paginatedResults->url($paginatedResults->lastPage()),
