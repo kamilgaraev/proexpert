@@ -121,5 +121,6 @@ class AppServiceProvider extends ServiceProvider
         MaterialReceipt::observe(MaterialReceiptObserver::class);
         Project::observe(ProjectObserver::class);
         Organization::observe(OrganizationObserver::class);
+        \App\Models\OrganizationModuleActivation::observe(\App\Observers\OrganizationModuleActivationObserver::class);
     }
 } 

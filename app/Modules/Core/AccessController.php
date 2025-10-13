@@ -14,7 +14,7 @@ class AccessController
     {
         $cacheKey = "org_module_access_{$organizationId}_{$moduleSlug}";
         
-        return Cache::remember($cacheKey, 300, function () use ($organizationId, $moduleSlug) {
+        return Cache::remember($cacheKey, 60, function () use ($organizationId, $moduleSlug) {
             $module = Module::where('slug', $moduleSlug)
                 ->where('is_active', true)
                 ->first();
@@ -46,7 +46,7 @@ class AccessController
     {
         $cacheKey = "org_module_permission_{$organizationId}_{$permission}";
         
-        return Cache::remember($cacheKey, 300, function () use ($organizationId, $permission) {
+        return Cache::remember($cacheKey, 60, function () use ($organizationId, $permission) {
             // Проверяем системные модули (can_deactivate: false) - их права всегда доступны
             $systemModulePermission = Module::where('is_active', true)
                 ->where('can_deactivate', false)
@@ -100,7 +100,7 @@ class AccessController
     {
         $cacheKey = "org_active_modules_{$organizationId}";
         
-        return Cache::remember($cacheKey, 300, function () use ($organizationId) {
+        return Cache::remember($cacheKey, 60, function () use ($organizationId) {
             // Получаем активированные модули
             $activatedModules = OrganizationModuleActivation::with('module')
                 ->where('organization_id', $organizationId)
@@ -134,7 +134,7 @@ class AccessController
         
         $cacheKey = "user_available_permissions_{$user->id}_{$organizationId}";
         
-        return Cache::remember($cacheKey, 300, function () use ($organizationId) {
+        return Cache::remember($cacheKey, 60, function () use ($organizationId) {
             $activeModules = $this->getActiveModules($organizationId);
             
             $permissions = [];
