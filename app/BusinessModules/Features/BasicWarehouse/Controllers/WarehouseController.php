@@ -40,19 +40,35 @@ class WarehouseController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'location' => 'nullable|string|max:500',
-            'type' => 'required|in:main,branch,mobile,virtual',
+            'code' => 'required|string|max:50',
+            'warehouse_type' => 'nullable|in:central,project,external',
             'description' => 'nullable|string',
             'address' => 'nullable|string',
-            'contact_person_id' => 'nullable|exists:users,id',
+            'contact_person' => 'nullable|string|max:255',
+            'contact_phone' => 'nullable|string|max:50',
+            'working_hours' => 'nullable|string|max:255',
+            'is_main' => 'nullable|boolean',
+            'is_active' => 'nullable|boolean',
             'settings' => 'nullable|array',
+            'storage_conditions' => 'nullable|array',
         ]);
 
         $organizationId = $request->user()->organization_id;
         
         $warehouse = \App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse::create([
             'organization_id' => $organizationId,
-            ...$validated,
+            'name' => $validated['name'],
+            'code' => $validated['code'],
+            'warehouse_type' => $validated['warehouse_type'] ?? 'central',
+            'description' => $validated['description'] ?? null,
+            'address' => $validated['address'] ?? null,
+            'contact_person' => $validated['contact_person'] ?? null,
+            'contact_phone' => $validated['contact_phone'] ?? null,
+            'working_hours' => $validated['working_hours'] ?? null,
+            'is_main' => $validated['is_main'] ?? false,
+            'is_active' => $validated['is_active'] ?? true,
+            'settings' => $validated['settings'] ?? [],
+            'storage_conditions' => $validated['storage_conditions'] ?? [],
         ]);
 
         return response()->json([
@@ -83,13 +99,17 @@ class WarehouseController extends Controller
     {
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
-            'location' => 'nullable|string|max:500',
-            'type' => 'sometimes|in:main,branch,mobile,virtual',
+            'code' => 'sometimes|string|max:50',
+            'warehouse_type' => 'sometimes|in:central,project,external',
             'description' => 'nullable|string',
             'address' => 'nullable|string',
-            'contact_person_id' => 'nullable|exists:users,id',
+            'contact_person' => 'nullable|string|max:255',
+            'contact_phone' => 'nullable|string|max:50',
+            'working_hours' => 'nullable|string|max:255',
+            'is_main' => 'sometimes|boolean',
             'is_active' => 'sometimes|boolean',
             'settings' => 'nullable|array',
+            'storage_conditions' => 'nullable|array',
         ]);
 
         $warehouse = \App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse::findOrFail($id);

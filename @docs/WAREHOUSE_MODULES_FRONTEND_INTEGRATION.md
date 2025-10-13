@@ -119,13 +119,17 @@ Authorization: Bearer {token}
       "id": 1,
       "organization_id": 123,
       "name": "Центральный склад",
-      "type": "main",
-      "location": "г. Москва, ул. Складская 1",
+      "code": "CENTRAL",
+      "warehouse_type": "central",
       "address": "115280, Москва, ул. Складская, д. 1",
-      "contact_person_id": 45,
+      "contact_person": "Петров П.П.",
+      "contact_phone": "+7 (495) 123-45-67",
+      "working_hours": "Пн-Пт 8:00-20:00",
       "description": "Основной склад организации",
+      "is_main": true,
       "is_active": true,
       "settings": {},
+      "storage_conditions": {},
       "created_at": "2025-01-15T10:00:00.000000Z",
       "updated_at": "2025-01-15T10:00:00.000000Z"
     }
@@ -138,25 +142,38 @@ Authorization: Bearer {token}
 ```json
 {
   "name": "Новый склад",
-  "type": "branch",
-  "location": "г. Москва, ул. Новая 10",
-  "address": "123456, Москва, ул. Новая, д. 10",
-  "contact_person_id": 67,
-  "description": "Филиальный склад",
+  "code": "SKLAD_KZN_1",
+  "warehouse_type": "central",
+  "address": "Казань, ул. Новая 10",
+  "contact_person": "Иванов Иван Иванович",
+  "contact_phone": "+7 (800) 555-35-35",
+  "working_hours": "9:00-18:00 ПН-ПТ",
+  "description": "Центральный склад в Казани",
+  "is_main": false,
+  "is_active": true,
   "settings": {
     "enable_auto_calculation": true
+  },
+  "storage_conditions": {
+    "temperature": "15-25°C",
+    "humidity": "40-60%"
   }
 }
 ```
 
 **Валидация:**
 - `name` - обязательно, строка, макс 255
-- `type` - обязательно, один из: `main`, `branch`, `mobile`, `virtual`
-- `location` - опционально, строка, макс 500
+- `code` - обязательно, строка, макс 50 (уникальный код склада)
+- `warehouse_type` - опционально, один из: `central`, `project`, `external` (по умолчанию `central`)
 - `address` - опционально, строка
-- `contact_person_id` - опционально, существующий user_id
+- `contact_person` - опционально, строка, макс 255
+- `contact_phone` - опционально, строка, макс 50
+- `working_hours` - опционально, строка, макс 255
 - `description` - опционально, строка
+- `is_main` - опционально, булево (является ли основным складом)
+- `is_active` - опционально, булево (по умолчанию true)
 - `settings` - опционально, объект
+- `storage_conditions` - опционально, объект
 
 **Ответ:**
 ```json
@@ -166,8 +183,19 @@ Authorization: Bearer {token}
     "id": 2,
     "organization_id": 123,
     "name": "Новый склад",
-    "type": "branch",
-    ...
+    "code": "SKLAD_KZN_1",
+    "warehouse_type": "central",
+    "address": "Казань, ул. Новая 10",
+    "contact_person": "Иванов Иван Иванович",
+    "contact_phone": "+7 (800) 555-35-35",
+    "working_hours": "9:00-18:00 ПН-ПТ",
+    "description": "Центральный склад в Казани",
+    "is_main": false,
+    "is_active": true,
+    "settings": {...},
+    "storage_conditions": {...},
+    "created_at": "2025-10-13T12:00:00.000000Z",
+    "updated_at": "2025-10-13T12:00:00.000000Z"
   },
   "message": "Склад успешно создан"
 }
