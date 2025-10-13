@@ -27,6 +27,14 @@ Route::prefix('reports')->name('reports.')->group(function () {
         Route::get('material-usage', [ReportController::class, 'materialUsageReport'])->name('material_usage');
         Route::get('work-completion', [ReportController::class, 'workCompletionReport'])->name('work_completion');
         Route::get('project-status-summary', [ReportController::class, 'projectStatusSummaryReport'])->name('project_status_summary');
+        
+        Route::get('contract-payments', [ReportController::class, 'contractPaymentsReport'])->name('contract_payments');
+        Route::get('contractor-settlements', [ReportController::class, 'contractorSettlementsReport'])->name('contractor_settlements');
+        Route::get('warehouse-stock', [ReportController::class, 'warehouseStockReport'])->name('warehouse_stock');
+        Route::get('material-movements', [ReportController::class, 'materialMovementsReport'])->name('material_movements');
+        Route::get('time-tracking', [ReportController::class, 'timeTrackingReport'])->name('time_tracking');
+        Route::get('project-profitability', [ReportController::class, 'projectProfitabilityReport'])->name('project_profitability');
+        Route::get('project-timelines', [ReportController::class, 'projectTimelinesReport'])->name('project_timelines');
     });
     
     // ПРОДВИНУТЫЕ ОТЧЕТЫ (модуль advanced-reports - платный)

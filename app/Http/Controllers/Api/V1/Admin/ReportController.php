@@ -15,6 +15,13 @@ use App\Http\Requests\Api\V1\Admin\Report\WorkCompletionReportRequest;
 use App\Http\Requests\Api\V1\Admin\Report\ForemanActivityReportRequest;
 use App\Http\Requests\Api\V1\Admin\Report\ProjectStatusSummaryReportRequest;
 use App\Http\Requests\Api\V1\Admin\Report\OfficialMaterialUsageReportRequest;
+use App\Http\Requests\Api\V1\Admin\Report\ContractPaymentsReportRequest;
+use App\Http\Requests\Api\V1\Admin\Report\ContractorSettlementsReportRequest;
+use App\Http\Requests\Api\V1\Admin\Report\WarehouseStockReportRequest;
+use App\Http\Requests\Api\V1\Admin\Report\MaterialMovementsReportRequest;
+use App\Http\Requests\Api\V1\Admin\Report\TimeTrackingReportRequest;
+use App\Http\Requests\Api\V1\Admin\Report\ProjectProfitabilityReportRequest;
+use App\Http\Requests\Api\V1\Admin\Report\ProjectTimelinesReportRequest;
 use App\Services\Landing\OrganizationModuleService;
 
 // TODO: Добавить Request классы для валидации фильтров отчетов
@@ -133,5 +140,82 @@ class ReportController extends Controller
         }
         
         return response()->json($reportData);
+    }
+
+    public function contractPaymentsReport(ContractPaymentsReportRequest $request): JsonResponse | StreamedResponse
+    {
+        $reportOutput = $this->reportService->getContractPaymentsReport($request);
+
+        if ($reportOutput instanceof StreamedResponse) {
+            return $reportOutput;
+        }
+
+        return response()->json($reportOutput);
+    }
+
+    public function contractorSettlementsReport(ContractorSettlementsReportRequest $request): JsonResponse | StreamedResponse
+    {
+        $reportOutput = $this->reportService->getContractorSettlementsReport($request);
+
+        if ($reportOutput instanceof StreamedResponse) {
+            return $reportOutput;
+        }
+
+        return response()->json($reportOutput);
+    }
+
+    public function warehouseStockReport(WarehouseStockReportRequest $request): JsonResponse | StreamedResponse
+    {
+        $reportOutput = $this->reportService->getWarehouseStockReport($request);
+
+        if ($reportOutput instanceof StreamedResponse) {
+            return $reportOutput;
+        }
+
+        return response()->json($reportOutput);
+    }
+
+    public function materialMovementsReport(MaterialMovementsReportRequest $request): JsonResponse | StreamedResponse
+    {
+        $reportOutput = $this->reportService->getMaterialMovementsReport($request);
+
+        if ($reportOutput instanceof StreamedResponse) {
+            return $reportOutput;
+        }
+
+        return response()->json($reportOutput);
+    }
+
+    public function timeTrackingReport(TimeTrackingReportRequest $request): JsonResponse | StreamedResponse
+    {
+        $reportOutput = $this->reportService->getTimeTrackingReport($request);
+
+        if ($reportOutput instanceof StreamedResponse) {
+            return $reportOutput;
+        }
+
+        return response()->json($reportOutput);
+    }
+
+    public function projectProfitabilityReport(ProjectProfitabilityReportRequest $request): JsonResponse | StreamedResponse
+    {
+        $reportOutput = $this->reportService->getProjectProfitabilityReport($request);
+
+        if ($reportOutput instanceof StreamedResponse) {
+            return $reportOutput;
+        }
+
+        return response()->json($reportOutput);
+    }
+
+    public function projectTimelinesReport(ProjectTimelinesReportRequest $request): JsonResponse | StreamedResponse
+    {
+        $reportOutput = $this->reportService->getProjectTimelinesReport($request);
+
+        if ($reportOutput instanceof StreamedResponse) {
+            return $reportOutput;
+        }
+
+        return response()->json($reportOutput);
     }
 } 

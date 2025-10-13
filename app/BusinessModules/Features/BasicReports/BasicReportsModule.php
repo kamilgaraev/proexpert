@@ -82,11 +82,15 @@ class BasicReportsModule implements ModuleInterface, ConfigurableInterface
             'basic_reports.material_usage',
             'basic_reports.work_completion', 
             'basic_reports.project_summary',
-            'basic_reports.export_excel',
-            'basic_reports.export_pdf',
+            'basic_reports.contract_payments',
+            'basic_reports.contractor_settlements',
             'basic_reports.warehouse_stock',
-            'basic_reports.warehouse_movements',
-            'basic_reports.warehouse_inventory'
+            'basic_reports.material_movements',
+            'basic_reports.time_tracking',
+            'basic_reports.project_profitability',
+            'basic_reports.project_timelines',
+            'basic_reports.export_excel',
+            'basic_reports.export_pdf'
         ];
     }
 
@@ -96,20 +100,24 @@ class BasicReportsModule implements ModuleInterface, ConfigurableInterface
             'Отчет по использованию материалов',
             'Отчет по выполненным работам', 
             'Сводка по статусам проектов',
-            'Отчет по остаткам на складе',
-            'Отчет по движению активов',
-            'Акты инвентаризации',
+            'Отчет по контрактам и платежам',
+            'Отчет по расчетам с подрядчиками',
+            'Отчет по остаткам на складах',
+            'Отчет по движению материалов',
+            'Отчет по учету рабочего времени',
+            'Отчет по рентабельности проектов',
+            'Отчет по срокам выполнения проектов',
             'Экспорт в Excel и PDF',
-            'Фильтрация по датам',
-            'Базовая аналитика'
+            'Фильтрация по датам и параметрам',
+            'Детальная аналитика'
         ];
     }
 
     public function getLimits(): array
     {
         return [
-            'max_reports_per_month' => 100,
-            'max_export_rows' => 1000,
+            'max_reports_per_month' => 200,
+            'max_export_rows' => 5000,
             'retention_days' => 30
         ];
     }

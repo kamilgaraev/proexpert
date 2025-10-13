@@ -777,4 +777,876 @@ class ReportService
             'generated_at' => Carbon::now(),
         ];
     }
+
+    public function getContractPaymentsReport(Request $request): array | StreamedResponse
+    {
+        $organizationId = $this->getCurrentOrgId($request);
+        $format = $request->query('format', 'json');
+        
+        $this->logging->business('report.contract_payments.requested', [
+            'organization_id' => $organizationId,
+            'filters' => $request->only(['project_id', 'contractor_id', 'status', 'date_from', 'date_to']),
+            'user_id' => $request->user()?->id
+        ]);
+
+        $query = DB::table('contracts')
+            ->leftJoin('contractors', 'contracts.contractor_id', '=', 'contractors.id')
+            ->leftJoin('projects', 'contracts.project_id', '=', 'projects.id')
+            ->where('contracts.organization_id', $organizationId)
+            ->select(
+                'contracts.id',
+                'contracts.number',
+                'contracts.date',
+                'contracts.status',
+                'contracts.total_amount',
+                'contracts.start_date',
+                'contracts.end_date',
+                'contracts.planned_advance_amount',
+                'contracts.actual_advance_amount',
+                'contractors.name as contractor_name',
+                'projects.name as project_name',
+                DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_payments WHERE contract_id = contracts.id) as paid_amount'),
+                DB::raw('(SELECT COALESCE(SUM(total_amount), 0) FROM completed_works WHERE contract_id = contracts.id AND status = "confirmed") as completed_amount')
+            );
+
+        if ($request->filled('project_id')) {
+            $query->where('contracts.project_id', $request->query('project_id'));
+        }
+        if ($request->filled('contractor_id')) {
+            $query->where('contracts.contractor_id', $request->query('contractor_id'));
+        }
+        if ($request->filled('status')) {
+            $query->where('contracts.status', $request->query('status'));
+        }
+        if ($request->filled('work_type_category')) {
+            $query->where('contracts.work_type_category', $request->query('work_type_category'));
+        }
+        if ($request->filled('date_from')) {
+            $query->where('contracts.date', '>=', $request->query('date_from'));
+        }
+        if ($request->filled('date_to')) {
+            $query->where('contracts.date', '<=', $request->query('date_to'));
+        }
+        if ($request->boolean('show_overdue')) {
+            $query->where('contracts.end_date', '<', now())
+                  ->where('contracts.status', 'active');
+        }
+
+        $contracts = $query->get()->map(function ($contract) {
+            $remaining = $contract->total_amount - $contract->completed_amount;
+            $debt = $contract->completed_amount - $contract->paid_amount;
+            $completion_percentage = $contract->total_amount > 0 
+                ? round(($contract->completed_amount / $contract->total_amount) * 100, 2) 
+                : 0;
+            $is_overdue = $contract->end_date && Carbon::parse($contract->end_date)->isPast() && $contract->status === 'active';
+            
+            return [
+                'id' => $contract->id,
+                'number' => $contract->number,
+                'date' => $contract->date,
+                'contractor' => $contract->contractor_name,
+                'project' => $contract->project_name,
+                'status' => $contract->status,
+                'total_amount' => (float)$contract->total_amount,
+                'completed_amount' => (float)$contract->completed_amount,
+                'paid_amount' => (float)$contract->paid_amount,
+                'remaining_amount' => (float)$remaining,
+                'debt_amount' => (float)$debt,
+                'completion_percentage' => $completion_percentage,
+                'planned_advance' => (float)$contract->planned_advance_amount,
+                'actual_advance' => (float)$contract->actual_advance_amount,
+                'start_date' => $contract->start_date,
+                'end_date' => $contract->end_date,
+                'is_overdue' => $is_overdue,
+            ];
+        });
+
+        if ($request->boolean('show_with_debt')) {
+            $contracts = $contracts->filter(fn($c) => $c['debt_amount'] > 0);
+        }
+
+        $totals = [
+            'total_contracts' => $contracts->count(),
+            'total_amount' => $contracts->sum('total_amount'),
+            'total_completed' => $contracts->sum('completed_amount'),
+            'total_paid' => $contracts->sum('paid_amount'),
+            'total_debt' => $contracts->sum('debt_amount'),
+        ];
+
+        if ($format === 'excel') {
+            $columns = [
+                'Номер контракта' => 'number',
+                'Дата' => 'date',
+                'Подрядчик' => 'contractor',
+                'Проект' => 'project',
+                'Статус' => 'status',
+                'Сумма контракта' => 'total_amount',
+                'Выполнено' => 'completed_amount',
+                'Оплачено' => 'paid_amount',
+                'Задолженность' => 'debt_amount',
+                '% выполнения' => 'completion_percentage',
+            ];
+            $exportable = $this->excelExporter->prepareDataForExport($contracts->toArray(), $columns);
+            return $this->excelExporter->streamDownload('contract_payments_report_' . date('YmdHis') . '.xlsx', $exportable['headers'], $exportable['data']);
+        }
+
+        if ($format === 'pdf') {
+            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+        }
+
+        return [
+            'title' => 'Отчет по контрактам и платежам',
+            'data' => $contracts->values(),
+            'totals' => $totals,
+            'filters' => $request->only(['project_id', 'contractor_id', 'status', 'date_from', 'date_to']),
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
+    public function getContractorSettlementsReport(Request $request): array | StreamedResponse
+    {
+        $organizationId = $this->getCurrentOrgId($request);
+        $format = $request->query('format', 'json');
+        
+        $this->logging->business('report.contractor_settlements.requested', [
+            'organization_id' => $organizationId,
+            'filters' => $request->only(['contractor_id', 'project_id', 'date_from', 'date_to']),
+            'user_id' => $request->user()?->id
+        ]);
+
+        $query = DB::table('contractors')
+            ->where('contractors.organization_id', $organizationId)
+            ->select(
+                'contractors.id',
+                'contractors.name',
+                'contractors.inn',
+                'contractors.contact_person',
+                'contractors.phone',
+                DB::raw('COUNT(DISTINCT contracts.id) as contracts_count'),
+                DB::raw('COALESCE(SUM(contracts.total_amount), 0) as total_contract_amount'),
+                DB::raw('COALESCE(SUM((SELECT SUM(total_amount) FROM completed_works WHERE contract_id = contracts.id AND status = "confirmed")), 0) as total_completed'),
+                DB::raw('COALESCE(SUM((SELECT SUM(amount) FROM contract_payments WHERE contract_id = contracts.id)), 0) as total_paid')
+            )
+            ->leftJoin('contracts', 'contractors.id', '=', 'contracts.contractor_id')
+            ->groupBy('contractors.id', 'contractors.name', 'contractors.inn', 'contractors.contact_person', 'contractors.phone');
+
+        if ($request->filled('contractor_id')) {
+            $query->where('contractors.id', $request->query('contractor_id'));
+        }
+        if ($request->filled('project_id')) {
+            $query->where('contracts.project_id', $request->query('project_id'));
+        }
+        if ($request->filled('date_from')) {
+            $query->where('contracts.date', '>=', $request->query('date_from'));
+        }
+        if ($request->filled('date_to')) {
+            $query->where('contracts.date', '<=', $request->query('date_to'));
+        }
+
+        $contractors = $query->get()->map(function ($contractor) use ($request, $organizationId) {
+            $debt = $contractor->total_completed - $contractor->total_paid;
+            $settlement_status = 'settled';
+            
+            if ($debt > 100) {
+                $settlement_status = 'has_debt';
+            } elseif ($debt < -100) {
+                $settlement_status = 'has_prepayment';
+            }
+
+            $contractDetails = DB::table('contracts')
+                ->where('contractor_id', $contractor->id)
+                ->where('organization_id', $organizationId)
+                ->select('id', 'number', 'date', 'total_amount', 'status')
+                ->get();
+
+            return [
+                'id' => $contractor->id,
+                'name' => $contractor->name,
+                'inn' => $contractor->inn,
+                'contact_person' => $contractor->contact_person,
+                'phone' => $contractor->phone,
+                'contracts_count' => (int)$contractor->contracts_count,
+                'total_contract_amount' => (float)$contractor->total_contract_amount,
+                'total_completed' => (float)$contractor->total_completed,
+                'total_paid' => (float)$contractor->total_paid,
+                'debt_amount' => (float)$debt,
+                'settlement_status' => $settlement_status,
+                'contracts' => $contractDetails,
+            ];
+        });
+
+        if ($request->filled('settlement_status') && $request->query('settlement_status') !== 'all') {
+            $contractors = $contractors->filter(fn($c) => $c['settlement_status'] === $request->query('settlement_status'));
+        }
+        if ($request->filled('min_debt_amount')) {
+            $contractors = $contractors->filter(fn($c) => abs($c['debt_amount']) >= $request->query('min_debt_amount'));
+        }
+
+        $totals = [
+            'total_contractors' => $contractors->count(),
+            'total_contracts' => $contractors->sum('contracts_count'),
+            'total_contract_amount' => $contractors->sum('total_contract_amount'),
+            'total_completed' => $contractors->sum('total_completed'),
+            'total_paid' => $contractors->sum('total_paid'),
+            'total_debt' => $contractors->sum('debt_amount'),
+        ];
+
+        if ($format === 'excel') {
+            $columns = [
+                'Подрядчик' => 'name',
+                'ИНН' => 'inn',
+                'Контактное лицо' => 'contact_person',
+                'Телефон' => 'phone',
+                'Кол-во контрактов' => 'contracts_count',
+                'Сумма контрактов' => 'total_contract_amount',
+                'Выполнено работ' => 'total_completed',
+                'Оплачено' => 'total_paid',
+                'Задолженность' => 'debt_amount',
+                'Статус расчетов' => 'settlement_status',
+            ];
+            $exportable = $this->excelExporter->prepareDataForExport($contractors->toArray(), $columns);
+            return $this->excelExporter->streamDownload('contractor_settlements_report_' . date('YmdHis') . '.xlsx', $exportable['headers'], $exportable['data']);
+        }
+
+        if ($format === 'pdf') {
+            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+        }
+
+        return [
+            'title' => 'Отчет по расчетам с подрядчиками',
+            'data' => $contractors->values(),
+            'totals' => $totals,
+            'filters' => $request->only(['contractor_id', 'project_id', 'date_from', 'date_to', 'settlement_status']),
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
+    public function getWarehouseStockReport(Request $request): array | StreamedResponse
+    {
+        $organizationId = $this->getCurrentOrgId($request);
+        $format = $request->query('format', 'json');
+        
+        $this->logging->business('report.warehouse_stock.requested', [
+            'organization_id' => $organizationId,
+            'filters' => $request->only(['warehouse_id', 'material_id', 'category']),
+            'user_id' => $request->user()?->id
+        ]);
+
+        $query = DB::table('warehouse_balances')
+            ->join('materials', 'warehouse_balances.material_id', '=', 'materials.id')
+            ->join('organization_warehouses', 'warehouse_balances.warehouse_id', '=', 'organization_warehouses.id')
+            ->leftJoin('measurement_units', 'materials.measurement_unit_id', '=', 'measurement_units.id')
+            ->where('warehouse_balances.organization_id', $organizationId)
+            ->select(
+                'warehouse_balances.id',
+                'materials.name as material_name',
+                'materials.code as material_code',
+                'materials.category',
+                'organization_warehouses.name as warehouse_name',
+                'warehouse_balances.available_quantity',
+                'warehouse_balances.reserved_quantity',
+                'warehouse_balances.average_price',
+                'warehouse_balances.min_stock_level',
+                'warehouse_balances.max_stock_level',
+                'warehouse_balances.expiry_date',
+                'warehouse_balances.location_code',
+                'measurement_units.short_name as unit',
+                DB::raw('(warehouse_balances.available_quantity + warehouse_balances.reserved_quantity) as total_quantity'),
+                DB::raw('(warehouse_balances.available_quantity * warehouse_balances.average_price) as total_value')
+            );
+
+        if ($request->filled('warehouse_id')) {
+            $query->where('warehouse_balances.warehouse_id', $request->query('warehouse_id'));
+        }
+        if ($request->filled('material_id')) {
+            $query->where('warehouse_balances.material_id', $request->query('material_id'));
+        }
+        if ($request->filled('category')) {
+            $query->where('materials.category', $request->query('category'));
+        }
+        if ($request->boolean('show_critical_only')) {
+            $query->whereRaw('warehouse_balances.available_quantity <= warehouse_balances.min_stock_level');
+        }
+        if ($request->filled('min_quantity')) {
+            $query->where('warehouse_balances.available_quantity', '>=', $request->query('min_quantity'));
+        }
+        if ($request->boolean('show_expired')) {
+            $query->where('warehouse_balances.expiry_date', '<=', now());
+        }
+        if ($request->filled('expiring_days')) {
+            $days = $request->query('expiring_days');
+            $query->whereBetween('warehouse_balances.expiry_date', [now(), now()->addDays($days)]);
+        }
+
+        $stocks = $query->get()->map(function ($stock) {
+            $is_critical = $stock->min_stock_level && $stock->available_quantity <= $stock->min_stock_level;
+            $is_expired = $stock->expiry_date && Carbon::parse($stock->expiry_date)->isPast();
+            
+            return [
+                'id' => $stock->id,
+                'material_name' => $stock->material_name,
+                'material_code' => $stock->material_code,
+                'category' => $stock->category,
+                'warehouse' => $stock->warehouse_name,
+                'available_quantity' => (float)$stock->available_quantity,
+                'reserved_quantity' => (float)$stock->reserved_quantity,
+                'total_quantity' => (float)$stock->total_quantity,
+                'unit' => $stock->unit,
+                'average_price' => (float)$stock->average_price,
+                'total_value' => (float)$stock->total_value,
+                'min_stock_level' => (float)$stock->min_stock_level,
+                'max_stock_level' => (float)$stock->max_stock_level,
+                'location_code' => $stock->location_code,
+                'expiry_date' => $stock->expiry_date,
+                'is_critical' => $is_critical,
+                'is_expired' => $is_expired,
+            ];
+        });
+
+        $totals = [
+            'total_items' => $stocks->count(),
+            'total_quantity' => $stocks->sum('total_quantity'),
+            'total_value' => $stocks->sum('total_value'),
+            'critical_items' => $stocks->filter(fn($s) => $s['is_critical'])->count(),
+            'expired_items' => $stocks->filter(fn($s) => $s['is_expired'])->count(),
+        ];
+
+        if ($format === 'excel') {
+            $columns = [
+                'Материал' => 'material_name',
+                'Код' => 'material_code',
+                'Категория' => 'category',
+                'Склад' => 'warehouse',
+                'Доступно' => 'available_quantity',
+                'Зарезервировано' => 'reserved_quantity',
+                'Всего' => 'total_quantity',
+                'Ед.изм.' => 'unit',
+                'Средняя цена' => 'average_price',
+                'Общая стоимость' => 'total_value',
+                'Мин. уровень' => 'min_stock_level',
+                'Критично' => 'is_critical',
+            ];
+            $exportable = $this->excelExporter->prepareDataForExport($stocks->toArray(), $columns);
+            return $this->excelExporter->streamDownload('warehouse_stock_report_' . date('YmdHis') . '.xlsx', $exportable['headers'], $exportable['data']);
+        }
+
+        if ($format === 'pdf') {
+            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+        }
+
+        return [
+            'title' => 'Отчет по остаткам на складах',
+            'data' => $stocks->values(),
+            'totals' => $totals,
+            'filters' => $request->only(['warehouse_id', 'material_id', 'category', 'show_critical_only']),
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
+    public function getMaterialMovementsReport(Request $request): array | StreamedResponse
+    {
+        $organizationId = $this->getCurrentOrgId($request);
+        $format = $request->query('format', 'json');
+        $dateFrom = Carbon::parse($request->query('date_from'))->startOfDay();
+        $dateTo = Carbon::parse($request->query('date_to'))->endOfDay();
+        
+        $this->logging->business('report.material_movements.requested', [
+            'organization_id' => $organizationId,
+            'date_from' => $dateFrom,
+            'date_to' => $dateTo,
+            'user_id' => $request->user()?->id
+        ]);
+
+        $query = DB::table('warehouse_movements')
+            ->join('materials', 'warehouse_movements.material_id', '=', 'materials.id')
+            ->join('organization_warehouses', 'warehouse_movements.warehouse_id', '=', 'organization_warehouses.id')
+            ->leftJoin('projects', 'warehouse_movements.project_id', '=', 'projects.id')
+            ->leftJoin('users', 'warehouse_movements.user_id', '=', 'users.id')
+            ->leftJoin('measurement_units', 'materials.measurement_unit_id', '=', 'measurement_units.id')
+            ->where('warehouse_movements.organization_id', $organizationId)
+            ->whereBetween('warehouse_movements.movement_date', [$dateFrom, $dateTo])
+            ->select(
+                'warehouse_movements.id',
+                'warehouse_movements.movement_date',
+                'warehouse_movements.movement_type',
+                'warehouse_movements.quantity',
+                'warehouse_movements.price_per_unit',
+                'warehouse_movements.document_number',
+                'warehouse_movements.notes',
+                'materials.name as material_name',
+                'materials.code as material_code',
+                'organization_warehouses.name as warehouse_name',
+                'projects.name as project_name',
+                'users.name as user_name',
+                'measurement_units.short_name as unit',
+                DB::raw('(warehouse_movements.quantity * warehouse_movements.price_per_unit) as total_amount')
+            );
+
+        if ($request->filled('warehouse_id')) {
+            $query->where('warehouse_movements.warehouse_id', $request->query('warehouse_id'));
+        }
+        if ($request->filled('material_id')) {
+            $query->where('warehouse_movements.material_id', $request->query('material_id'));
+        }
+        if ($request->filled('project_id')) {
+            $query->where('warehouse_movements.project_id', $request->query('project_id'));
+        }
+        if ($request->filled('movement_type')) {
+            $query->where('warehouse_movements.movement_type', $request->query('movement_type'));
+        }
+        if ($request->filled('user_id')) {
+            $query->where('warehouse_movements.user_id', $request->query('user_id'));
+        }
+
+        $movements = $query->orderBy('warehouse_movements.movement_date', 'desc')->get()->map(function ($movement) {
+            return [
+                'id' => $movement->id,
+                'date' => $movement->movement_date,
+                'type' => $movement->movement_type,
+                'material_name' => $movement->material_name,
+                'material_code' => $movement->material_code,
+                'warehouse' => $movement->warehouse_name,
+                'project' => $movement->project_name,
+                'quantity' => (float)$movement->quantity,
+                'unit' => $movement->unit,
+                'price_per_unit' => (float)$movement->price_per_unit,
+                'total_amount' => (float)$movement->total_amount,
+                'document_number' => $movement->document_number,
+                'user' => $movement->user_name,
+                'notes' => $movement->notes,
+            ];
+        });
+
+        $totals = [
+            'total_movements' => $movements->count(),
+            'receipt_count' => $movements->where('type', 'receipt')->count(),
+            'issue_count' => $movements->where('type', 'issue')->count(),
+            'transfer_count' => $movements->where('type', 'transfer')->count(),
+            'total_amount' => $movements->sum('total_amount'),
+        ];
+
+        if ($format === 'excel') {
+            $columns = [
+                'Дата' => 'date',
+                'Тип операции' => 'type',
+                'Материал' => 'material_name',
+                'Код' => 'material_code',
+                'Склад' => 'warehouse',
+                'Проект' => 'project',
+                'Количество' => 'quantity',
+                'Ед.изм.' => 'unit',
+                'Цена' => 'price_per_unit',
+                'Сумма' => 'total_amount',
+                'Документ' => 'document_number',
+                'Пользователь' => 'user',
+            ];
+            $exportable = $this->excelExporter->prepareDataForExport($movements->toArray(), $columns);
+            return $this->excelExporter->streamDownload('material_movements_report_' . date('YmdHis') . '.xlsx', $exportable['headers'], $exportable['data']);
+        }
+
+        if ($format === 'pdf') {
+            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+        }
+
+        return [
+            'title' => 'Отчет по движению материалов',
+            'data' => $movements->values(),
+            'totals' => $totals,
+            'filters' => $request->only(['warehouse_id', 'material_id', 'project_id', 'movement_type', 'date_from', 'date_to']),
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
+    public function getTimeTrackingReport(Request $request): array | StreamedResponse
+    {
+        $organizationId = $this->getCurrentOrgId($request);
+        $format = $request->query('format', 'json');
+        $dateFrom = Carbon::parse($request->query('date_from'))->startOfDay();
+        $dateTo = Carbon::parse($request->query('date_to'))->endOfDay();
+        
+        $this->logging->business('report.time_tracking.requested', [
+            'organization_id' => $organizationId,
+            'date_from' => $dateFrom,
+            'date_to' => $dateTo,
+            'user_id' => $request->user()?->id
+        ]);
+
+        $query = DB::table('time_entries')
+            ->join('users', 'time_entries.user_id', '=', 'users.id')
+            ->leftJoin('projects', 'time_entries.project_id', '=', 'projects.id')
+            ->leftJoin('work_types', 'time_entries.work_type_id', '=', 'work_types.id')
+            ->where('time_entries.organization_id', $organizationId)
+            ->whereBetween('time_entries.work_date', [$dateFrom, $dateTo])
+            ->select(
+                'time_entries.id',
+                'time_entries.work_date',
+                'time_entries.hours_worked',
+                'time_entries.status',
+                'time_entries.is_billable',
+                'time_entries.hourly_rate',
+                'time_entries.title',
+                'users.name as user_name',
+                'projects.name as project_name',
+                'work_types.name as work_type_name',
+                DB::raw('(time_entries.hours_worked * COALESCE(time_entries.hourly_rate, 0)) as total_cost')
+            );
+
+        if ($request->filled('user_id')) {
+            $query->where('time_entries.user_id', $request->query('user_id'));
+        }
+        if ($request->filled('project_id')) {
+            $query->where('time_entries.project_id', $request->query('project_id'));
+        }
+        if ($request->filled('work_type_id')) {
+            $query->where('time_entries.work_type_id', $request->query('work_type_id'));
+        }
+        if ($request->filled('status')) {
+            $query->where('time_entries.status', $request->query('status'));
+        }
+        if ($request->has('is_billable')) {
+            $query->where('time_entries.is_billable', $request->boolean('is_billable'));
+        }
+
+        $entries = $query->orderBy('time_entries.work_date', 'desc')->get();
+
+        $groupBy = $request->query('group_by');
+        $grouped = null;
+
+        if ($groupBy === 'user') {
+            $grouped = $entries->groupBy('user_name')->map(function ($group) {
+                return [
+                    'user' => $group->first()->user_name,
+                    'total_hours' => $group->sum('hours_worked'),
+                    'total_cost' => $group->sum('total_cost'),
+                    'entries_count' => $group->count(),
+                ];
+            })->values();
+        } elseif ($groupBy === 'project') {
+            $grouped = $entries->groupBy('project_name')->map(function ($group) {
+                return [
+                    'project' => $group->first()->project_name ?? 'Без проекта',
+                    'total_hours' => $group->sum('hours_worked'),
+                    'total_cost' => $group->sum('total_cost'),
+                    'entries_count' => $group->count(),
+                ];
+            })->values();
+        }
+
+        $data = $entries->map(function ($entry) {
+            return [
+                'id' => $entry->id,
+                'date' => $entry->work_date,
+                'user' => $entry->user_name,
+                'project' => $entry->project_name,
+                'work_type' => $entry->work_type_name,
+                'title' => $entry->title,
+                'hours' => (float)$entry->hours_worked,
+                'hourly_rate' => (float)$entry->hourly_rate,
+                'total_cost' => (float)$entry->total_cost,
+                'status' => $entry->status,
+                'is_billable' => (bool)$entry->is_billable,
+            ];
+        });
+
+        $totals = [
+            'total_entries' => $data->count(),
+            'total_hours' => $data->sum('hours'),
+            'total_cost' => $data->sum('total_cost'),
+            'billable_hours' => $data->where('is_billable', true)->sum('hours'),
+            'approved_hours' => $data->where('status', 'approved')->sum('hours'),
+        ];
+
+        if ($format === 'excel') {
+            $columns = [
+                'Дата' => 'date',
+                'Сотрудник' => 'user',
+                'Проект' => 'project',
+                'Тип работ' => 'work_type',
+                'Описание' => 'title',
+                'Часов' => 'hours',
+                'Ставка' => 'hourly_rate',
+                'Стоимость' => 'total_cost',
+                'Статус' => 'status',
+                'Оплачиваемо' => 'is_billable',
+            ];
+            $exportable = $this->excelExporter->prepareDataForExport($data->toArray(), $columns);
+            return $this->excelExporter->streamDownload('time_tracking_report_' . date('YmdHis') . '.xlsx', $exportable['headers'], $exportable['data']);
+        }
+
+        if ($format === 'pdf') {
+            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+        }
+
+        return [
+            'title' => 'Отчет по учету рабочего времени',
+            'data' => $data->values(),
+            'grouped_data' => $grouped,
+            'totals' => $totals,
+            'filters' => $request->only(['user_id', 'project_id', 'work_type_id', 'status', 'date_from', 'date_to']),
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
+    public function getProjectProfitabilityReport(Request $request): array | StreamedResponse
+    {
+        $organizationId = $this->getCurrentOrgId($request);
+        $format = $request->query('format', 'json');
+        
+        $this->logging->business('report.project_profitability.requested', [
+            'organization_id' => $organizationId,
+            'filters' => $request->only(['project_id', 'status', 'customer']),
+            'user_id' => $request->user()?->id
+        ]);
+
+        $query = DB::table('projects')
+            ->where('projects.organization_id', $organizationId)
+            ->select(
+                'projects.id',
+                'projects.name',
+                'projects.customer',
+                'projects.status',
+                'projects.budget_amount',
+                'projects.start_date',
+                'projects.end_date',
+                DB::raw('(SELECT COALESCE(SUM(total_amount), 0) FROM contracts WHERE project_id = projects.id) as contractor_costs'),
+                DB::raw('(SELECT COALESCE(SUM(total_price), 0) FROM material_receipts WHERE project_id = projects.id) as material_costs')
+            );
+
+        if ($request->filled('project_id')) {
+            $query->where('projects.id', $request->query('project_id'));
+        }
+        if ($request->filled('status')) {
+            $query->where('projects.status', $request->query('status'));
+        }
+        if ($request->filled('customer')) {
+            $query->where('projects.customer', 'like', '%' . $request->query('customer') . '%');
+        }
+        if ($request->filled('date_from')) {
+            $query->where('projects.start_date', '>=', $request->query('date_from'));
+        }
+        if ($request->filled('date_to')) {
+            $query->where('projects.start_date', '<=', $request->query('date_to'));
+        }
+
+        $projects = $query->get()->map(function ($project) use ($request) {
+            $income = (float)$project->budget_amount;
+            $contractorCosts = (float)$project->contractor_costs;
+            $materialCosts = (float)$project->material_costs;
+            $laborCosts = 0;
+
+            if ($request->boolean('include_labor_costs')) {
+                $laborCosts = (float)DB::table('time_entries')
+                    ->where('project_id', $project->id)
+                    ->where('is_billable', true)
+                    ->sum(DB::raw('hours_worked * COALESCE(hourly_rate, 0)'));
+            }
+
+            $totalExpenses = $contractorCosts + $materialCosts + $laborCosts;
+            $profit = $income - $totalExpenses;
+            $profitability = $income > 0 ? round(($profit / $income) * 100, 2) : 0;
+
+            return [
+                'id' => $project->id,
+                'name' => $project->name,
+                'customer' => $project->customer,
+                'status' => $project->status,
+                'start_date' => $project->start_date,
+                'end_date' => $project->end_date,
+                'income' => $income,
+                'contractor_costs' => $contractorCosts,
+                'material_costs' => $materialCosts,
+                'labor_costs' => $laborCosts,
+                'total_expenses' => $totalExpenses,
+                'profit' => $profit,
+                'profitability_percent' => $profitability,
+            ];
+        });
+
+        if ($request->filled('min_profitability')) {
+            $projects = $projects->filter(fn($p) => $p['profitability_percent'] >= $request->query('min_profitability'));
+        }
+        if ($request->filled('max_profitability')) {
+            $projects = $projects->filter(fn($p) => $p['profitability_percent'] <= $request->query('max_profitability'));
+        }
+        if ($request->boolean('show_losses_only')) {
+            $projects = $projects->filter(fn($p) => $p['profit'] < 0);
+        }
+
+        $totals = [
+            'total_projects' => $projects->count(),
+            'total_income' => $projects->sum('income'),
+            'total_expenses' => $projects->sum('total_expenses'),
+            'total_profit' => $projects->sum('profit'),
+            'avg_profitability' => $projects->count() > 0 ? round($projects->avg('profitability_percent'), 2) : 0,
+            'profitable_projects' => $projects->filter(fn($p) => $p['profit'] > 0)->count(),
+            'loss_making_projects' => $projects->filter(fn($p) => $p['profit'] < 0)->count(),
+        ];
+
+        if ($format === 'excel') {
+            $columns = [
+                'Проект' => 'name',
+                'Заказчик' => 'customer',
+                'Статус' => 'status',
+                'Доход' => 'income',
+                'Подрядчики' => 'contractor_costs',
+                'Материалы' => 'material_costs',
+                'Зарплата' => 'labor_costs',
+                'Всего расходов' => 'total_expenses',
+                'Прибыль' => 'profit',
+                'Рентабельность %' => 'profitability_percent',
+            ];
+            $exportable = $this->excelExporter->prepareDataForExport($projects->toArray(), $columns);
+            return $this->excelExporter->streamDownload('project_profitability_report_' . date('YmdHis') . '.xlsx', $exportable['headers'], $exportable['data']);
+        }
+
+        if ($format === 'pdf') {
+            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+        }
+
+        return [
+            'title' => 'Отчет по рентабельности проектов',
+            'data' => $projects->values(),
+            'totals' => $totals,
+            'filters' => $request->only(['project_id', 'status', 'customer', 'date_from', 'date_to']),
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
+    public function getProjectTimelinesReport(Request $request): array | StreamedResponse
+    {
+        $organizationId = $this->getCurrentOrgId($request);
+        $format = $request->query('format', 'json');
+        
+        $this->logging->business('report.project_timelines.requested', [
+            'organization_id' => $organizationId,
+            'filters' => $request->only(['project_id', 'status', 'customer']),
+            'user_id' => $request->user()?->id
+        ]);
+
+        $query = DB::table('projects')
+            ->where('projects.organization_id', $organizationId)
+            ->select(
+                'projects.id',
+                'projects.name',
+                'projects.customer',
+                'projects.status',
+                'projects.start_date',
+                'projects.end_date',
+                'projects.budget_amount',
+                'projects.created_at',
+                DB::raw('(SELECT COALESCE(SUM(total_amount), 0) FROM contracts WHERE project_id = projects.id) as total_contract_amount'),
+                DB::raw('(SELECT COALESCE(SUM(total_amount), 0) FROM completed_works WHERE project_id = projects.id AND status = "confirmed") as completed_amount')
+            );
+
+        if ($request->filled('project_id')) {
+            $query->where('projects.id', $request->query('project_id'));
+        }
+        if ($request->filled('status')) {
+            $query->where('projects.status', $request->query('status'));
+        }
+        if ($request->filled('customer')) {
+            $query->where('projects.customer', 'like', '%' . $request->query('customer') . '%');
+        }
+        if ($request->filled('date_from')) {
+            $query->where('projects.start_date', '>=', $request->query('date_from'));
+        }
+        if ($request->filled('date_to')) {
+            $query->where('projects.start_date', '<=', $request->query('date_to'));
+        }
+
+        $projects = $query->get()->map(function ($project) {
+            $startDate = $project->start_date ? Carbon::parse($project->start_date) : null;
+            $endDate = $project->end_date ? Carbon::parse($project->end_date) : null;
+            $now = Carbon::now();
+            
+            $totalDays = $startDate && $endDate ? $startDate->diffInDays($endDate) : 0;
+            $elapsedDays = $startDate ? $startDate->diffInDays($now) : 0;
+            $remainingDays = $endDate ? $now->diffInDays($endDate, false) : 0;
+            
+            $isOverdue = $endDate && $endDate->isPast() && $project->status === 'active';
+            $delayDays = $isOverdue ? abs($remainingDays) : 0;
+            
+            $completionPercent = $project->budget_amount > 0 
+                ? round(($project->completed_amount / $project->budget_amount) * 100, 2) 
+                : 0;
+            
+            $timeProgress = $totalDays > 0 ? round(($elapsedDays / $totalDays) * 100, 2) : 0;
+            
+            $isAtRisk = $timeProgress > $completionPercent + 20 && $project->status === 'active';
+            
+            $estimatedCompletion = null;
+            if ($completionPercent > 0 && $completionPercent < 100 && $startDate) {
+                $daysToComplete = ($elapsedDays / $completionPercent) * 100;
+                $estimatedCompletion = $startDate->copy()->addDays($daysToComplete)->toDateString();
+            }
+
+            return [
+                'id' => $project->id,
+                'name' => $project->name,
+                'customer' => $project->customer,
+                'status' => $project->status,
+                'start_date' => $project->start_date,
+                'end_date' => $project->end_date,
+                'planned_duration_days' => (int)$totalDays,
+                'elapsed_days' => (int)$elapsedDays,
+                'remaining_days' => (int)$remainingDays,
+                'is_overdue' => $isOverdue,
+                'delay_days' => (int)$delayDays,
+                'is_at_risk' => $isAtRisk,
+                'completion_percent' => $completionPercent,
+                'time_progress_percent' => $timeProgress,
+                'estimated_completion_date' => $estimatedCompletion,
+            ];
+        });
+
+        if ($request->boolean('show_overdue_only')) {
+            $projects = $projects->filter(fn($p) => $p['is_overdue']);
+        }
+        if ($request->boolean('show_at_risk')) {
+            $projects = $projects->filter(fn($p) => $p['is_at_risk'] || $p['is_overdue']);
+        }
+        if ($request->filled('min_delay_days')) {
+            $projects = $projects->filter(fn($p) => $p['delay_days'] >= $request->query('min_delay_days'));
+        }
+
+        $totals = [
+            'total_projects' => $projects->count(),
+            'active_projects' => $projects->where('status', 'active')->count(),
+            'overdue_projects' => $projects->filter(fn($p) => $p['is_overdue'])->count(),
+            'at_risk_projects' => $projects->filter(fn($p) => $p['is_at_risk'])->count(),
+            'avg_completion_percent' => $projects->count() > 0 ? round($projects->avg('completion_percent'), 2) : 0,
+        ];
+
+        if ($format === 'excel') {
+            $columns = [
+                'Проект' => 'name',
+                'Заказчик' => 'customer',
+                'Статус' => 'status',
+                'Дата начала' => 'start_date',
+                'Дата окончания' => 'end_date',
+                'План дней' => 'planned_duration_days',
+                'Прошло дней' => 'elapsed_days',
+                'Осталось дней' => 'remaining_days',
+                'Просрочено' => 'is_overdue',
+                'Задержка дней' => 'delay_days',
+                '% выполнения' => 'completion_percent',
+                'В зоне риска' => 'is_at_risk',
+            ];
+            $exportable = $this->excelExporter->prepareDataForExport($projects->toArray(), $columns);
+            return $this->excelExporter->streamDownload('project_timelines_report_' . date('YmdHis') . '.xlsx', $exportable['headers'], $exportable['data']);
+        }
+
+        if ($format === 'pdf') {
+            throw new BusinessLogicException('PDF экспорт для этого отчета пока не реализован. Используйте Excel.', 501);
+        }
+
+        return [
+            'title' => 'Отчет по срокам выполнения проектов',
+            'data' => $projects->values(),
+            'totals' => $totals,
+            'filters' => $request->only(['project_id', 'status', 'customer', 'date_from', 'date_to']),
+            'generated_at' => Carbon::now(),
+        ];
+    }
+
 } 
