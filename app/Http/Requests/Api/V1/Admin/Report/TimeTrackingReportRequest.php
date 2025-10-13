@@ -20,7 +20,7 @@ class TimeTrackingReportRequest extends FormRequest
             'date_from' => 'required|date',
             'date_to' => 'required|date|after_or_equal:date_from',
             'status' => 'nullable|string|in:draft,submitted,approved,rejected',
-            'is_billable' => 'nullable|boolean',
+            'is_billable' => 'nullable|in:0,1,true,false',
             'group_by' => 'nullable|string|in:user,project,date,work_type',
             'format' => 'nullable|string|in:json,excel,pdf',
             'page' => 'nullable|integer|min:1',
