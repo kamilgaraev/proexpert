@@ -11,9 +11,12 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 
-Route::middleware(['api', 'auth:api', 'organization.context'])
-    ->prefix('api/v1')
-    ->name('api.v1.')
+// ==========================================
+// Admin Panel Routes
+// ==========================================
+Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])
+    ->prefix('api/v1/admin')
+    ->name('admin.')
     ->group(function () {
         
         Route::prefix('warehouses')->name('warehouses.')->group(function () {

@@ -10,9 +10,12 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 
-Route::middleware(['api', 'auth:api', 'organization.context', 'module:advanced-warehouse'])
-    ->prefix('api/v1/advanced-warehouse')
-    ->name('api.v1.advanced-warehouse.')
+// ==========================================
+// Admin Panel Routes
+// ==========================================
+Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin', 'module:advanced-warehouse'])
+    ->prefix('api/v1/admin/advanced-warehouse')
+    ->name('admin.advanced-warehouse.')
     ->group(function () {
         
         // Аналитика и прогнозирование
