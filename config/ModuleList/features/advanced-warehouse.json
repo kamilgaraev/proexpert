@@ -20,10 +20,8 @@
   },
   "dependencies": [
     "basic-warehouse",
-    "materials",
     "organizations",
-    "users",
-    "projects"
+    "users"
   ],
   "conflicts": [],
   "permissions": [

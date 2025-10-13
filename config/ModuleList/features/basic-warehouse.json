@@ -18,10 +18,8 @@
     "duration_days": 0
   },
   "dependencies": [
-    "materials",
     "organizations",
-    "users",
-    "projects"
+    "users"
   ],
   "conflicts": [],
   "permissions": [
