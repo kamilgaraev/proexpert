@@ -53,26 +53,31 @@ class ProjectAllocationController extends Controller
             }
 
             // Создаем или обновляем распределение
-            $allocation = WarehouseProjectAllocation::updateOrCreate(
-                [
-                    'warehouse_id' => $validated['warehouse_id'],
-                    'material_id' => $validated['material_id'],
-                    'project_id' => $validated['project_id'],
-                ],
-                [
-                    'organization_id' => $organizationId,
-                    'allocated_quantity' => DB::raw('allocated_quantity + ' . $validated['quantity']),
-                    'allocated_by_user_id' => $request->user()->id,
-                    'allocated_at' => now(),
-                    'notes' => $validated['notes'] ?? null,
-                ]
-            );
+            $allocation = WarehouseProjectAllocation::firstOrNew([
+                'warehouse_id' => $validated['warehouse_id'],
+                'material_id' => $validated['material_id'],
+                'project_id' => $validated['project_id'],
+            ]);
+
+            if ($allocation->exists) {
+                // Обновляем существующее
+                $allocation->allocated_quantity += $validated['quantity'];
+            } else {
+                // Создаем новое
+                $allocation->organization_id = $organizationId;
+                $allocation->allocated_quantity = $validated['quantity'];
+            }
+
+            $allocation->allocated_by_user_id = $request->user()->id;
+            $allocation->allocated_at = now();
+            $allocation->notes = $validated['notes'] ?? $allocation->notes;
+            $allocation->save();
 
             DB::commit();
 
             return response()->json([
                 'success' => true,
-                'data' => $allocation->fresh(['project', 'material', 'warehouse']),
+                'data' => $allocation->load(['project', 'material', 'warehouse']),
                 'message' => 'Материал успешно распределен на проект',
             ], 201);
         } catch (\Exception $e) {
