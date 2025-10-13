@@ -50,6 +50,7 @@ class OrganizationModuleActivationObserver
         // Очищаем общие ключи организации
         Cache::forget("org_active_modules_{$organizationId}");
         Cache::forget("active_modules_{$organizationId}");
+        Cache::forget("modules_with_status_{$organizationId}");
         
         // Очищаем кеш всех разрешений организации
         $this->clearOrganizationPermissionsCache($organizationId);

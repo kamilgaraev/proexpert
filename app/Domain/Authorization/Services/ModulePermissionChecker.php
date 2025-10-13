@@ -220,6 +220,7 @@ class ModulePermissionChecker
         
         if ($organizationId) {
             Cache::forget("org_active_modules_$organizationId");
+            Cache::forget("modules_with_status_{$organizationId}");  // Кеш списка модулей для UI
         }
         
         Cache::forget('available_modules');

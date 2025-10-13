@@ -811,6 +811,7 @@ class ModuleManager
         $cacheKeys = [
             "org_active_modules_{$organizationId}",
             "active_modules_{$organizationId}",
+            "modules_with_status_{$organizationId}",  // Кеш списка модулей для UI
         ];
         
         foreach ($cacheKeys as $key) {

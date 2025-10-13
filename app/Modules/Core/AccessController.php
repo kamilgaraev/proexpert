@@ -195,7 +195,8 @@ class AccessController
         // Очищаем конкретные ключи без wildcards
         $specificKeys = [
             "org_active_modules_{$organizationId}",
-            "active_modules_{$organizationId}"
+            "active_modules_{$organizationId}",
+            "modules_with_status_{$organizationId}"  // Кеш списка модулей для UI
         ];
         
         foreach ($specificKeys as $key) {

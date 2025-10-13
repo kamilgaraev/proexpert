@@ -244,6 +244,8 @@ class ModuleController extends Controller
             return (new ErrorResponse($result['message'], 400))->toResponse($request);
         }
 
+        app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
+
         return (new SuccessResponse($result))->toResponse($request);
     }
 
@@ -447,6 +449,8 @@ class ModuleController extends Controller
             ))->toResponse($request);
         }
         
+        app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
+        
         return (new SuccessResponse($result))->toResponse($request);
     }
 
@@ -512,6 +516,8 @@ class ModuleController extends Controller
                 ['code' => $result['code']]
             ))->toResponse($request);
         }
+        
+        app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
         
         return (new SuccessResponse($result))->toResponse($request);
     }
