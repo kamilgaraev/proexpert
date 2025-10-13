@@ -664,12 +664,13 @@ class GenerateCustomReportAction
     {
         try {
             $config = config('filesystems.disks.s3');
+            $bucket = $config['bucket'] ?? 'prohelper-storage';
             
             $s3Client = new S3Client([
                 'version' => 'latest',
                 'region' => $config['region'] ?? 'ru-central1',
-                'endpoint' => $config['endpoint'] ?? 'https://storage.yandexcloud.net',
-                'use_path_style_endpoint' => true,
+                'endpoint' => "https://{$bucket}.storage.yandexcloud.net",
+                'use_path_style_endpoint' => false,
                 'credentials' => [
                     'key' => $config['key'],
                     'secret' => $config['secret'],
@@ -677,7 +678,7 @@ class GenerateCustomReportAction
             ]);
 
             $cmd = $s3Client->getCommand('GetObject', [
-                'Bucket' => $config['bucket'] ?? 'prohelper-storage',
+                'Bucket' => $bucket,
                 'Key' => $s3Path,
             ]);
 
@@ -687,6 +688,7 @@ class GenerateCustomReportAction
             Log::debug('AI Report presigned URL generated', [
                 'path' => $s3Path,
                 'url' => $presignedUrl,
+                'bucket' => $bucket,
                 'expires_at' => now()->addDay()->toISOString(),
             ]);
 
