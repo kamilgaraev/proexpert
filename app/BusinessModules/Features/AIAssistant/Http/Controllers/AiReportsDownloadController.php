@@ -94,16 +94,38 @@ class AiReportsDownloadController extends Controller
     protected function generatePresignedUrl(string $s3Path): string
     {
         try {
-            /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
-            $disk = Storage::disk('s3');
+            $config = config('filesystems.disks.s3');
+            
+            $s3Client = new \Aws\S3\S3Client([
+                'version' => 'latest',
+                'region' => $config['region'] ?? 'ru-central1',
+                'endpoint' => $config['endpoint'] ?? 'https://storage.yandexcloud.net',
+                'use_path_style_endpoint' => true,
+                'credentials' => [
+                    'key' => $config['key'],
+                    'secret' => $config['secret'],
+                ],
+            ]);
 
-            // Генерируем presigned URL на 15 минут (короткий срок для безопасности)
-            return $disk->temporaryUrl($s3Path, now()->addMinutes(15));
+            $cmd = $s3Client->getCommand('GetObject', [
+                'Bucket' => $config['bucket'] ?? 'prohelper-storage',
+                'Key' => $s3Path,
+            ]);
+
+            $request = $s3Client->createPresignedRequest($cmd, '+15 minutes');
+            $presignedUrl = (string) $request->getUri();
+
+            Log::info('Generated presigned URL for AI report download', [
+                'path' => $s3Path,
+            ]);
+
+            return $presignedUrl;
 
         } catch (\Exception $e) {
             Log::error('Failed to generate presigned URL for AI report', [
                 'path' => $s3Path,
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
             throw $e;
         }

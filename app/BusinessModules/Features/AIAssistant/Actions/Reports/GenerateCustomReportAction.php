@@ -663,33 +663,43 @@ class GenerateCustomReportAction
     protected function generatePresignedUrl(string $s3Path): string
     {
         try {
-            // Используем тот же подход, что и в Laravel filesystem
-            /** @var \Illuminate\Filesystem\FilesystemAdapter $disk */
-            $disk = Storage::disk('s3');
+            $config = config('filesystems.disks.s3');
+            
+            $s3Client = new S3Client([
+                'version' => 'latest',
+                'region' => $config['region'] ?? 'ru-central1',
+                'endpoint' => $config['endpoint'] ?? 'https://storage.yandexcloud.net',
+                'use_path_style_endpoint' => true,
+                'credentials' => [
+                    'key' => $config['key'],
+                    'secret' => $config['secret'],
+                ],
+            ]);
 
-            // Генерируем presigned URL на 24 часа
-            $temporaryUrl = $disk->temporaryUrl($s3Path, now()->addDay());
+            $cmd = $s3Client->getCommand('GetObject', [
+                'Bucket' => $config['bucket'] ?? 'prohelper-storage',
+                'Key' => $s3Path,
+            ]);
+
+            $request = $s3Client->createPresignedRequest($cmd, '+24 hours');
+            $presignedUrl = (string) $request->getUri();
 
             Log::debug('AI Report presigned URL generated', [
                 'path' => $s3Path,
-                'url' => $temporaryUrl,
+                'url' => $presignedUrl,
                 'expires_at' => now()->addDay()->toISOString(),
             ]);
 
-            return $temporaryUrl;
+            return $presignedUrl;
 
         } catch (\Exception $e) {
             Log::error('AI Report presigned URL failed', [
                 'path' => $s3Path,
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
 
-            // Fallback: возвращаем публичный URL если presigned не работает
-            $config = config('filesystems.disks.s3');
-            $endpoint = $config['endpoint'] ?? 'https://storage.yandexcloud.net';
-            $bucket = $config['bucket'] ?? 'prohelper-storage';
-
-            return rtrim($endpoint, '/') . '/' . $bucket . '/' . $s3Path;
+            throw new \RuntimeException('Не удалось сгенерировать ссылку на отчет: ' . $e->getMessage());
         }
     }
 }

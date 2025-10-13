@@ -39,3 +39,4 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 *.md
 !README.md
 !CHANGELOG.md
+.gigaide
