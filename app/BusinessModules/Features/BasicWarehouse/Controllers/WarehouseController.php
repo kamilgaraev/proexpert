@@ -21,7 +21,7 @@ class WarehouseController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $warehouses = \App\BusinessModules\Features\BasicWarehouse\Models\OrganizationWarehouse::where('organization_id', $organizationId)
             ->where('is_active', true)
@@ -38,7 +38,7 @@ class WarehouseController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $validated = $request->validate([
             'name' => 'required|string|max:255',
@@ -103,7 +103,7 @@ class WarehouseController extends Controller
      */
     public function update(Request $request, int $id): JsonResponse
     {
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
@@ -156,7 +156,7 @@ class WarehouseController extends Controller
      */
     public function balances(Request $request, int $id): JsonResponse
     {
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $filters = [
             'warehouse_id' => $id,
@@ -177,7 +177,7 @@ class WarehouseController extends Controller
      */
     public function movements(Request $request, int $id): JsonResponse
     {
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $filters = [
             'warehouse_id' => $id,

@@ -32,7 +32,7 @@ class WarehouseOperationsController extends Controller
             'metadata' => 'nullable|array',
         ]);
 
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $result = $this->warehouseService->receiveAsset(
             $organizationId,
@@ -71,7 +71,7 @@ class WarehouseOperationsController extends Controller
             'metadata' => 'nullable|array',
         ]);
 
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $result = $this->warehouseService->writeOffAsset(
             $organizationId,
@@ -109,7 +109,7 @@ class WarehouseOperationsController extends Controller
             'metadata' => 'nullable|array',
         ]);
 
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $result = $this->warehouseService->transferAsset(
             $organizationId,

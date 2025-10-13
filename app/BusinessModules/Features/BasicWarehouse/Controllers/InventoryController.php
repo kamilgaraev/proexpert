@@ -20,7 +20,7 @@ class InventoryController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $acts = InventoryAct::where('organization_id', $organizationId)
             ->with(['warehouse', 'creator'])
@@ -52,7 +52,7 @@ class InventoryController extends Controller
             'notes' => 'nullable|string',
         ]);
 
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         DB::beginTransaction();
         try {

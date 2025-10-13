@@ -27,7 +27,7 @@ class AdvancedWarehouseController extends Controller
             'warehouse_id' => 'nullable|exists:organization_warehouses,id',
         ]);
 
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $analytics = $this->advancedWarehouseService->getTurnoverAnalytics($organizationId, $validated);
         
@@ -48,7 +48,7 @@ class AdvancedWarehouseController extends Controller
             'asset_ids.*' => 'exists:materials,id',
         ]);
 
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $forecast = $this->advancedWarehouseService->getForecastData($organizationId, $validated);
         
@@ -68,7 +68,7 @@ class AdvancedWarehouseController extends Controller
             'date_to' => 'nullable|date|after_or_equal:date_from',
         ]);
 
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $analysis = $this->advancedWarehouseService->getAbcXyzAnalysis($organizationId, $validated);
         
@@ -92,7 +92,7 @@ class AdvancedWarehouseController extends Controller
             'reason' => 'nullable|string',
         ]);
 
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $result = $this->advancedWarehouseService->reserveAssets(
             $organizationId,
@@ -132,7 +132,7 @@ class AdvancedWarehouseController extends Controller
      */
     public function reservations(Request $request): JsonResponse
     {
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $reservations = \App\BusinessModules\Features\AdvancedWarehouse\Models\AssetReservation::where('organization_id', $organizationId)
             ->with(['material', 'warehouse', 'project', 'reservedBy'])
@@ -168,7 +168,7 @@ class AdvancedWarehouseController extends Controller
             'notes' => 'nullable|string',
         ]);
 
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $result = $this->advancedWarehouseService->createAutoReorderRule(
             $organizationId,
@@ -188,7 +188,7 @@ class AdvancedWarehouseController extends Controller
      */
     public function autoReorderRules(Request $request): JsonResponse
     {
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $rules = \App\BusinessModules\Features\AdvancedWarehouse\Models\AutoReorderRule::where('organization_id', $organizationId)
             ->with(['material', 'warehouse', 'defaultSupplier'])
@@ -212,7 +212,7 @@ class AdvancedWarehouseController extends Controller
      */
     public function checkAutoReorder(Request $request): JsonResponse
     {
-        $organizationId = $request->user()->organization_id;
+        $organizationId = $request->user()->current_organization_id;
         
         $result = $this->advancedWarehouseService->checkAutoReorder($organizationId);
         
