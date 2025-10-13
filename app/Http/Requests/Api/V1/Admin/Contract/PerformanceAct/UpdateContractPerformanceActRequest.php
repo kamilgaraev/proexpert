@@ -19,11 +19,17 @@ class UpdateContractPerformanceActRequest extends FormRequest
         return [
             'act_document_number' => ['sometimes', 'nullable', 'string', 'max:255'],
             'act_date' => ['sometimes', 'required', 'date_format:Y-m-d'],
-            'amount' => ['sometimes', 'required', 'numeric', 'min:0'],
             'description' => ['sometimes', 'nullable', 'string'],
             'is_approved' => ['sometimes', 'boolean'],
             'approval_date' => ['sometimes','nullable', 'date_format:Y-m-d', 'required_if:is_approved,true'],
-            'organization_id_for_show' => ['sometimes', 'integer'] // Временное поле
+            'organization_id_for_show' => ['sometimes', 'integer'], // Временное поле
+
+            // Выполненные работы - ОБЯЗАТЕЛЬНЫ при обновлении акта
+            'completed_works' => ['sometimes', 'array'],
+            'completed_works.*.completed_work_id' => ['required_with:completed_works', 'integer', 'exists:completed_works,id'],
+            'completed_works.*.included_quantity' => ['required_with:completed_works', 'numeric', 'min:0'],
+            'completed_works.*.included_amount' => ['required_with:completed_works', 'numeric', 'min:0'],
+            'completed_works.*.notes' => ['nullable', 'string', 'max:500'],
         ];
     }
 
@@ -38,10 +44,10 @@ class UpdateContractPerformanceActRequest extends FormRequest
         return new ContractPerformanceActDTO(
             act_document_number: $validatedData['act_document_number'] ?? null,
             act_date: $validatedData['act_date'], // 'required' if present
-            amount: (float) ($validatedData['amount'] ?? 0), // 'required' if present
             description: $validatedData['description'] ?? null,
             is_approved: $this->has('is_approved') ? $this->boolean('is_approved') : true, // true по умолчанию, если не передано
-            approval_date: $validatedData['approval_date'] ?? null
+            approval_date: $validatedData['approval_date'] ?? null,
+            completed_works: $validatedData['completed_works'] ?? []
         );
     }
 } 

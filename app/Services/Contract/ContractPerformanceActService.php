@@ -49,19 +49,19 @@ class ContractPerformanceActService
             'contract_id' => $contractId,
             'organization_id' => $organizationId,
             'act_document_number' => $actDTO->act_document_number,
-            'act_amount' => $actDTO->amount,
             'has_completed_works' => !empty($actDTO->completed_works),
             'completed_works_count' => count($actDTO->completed_works ?? [])
         ]);
 
         $contract = $this->getContractOrFail($contractId, $organizationId);
-        
+
+        // Создаем акт без суммы (сумма рассчитается на основе работ)
         $actData = $actDTO->toArray();
         $actData['contract_id'] = $contract->id;
 
         $act = $this->actRepository->create($actData);
 
-        // Синхронизируем выполненные работы если они переданы
+        // Синхронизируем выполненные работы (обязательно для создания акта)
         if (!empty($actDTO->completed_works)) {
             $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
             // Пересчитываем сумму акта на основе включенных работ
@@ -111,7 +111,6 @@ class ContractPerformanceActService
             'act_id' => $actId,
             'contract_id' => $contractId,
             'organization_id' => $organizationId,
-            'new_amount' => $actDTO->amount,
             'new_document_number' => $actDTO->act_document_number
         ]);
 
@@ -127,7 +126,7 @@ class ContractPerformanceActService
                 'act_exists' => $act !== null,
                 'contract_matches' => $act ? ($act->contract_id === $contractId) : false
             ], 'warning');
-            
+
             throw new Exception('Performance act not found or does not belong to the specified contract.');
         }
 
@@ -147,18 +146,19 @@ class ContractPerformanceActService
                 'contract_id' => $contractId,
                 'organization_id' => $organizationId
             ], 'error');
-            
+
             throw new Exception('Failed to update performance act.');
         }
 
         $act = $this->actRepository->find($actId);
 
         // Синхронизируем выполненные работы если они переданы
-        if (!empty($actDTO->completed_works)) {
+        if (isset($actDTO->completed_works) && !empty($actDTO->completed_works)) {
             $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
-            // Пересчитываем сумму акта на основе включенных работ
-            $act->recalculateAmount();
         }
+
+        // Всегда пересчитываем сумму акта на основе включенных работ
+        $act->recalculateAmount();
 
         // BUSINESS: Акт успешно обновлен
         $this->logging->business('performance_act.updated', [
