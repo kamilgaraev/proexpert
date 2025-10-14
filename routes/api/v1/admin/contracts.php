@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPaymentController;
+use App\Http\Controllers\Api\V1\Admin\Contract\ContractAdvancePaymentController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractSpecificationController;
 
 // Маршруты для Контрактов
