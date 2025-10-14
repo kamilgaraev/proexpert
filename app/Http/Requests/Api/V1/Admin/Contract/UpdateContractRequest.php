@@ -35,6 +35,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'payment_terms' => ['sometimes', 'nullable', 'string'],
             'total_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'gp_percentage' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
+            'subcontract_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'planned_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'actual_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'status' => ['sometimes', 'nullable', new Enum(ContractStatusEnum::class)],
@@ -76,10 +77,13 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             total_amount: isset($validatedData['total_amount']) 
                 ? (float) $validatedData['total_amount'] 
                 : (float) $contract->total_amount,
-            gp_percentage: array_key_exists('gp_percentage', $validatedData) 
+            gp_percentage: array_key_exists('gp_percentage', $validatedData)
                 ? ($validatedData['gp_percentage'] !== null ? (float) $validatedData['gp_percentage'] : null)
                 : $contract->gp_percentage,
-            planned_advance_amount: array_key_exists('planned_advance_amount', $validatedData) 
+            subcontract_amount: array_key_exists('subcontract_amount', $validatedData)
+                ? ($validatedData['subcontract_amount'] !== null ? (float) $validatedData['subcontract_amount'] : null)
+                : $contract->subcontract_amount,
+            planned_advance_amount: array_key_exists('planned_advance_amount', $validatedData)
                 ? ($validatedData['planned_advance_amount'] !== null ? (float) $validatedData['planned_advance_amount'] : null)
                 : $contract->planned_advance_amount,
             actual_advance_amount: array_key_exists('actual_advance_amount', $validatedData) 

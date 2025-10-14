@@ -12,4 +12,8 @@ Route::group(['prefix' => 'contracts/{contract}'], function () {
 
 // CRUD по соглашениям (без индекса)
 Route::apiResource('agreements', AgreementController::class)
-    ->parameters(['agreements' => 'agreement']); 
+    ->parameters(['agreements' => 'agreement']);
+
+// Применение изменений дополнительного соглашения к контракту
+Route::post('agreements/{agreement}/apply-changes', [AgreementController::class, 'applyChanges'])
+    ->name('agreements.apply-changes'); 

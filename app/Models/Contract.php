@@ -28,6 +28,7 @@ class Contract extends Model
         'payment_terms',
         'total_amount',
         'gp_percentage',
+        'subcontract_amount',
         'planned_advance_amount',
         'actual_advance_amount',
         'status',
@@ -40,6 +41,7 @@ class Contract extends Model
         'date' => 'date',
         'total_amount' => 'decimal:2',
         'gp_percentage' => 'decimal:2',
+        'subcontract_amount' => 'decimal:2',
         'planned_advance_amount' => 'decimal:2',
         'actual_advance_amount' => 'decimal:2',
         'start_date' => 'date',
@@ -86,6 +88,11 @@ class Contract extends Model
         return $this->hasMany(ContractPayment::class);
     }
 
+    public function advancePayments(): HasMany
+    {
+        return $this->hasMany(ContractAdvancePayment::class);
+    }
+
     /**
      * Получить выполненные работы по данному договору.
      */
@@ -126,6 +133,17 @@ class Contract extends Model
         $totalAmount = $this->total_amount ?? 0;
         $gpAmount = $this->gp_amount ?? 0;
         return $totalAmount + $gpAmount;
+    }
+
+    /**
+     * Получить общую сумму контракта с учетом генподряда и субподряда
+     */
+    public function getTotalAmountWithSubcontractAttribute(): float
+    {
+        $totalAmount = $this->total_amount ?? 0;
+        $gpAmount = $this->gp_amount ?? 0;
+        $subcontractAmount = $this->subcontract_amount ?? 0;
+        return $totalAmount + $gpAmount + $subcontractAmount;
     }
 
     /**

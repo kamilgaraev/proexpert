@@ -10,6 +10,8 @@ class SupplementaryAgreementDTO
         public readonly string $agreement_date, // Y-m-d
         public readonly float $change_amount,
         public readonly array $subject_changes,
+        public readonly ?array $advance_changes,
+        public readonly ?array $subcontract_changes,
     ) {}
 
     public function toArray(): array
@@ -20,6 +22,8 @@ class SupplementaryAgreementDTO
             'agreement_date' => $this->agreement_date,
             'change_amount' => $this->change_amount,
             'subject_changes' => $this->subject_changes,
+            'advance_changes' => $this->advance_changes,
+            'subcontract_changes' => $this->subcontract_changes,
         ];
     }
 } 

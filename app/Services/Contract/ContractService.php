@@ -49,6 +49,7 @@ class ContractService
             'organization_id' => $organizationId,
             'contractor_id' => $contractDTO->contractor_id ?? null,
             'total_amount' => $contractDTO->total_amount ?? null,
+            'subcontract_amount' => $contractDTO->subcontract_amount ?? null,
             'contract_number' => $contractDTO->number ?? null,
             'user_id' => Auth::id()
         ]);

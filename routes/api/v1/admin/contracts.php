@@ -48,6 +48,11 @@ Route::apiResource('contracts.payments', ContractPaymentController::class)
     ->shallow()
     ->parameters(['payments' => 'payment']);
 
+// Вложенные маршруты для Авансовых платежей по Контрактам
+Route::apiResource('contracts.advance-payments', ContractAdvancePaymentController::class)
+    ->shallow()
+    ->parameters(['advance-payments' => 'advance_payment']);
+
 // Маршруты для Спецификаций контрактов
 Route::group(['prefix' => 'contracts/{contract}/specifications'], function () {
     Route::get('/', [ContractSpecificationController::class, 'index'])

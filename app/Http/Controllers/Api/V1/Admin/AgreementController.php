@@ -53,4 +53,21 @@ class AgreementController extends Controller
         $this->service->delete($id);
         return response()->json(null, Response::HTTP_NO_CONTENT);
     }
+
+    public function applyChanges(int $id)
+    {
+        try {
+            $this->service->applyChangesToContract($id);
+            return response()->json([
+                'success' => true,
+                'message' => 'Изменения дополнительного соглашения успешно применены к контракту'
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при применении изменений',
+                'error' => $e->getMessage()
+            ], Response::HTTP_BAD_REQUEST);
+        }
+    }
 } 

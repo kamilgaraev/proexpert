@@ -17,12 +17,16 @@ class SupplementaryAgreement extends Model
         'agreement_date',
         'change_amount',
         'subject_changes',
+        'advance_changes',
+        'subcontract_changes',
     ];
 
     protected $casts = [
         'agreement_date' => 'date',
         'change_amount' => 'decimal:2',
         'subject_changes' => 'array',
+        'advance_changes' => 'array',
+        'subcontract_changes' => 'array',
     ];
 
     public function contract(): BelongsTo
