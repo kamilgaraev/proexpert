@@ -9,6 +9,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
+use App\Enums\Contract\GpCalculationTypeEnum;
 use App\DTOs\Contract\ContractDTO;
 use Illuminate\Validation\Rules\Enum;
 use App\Rules\ParentContractValid;
@@ -34,7 +35,9 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'work_type_category' => ['sometimes', 'nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'payment_terms' => ['sometimes', 'nullable', 'string'],
             'total_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
-            'gp_percentage' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
+            'gp_percentage' => ['sometimes', 'nullable', 'numeric'],
+            'gp_calculation_type' => ['sometimes', 'nullable', new Enum(GpCalculationTypeEnum::class)],
+            'gp_coefficient' => ['sometimes', 'nullable', 'numeric'],
             'subcontract_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'planned_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'actual_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
@@ -80,6 +83,12 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             gp_percentage: array_key_exists('gp_percentage', $validatedData)
                 ? ($validatedData['gp_percentage'] !== null ? (float) $validatedData['gp_percentage'] : null)
                 : $contract->gp_percentage,
+            gp_calculation_type: array_key_exists('gp_calculation_type', $validatedData)
+                ? ($validatedData['gp_calculation_type'] ? GpCalculationTypeEnum::from($validatedData['gp_calculation_type']) : null)
+                : $contract->gp_calculation_type,
+            gp_coefficient: array_key_exists('gp_coefficient', $validatedData)
+                ? ($validatedData['gp_coefficient'] !== null ? (float) $validatedData['gp_coefficient'] : null)
+                : $contract->gp_coefficient,
             subcontract_amount: array_key_exists('subcontract_amount', $validatedData)
                 ? ($validatedData['subcontract_amount'] !== null ? (float) $validatedData['subcontract_amount'] : null)
                 : $contract->subcontract_amount,
@@ -100,7 +109,8 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
                 : ($contract->end_date ? $contract->end_date->format('Y-m-d') : null),
             notes: array_key_exists('notes', $validatedData) 
                 ? $validatedData['notes'] 
-                : $contract->notes
+                : $contract->notes,
+            advance_payments: null
         );
     }
 } 

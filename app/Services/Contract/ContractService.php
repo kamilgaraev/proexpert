@@ -66,7 +66,26 @@ class ContractService
         $contractData['organization_id'] = $organizationId;
 
         try {
+            DB::beginTransaction();
+            
+            $advancePayments = $contractDTO->advance_payments;
+            unset($contractData['advance_payments']);
+            
             $contract = $this->contractRepository->create($contractData);
+            
+            if ($advancePayments && is_array($advancePayments)) {
+                foreach ($advancePayments as $advance) {
+                    $this->paymentRepository->create([
+                        'contract_id' => $contract->id,
+                        'amount' => $advance['amount'],
+                        'payment_date' => $advance['payment_date'] ?? null,
+                        'payment_type' => 'advance',
+                        'description' => $advance['description'] ?? null,
+                    ]);
+                }
+            }
+            
+            DB::commit();
 
             // BUSINESS: Договор успешно создан
             $this->logging->business('contract.created', [

@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
+use App\Enums\Contract\GpCalculationTypeEnum;
 
 class Contract extends Model
 {
@@ -28,6 +29,8 @@ class Contract extends Model
         'payment_terms',
         'total_amount',
         'gp_percentage',
+        'gp_calculation_type',
+        'gp_coefficient',
         'subcontract_amount',
         'planned_advance_amount',
         'actual_advance_amount',
@@ -41,6 +44,8 @@ class Contract extends Model
         'date' => 'date',
         'total_amount' => 'decimal:2',
         'gp_percentage' => 'decimal:2',
+        'gp_calculation_type' => GpCalculationTypeEnum::class,
+        'gp_coefficient' => 'decimal:4',
         'subcontract_amount' => 'decimal:2',
         'planned_advance_amount' => 'decimal:2',
         'actual_advance_amount' => 'decimal:2',
@@ -111,12 +116,19 @@ class Contract extends Model
     // Accessor for calculated GP Amount
     public function getGpAmountAttribute(): float
     {
-        $percentage = $this->gp_percentage ?? 0;
         $amount = $this->total_amount ?? 0;
+        $calculationType = $this->gp_calculation_type ?? GpCalculationTypeEnum::PERCENTAGE;
         
-        if ($percentage > 0 && $amount > 0) {
+        if ($calculationType === GpCalculationTypeEnum::COEFFICIENT) {
+            $coefficient = $this->gp_coefficient ?? 0;
+            return round($amount * $coefficient, 2);
+        }
+        
+        $percentage = $this->gp_percentage ?? 0;
+        if ($percentage != 0 && $amount > 0) {
             return round(($amount * $percentage) / 100, 2);
         }
+        
         return 0.00;
     }
 

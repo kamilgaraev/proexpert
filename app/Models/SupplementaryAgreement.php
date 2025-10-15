@@ -18,6 +18,8 @@ class SupplementaryAgreement extends Model
         'change_amount',
         'subject_changes',
         'subcontract_changes',
+        'gp_changes',
+        'advance_changes',
     ];
 
     protected $casts = [
@@ -25,6 +27,8 @@ class SupplementaryAgreement extends Model
         'change_amount' => 'decimal:2',
         'subject_changes' => 'array',
         'subcontract_changes' => 'array',
+        'gp_changes' => 'array',
+        'advance_changes' => 'array',
     ];
 
     public function contract(): BelongsTo

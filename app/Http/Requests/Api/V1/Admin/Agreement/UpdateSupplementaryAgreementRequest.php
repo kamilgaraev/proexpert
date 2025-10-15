@@ -21,6 +21,10 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
             'subject_changes' => ['sometimes', 'array'],
             'subject_changes.*' => ['string'],
             'subcontract_changes' => ['sometimes', 'nullable', 'array'],
+            'gp_changes' => ['sometimes', 'nullable', 'array'],
+            'advance_changes' => ['sometimes', 'nullable', 'array'],
+            'advance_changes.*.payment_id' => ['required', 'integer', 'exists:contract_payments,id'],
+            'advance_changes.*.new_amount' => ['required', 'numeric', 'min:0'],
         ];
     }
 
@@ -33,6 +37,8 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
             change_amount: $this->validated('change_amount') !== null ? (float) $this->validated('change_amount') : 0,
             subject_changes: $this->validated('subject_changes') ?? [],
             subcontract_changes: $this->validated('subcontract_changes'),
+            gp_changes: $this->validated('gp_changes'),
+            advance_changes: $this->validated('advance_changes'),
         );
     }
 } 

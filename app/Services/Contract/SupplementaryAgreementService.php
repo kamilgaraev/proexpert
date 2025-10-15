@@ -6,6 +6,8 @@ use App\Repositories\Interfaces\SupplementaryAgreementRepositoryInterface;
 use App\DTOs\SupplementaryAgreementDTO;
 use App\Models\SupplementaryAgreement;
 use App\Models\Contract;
+use App\Models\ContractPayment;
+use App\Enums\Contract\GpCalculationTypeEnum;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
@@ -61,6 +63,14 @@ class SupplementaryAgreementService
                 $this->applySubcontractChanges($contract, $agreement->subcontract_changes);
             }
 
+            if ($agreement->gp_changes) {
+                $this->applyGpChanges($contract, $agreement->gp_changes);
+            }
+
+            if ($agreement->advance_changes) {
+                $this->applyAdvanceChanges($contract, $agreement->advance_changes);
+            }
+
             DB::commit();
 
             return true;
@@ -75,6 +85,44 @@ class SupplementaryAgreementService
         if (isset($changes['amount'])) {
             $contract->subcontract_amount = $changes['amount'];
             $contract->save();
+        }
+    }
+
+    private function applyGpChanges(Contract $contract, array $changes): void
+    {
+        if (isset($changes['percentage'])) {
+            $contract->gp_percentage = $changes['percentage'];
+            $contract->gp_calculation_type = GpCalculationTypeEnum::PERCENTAGE;
+        }
+
+        if (isset($changes['coefficient'])) {
+            $contract->gp_coefficient = $changes['coefficient'];
+            $contract->gp_calculation_type = GpCalculationTypeEnum::COEFFICIENT;
+        }
+
+        if (isset($changes['calculation_type'])) {
+            $contract->gp_calculation_type = GpCalculationTypeEnum::from($changes['calculation_type']);
+        }
+
+        $contract->save();
+    }
+
+    private function applyAdvanceChanges(Contract $contract, array $changes): void
+    {
+        foreach ($changes as $change) {
+            if (!isset($change['payment_id']) || !isset($change['new_amount'])) {
+                continue;
+            }
+
+            $payment = ContractPayment::where('id', $change['payment_id'])
+                ->where('contract_id', $contract->id)
+                ->where('payment_type', 'advance')
+                ->first();
+
+            if ($payment) {
+                $payment->amount = $change['new_amount'];
+                $payment->save();
+            }
         }
     }
 } 

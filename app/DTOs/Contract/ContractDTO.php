@@ -4,6 +4,7 @@ namespace App\DTOs\Contract;
 
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
+use App\Enums\Contract\GpCalculationTypeEnum;
 use Illuminate\Http\Request; // Для гидрации из Request, если нужно
 
 class ContractDTO
@@ -19,13 +20,16 @@ class ContractDTO
         public readonly ?string $payment_terms,
         public readonly float $total_amount,
         public readonly ?float $gp_percentage,
+        public readonly ?GpCalculationTypeEnum $gp_calculation_type,
+        public readonly ?float $gp_coefficient,
         public readonly ?float $subcontract_amount,
         public readonly ?float $planned_advance_amount,
         public readonly ?float $actual_advance_amount,
         public readonly ContractStatusEnum $status,
         public readonly ?string $start_date, // Y-m-d format
         public readonly ?string $end_date, // Y-m-d format
-        public readonly ?string $notes
+        public readonly ?string $notes,
+        public readonly ?array $advance_payments = null
     ) {}
 
     public function toArray(): array
@@ -41,6 +45,8 @@ class ContractDTO
             'payment_terms' => $this->payment_terms,
             'total_amount' => $this->total_amount,
             'gp_percentage' => $this->gp_percentage,
+            'gp_calculation_type' => $this->gp_calculation_type?->value,
+            'gp_coefficient' => $this->gp_coefficient,
             'subcontract_amount' => $this->subcontract_amount,
             'planned_advance_amount' => $this->planned_advance_amount,
             'actual_advance_amount' => $this->actual_advance_amount,
