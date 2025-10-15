@@ -245,7 +245,11 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         }
 
         // Eager load relationships
-        $query->with(['contractor:id,name', 'project:id,name']);
+        $query->with([
+            'contractor:id,name', 
+            'project:id,name',
+            'agreements:id,contract_id,change_amount' // Для расчета эффективной суммы контракта
+        ]);
 
         // Сортировка
         $allowedSortFields = ['created_at', 'date', 'total_amount', 'number', 'status'];
