@@ -57,12 +57,6 @@ class SupplementaryAgreementService
 
             $contract = $agreement->contract;
 
-            // Применяем изменения авансов
-            if ($agreement->advance_changes) {
-                $this->applyAdvanceChanges($contract, $agreement->advance_changes);
-            }
-
-            // Применяем изменения субподряда
             if ($agreement->subcontract_changes) {
                 $this->applySubcontractChanges($contract, $agreement->subcontract_changes);
             }
@@ -76,17 +70,11 @@ class SupplementaryAgreementService
         }
     }
 
-    private function applyAdvanceChanges(Contract $contract, array $changes): void
-    {
-        // Логика применения изменений авансов к контракту
-        // Это может включать обновление planned_advance_amount или создание/изменение авансовых платежей
-        // Реализация зависит от бизнес-логики
-    }
-
     private function applySubcontractChanges(Contract $contract, array $changes): void
     {
-        // Логика применения изменений субподряда к контракту
-        // Это может включать обновление subcontract_amount
-        // Реализация зависит от бизнес-логики
+        if (isset($changes['amount'])) {
+            $contract->subcontract_amount = $changes['amount'];
+            $contract->save();
+        }
     }
 } 

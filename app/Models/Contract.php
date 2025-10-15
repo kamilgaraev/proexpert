@@ -88,11 +88,6 @@ class Contract extends Model
         return $this->hasMany(ContractPayment::class);
     }
 
-    public function advancePayments(): HasMany
-    {
-        return $this->hasMany(ContractAdvancePayment::class);
-    }
-
     /**
      * Получить выполненные работы по данному договору.
      */
@@ -138,13 +133,6 @@ class Contract extends Model
     /**
      * Получить общую сумму контракта с учетом генподряда и субподряда
      */
-    public function getTotalAmountWithSubcontractAttribute(): float
-    {
-        $totalAmount = $this->total_amount ?? 0;
-        $gpAmount = $this->gp_amount ?? 0;
-        $subcontractAmount = $this->subcontract_amount ?? 0;
-        return $totalAmount + $gpAmount + $subcontractAmount;
-    }
 
     /**
      * Получить остаток планируемого аванса для выплаты

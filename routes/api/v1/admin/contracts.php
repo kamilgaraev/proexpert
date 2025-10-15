@@ -4,7 +4,6 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPaymentController;
-use App\Http\Controllers\Api\V1\Admin\Contract\ContractAdvancePaymentController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractSpecificationController;
 
 // Маршруты для Контрактов
@@ -48,11 +47,6 @@ Route::group(['prefix' => 'contracts/{contract}/performance-acts'], function () 
 Route::apiResource('contracts.payments', ContractPaymentController::class)
     ->shallow()
     ->parameters(['payments' => 'payment']);
-
-// Вложенные маршруты для Авансовых платежей по Контрактам
-Route::apiResource('contracts.advance-payments', ContractAdvancePaymentController::class)
-    ->shallow()
-    ->parameters(['advance-payments' => 'advance_payment']);
 
 // Маршруты для Спецификаций контрактов
 Route::group(['prefix' => 'contracts/{contract}/specifications'], function () {
