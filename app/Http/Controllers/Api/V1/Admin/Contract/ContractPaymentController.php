@@ -58,14 +58,14 @@ class ContractPaymentController extends Controller
         }
     }
 
-    public function show(Request $request, int $paymentId)
+    public function show(Request $request, ContractPayment $payment)
     {
         $organizationId = $request->user()?->current_organization_id;
 
         try {
-            $payment = $this->paymentService->getPaymentById($paymentId, null, $organizationId);
-            if (!$payment) {
-                return response()->json(['message' => 'Payment not found'], Response::HTTP_NOT_FOUND);
+            $contract = $payment->contract;
+            if (!$contract || $contract->organization_id !== $organizationId) {
+                return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
             }
             return new ContractPaymentResource($payment);
         } catch (Exception $e) {
@@ -73,30 +73,35 @@ class ContractPaymentController extends Controller
         }
     }
 
-    public function update(UpdateContractPaymentRequest $request, int $paymentId)
+    public function update(UpdateContractPaymentRequest $request, ContractPayment $payment)
     {
         $organizationId = $request->user()?->current_organization_id;
         
         try {
-            $paymentModel = $this->paymentService->getPaymentById($paymentId, null, $organizationId);
-            if (!$paymentModel) {
-                 return response()->json(['message' => 'Payment not found'], Response::HTTP_NOT_FOUND);
+            $contract = $payment->contract;
+            if (!$contract || $contract->organization_id !== $organizationId) {
+                return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
             }
 
             $paymentDTO = $request->toDto();
-            $updatedPayment = $this->paymentService->updatePayment($paymentId, null, $organizationId, $paymentDTO);
+            $updatedPayment = $this->paymentService->updatePayment($payment->id, null, $organizationId, $paymentDTO);
             return new ContractPaymentResource($updatedPayment);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to update payment', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
         }
     }
 
-    public function destroy(Request $request, int $paymentId)
+    public function destroy(Request $request, ContractPayment $payment)
     {
         $organizationId = $request->user()?->current_organization_id;
 
         try {
-            $this->paymentService->deletePayment($paymentId, null, $organizationId);
+            $contract = $payment->contract;
+            if (!$contract || $contract->organization_id !== $organizationId) {
+                return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
+            }
+
+            $this->paymentService->deletePayment($payment->id, null, $organizationId);
             return response()->json(null, Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to delete payment', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
