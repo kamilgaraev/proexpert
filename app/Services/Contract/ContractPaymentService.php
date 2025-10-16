@@ -75,22 +75,38 @@ class ContractPaymentService
         return $payment;
     }
 
-    public function getPaymentById(int $paymentId, int $contractId, int $organizationId): ?ContractPayment
+    public function getPaymentById(int $paymentId, ?int $contractId, int $organizationId): ?ContractPayment
     {
-        $this->getContractOrFail($contractId, $organizationId);
         $payment = $this->paymentRepository->find($paymentId);
-        if ($payment && $payment->contract_id === $contractId) {
-            return $payment;
+        if (!$payment) {
+            return null;
         }
-        return null;
+
+        $contract = $this->contractRepository->find($payment->contract_id);
+        if (!$contract || $contract->organization_id !== $organizationId) {
+            throw new Exception('Payment not found or does not belong to the organization.');
+        }
+
+        if ($contractId !== null && $payment->contract_id !== $contractId) {
+            return null;
+        }
+
+        return $payment;
     }
 
-    public function updatePayment(int $paymentId, int $contractId, int $organizationId, ContractPaymentDTO $paymentDTO): ContractPayment
+    public function updatePayment(int $paymentId, ?int $contractId, int $organizationId, ContractPaymentDTO $paymentDTO): ContractPayment
     {
-        $this->getContractOrFail($contractId, $organizationId);
         $payment = $this->paymentRepository->find($paymentId);
+        if (!$payment) {
+            throw new Exception('Payment not found.');
+        }
 
-        if (!$payment || $payment->contract_id !== $contractId) {
+        $contract = $this->contractRepository->find($payment->contract_id);
+        if (!$contract || $contract->organization_id !== $organizationId) {
+            throw new Exception('Payment not found or does not belong to the organization.');
+        }
+
+        if ($contractId !== null && $payment->contract_id !== $contractId) {
             throw new Exception('Payment not found or does not belong to the specified contract.');
         }
 
@@ -102,29 +118,35 @@ class ContractPaymentService
             throw new Exception('Failed to update payment.');
         }
 
-        // Если изменился тип платежа или это авансовый платеж - пересчитываем actual_advance_amount
         if ($oldPaymentType === ContractPaymentTypeEnum::ADVANCE || $paymentDTO->payment_type === ContractPaymentTypeEnum::ADVANCE) {
-            $this->updateActualAdvanceAmount($contractId);
+            $this->updateActualAdvanceAmount($payment->contract_id);
         }
 
         return $this->paymentRepository->find($paymentId); 
     }
 
-    public function deletePayment(int $paymentId, int $contractId, int $organizationId): bool
+    public function deletePayment(int $paymentId, ?int $contractId, int $organizationId): bool
     {
-        $this->getContractOrFail($contractId, $organizationId);
         $payment = $this->paymentRepository->find($paymentId);
+        if (!$payment) {
+            throw new Exception('Payment not found.');
+        }
 
-        if (!$payment || $payment->contract_id !== $contractId) {
+        $contract = $this->contractRepository->find($payment->contract_id);
+        if (!$contract || $contract->organization_id !== $organizationId) {
+            throw new Exception('Payment not found or does not belong to the organization.');
+        }
+
+        if ($contractId !== null && $payment->contract_id !== $contractId) {
             throw new Exception('Payment not found or does not belong to the specified contract.');
         }
 
         $wasAdvancePayment = $payment->payment_type === ContractPaymentTypeEnum::ADVANCE;
+        $actualContractId = $payment->contract_id;
         $result = $this->paymentRepository->delete($paymentId);
 
-        // Если удален авансовый платеж - пересчитываем actual_advance_amount
         if ($result && $wasAdvancePayment) {
-            $this->updateActualAdvanceAmount($contractId);
+            $this->updateActualAdvanceAmount($actualContractId);
         }
 
         return $result;

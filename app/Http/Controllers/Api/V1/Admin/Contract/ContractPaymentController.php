@@ -58,14 +58,12 @@ class ContractPaymentController extends Controller
         }
     }
 
-    public function show(Request $request, int $contractId, int $paymentId)
+    public function show(Request $request, int $paymentId)
     {
-        // $organizationId = Auth::user()->organization_id;
         $organizationId = $request->user()?->current_organization_id;
 
         try {
-            // Contract $contract, ContractPayment $payment (Route Model Binding)
-            $payment = $this->paymentService->getPaymentById($paymentId, $contractId, $organizationId);
+            $payment = $this->paymentService->getPaymentById($paymentId, null, $organizationId);
             if (!$payment) {
                 return response()->json(['message' => 'Payment not found'], Response::HTTP_NOT_FOUND);
             }
@@ -75,39 +73,30 @@ class ContractPaymentController extends Controller
         }
     }
 
-    public function update(UpdateContractPaymentRequest $request, int $contractId, int $paymentId)
+    public function update(UpdateContractPaymentRequest $request, int $paymentId)
     {
-        // $organizationId = Auth::user()->organization_id;
         $organizationId = $request->user()?->current_organization_id;
         
         try {
-            // Contract $contract, ContractPayment $payment (Route Model Binding)
-            // Передача $payment модели в toDto() из UpdateContractPaymentRequest теперь важна.
-            // Чтобы это работало, параметр в методе контроллера должен называться 'payment', как в маршруте
-            $paymentModel = $this->paymentService->getPaymentById($paymentId, $contractId, $organizationId); // Получаем модель для передачи в DTO
+            $paymentModel = $this->paymentService->getPaymentById($paymentId, null, $organizationId);
             if (!$paymentModel) {
                  return response()->json(['message' => 'Payment not found'], Response::HTTP_NOT_FOUND);
             }
-            // Заменяем $this->route('payment') в UpdateContractPaymentRequest на явную передачу модели
-            // или модифицируем UpdateContractPaymentRequest для работы с $this->route('payment')
-            // Для простоты, предположим UpdateContractPaymentRequest настроен на $this->route('payment')
 
-            $paymentDTO = $request->toDto(); // $request->route('payment') будет использован в toDto()
-            $updatedPayment = $this->paymentService->updatePayment($paymentId, $contractId, $organizationId, $paymentDTO);
+            $paymentDTO = $request->toDto();
+            $updatedPayment = $this->paymentService->updatePayment($paymentId, null, $organizationId, $paymentDTO);
             return new ContractPaymentResource($updatedPayment);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to update payment', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
         }
     }
 
-    public function destroy(Request $request, int $contractId, int $paymentId)
+    public function destroy(Request $request, int $paymentId)
     {
-        // $organizationId = Auth::user()->organization_id;
         $organizationId = $request->user()?->current_organization_id;
 
         try {
-            // Contract $contract, ContractPayment $payment (Route Model Binding)
-            $this->paymentService->deletePayment($paymentId, $contractId, $organizationId);
+            $this->paymentService->deletePayment($paymentId, null, $organizationId);
             return response()->json(null, Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to delete payment', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
