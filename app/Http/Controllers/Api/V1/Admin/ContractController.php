@@ -50,10 +50,12 @@ class ContractController extends Controller
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
         
+        // Получаем project_id из URL (обязательный параметр для project-based маршрутов)
+        $projectId = $request->route('project');
+        
         // Расширенная фильтрация
         $filters = $request->only([
             'contractor_id', 
-            'project_id', 
             'status', 
             'type', 
             'number', 
@@ -81,6 +83,9 @@ class ContractController extends Controller
             'contractor_search',    // Поиск по подрядчику (имя, ИНН, КПП, email, телефон)
             'project_search'        // Поиск по проекту (название, адрес, код)
         ]);
+        
+        // ЖЕСТКО устанавливаем project_id из URL (игнорируем любые другие значения)
+        $filters['project_id'] = $projectId;
         
         $sortBy = $request->input('sort_by', 'created_at');
         $sortDirection = $request->input('sort_direction', 'desc');

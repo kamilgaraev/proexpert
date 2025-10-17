@@ -369,4 +369,115 @@ class MaterialAnalyticsController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Получить аналитику материалов по проекту
+     */
+    public function getMaterialAnalytics(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $this->getOrganizationId($request);
+            $projectId = $request->route('project');
+            
+            $dateFrom = $request->get('date_from');
+            $dateTo = $request->get('date_to');
+
+            $analytics = $this->materialRepository->getMaterialUsageByProjects(
+                $organizationId,
+                [$projectId],
+                $dateFrom,
+                $dateTo
+            );
+
+            return response()->json([
+                'success' => true,
+                'data' => $analytics
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка получения аналитики материалов: ' . $e->getMessage(), [
+                'user_id' => $request->user()?->id,
+                'project_id' => $request->route('project'),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения аналитики материалов'
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить аналитику затрат на материалы по проекту
+     */
+    public function getCostAnalytics(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $this->getOrganizationId($request);
+            $projectId = $request->route('project');
+            
+            $filters = [
+                'project_ids' => [$projectId],
+                'date_from' => $request->get('date_from'),
+                'date_to' => $request->get('date_to'),
+                'group_by' => $request->get('group_by', 'month')
+            ];
+
+            $costAnalytics = $this->materialRepository->getMaterialCostDynamicsReport($organizationId, $filters);
+
+            return response()->json([
+                'success' => true,
+                'data' => $costAnalytics
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка получения аналитики затрат: ' . $e->getMessage(), [
+                'user_id' => $request->user()?->id,
+                'project_id' => $request->route('project'),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения аналитики затрат'
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить аналитику использования материалов по проекту
+     */
+    public function getUsageAnalytics(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $this->getOrganizationId($request);
+            $projectId = $request->route('project');
+            
+            $filters = [
+                'project_id' => $projectId,
+                'date_from' => $request->get('date_from'),
+                'date_to' => $request->get('date_to'),
+            ];
+
+            $movementReport = $this->materialRepository->getMaterialMovementReport($organizationId, $filters);
+
+            return response()->json([
+                'success' => true,
+                'data' => $movementReport
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Ошибка получения аналитики использования: ' . $e->getMessage(), [
+                'user_id' => $request->user()?->id,
+                'project_id' => $request->route('project'),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка получения аналитики использования'
+            ], 500);
+        }
+    }
 } 

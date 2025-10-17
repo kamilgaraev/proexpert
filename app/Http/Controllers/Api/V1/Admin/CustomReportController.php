@@ -28,12 +28,20 @@ class CustomReportController extends Controller
     {
         $user = $request->user();
         $organizationId = $user->current_organization_id;
+        
+        // Получаем project_id из URL (обязательный параметр для project-based маршрутов)
+        $projectId = $request->route('project');
 
         $query = CustomReport::forOrganization($organizationId)
             ->where(function ($q) use ($user) {
                 $q->where('user_id', $user->id)
                   ->orWhere('is_shared', true);
             });
+        
+        // Фильтруем по проекту если есть project_id в URL
+        if ($projectId) {
+            $query->where('project_id', $projectId);
+        }
 
         if ($request->filled('category')) {
             $query->byCategory($request->category);

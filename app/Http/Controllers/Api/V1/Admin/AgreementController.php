@@ -8,6 +8,7 @@ use App\Http\Requests\Api\V1\Admin\Agreement\StoreSupplementaryAgreementRequest;
 use App\Http\Requests\Api\V1\Admin\Agreement\UpdateSupplementaryAgreementRequest;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Exception;
 
 class AgreementController extends Controller
 {
@@ -15,7 +16,12 @@ class AgreementController extends Controller
 
     public function index(Request $request, int $contractId = null)
     {
+        // Получаем project_id из URL (обязательный параметр для project-based маршрутов)
+        $projectId = $request->route('project');
         $perPage = $request->query('per_page', 15);
+        
+        // TODO: Добавить фильтрацию по project_id в SupplementaryAgreementService
+        // Пока фильтруем по contractId если есть
         if ($contractId) {
             return $this->service->paginateByContract($contractId, $perPage);
         }

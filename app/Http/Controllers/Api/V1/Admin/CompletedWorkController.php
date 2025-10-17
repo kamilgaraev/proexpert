@@ -32,9 +32,11 @@ class CompletedWorkController extends Controller
     {
         $organizationId = Auth::user()->current_organization_id;
         
+        // Получаем project_id из URL (обязательный параметр для project-based маршрутов)
+        $projectId = $request->route('project');
+        
         // Расширенная фильтрация выполненных работ
         $filters = $request->only([
-            'project_id',           // По проекту
             'contract_id',          // По контракту  
             'work_type_id',         // По типу работ
             'user_id',              // По прорабу/исполнителю
@@ -51,6 +53,8 @@ class CompletedWorkController extends Controller
         ]);
         
         $filters['organization_id'] = $organizationId;
+        // ЖЕСТКО устанавливаем project_id из URL (игнорируем любые другие значения)
+        $filters['project_id'] = $projectId;
         
         $sortBy = $request->query('sortBy', 'completion_date');
         $sortDirection = $request->query('sortDirection', 'desc');
