@@ -166,12 +166,21 @@ class ProjectContextService
         return $allProjects->map(function ($project) use ($organization) {
             $role = $this->getOrganizationRole($project, $organization);
             
+            // Пропускаем проекты без роли (не должно быть, но для безопасности)
+            if (!$role) {
+                Log::warning('Project without role found', [
+                    'project_id' => $project->id,
+                    'organization_id' => $organization->id,
+                ]);
+                return null;
+            }
+            
             return [
                 'project' => $project,
                 'role' => $role,
                 'is_owner' => $project->organization_id === $organization->id,
             ];
-        })->toArray();
+        })->filter()->values()->toArray();
     }
 
     private function buildContext(Project $project, Organization $organization): ProjectContext

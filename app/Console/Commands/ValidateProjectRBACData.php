@@ -14,7 +14,7 @@ class ValidateProjectRBACData extends Command
 {
     protected $signature = 'rbac:validate 
                           {--fix : Автоматически исправить найденные проблемы}
-                          {--verbose : Показать детальную информацию}';
+                          {--v|vv|vvv : Детальность вывода (встроенная опция Laravel)}';
 
     protected $description = 'Валидация консистентности данных Project-Based RBAC';
 
@@ -172,7 +172,7 @@ class ValidateProjectRBACData extends Command
                 $incompatible++;
                 $this->issues[] = "Несовместимость capabilities для org '{$record->org_name}' (#{$record->organization_id}) с ролью '{$record->role_new}' в проекте #{$record->project_id}";
 
-                if ($this->option('verbose')) {
+                if ($this->output->isVerbose()) {
                     $this->line("  ⚠️  {$record->org_name}: " . implode(', ', $validation->errors));
                 }
             }

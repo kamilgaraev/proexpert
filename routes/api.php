@@ -183,14 +183,17 @@ Route::prefix('v1/admin')->name('admin.')->group(function () {
         require __DIR__ . '/api/v1/admin/advance_transactions.php';
         // Подключаем маршруты для коэффициентов норм расхода
         require __DIR__ . '/api/v1/admin/rate_coefficients.php';
-        // Подключаем маршруты для выполненных работ
-        require __DIR__ . '/api/v1/admin/completed_works.php';
+        
+        // OLD ROUTES - Закомментированы для Project-Based RBAC
+        // Используйте новые маршруты: /api/v1/admin/projects/{project}/...
+        // require __DIR__ . '/api/v1/admin/completed_works.php';
+        // require __DIR__ . '/api/v1/admin/contracts.php';
+        // require __DIR__ . '/api/v1/admin/agreements.php';
+        
         // Сюда можно будет добавлять require для новых файлов маршрутов админки
         require __DIR__ . '/api/v1/admin/dashboard.php';
         require __DIR__ . '/api/v1/admin/profile.php';
         require __DIR__ . '/api/v1/admin/material_analytics.php';
-        require __DIR__ . '/api/v1/admin/contracts.php';
-        require __DIR__ . '/api/v1/admin/agreements.php';
         require __DIR__ . '/api/v1/admin/specifications.php';
 
         require __DIR__ . '/api/v1/admin/filters.php';
