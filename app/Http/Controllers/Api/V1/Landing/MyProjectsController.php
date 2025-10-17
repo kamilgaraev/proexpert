@@ -27,9 +27,14 @@ class MyProjectsController extends Controller
     {
         try {
             $user = $request->user();
-            $organization = $user->organization;
+            $organization = $user->currentOrganization;
             
             if (!$organization) {
+                Log::warning('User has no current organization', [
+                    'user_id' => $user->id,
+                    'current_organization_id' => $user->current_organization_id,
+                ]);
+                
                 return response()->json([
                     'success' => false,
                     'message' => 'Организация не найдена',
@@ -109,9 +114,14 @@ class MyProjectsController extends Controller
     {
         try {
             $user = $request->user();
-            $organization = $user->organization;
+            $organization = $user->currentOrganization;
             
             if (!$organization) {
+                Log::warning('User has no current organization', [
+                    'user_id' => $user->id,
+                    'current_organization_id' => $user->current_organization_id,
+                ]);
+                
                 return response()->json([
                     'success' => false,
                     'message' => 'Организация не найдена',
