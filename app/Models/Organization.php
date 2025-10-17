@@ -183,9 +183,28 @@ class Organization extends Model
     /**
      * Получить проекты, связанные с организацией.
      */
+    /**
+     * Проекты, которыми владеет организация (owner).
+     */
     public function projects(): HasMany
     {
         return $this->hasMany(Project::class);
+    }
+
+    /**
+     * Проекты, в которых организация участвует (через project_organization).
+     */
+    public function participantProjects(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            Project::class,
+            'project_organization',
+            'organization_id',
+            'project_id'
+        )
+        ->using(\App\Models\ProjectOrganization::class)
+        ->withPivot(['role', 'role_new', 'is_active', 'added_by_user_id', 'invited_at', 'accepted_at', 'metadata'])
+        ->withTimestamps();
     }
 
     /**

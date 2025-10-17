@@ -156,7 +156,7 @@ class ProjectContextService
             ->where('is_archived', false)
             ->get();
 
-        $participantProjects = $organization->projects()
+        $participantProjects = $organization->participantProjects()
             ->wherePivot('is_active', true)
             ->where('is_archived', false)
             ->get();
