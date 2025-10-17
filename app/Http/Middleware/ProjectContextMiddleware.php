@@ -96,12 +96,6 @@ class ProjectContextMiddleware
         $request->attributes->set('project', $project);
         $request->attributes->set('current_organization', $organization);
 
-        // Добавляем в request для удобного доступа
-        $request->merge([
-            '_project_context' => $projectContext,
-            '_project' => $project,
-        ]);
-
         return $next($request);
     }
 
