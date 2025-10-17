@@ -159,7 +159,7 @@ class Contract extends Model
     /**
      * Проверить, выплачен ли планируемый аванс полностью
      */
-    public function isAdvanceFullyPaidAttribute(): bool
+    public function getIsAdvanceFullyPaidAttribute(): bool
     {
         $planned = $this->planned_advance_amount ?? 0;
         $actual = $this->actual_advance_amount ?? 0;
