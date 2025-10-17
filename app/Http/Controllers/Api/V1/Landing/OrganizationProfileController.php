@@ -28,7 +28,7 @@ class OrganizationProfileController extends Controller
     {
         try {
             $user = $request->user();
-            $organization = $user->organization;
+            $organization = $user->currentOrganization;
             
             if (!$organization) {
                 return response()->json([
@@ -87,7 +87,7 @@ class OrganizationProfileController extends Controller
         
         try {
             $user = $request->user();
-            $organization = $user->organization;
+            $organization = $user->currentOrganization;
             
             if (!$organization) {
                 return response()->json([
@@ -145,7 +145,7 @@ class OrganizationProfileController extends Controller
         
         try {
             $user = $request->user();
-            $organization = $user->organization;
+            $organization = $user->currentOrganization;
             
             if (!$organization) {
                 return response()->json([
@@ -203,7 +203,7 @@ class OrganizationProfileController extends Controller
         
         try {
             $user = $request->user();
-            $organization = $user->organization;
+            $organization = $user->currentOrganization;
             
             if (!$organization) {
                 return response()->json([
@@ -264,7 +264,7 @@ class OrganizationProfileController extends Controller
         
         try {
             $user = $request->user();
-            $organization = $user->organization;
+            $organization = $user->currentOrganization;
             
             if (!$organization) {
                 return response()->json([
@@ -309,7 +309,7 @@ class OrganizationProfileController extends Controller
     {
         try {
             $user = $request->user();
-            $organization = $user->organization;
+            $organization = $user->currentOrganization;
             
             if (!$organization) {
                 return response()->json([
