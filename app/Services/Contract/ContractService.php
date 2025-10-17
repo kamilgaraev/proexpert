@@ -209,6 +209,8 @@ class ContractService
             return $contract->load([
                 'contractor', 
                 'project', 
+                'project.organization',           // Для customer (заказчик)
+                'project.organizations',          // Для project_participants
                 'parentContract', 
                 'childContracts', 
                 'performanceActs',

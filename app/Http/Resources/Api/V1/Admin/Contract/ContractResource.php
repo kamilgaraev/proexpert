@@ -125,6 +125,68 @@ class ContractResource extends JsonResource
             'child_contracts' => ContractMiniResource::collection($this->whenLoaded('childContracts')),
             'performance_acts' => ContractPerformanceActResource::collection($this->whenLoaded('performanceActs')), 
             'payments' => ContractPaymentResource::collection($this->whenLoaded('payments')),
+            
+            // === АГРЕГИРОВАННЫЕ ДАННЫЕ ===
+            // Заказчик (организация-владелец проекта)
+            'customer' => $this->when(
+                $this->relationLoaded('project') && $this->project?->relationLoaded('organization'),
+                function() {
+                    return [
+                        'id' => $this->project->organization->id,
+                        'name' => $this->project->organization->name,
+                        'inn' => $this->project->organization->inn,
+                        'kpp' => $this->project->organization->kpp,
+                        'legal_address' => $this->project->organization->legal_address,
+                        'contact_email' => $this->project->organization->contact_email,
+                        'contact_phone' => $this->project->organization->contact_phone,
+                    ];
+                }
+            ),
+            
+            // Расширенные данные подрядчика
+            'contractor_details' => $this->when(
+                $this->relationLoaded('contractor'),
+                function() {
+                    return [
+                        'id' => $this->contractor->id,
+                        'name' => $this->contractor->name,
+                        'inn' => $this->contractor->inn,
+                        'kpp' => $this->contractor->kpp,
+                        'legal_address' => $this->contractor->legal_address,
+                        'email' => $this->contractor->email,
+                        'phone' => $this->contractor->phone,
+                        'director_name' => $this->contractor->director_name,
+                        'contact_person' => $this->contractor->contact_person,
+                        'contact_person_phone' => $this->contractor->contact_person_phone,
+                    ];
+                }
+            ),
+            
+            // Участники проекта (из project_organization)
+            'project_participants' => $this->when(
+                $this->relationLoaded('project') && $this->project?->relationLoaded('organizations'),
+                function() {
+                    return $this->project->organizations->map(function($org) {
+                        return [
+                            'organization_id' => $org->id,
+                            'organization_name' => $org->name,
+                            'role' => $org->pivot->role_new ?? $org->pivot->role,
+                            'role_label' => match($org->pivot->role_new ?? $org->pivot->role) {
+                                'owner' => 'Заказчик/Генподрядчик',
+                                'general_contractor' => 'Генподрядчик',
+                                'contractor' => 'Подрядчик',
+                                'subcontractor' => 'Субподрядчик',
+                                'supplier' => 'Поставщик',
+                                'supervisor' => 'Технический надзор',
+                                default => 'Участник'
+                            },
+                            'is_active' => $org->pivot->is_active,
+                            'invited_at' => $org->pivot->invited_at,
+                            'accepted_at' => $org->pivot->accepted_at,
+                        ];
+                    });
+                }
+            ),
         ];
     }
 } 
