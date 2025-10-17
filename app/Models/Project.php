@@ -13,6 +13,31 @@ use App\Models\WorkType;
 class Project extends Model
 {
     use HasFactory, SoftDeletes;
+    
+    /**
+     * Boot метод - события модели
+     */
+    protected static function boot()
+    {
+        parent::boot();
+        
+        // При создании проекта автоматически добавляем owner в project_organization
+        static::created(function ($project) {
+            if ($project->organization_id) {
+                \Illuminate\Support\Facades\DB::table('project_organization')->insert([
+                    'project_id' => $project->id,
+                    'organization_id' => $project->organization_id,
+                    'role' => 'owner',
+                    'role_new' => 'owner',
+                    'is_active' => true,
+                    'invited_at' => $project->created_at,
+                    'accepted_at' => $project->created_at,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+        });
+    }
 
     protected $fillable = [
         'organization_id',
@@ -85,13 +110,86 @@ class Project extends Model
     }
 
     /**
-     * Получить организации, участвующие в проекте.
+     * Получить организации, участвующие в проекте (с Custom Pivot).
      */
     public function organizations(): BelongsToMany
     {
         return $this->belongsToMany(Organization::class, 'project_organization')
-            ->withPivot(['role', 'permissions'])
+            ->using(ProjectOrganization::class)
+            ->withPivot([
+                'role', 
+                'role_new',
+                'permissions', 
+                'is_active', 
+                'added_by_user_id', 
+                'invited_at', 
+                'accepted_at', 
+                'metadata'
+            ])
             ->withTimestamps();
+    }
+    
+    /**
+     * Получить активных участников проекта.
+     */
+    public function activeParticipants()
+    {
+        return $this->organizations()->wherePivot('is_active', true);
+    }
+    
+    /**
+     * Получить роль организации в проекте.
+     */
+    public function getOrganizationRole(int $organizationId): ?\App\Enums\ProjectOrganizationRole
+    {
+        // Проверить: это owner проекта?
+        if ($this->organization_id === $organizationId) {
+            return \App\Enums\ProjectOrganizationRole::OWNER;
+        }
+        
+        // Проверить в participants
+        $pivot = $this->organizations()
+            ->wherePivot('organization_id', $organizationId)
+            ->wherePivot('is_active', true)
+            ->first()?->pivot;
+        
+        if (!$pivot) {
+            return null;
+        }
+        
+        return $pivot->role;
+    }
+    
+    /**
+     * Проверить участие организации в проекте.
+     */
+    public function hasOrganization(int $organizationId, ?\App\Enums\ProjectOrganizationRole $role = null): bool
+    {
+        // Owner проекта всегда участник
+        if ($this->organization_id === $organizationId) {
+            return $role === null || $role === \App\Enums\ProjectOrganizationRole::OWNER;
+        }
+        
+        $query = $this->organizations()
+            ->wherePivot('organization_id', $organizationId)
+            ->wherePivot('is_active', true);
+        
+        if ($role) {
+            $query->wherePivot('role_new', $role->value);
+        }
+        
+        return $query->exists();
+    }
+    
+    /**
+     * Получить pivot для организации.
+     */
+    public function getOrganizationPivot(int $organizationId): ?ProjectOrganization
+    {
+        return $this->organizations()
+            ->wherePivot('organization_id', $organizationId)
+            ->wherePivot('is_active', true)
+            ->first()?->pivot;
     }
 
     /**

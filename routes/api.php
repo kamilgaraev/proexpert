@@ -41,6 +41,10 @@ use App\Http\Controllers\Api\V1\HoldingApiController;
                  }
                 require __DIR__ . '/api/v1/landing/organization.php';
                 require __DIR__ . '/api/v1/landing/support.php';
+                
+                // Organization Profile & Capabilities Management
+                require __DIR__ . '/api/v1/landing/organization-profile.php';
+                
                 // Добавить другие защищенные маршруты ЛК
             });
         });
@@ -114,6 +118,9 @@ Route::prefix('landing')->name('landing.')->group(function () {
             
             // Подключение маршрутов мультиорганизации для лендинга/ЛК
             require __DIR__ . '/api/v1/landing/multi_organization.php';
+            
+            // Organization Profile & Capabilities Management
+            require __DIR__ . '/api/v1/landing/organization-profile.php';
             
             // Подключение маршрутов приглашений подрядчиков для лендинга/ЛК
             Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
@@ -199,6 +206,9 @@ Route::prefix('v1/admin')->name('admin.')->group(function () {
         require __DIR__ . '/api/v1/admin/schedule.php';
         require __DIR__ . '/api/v1/admin/custom-reports.php';
         require __DIR__ . '/api/v1/admin/advanced_dashboard.php';
+        
+        // PROJECT-BASED ROUTES with ProjectContext Middleware
+        require __DIR__ . '/api/v1/admin/project-based.php';
     });
 });
 

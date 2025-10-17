@@ -10,6 +10,7 @@ use App\Http\Requests\Api\V1\Admin\CompletedWork\SyncCompletedWorkMaterialsReque
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkResource;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkCollection;
 use App\Http\Resources\Api\V1\Admin\CompletedWork\CompletedWorkMaterialResource;
+use App\Http\Middleware\ProjectContextMiddleware;
 use App\Models\CompletedWork;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -70,7 +71,12 @@ class CompletedWorkController extends Controller
     {
         try {
             $dto = $request->toDto();
-            $completedWork = $this->completedWorkService->create($dto);
+            
+            // Получаем ProjectContext если доступен (для project-based routes)
+            $projectContext = ProjectContextMiddleware::getProjectContext($request);
+            
+            $completedWork = $this->completedWorkService->create($dto, $projectContext);
+            
             return response()->json(
                 [
                     'success' => true, 

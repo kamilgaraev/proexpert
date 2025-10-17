@@ -10,6 +10,12 @@ use App\Models\Project;
 use App\Models\User;
 use App\Models\Role;
 use App\Services\Logging\LoggingService;
+use App\Services\Organization\OrganizationProfileService;
+use App\Services\Project\ProjectContextService;
+use App\Enums\ProjectOrganizationRole;
+use App\Events\ProjectOrganizationAdded;
+use App\Events\ProjectOrganizationRoleChanged;
+use App\Events\ProjectOrganizationRemoved;
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\Collection;
 use App\Exceptions\BusinessLogicException;
@@ -25,19 +31,25 @@ class ProjectService
     protected MaterialRepositoryInterface $materialRepository;
     protected WorkTypeRepositoryInterface $workTypeRepository;
     protected LoggingService $logging;
+    protected OrganizationProfileService $organizationProfileService;
+    protected ProjectContextService $projectContextService;
 
     public function __construct(
         ProjectRepositoryInterface $projectRepository,
         UserRepositoryInterface $userRepository,
         MaterialRepositoryInterface $materialRepository,
         WorkTypeRepositoryInterface $workTypeRepository,
-        LoggingService $logging
+        LoggingService $logging,
+        OrganizationProfileService $organizationProfileService,
+        ProjectContextService $projectContextService
     ) {
         $this->projectRepository = $projectRepository;
         $this->userRepository = $userRepository;
         $this->materialRepository = $materialRepository;
         $this->workTypeRepository = $workTypeRepository;
         $this->logging = $logging;
+        $this->organizationProfileService = $organizationProfileService;
+        $this->projectContextService = $projectContextService;
     }
 
     /**
@@ -635,8 +647,12 @@ class ProjectService
     /**
      * Добавить дочернюю организацию к проекту.
      */
-    public function addOrganizationToProject(int $projectId, int $organizationId, Request $request): void
-    {
+    public function addOrganizationToProject(
+        int $projectId, 
+        int $organizationId, 
+        ProjectOrganizationRole $role,
+        Request $request
+    ): void {
         $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
         if (!$project) {
             throw new BusinessLogicException('Проект не найден в вашей организации.', 404);
@@ -646,7 +662,41 @@ class ProjectService
             throw new BusinessLogicException('Организация уже добавлена к проекту.', 409);
         }
 
-        $project->organizations()->attach($organizationId, ['role' => 'collaborator']);
+        $organization = \App\Models\Organization::find($organizationId);
+        if (!$organization) {
+            throw new BusinessLogicException('Организация не найдена.', 404);
+        }
+
+        $validation = $this->organizationProfileService->validateCapabilitiesForRole($organization, $role);
+        if (!$validation->isValid) {
+            throw new BusinessLogicException(
+                'Организация не может выполнять данную роль: ' . implode(', ', $validation->errors),
+                422
+            );
+        }
+
+        $user = $request->user();
+        
+        $project->organizations()->attach($organizationId, [
+            'role' => $role->value,
+            'role_new' => $role->value,
+            'is_active' => true,
+            'added_by_user_id' => $user?->id,
+            'invited_at' => now(),
+            'accepted_at' => now(),
+        ]);
+
+        $this->projectContextService->invalidateContext($projectId, $organizationId);
+
+        $this->logging->business('Organization added to project', [
+            'project_id' => $projectId,
+            'organization_id' => $organizationId,
+            'role' => $role->value,
+            'added_by' => $user?->id,
+        ]);
+        
+        // Dispatch event
+        event(new ProjectOrganizationAdded($project, $organization, $role, $user));
     }
 
     /**
@@ -662,8 +712,86 @@ class ProjectService
         if ($organizationId === $project->organization_id) {
             throw new BusinessLogicException('Нельзя удалить головную организацию проекта.', 400);
         }
+        
+        // Получаем роль организации перед удалением
+        $organization = \App\Models\Organization::find($organizationId);
+        $role = $this->projectContextService->getOrganizationRole($project, $organization);
+        $user = $request->user();
 
         $project->organizations()->detach($organizationId);
+        
+        $this->projectContextService->invalidateContext($projectId, $organizationId);
+        
+        $this->logging->business('Organization removed from project', [
+            'project_id' => $projectId,
+            'organization_id' => $organizationId,
+        ]);
+        
+        // Dispatch event
+        if ($role) {
+            event(new ProjectOrganizationRemoved($project, $organization, $role, $user));
+        }
+    }
+    
+    /**
+     * Изменить роль организации в проекте.
+     */
+    public function updateOrganizationRole(
+        int $projectId, 
+        int $organizationId, 
+        ProjectOrganizationRole $newRole,
+        Request $request
+    ): void {
+        $project = $this->findProjectByIdForCurrentOrg($projectId, $request);
+        if (!$project) {
+            throw new BusinessLogicException('Проект не найден в вашей организации.', 404);
+        }
+
+        if ($organizationId === $project->organization_id) {
+            throw new BusinessLogicException('Нельзя изменить роль владельца проекта.', 400);
+        }
+
+        $pivot = $project->organizations()
+            ->wherePivot('organization_id', $organizationId)
+            ->first();
+
+        if (!$pivot) {
+            throw new BusinessLogicException('Организация не является участником проекта.', 404);
+        }
+        
+        // Получаем текущую роль
+        $organization = \App\Models\Organization::find($organizationId);
+        $oldRole = $this->projectContextService->getOrganizationRole($project, $organization);
+
+        $validation = $this->organizationProfileService->validateCapabilitiesForRole($organization, $newRole);
+        
+        if (!$validation->isValid) {
+            throw new BusinessLogicException(
+                'Организация не может выполнять данную роль: ' . implode(', ', $validation->errors),
+                422
+            );
+        }
+
+        $project->organizations()->updateExistingPivot($organizationId, [
+            'role' => $newRole->value,
+            'role_new' => $newRole->value,
+            'updated_at' => now(),
+        ]);
+
+        $this->projectContextService->invalidateContext($projectId, $organizationId);
+
+        $this->logging->business('Organization role updated in project', [
+            'project_id' => $projectId,
+            'organization_id' => $organizationId,
+            'old_role' => $oldRole?->value,
+            'new_role' => $newRole->value,
+        ]);
+        
+        // Dispatch event
+        if ($oldRole) {
+            $user = $request->user();
+            event(new ProjectOrganizationRoleChanged($project, $organization, $oldRole, $newRole, $user));
+        }
     }
 
     /**

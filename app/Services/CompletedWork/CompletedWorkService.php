@@ -3,9 +3,12 @@
 namespace App\Services\CompletedWork;
 
 use App\Models\CompletedWork;
+use App\Models\Project;
 use App\DTOs\CompletedWork\CompletedWorkDTO;
 use App\DTOs\CompletedWork\CompletedWorkMaterialDTO;
 use App\Services\Logging\LoggingService;
+use App\Services\Project\ProjectContextService;
+use App\Domain\Project\ValueObjects\ProjectContext;
 use Illuminate\Support\Collection;
 use Illuminate\Pagination\LengthAwarePaginator;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
@@ -25,15 +28,18 @@ class CompletedWorkService
     protected CompletedWorkRepositoryInterface $completedWorkRepository;
     protected RateCoefficientService $rateCoefficientService;
     protected LoggingService $logging;
+    protected ProjectContextService $projectContextService;
 
     public function __construct(
         CompletedWorkRepositoryInterface $completedWorkRepository,
         RateCoefficientService $rateCoefficientService,
-        LoggingService $logging
+        LoggingService $logging,
+        ProjectContextService $projectContextService
     ) {
         $this->completedWorkRepository = $completedWorkRepository;
         $this->rateCoefficientService = $rateCoefficientService;
         $this->logging = $logging;
+        $this->projectContextService = $projectContextService;
     }
 
     public function getAll(array $filters = [], int $perPage = 15, string $sortBy = 'completion_date', string $sortDirection = 'desc', array $relations = []): LengthAwarePaginator
@@ -51,20 +57,91 @@ class CompletedWorkService
         return $completedWork;
     }
 
-    public function create(CompletedWorkDTO $dto): CompletedWork
+    public function create(CompletedWorkDTO $dto, ?ProjectContext $projectContext = null): CompletedWork
     {
+        // Project-Based RBAC: валидация прав и auto-fill contractor_org_id
+        if ($projectContext) {
+            // Проверка: может ли роль создавать работы
+            if (!$projectContext->roleConfig->canManageWorks) {
+                throw new BusinessLogicException(
+                    'Ваша роль "' . $projectContext->roleConfig->displayLabel . 
+                    '" не позволяет создавать работы в этом проекте',
+                    403
+                );
+            }
+
+            // Auto-fill contractor_id для contractor/subcontractor ролей
+            $contractorId = $dto->contractor_id;
+            
+            if (in_array($projectContext->roleConfig->role->value, ['contractor', 'subcontractor'])) {
+                // Проверяем: если пытаются указать другого подрядчика - ошибка
+                if ($contractorId && $contractorId !== $projectContext->organizationId) {
+                    throw new BusinessLogicException('Подрядчик может создавать работы только для себя', 403);
+                }
+                
+                // Auto-fill
+                $contractorId = $projectContext->organizationId;
+                
+                // Создаем новый DTO с исправленным contractor_id
+                $dto = new CompletedWorkDTO(
+                    id: $dto->id,
+                    organization_id: $dto->organization_id,
+                    project_id: $dto->project_id,
+                    contract_id: $dto->contract_id,
+                    contractor_id: $contractorId,
+                    work_type_id: $dto->work_type_id,
+                    user_id: $dto->user_id,
+                    quantity: $dto->quantity,
+                    price: $dto->price,
+                    total_amount: $dto->total_amount,
+                    completion_date: $dto->completion_date,
+                    notes: $dto->notes,
+                    status: $dto->status,
+                    additional_info: $dto->additional_info,
+                    materials: $dto->materials
+                );
+                
+                $this->logging->technical('contractor_id auto-filled', [
+                    'organization_id' => $dto->organization_id,
+                    'contractor_id' => $contractorId,
+                    'role' => $projectContext->roleConfig->role->value,
+                ]);
+            }
+
+            // Валидация: contractor должен быть участником проекта
+            if ($contractorId) {
+                $project = Project::find($dto->project_id);
+                
+                if (!$project) {
+                    throw new BusinessLogicException('Проект не найден', 404);
+                }
+                
+                $contractorInProject = $project->hasOrganization($contractorId);
+                
+                if (!$contractorInProject) {
+                    throw new BusinessLogicException(
+                        'Организация-подрядчик не является участником проекта. ' .
+                        'Сначала добавьте её в список участников.',
+                        422
+                    );
+                }
+            }
+        }
+        
         // BUSINESS: Начало создания выполненной работы
         $this->logging->business('completed_work.creation.started', [
             'project_id' => $dto->project_id,
             'contract_id' => $dto->contract_id,
             'work_type_id' => $dto->work_type_id,
             'organization_id' => $dto->organization_id,
+            'contractor_id' => $dto->contractor_id ?? null,
             'quantity' => $dto->quantity,
             'price' => $dto->price,
             'total_amount' => $dto->total_amount,
             'status' => $dto->status,
             'has_materials' => !empty($dto->materials),
-            'materials_count' => count($dto->materials ?? [])
+            'materials_count' => count($dto->materials ?? []),
+            'has_project_context' => $projectContext !== null,
         ]);
 
         return DB::transaction(function () use ($dto) {

@@ -15,12 +15,23 @@ use App\Models\CompletedWork;
 use App\Models\MaterialReceipt;
 use App\Models\Project;
 use App\Models\Organization;
+use App\Models\ProjectOrganization;
 // ОТКЛЮЧЕНЫ: переключились на warehouse_balances
 // use App\Observers\MaterialUsageLogObserver;
 use App\Observers\CompletedWorkObserver;
 // use App\Observers\MaterialReceiptObserver;
 use App\Observers\ProjectObserver;
 use App\Observers\OrganizationObserver;
+use App\Observers\ProjectOrganizationObserver;
+use Illuminate\Support\Facades\Event;
+use App\Events\ProjectOrganizationAdded;
+use App\Events\ProjectOrganizationRoleChanged;
+use App\Events\ProjectOrganizationRemoved;
+use App\Events\OrganizationProfileUpdated;
+use App\Events\OrganizationOnboardingCompleted;
+use App\Listeners\LogProjectOrganizationActivity;
+use App\Listeners\InvalidateProjectContextCache;
+use App\Listeners\SuggestModulesBasedOnCapabilities;
 use App\Modules\Core\ModuleScanner;
 use App\Modules\Core\ModuleRegistry;
 use App\Modules\Core\BillingEngine;
@@ -123,6 +134,22 @@ class AppServiceProvider extends ServiceProvider
         // MaterialReceipt::observe(MaterialReceiptObserver::class);
         Project::observe(ProjectObserver::class);
         Organization::observe(OrganizationObserver::class);
+        ProjectOrganization::observe(ProjectOrganizationObserver::class);
         \App\Models\OrganizationModuleActivation::observe(\App\Observers\OrganizationModuleActivationObserver::class);
+        
+        // Project-Based RBAC Events
+        Event::listen(ProjectOrganizationAdded::class, [LogProjectOrganizationActivity::class, 'handleAdded']);
+        Event::listen(ProjectOrganizationAdded::class, [InvalidateProjectContextCache::class, 'handleAdded']);
+        
+        Event::listen(ProjectOrganizationRoleChanged::class, [LogProjectOrganizationActivity::class, 'handleRoleChanged']);
+        Event::listen(ProjectOrganizationRoleChanged::class, [InvalidateProjectContextCache::class, 'handleRoleChanged']);
+        
+        Event::listen(ProjectOrganizationRemoved::class, [LogProjectOrganizationActivity::class, 'handleRemoved']);
+        Event::listen(ProjectOrganizationRemoved::class, [InvalidateProjectContextCache::class, 'handleRemoved']);
+        
+        // Organization Profile Events
+        Event::listen(OrganizationProfileUpdated::class, [SuggestModulesBasedOnCapabilities::class, 'handleProfileUpdated']);
+        
+        Event::listen(OrganizationOnboardingCompleted::class, [SuggestModulesBasedOnCapabilities::class, 'handleOnboardingCompleted']);
     }
 } 

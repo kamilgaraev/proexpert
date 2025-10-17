@@ -6,9 +6,13 @@ use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\Repositories\Interfaces\ContractorRepositoryInterface;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
 use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
-use App\DTOs\Contract\ContractDTO; // Создадим его позже
+use App\DTOs\Contract\ContractDTO;
 use App\Models\Contract;
+use App\Models\Project;
+use App\Models\Organization;
 use App\Services\Logging\LoggingService;
+use App\Services\Project\ProjectContextService;
+use App\Domain\Project\ValueObjects\ProjectContext;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
@@ -22,19 +26,22 @@ class ContractService
     protected ContractPerformanceActRepositoryInterface $actRepository;
     protected ContractPaymentRepositoryInterface $paymentRepository;
     protected LoggingService $logging;
+    protected ProjectContextService $projectContextService;
 
     public function __construct(
         ContractRepositoryInterface $contractRepository,
         ContractorRepositoryInterface $contractorRepository,
         ContractPerformanceActRepositoryInterface $actRepository,
         ContractPaymentRepositoryInterface $paymentRepository,
-        LoggingService $logging
+        LoggingService $logging,
+        ProjectContextService $projectContextService
     ) {
         $this->contractRepository = $contractRepository;
         $this->contractorRepository = $contractorRepository;
         $this->actRepository = $actRepository;
         $this->paymentRepository = $paymentRepository;
         $this->logging = $logging;
+        $this->projectContextService = $projectContextService;
     }
 
     public function getAllContracts(int $organizationId, int $perPage = 15, array $filters = [], string $sortBy = 'date', string $sortDirection = 'desc'): LengthAwarePaginator
@@ -42,8 +49,84 @@ class ContractService
         return $this->contractRepository->getContractsForOrganizationPaginated($organizationId, $perPage, $filters, $sortBy, $sortDirection);
     }
 
-    public function createContract(int $organizationId, ContractDTO $contractDTO): Contract
+    public function createContract(
+        int $organizationId, 
+        ContractDTO $contractDTO,
+        ?ProjectContext $projectContext = null
+    ): Contract
     {
+        // Project-Based RBAC: валидация прав и auto-fill contractor_id
+        if ($projectContext) {
+            // Проверка: может ли роль создавать контракты
+            if (!$projectContext->roleConfig->canManageContracts) {
+                throw new Exception(
+                    'Ваша роль "' . $projectContext->roleConfig->displayLabel . 
+                    '" не позволяет создавать контракты в этом проекте'
+                );
+            }
+
+            // Auto-fill contractor_id для contractor/subcontractor ролей
+            $contractorId = $contractDTO->contractor_id;
+            
+            if (in_array($projectContext->roleConfig->role->value, ['contractor', 'subcontractor'])) {
+                // Проверяем: если пытаются указать другого подрядчика - ошибка
+                if ($contractorId && $contractorId !== $projectContext->organizationId) {
+                    throw new Exception('Подрядчик может создавать контракты только для себя');
+                }
+                
+                // Auto-fill
+                $contractorId = $projectContext->organizationId;
+                
+                // Создаем новый DTO с исправленным contractor_id
+                $contractDTO = new ContractDTO(
+                    project_id: $contractDTO->project_id,
+                    contractor_id: $contractorId,
+                    parent_contract_id: $contractDTO->parent_contract_id,
+                    number: $contractDTO->number,
+                    date: $contractDTO->date,
+                    subject: $contractDTO->subject,
+                    work_type_category: $contractDTO->work_type_category,
+                    payment_terms: $contractDTO->payment_terms,
+                    total_amount: $contractDTO->total_amount,
+                    gp_percentage: $contractDTO->gp_percentage,
+                    gp_calculation_type: $contractDTO->gp_calculation_type,
+                    gp_coefficient: $contractDTO->gp_coefficient,
+                    subcontract_amount: $contractDTO->subcontract_amount,
+                    planned_advance_amount: $contractDTO->planned_advance_amount,
+                    actual_advance_amount: $contractDTO->actual_advance_amount,
+                    status: $contractDTO->status,
+                    start_date: $contractDTO->start_date,
+                    end_date: $contractDTO->end_date,
+                    notes: $contractDTO->notes,
+                    advance_payments: $contractDTO->advance_payments
+                );
+                
+                $this->logging->technical('contractor_id auto-filled', [
+                    'organization_id' => $organizationId,
+                    'contractor_id' => $contractorId,
+                    'role' => $projectContext->roleConfig->role->value,
+                ]);
+            }
+
+            // Валидация: contractor должен быть участником проекта
+            if ($contractorId) {
+                $project = Project::find($contractDTO->project_id);
+                
+                if (!$project) {
+                    throw new Exception('Проект не найден');
+                }
+                
+                $contractorInProject = $project->hasOrganization($contractorId);
+                
+                if (!$contractorInProject) {
+                    throw new Exception(
+                        'Организация-подрядчик не является участником проекта. ' .
+                        'Сначала добавьте её в список участников.'
+                    );
+                }
+            }
+        }
+        
         // BUSINESS: Начало создания договора - важная бизнес-операция
         $this->logging->business('contract.creation.started', [
             'organization_id' => $organizationId,
@@ -51,16 +134,10 @@ class ContractService
             'total_amount' => $contractDTO->total_amount ?? null,
             'subcontract_amount' => $contractDTO->subcontract_amount ?? null,
             'contract_number' => $contractDTO->number ?? null,
-            'user_id' => Auth::id()
+            'project_id' => $contractDTO->project_id ?? null,
+            'user_id' => Auth::id(),
+            'has_project_context' => $projectContext !== null,
         ]);
-
-        // Убедимся, что подрядчик существует и принадлежит этой организации
-        // $contractor = $this->contractorRepository->find($contractDTO->contractor_id);
-        // if (!$contractor || $contractor->organization_id !== $organizationId) {
-        //     throw new Exception('Contractor not found or does not belong to the organization.');
-        // }
-
-        // Дополнительные проверки, например, для parent_contract_id
 
         $contractData = $contractDTO->toArray();
         $contractData['organization_id'] = $organizationId;

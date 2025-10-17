@@ -8,14 +8,15 @@ use App\Http\Requests\Api\V1\Admin\Contract\StoreContractRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\UpdateContractRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\AttachToParentContractRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\DetachFromParentContractRequest;
-use App\Http\Resources\Api\V1\Admin\Contract\ContractResource; // Создадим позже
-use App\Http\Resources\Api\V1\Admin\Contract\ContractCollection; // Создадим позже
+use App\Http\Resources\Api\V1\Admin\Contract\ContractResource;
+use App\Http\Resources\Api\V1\Admin\Contract\ContractCollection;
 use App\Http\Resources\Api\V1\Admin\Contract\ContractMiniResource;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Payment\ContractPaymentResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Agreement\SupplementaryAgreementResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Specification\SpecificationResource;
-use App\Models\Organization; // Для получения ID организации, например, из аутентифицированного пользователя
+use App\Http\Middleware\ProjectContextMiddleware;
+use App\Models\Organization;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
@@ -99,14 +100,24 @@ class ContractController extends Controller
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
+        
         try {
-            $contractDTO = $request->toDto(); // Метод toDto() должен быть реализован
-            $contract = $this->contractService->createContract($organizationId, $contractDTO);
+            $contractDTO = $request->toDto();
+            
+            // Получаем ProjectContext если доступен (для project-based routes)
+            $projectContext = ProjectContextMiddleware::getProjectContext($request);
+            
+            $contract = $this->contractService->createContract($organizationId, $contractDTO, $projectContext);
+            
             return (new ContractResource($contract))
                     ->response()
                     ->setStatusCode(Response::HTTP_CREATED);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to create contract', 'error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to create contract',
+                'error' => $e->getMessage()
+            ], Response::HTTP_BAD_REQUEST);
         }
     }
 
