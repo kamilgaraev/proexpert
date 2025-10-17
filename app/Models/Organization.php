@@ -54,6 +54,11 @@ class Organization extends Model
         'storage_used_mb',
         'storage_usage_synced_at',
         'bucket_region',
+        // Project-Based RBAC fields
+        'capabilities',
+        'primary_business_type',
+        'specializations',
+        'certifications',
     ];
 
     /**
@@ -72,6 +77,10 @@ class Organization extends Model
         'hierarchy_level' => 'integer',
         'storage_used_mb' => 'decimal:2',
         'storage_usage_synced_at' => 'datetime',
+        // Project-Based RBAC fields
+        'capabilities' => 'array',
+        'specializations' => 'array',
+        'certifications' => 'array',
     ];
 
     /**
