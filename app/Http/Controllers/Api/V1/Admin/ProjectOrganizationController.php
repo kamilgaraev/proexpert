@@ -117,7 +117,7 @@ class ProjectOrganizationController extends Controller
                 $role,
                 $request
             );
-            
+
             return response()->json([
                 'success' => true,
                 'message' => 'Участник успешно добавлен в проект',

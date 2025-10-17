@@ -164,6 +164,11 @@ Route::prefix('lk')->name('lk.')->group(function () {
 Route::prefix('v1/admin')->name('admin.')->group(function () {
     // Публичные маршруты аутентификации админки
     require __DIR__ . '/api/v1/admin/auth.php';
+    
+    // Маршрут для выбора проекта (БЕЗ project context, но с organization context)
+    Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])
+        ->get('/available-projects', [\App\Http\Controllers\Api\V1\Admin\ProjectSelectorController::class, 'availableProjects'])
+        ->name('projects.available');
 
     // Защищенные маршруты Admin Panel  
     Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin'])->group(function() {
