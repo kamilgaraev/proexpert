@@ -43,7 +43,7 @@ class ProjectContextMiddleware
             ], 401);
         }
 
-        $organization = $user->organization;
+        $organization = $user->currentOrganization;
         
         if (!$organization) {
             return response()->json([
