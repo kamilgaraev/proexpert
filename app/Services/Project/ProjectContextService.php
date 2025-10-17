@@ -103,31 +103,25 @@ class ProjectContextService
     {
         $participants = [];
 
-        $owner = $project->organization;
-        if ($owner) {
-            $participants[] = [
-                'organization' => $owner,
-                'role' => ProjectOrganizationRole::OWNER,
-                'is_active' => true,
-                'is_owner' => true,
-            ];
-        }
-
-        $otherParticipants = $project->organizations()
+        // Загружаем всех участников из project_organization
+        $allParticipants = $project->organizations()
             ->wherePivot('is_active', true)
             ->get();
 
-        foreach ($otherParticipants as $org) {
+        foreach ($allParticipants as $org) {
             $pivot = $org->pivot;
             $roleValue = $pivot->role_new ?? $pivot->role;
             $role = ProjectOrganizationRole::tryFrom($roleValue);
 
             if ($role) {
+                // Проверяем, является ли эта организация owner'ом проекта
+                $isProjectOwner = $project->organization_id === $org->id;
+                
                 $participants[] = [
                     'organization' => $org,
                     'role' => $role,
                     'is_active' => $pivot->is_active ?? true,
-                    'is_owner' => false,
+                    'is_owner' => $isProjectOwner,
                     'added_at' => $pivot->created_at,
                     'invited_at' => $pivot->invited_at,
                     'accepted_at' => $pivot->accepted_at,
