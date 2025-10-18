@@ -38,6 +38,12 @@ class RouteServiceProvider extends ServiceProvider
                     require base_path('routes/api/public.php');
                 });
 
+            // Holding API Routes (v1) - публичные и защищенные
+            Route::middleware('api')
+                ->prefix('api/v1/holding-api')
+                ->as('api.v1.holdingApi.')
+                ->group(base_path('routes/api/v1/holding-api.php'));
+
             // Mobile API Routes
             Route::middleware('api')
                 ->prefix('api/v1/mobile')
