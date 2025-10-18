@@ -11,8 +11,13 @@ return new class extends Migration
         Schema::table('holding_sites', function (Blueprint $table) {
             $table->string('domain')->nullable()->change();
             $table->foreignId('created_by_user_id')->nullable()->change();
-            $table->dropColumn('template_id');
         });
+
+        if (Schema::hasColumn('holding_sites', 'template_id')) {
+            Schema::table('holding_sites', function (Blueprint $table) {
+                $table->dropColumn('template_id');
+            });
+        }
     }
 
     public function down(): void
@@ -20,8 +25,13 @@ return new class extends Migration
         Schema::table('holding_sites', function (Blueprint $table) {
             $table->string('domain')->nullable(false)->change();
             $table->foreignId('created_by_user_id')->nullable(false)->change();
-            $table->string('template_id')->default('default')->after('favicon_url');
         });
+        
+        if (!Schema::hasColumn('holding_sites', 'template_id')) {
+            Schema::table('holding_sites', function (Blueprint $table) {
+                $table->string('template_id')->default('default')->after('favicon_url');
+            });
+        }
     }
 };
 
