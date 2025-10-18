@@ -96,10 +96,7 @@ class OrganizationProfileService
     {
         return new OrganizationProfile(
             organizationId: $organization->id,
-            capabilities: array_map(
-                fn($cap) => OrganizationCapability::from($cap),
-                $organization->capabilities ?? []
-            ),
+            capabilities: $organization->capabilities ?? [],
             primaryBusinessType: $organization->primary_business_type,
             specializations: $organization->specializations ?? [],
             certifications: $organization->certifications ?? [],

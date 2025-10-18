@@ -13,6 +13,7 @@ use App\Models\Organization;
 use App\Services\Logging\LoggingService;
 use App\Services\Project\ProjectContextService;
 use App\Domain\Project\ValueObjects\ProjectContext;
+use App\BusinessModules\Core\MultiOrganization\Contracts\OrganizationScopeInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
@@ -27,6 +28,7 @@ class ContractService
     protected ContractPaymentRepositoryInterface $paymentRepository;
     protected LoggingService $logging;
     protected ProjectContextService $projectContextService;
+    protected OrganizationScopeInterface $orgScope;
 
     public function __construct(
         ContractRepositoryInterface $contractRepository,
@@ -34,7 +36,8 @@ class ContractService
         ContractPerformanceActRepositoryInterface $actRepository,
         ContractPaymentRepositoryInterface $paymentRepository,
         LoggingService $logging,
-        ProjectContextService $projectContextService
+        ProjectContextService $projectContextService,
+        OrganizationScopeInterface $orgScope
     ) {
         $this->contractRepository = $contractRepository;
         $this->contractorRepository = $contractorRepository;
@@ -42,6 +45,7 @@ class ContractService
         $this->paymentRepository = $paymentRepository;
         $this->logging = $logging;
         $this->projectContextService = $projectContextService;
+        $this->orgScope = $orgScope;
     }
 
     public function getAllContracts(int $organizationId, int $perPage = 15, array $filters = [], string $sortBy = 'date', string $sortDirection = 'desc'): LengthAwarePaginator

@@ -385,4 +385,47 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
             ->orderBy('completed_works.completion_date', 'desc')
             ->get();
     }
+
+    public function getContractsForOrganizations(array $orgIds, array $filters = [], int $perPage = 15): LengthAwarePaginator
+    {
+        $query = $this->model->query()->whereIn('organization_id', $orgIds);
+
+        if (!empty($filters['status'])) {
+            if (is_array($filters['status'])) {
+                $query->whereIn('contracts.status', $filters['status']);
+            } else {
+                $query->where('contracts.status', $filters['status']);
+            }
+        }
+
+        if (!empty($filters['date_from'])) {
+            $query->whereDate('contracts.date', '>=', $filters['date_from']);
+        }
+
+        if (!empty($filters['date_to'])) {
+            $query->whereDate('contracts.date', '<=', $filters['date_to']);
+        }
+
+        if (!empty($filters['contractor_search'])) {
+            $search = $filters['contractor_search'];
+            $query->whereHas('contractor', function ($contractorQuery) use ($search) {
+                $contractorQuery->where(function($q) use ($search) {
+                    $q->where('name', 'ilike', '%' . $search . '%')
+                      ->orWhere('inn', 'like', '%' . $search . '%');
+                });
+            });
+        }
+
+        if (!empty($filters['project_id'])) {
+            $query->where('contracts.project_id', $filters['project_id']);
+        }
+
+        if (count($orgIds) > 1) {
+            $query->with(['organization:id,name,is_holding', 'contractor:id,name', 'project:id,name']);
+        } else {
+            $query->with(['contractor:id,name', 'project:id,name']);
+        }
+
+        return $query->orderBy('contracts.date', 'desc')->paginate($perPage);
+    }
 } 

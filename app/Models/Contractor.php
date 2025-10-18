@@ -119,7 +119,7 @@ class Contractor extends Model
         $syncSettings = $this->sync_settings ?? [];
         
         $fieldsToSync = $syncSettings['sync_fields'] ?? [
-            'name', 'phone', 'email', 'legal_address'
+            'name', 'phone', 'email', 'legal_address', 'inn', 'kpp'
         ];
 
         $updated = false;
@@ -133,9 +133,71 @@ class Contractor extends Model
         if ($updated) {
             $this->last_sync_at = now();
             $this->save();
+
+            \Illuminate\Support\Facades\Log::info('Contractor synced from source organization', [
+                'contractor_id' => $this->id,
+                'source_org_id' => $this->source_organization_id,
+                'target_org_id' => $this->organization_id,
+                'fields_synced' => $fieldsToSync,
+            ]);
         }
 
         return $updated;
+    }
+
+    public static function syncFromParentOrganization(int $childOrgId, int $parentOrgId): array
+    {
+        $parentContractors = static::where('organization_id', $parentOrgId)
+            ->whereNull('source_organization_id')
+            ->get();
+
+        $synced = 0;
+        $created = 0;
+        $errors = [];
+
+        foreach ($parentContractors as $parentContractor) {
+            try {
+                $existing = static::where('organization_id', $childOrgId)
+                    ->where('source_organization_id', $parentOrgId)
+                    ->where('inn', $parentContractor->inn)
+                    ->first();
+
+                if ($existing) {
+                    if ($existing->syncFromSourceOrganization()) {
+                        $synced++;
+                    }
+                } else {
+                    static::create([
+                        'organization_id' => $childOrgId,
+                        'source_organization_id' => $parentOrgId,
+                        'contractor_type' => self::TYPE_INVITED_ORGANIZATION,
+                        'name' => $parentContractor->name,
+                        'phone' => $parentContractor->phone,
+                        'email' => $parentContractor->email,
+                        'legal_address' => $parentContractor->legal_address,
+                        'inn' => $parentContractor->inn,
+                        'kpp' => $parentContractor->kpp,
+                        'bank_details' => $parentContractor->bank_details,
+                        'connected_at' => now(),
+                        'last_sync_at' => now(),
+                        'sync_settings' => ['sync_fields' => ['name', 'phone', 'email', 'legal_address', 'inn', 'kpp']],
+                    ]);
+                    $created++;
+                }
+            } catch (\Exception $e) {
+                $errors[] = [
+                    'contractor_id' => $parentContractor->id,
+                    'error' => $e->getMessage(),
+                ];
+            }
+        }
+
+        return [
+            'synced' => $synced,
+            'created' => $created,
+            'total' => $parentContractors->count(),
+            'errors' => $errors,
+        ];
     }
 
     public function getCacheKey(string $suffix = ''): string

@@ -13,9 +13,11 @@ use App\Services\Logging\LoggingService;
 use App\Services\Organization\OrganizationProfileService;
 use App\Services\Project\ProjectContextService;
 use App\Enums\ProjectOrganizationRole;
+use App\BusinessModules\Core\MultiOrganization\Contracts\OrganizationScopeInterface;
 use App\Events\ProjectOrganizationAdded;
 use App\Events\ProjectOrganizationRoleChanged;
 use App\Events\ProjectOrganizationRemoved;
+use App\Events\ProjectCreated;
 use Illuminate\Http\Request;
 use Illuminate\Database\Eloquent\Collection;
 use App\Exceptions\BusinessLogicException;
@@ -33,6 +35,7 @@ class ProjectService
     protected LoggingService $logging;
     protected OrganizationProfileService $organizationProfileService;
     protected ProjectContextService $projectContextService;
+    protected OrganizationScopeInterface $orgScope;
 
     public function __construct(
         ProjectRepositoryInterface $projectRepository,
@@ -41,7 +44,8 @@ class ProjectService
         WorkTypeRepositoryInterface $workTypeRepository,
         LoggingService $logging,
         OrganizationProfileService $organizationProfileService,
-        ProjectContextService $projectContextService
+        ProjectContextService $projectContextService,
+        OrganizationScopeInterface $orgScope
     ) {
         $this->projectRepository = $projectRepository;
         $this->userRepository = $userRepository;
@@ -50,6 +54,7 @@ class ProjectService
         $this->logging = $logging;
         $this->organizationProfileService = $organizationProfileService;
         $this->projectContextService = $projectContextService;
+        $this->orgScope = $orgScope;
     }
 
     /**
@@ -143,6 +148,8 @@ class ProjectService
         $dataToCreate['is_head'] = true;
         
         $project = $this->projectRepository->create($dataToCreate);
+        
+        event(new ProjectCreated($project));
         
         // AUDIT: Создание проекта - важно для compliance и отслеживания изменений
         $this->logging->audit('project.created', [

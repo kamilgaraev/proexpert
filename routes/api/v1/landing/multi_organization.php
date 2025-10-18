@@ -2,6 +2,10 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\MultiOrganizationController;
+use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingDashboardController;
+use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingProjectsController;
+use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingContractsController;
+use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingFilterController;
 
 Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'module.access:multi-organization'])
     ->prefix('multi-organization')
@@ -29,8 +33,22 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
         Route::post('/switch-context', [MultiOrganizationController::class, 'switchOrganizationContext'])
             ->name('switchContext');
         
+        Route::get('/dashboard-v2', [HoldingDashboardController::class, 'index'])
+            ->name('dashboardV2');
+        
         Route::get('/dashboard', [MultiOrganizationController::class, 'getHoldingDashboard'])
             ->name('dashboard');
+
+        Route::get('/filter-options', [HoldingFilterController::class, 'getFilterOptions'])
+            ->name('filterOptions');
+
+        Route::get('/projects', [HoldingProjectsController::class, 'index'])
+            ->name('projects.index');
+        Route::get('/projects/{projectId}', [HoldingProjectsController::class, 'show'])
+            ->name('projects.show');
+
+        Route::get('/contracts-v2', [HoldingContractsController::class, 'index'])
+            ->name('contractsV2.index');
 
         Route::get('/child-organizations', [MultiOrganizationController::class, 'getChildOrganizations'])
             ->name('getChildOrganizations');

@@ -1,0 +1,101 @@
+{
+  "name": "Администратор холдинга",
+  "slug": "parent_administrator",
+  "version": "1.0.0",
+  "context": "project",
+  "interface": "admin",
+  "description": "Головная организация холдинга автоматически добавляется с этой ролью при создании проектов дочерними организациями. Полный контроль и видимость.",
+  
+  "system_permissions": [
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "projects": [
+      "projects.view",
+      "projects.edit",
+      "projects.delete",
+      "projects.analytics"
+    ],
+    "contracts": [
+      "contracts.view",
+      "contracts.create",
+      "contracts.edit",
+      "contracts.delete"
+    ],
+    "works": [
+      "works.view",
+      "works.edit",
+      "works.create",
+      "works.approve"
+    ],
+    "materials": [
+      "materials.view",
+      "materials.edit"
+    ],
+    "basic-warehouse": [
+      "warehouse.view"
+    ],
+    "advanced-warehouse": [
+      "warehouse.view"
+    ],
+    "reports": [
+      "reports.view",
+      "reports.export"
+    ],
+    "finance": [
+      "finance.view"
+    ],
+    "file-management": [
+      "files.view",
+      "files.upload"
+    ],
+    "contractor-portal": [
+      "contractors.view",
+      "contractors.manage"
+    ],
+    "system-logs": [
+      "logs.view"
+    ],
+    "rate-management": [
+      "rate_coefficients.view"
+    ],
+    "report-templates": [
+      "report_templates.view"
+    ],
+    "data-filters": [
+      "filters.view"
+    ],
+    "dashboard-widgets": [
+      "dashboard.view"
+    ],
+    "schedule-management": [
+      "schedule.view"
+    ]
+  },
+  
+  "interface_access": ["admin", "lk"],
+  
+  "hierarchy": {
+    "can_manage_roles": ["*"],
+    "cannot_manage": []
+  },
+  
+  "ui_behavior": {
+    "contractor_field": "visible",
+    "can_create_works": true,
+    "can_approve_works": true,
+    "can_manage_contracts": true,
+    "can_assign_contractors": true,
+    "view_scope": "all",
+    "read_only": false,
+    "modules_visible": ["all"],
+    "modules_hidden": [],
+    "auto_added": true,
+    "system_role": true
+  },
+  
+  "conditions": {}
+}
+

@@ -380,7 +380,34 @@ class AuthorizationService
                 }
             }
         }
+
+        if ($authContext && $authContext->type === AuthorizationContext::TYPE_ORGANIZATION) {
+            $org = \App\Models\Organization::find($authContext->resource_id);
+
+            if ($org && $org->parent_organization_id) {
+                $parentContext = AuthorizationContext::getOrganizationContext($org->parent_organization_id);
+
+                if ($this->checkPermissionInContext($user, $permission, $parentContext)) {
+                    return true;
+                }
+            }
+        }
         
+        return false;
+    }
+
+    protected function checkPermissionInContext(User $user, string $permission, AuthorizationContext $context): bool
+    {
+        $roles = $this->getUserRoles($user, $context);
+
+        foreach ($roles as $assignment) {
+            if ($this->permissionResolver->hasPermission($assignment, $permission, null)) {
+                if ($this->evaluateConditions($assignment, [])) {
+                    return true;
+                }
+            }
+        }
+
         return false;
     }
 

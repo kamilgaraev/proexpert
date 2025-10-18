@@ -24,6 +24,11 @@ class ReportQueryBuilder
 
         $query = $this->buildBaseQuery($primarySource, $organizationId);
 
+        if ($this->shouldApplyMultiOrgScope($organizationId)) {
+            $adapter = app(\App\BusinessModules\Core\MultiOrganization\Services\HoldingReportAdapter::class);
+            $query = $adapter->applyReportScope($query, $organizationId, $config);
+        }
+
         if (isset($config['data_sources']['joins']) && !empty($config['data_sources']['joins'])) {
             $this->applyJoins($query, $config['data_sources']['joins'], $primarySource);
         }
@@ -269,6 +274,25 @@ class ReportQueryBuilder
         $complexity += count($config['columns_config'] ?? []);
 
         return $complexity;
+    }
+
+    protected function shouldApplyMultiOrgScope(int $organizationId): bool
+    {
+        try {
+            if (!app()->bound(\App\Modules\Core\AccessController::class)) {
+                return false;
+            }
+
+            $accessController = app(\App\Modules\Core\AccessController::class);
+            if (!$accessController->hasModuleAccess($organizationId, 'multi-organization')) {
+                return false;
+            }
+
+            $org = \App\Models\Organization::find($organizationId);
+            return $org && $org->is_holding;
+        } catch (\Exception $e) {
+            return false;
+        }
     }
 }
 

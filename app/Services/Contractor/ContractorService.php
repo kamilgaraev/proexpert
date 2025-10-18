@@ -6,15 +6,22 @@ use App\Repositories\Interfaces\ContractorRepositoryInterface;
 use App\DTOs\Contractor\ContractorDTO;
 use App\Models\Contractor;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
+use App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface;
 use Exception;
 
 class ContractorService
 {
     protected ContractorRepositoryInterface $contractorRepository;
+    protected ContractorSharingInterface $contractorSharing;
 
-    public function __construct(ContractorRepositoryInterface $contractorRepository)
+    public function __construct(
+        ContractorRepositoryInterface $contractorRepository,
+        ContractorSharingInterface $contractorSharing
+    )
     {
         $this->contractorRepository = $contractorRepository;
+        $this->contractorSharing = $contractorSharing;
     }
 
     public function getAllContractors(int $organizationId, int $perPage = 15, array $filters = [], string $sortBy = 'name', string $sortDirection = 'asc'): LengthAwarePaginator
@@ -124,5 +131,15 @@ class ContractorService
              throw new Exception('Cannot delete contractor with active contracts.');
         }
         return $this->contractorRepository->delete($contractorId);
+    }
+
+    public function getAvailableContractors(int $organizationId): Collection
+    {
+        return $this->contractorSharing->getAvailableContractors($organizationId);
+    }
+
+    public function canUseContractor(int $contractorId, int $organizationId): bool
+    {
+        return $this->contractorSharing->canUseContractor($contractorId, $organizationId);
     }
 } 

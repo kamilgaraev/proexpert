@@ -196,4 +196,35 @@ class ProjectRepository extends BaseRepository implements ProjectRepositoryInter
                     ->orderBy('status') // Опционально, для упорядоченного вывода
                     ->pluck('count', 'status'); // Возвращает коллекцию [status => count]
     }
+
+    public function getProjectsForOrganizations(array $orgIds, array $filters = [], int $perPage = 15): LengthAwarePaginator
+    {
+        $query = $this->model->query()->whereIn('organization_id', $orgIds);
+
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        if (!empty($filters['date_from'])) {
+            $query->where('created_at', '>=', $filters['date_from']);
+        }
+
+        if (!empty($filters['date_to'])) {
+            $query->where('created_at', '<=', $filters['date_to']);
+        }
+
+        if (!empty($filters['name'])) {
+            $query->where('name', 'ilike', '%' . $filters['name'] . '%');
+        }
+
+        if (isset($filters['is_archived'])) {
+            $query->where('is_archived', (bool)$filters['is_archived']);
+        }
+
+        if (count($orgIds) > 1) {
+            $query->with('organization:id,name,is_holding');
+        }
+
+        return $query->orderBy('created_at', 'desc')->paginate($perPage);
+    }
 } 

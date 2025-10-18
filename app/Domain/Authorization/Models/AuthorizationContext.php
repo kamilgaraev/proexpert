@@ -138,4 +138,32 @@ class AuthorizationContext extends Model
         
         return $hierarchy;
     }
+
+    /**
+     * Проверить: находится ли targetOrgId в иерархии текущей организации
+     * Используется для multi-organization модуля
+     */
+    public function isInOrganizationHierarchy(int $targetOrgId): bool
+    {
+        if ($this->type !== self::TYPE_ORGANIZATION) {
+            return false;
+        }
+
+        $currentOrg = \App\Models\Organization::find($this->resource_id);
+        if (!$currentOrg) {
+            return false;
+        }
+
+        if ($currentOrg->is_holding) {
+            if ($currentOrg->id === $targetOrgId) {
+                return true;
+            }
+
+            return \App\Models\Organization::where('id', $targetOrgId)
+                ->where('parent_organization_id', $currentOrg->id)
+                ->exists();
+        }
+
+        return $currentOrg->id === $targetOrgId;
+    }
 }
