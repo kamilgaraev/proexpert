@@ -32,14 +32,18 @@ class OrganizationSearchController extends Controller
             'search' => 'nullable|string|max:255',
             'city' => 'nullable|string|max:100',
             'country' => 'nullable|string|max:100',
-            'verified' => 'nullable|boolean',
-            'exclude_invited' => 'nullable|boolean',
-            'exclude_existing_contractors' => 'nullable|boolean',
+            'verified' => 'nullable|in:true,false,1,0',
+            'exclude_invited' => 'nullable|in:true,false,1,0',
+            'exclude_existing_contractors' => 'nullable|in:true,false,1,0',
             'sort_by' => 'nullable|string|in:relevance,name,city,connections,verified',
             'per_page' => 'nullable|integer|min:1|max:50',
         ]);
 
-        $filters = collect($validated)->except(['sort_by', 'per_page'])->filter()->toArray();
+        $validated['verified'] = isset($validated['verified']) ? filter_var($validated['verified'], FILTER_VALIDATE_BOOLEAN) : null;
+        $validated['exclude_invited'] = isset($validated['exclude_invited']) ? filter_var($validated['exclude_invited'], FILTER_VALIDATE_BOOLEAN) : null;
+        $validated['exclude_existing_contractors'] = isset($validated['exclude_existing_contractors']) ? filter_var($validated['exclude_existing_contractors'], FILTER_VALIDATE_BOOLEAN) : null;
+
+        $filters = collect($validated)->except(['sort_by', 'per_page'])->filter(fn($value) => $value !== null)->toArray();
         $sortBy = $validated['sort_by'] ?? 'relevance';
         $perPage = $validated['per_page'] ?? 20;
 
