@@ -32,11 +32,14 @@ class HoldingLandingController extends Controller
 
     /**
      * Получить лендинг холдинга (создать если не существует)
+     * Холдинг определяется автоматически из контекста текущей организации
      */
-    public function show(Request $request, int $holdingId): JsonResponse
+    public function show(Request $request): JsonResponse
     {
         try {
-            $organizationGroup = OrganizationGroup::findOrFail($holdingId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $organizationGroup = OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
             $user = Auth::user();
 
             if (!$this->canUserEditLanding($user, $organizationGroup)) {
@@ -47,7 +50,7 @@ class HoldingLandingController extends Controller
             }
 
             // Ищем существующий лендинг или создаем новый
-            $site = HoldingSite::where('organization_group_id', $holdingId)->first();
+            $site = HoldingSite::where('organization_group_id', $organizationGroup->id)->first();
             
             if (!$site) {
                 // Автоматически создаем лендинг для холдинга
@@ -81,7 +84,7 @@ class HoldingLandingController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error getting holding landing', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
             ]);
@@ -95,11 +98,15 @@ class HoldingLandingController extends Controller
 
     /**
      * Обновить настройки лендинга
+     * Холдинг определяется автоматически из контекста текущей организации
      */
-    public function update(Request $request, int $holdingId): JsonResponse
+    public function update(Request $request): JsonResponse
     {
         try {
-            $site = HoldingSite::where('organization_group_id', $holdingId)->firstOrFail();
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = HoldingSite::where('organization_group_id', $organizationGroup->id)->firstOrFail();
             $user = Auth::user();
 
             if (!$this->canUserEditLanding($user, $site->organizationGroup)) {
@@ -148,7 +155,7 @@ class HoldingLandingController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error updating holding landing', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
             ]);
@@ -162,11 +169,15 @@ class HoldingLandingController extends Controller
 
     /**
      * Опубликовать лендинг
+     * Холдинг определяется автоматически из контекста текущей организации
      */
-    public function publish(Request $request, int $holdingId): JsonResponse
+    public function publish(Request $request): JsonResponse
     {
         try {
-            $site = HoldingSite::where('organization_group_id', $holdingId)->firstOrFail();
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = HoldingSite::where('organization_group_id', $organizationGroup->id)->firstOrFail();
             $user = Auth::user();
 
             $published = $this->siteService->publishSite($site, $user);
@@ -182,7 +193,7 @@ class HoldingLandingController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error publishing holding landing', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
             ]);

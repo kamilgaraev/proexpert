@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\OrganizationGroup;
 use App\Services\Landing\MultiOrganizationService;
+use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
 use Illuminate\Support\Facades\Auth;
 
 class HoldingController extends Controller
@@ -14,6 +15,40 @@ class HoldingController extends Controller
     public function __construct(MultiOrganizationService $multiOrgService)
     {
         $this->multiOrgService = $multiOrgService;
+    }
+
+    public function getSiteData(Request $request)
+    {
+        $holding = $request->attributes->get('holding');
+        
+        if (!$holding) {
+            abort(404, 'Холдинг не найден');
+        }
+
+        $site = HoldingSite::where('organization_group_id', $holding->id)
+            ->where('is_active', true)
+            ->first();
+
+        if (!$site) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Лендинг холдинга еще не создан',
+                'data' => null
+            ], 404);
+        }
+
+        if (!$site->isPublished() && !$this->isValidPreview($request, $site)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Лендинг не опубликован',
+                'data' => null
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $site->getFullSiteData()
+        ]);
     }
 
     public function index(Request $request)
@@ -146,5 +181,19 @@ class HoldingController extends Controller
             'efficiency_score' => 0,
             'satisfaction_index' => 0,
         ];
+    }
+
+    private function isValidPreview(Request $request, HoldingSite $site): bool
+    {
+        if (!$request->has('preview') || $request->get('preview') !== 'true') {
+            return false;
+        }
+
+        $token = $request->get('token');
+        if (!$token) {
+            return false;
+        }
+
+        return $site->isValidPreviewToken($token);
     }
 } 

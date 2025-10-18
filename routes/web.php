@@ -3,12 +3,11 @@
 use Illuminate\Support\Facades\Route;
 
 // Роуты для холдинговых поддоменов (исключая служебные)
+// Например: stroitelnyj-holding-alfa.prohelper.pro
 Route::domain('{holding}.' . config('app.domain', 'prohelper.pro'))
     ->middleware(['holding.subdomain'])
     ->where(['holding' => '^(?!www|lk|api|admin|mail|ftp).*$'])
-    ->group(function () {
-        require __DIR__ . '/holding.php';
-    });
+    ->group(base_path('routes/subdomain/holding.php'));
 
 Route::get('/', function () {
     return view('welcome');
