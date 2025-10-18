@@ -6,6 +6,7 @@ use App\Models\Organization;
 use App\Models\OrganizationGroup;
 use App\Models\OrganizationAccessPermission;
 use App\Models\User;
+use App\BusinessModules\Enterprise\MultiOrganization\Website\Domain\Models\HoldingSite;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -43,6 +44,29 @@ class MultiOrganizationService
                 'max_child_organizations' => $data['max_child_organizations'] ?? 10,
                 'settings' => $data['settings'] ?? [],
                 'permissions_config' => $data['permissions_config'] ?? $this->getDefaultPermissionsConfig(),
+            ]);
+
+            HoldingSite::create([
+                'organization_group_id' => $group->id,
+                'domain' => $group->slug . '.prohelper.pro',
+                'title' => $group->name,
+                'description' => $group->description ?? 'Официальный сайт холдинга ' . $group->name,
+                'status' => 'draft',
+                'is_active' => true,
+                'theme_config' => [
+                    'primary_color' => '#1E40AF',
+                    'secondary_color' => '#F59E0B',
+                    'font_family' => 'Inter',
+                    'header_style' => 'fixed',
+                    'footer_style' => 'dark',
+                ],
+                'seo_meta' => [
+                    'title' => $group->name,
+                    'description' => $group->description ?? '',
+                    'keywords' => ['строительство', 'холдинг'],
+                ],
+                'analytics_config' => [],
+                'created_by_user_id' => $user->id,
             ]);
 
             return $group;
