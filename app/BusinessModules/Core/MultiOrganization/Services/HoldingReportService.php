@@ -76,6 +76,48 @@ class HoldingReportService
         return $result;
     }
 
+    public function getIntraGroupReport(HoldingReportRequest $request, int $holdingId): array|StreamedResponse
+    {
+        $holding = $this->validateHoldingAccess($holdingId);
+        $availableOrgIds = $this->scope->getOrganizationScope($holdingId);
+        $filters = $this->extractFilters($request);
+
+        $selectedOrgIds = !empty($filters['organization_ids']) 
+            ? array_intersect($filters['organization_ids'], $availableOrgIds)
+            : $availableOrgIds;
+
+        Log::info('Holding intra-group report requested', [
+            'holding_id' => $holdingId,
+            'organizations' => count($selectedOrgIds),
+        ]);
+
+        $projects = $this->getProjectsWithIntraGroupStructure($holdingId, $selectedOrgIds, $filters);
+
+        $summary = $this->calculateIntraGroupSummary($projects);
+
+        $result = [
+            'title' => 'Отчет по внутригрупповым проектам холдинга',
+            'holding' => [
+                'id' => $holding->id,
+                'name' => $holding->name,
+            ],
+            'period' => [
+                'from' => $filters['date_from'],
+                'to' => $filters['date_to'],
+            ],
+            'filters' => $filters,
+            'summary' => $summary,
+            'projects' => $projects,
+            'generated_at' => now()->toISOString(),
+        ];
+
+        if ($request->input('export_format')) {
+            return $this->exportIntraGroupReport($result, $request->input('export_format'));
+        }
+
+        return $result;
+    }
+
     public function getContractsSummaryReport(HoldingReportRequest $request, int $holdingId): array|StreamedResponse
     {
         $holding = $this->validateHoldingAccess($holdingId);
@@ -590,6 +632,225 @@ class HoldingReportService
         }
 
         $filename = 'holding_contracts_report_' . now()->format('Y-m-d_His');
+
+        if ($format === 'csv') {
+            return $this->csvExporter->streamDownload($filename . '.csv', $headers, $rows);
+        }
+
+        return $this->excelExporter->streamDownload($filename . '.xlsx', $headers, $rows);
+    }
+
+    protected function getProjectsWithIntraGroupStructure(int $holdingId, array $orgIds, array $filters): array
+    {
+        $query = Project::query()
+            ->where('organization_id', $holdingId)
+            ->with(['organization:id,name', 'contracts.contractor']);
+
+        $this->applyProjectFilters($query, $filters);
+
+        $projects = $query->get();
+        $result = [];
+
+        foreach ($projects as $project) {
+            $projectContracts = Contract::where('project_id', $project->id)
+                ->where('organization_id', $holdingId)
+                ->with(['contractor:id,name,organization_id'])
+                ->get();
+
+            $totalHeadAmount = $projectContracts->sum('total_amount');
+            $totalHeadPaid = DB::table('contract_payments')
+                ->whereIn('contract_id', $projectContracts->pluck('id'))
+                ->sum('amount');
+
+            $childOrganizationsData = [];
+            
+            foreach ($projectContracts as $contract) {
+                $contractor = $contract->contractor;
+                
+                if (!$contractor || !$contractor->organization_id) {
+                    continue;
+                }
+
+                if (!in_array($contractor->organization_id, $orgIds)) {
+                    continue;
+                }
+
+                $childOrg = Organization::find($contractor->organization_id);
+                
+                if (!$childOrg || $childOrg->parent_organization_id != $holdingId) {
+                    continue;
+                }
+
+                $subcontracts = Contract::where('project_id', $project->id)
+                    ->where('organization_id', $childOrg->id)
+                    ->whereNull('deleted_at')
+                    ->get();
+
+                $totalSubAmount = $subcontracts->sum('total_amount');
+                $totalSubPaid = DB::table('contract_payments')
+                    ->whereIn('contract_id', $subcontracts->pluck('id'))
+                    ->sum('amount');
+
+                $existingIndex = array_search($childOrg->id, array_column($childOrganizationsData, 'organization_id'));
+
+                if ($existingIndex !== false) {
+                    $childOrganizationsData[$existingIndex]['parent_contract_amount'] += (float) $contract->total_amount;
+                    $childOrganizationsData[$existingIndex]['subcontracts_count'] += $subcontracts->count();
+                    $childOrganizationsData[$existingIndex]['subcontracts_amount'] += $totalSubAmount;
+                    $childOrganizationsData[$existingIndex]['subcontracts_paid'] += $totalSubPaid;
+                } else {
+                    $childOrganizationsData[] = [
+                        'organization_id' => $childOrg->id,
+                        'organization_name' => $childOrg->name,
+                        'role' => 'subcontractor',
+                        'parent_contract_id' => $contract->id,
+                        'parent_contract_number' => $contract->number,
+                        'parent_contract_amount' => (float) $contract->total_amount,
+                        'subcontracts_count' => $subcontracts->count(),
+                        'subcontracts_amount' => round($totalSubAmount, 2),
+                        'subcontracts_paid' => round($totalSubPaid, 2),
+                        'subcontracts_remaining' => round($totalSubAmount - $totalSubPaid, 2),
+                        'margin' => round($contract->total_amount - $totalSubAmount, 2),
+                        'margin_percentage' => $contract->total_amount > 0 
+                            ? round((($contract->total_amount - $totalSubAmount) / $contract->total_amount) * 100, 2) 
+                            : 0,
+                        'subcontracts' => $subcontracts->map(function ($sub) {
+                            $paid = DB::table('contract_payments')
+                                ->where('contract_id', $sub->id)
+                                ->sum('amount');
+
+                            return [
+                                'id' => $sub->id,
+                                'number' => $sub->number,
+                                'contractor_name' => $sub->contractor?->name,
+                                'amount' => round($sub->total_amount, 2),
+                                'paid' => round($paid, 2),
+                                'status' => $sub->status,
+                            ];
+                        })->toArray(),
+                    ];
+                }
+            }
+
+            $result[] = [
+                'project_id' => $project->id,
+                'project_name' => $project->name,
+                'project_address' => $project->address,
+                'project_status' => $project->status,
+                'project_budget' => round($project->budget_amount ?? 0, 2),
+                'head_organization' => [
+                    'id' => $holdingId,
+                    'name' => $project->organization->name,
+                    'contracts_count' => $projectContracts->count(),
+                    'contracts_amount' => round($totalHeadAmount, 2),
+                    'contracts_paid' => round($totalHeadPaid, 2),
+                    'contracts_remaining' => round($totalHeadAmount - $totalHeadPaid, 2),
+                ],
+                'child_organizations' => $childOrganizationsData,
+                'financial_flow' => [
+                    'total_inflow' => round($totalHeadAmount, 2),
+                    'total_outflow' => round(collect($childOrganizationsData)->sum('parent_contract_amount'), 2),
+                    'net_margin' => round($totalHeadAmount - collect($childOrganizationsData)->sum('parent_contract_amount'), 2),
+                ],
+            ];
+        }
+
+        return $result;
+    }
+
+    protected function calculateIntraGroupSummary(array $projects): array
+    {
+        $totalProjects = count($projects);
+        $totalHeadContracts = array_sum(array_column(array_column($projects, 'head_organization'), 'contracts_count'));
+        $totalHeadAmount = array_sum(array_column(array_column($projects, 'head_organization'), 'contracts_amount'));
+        $totalHeadPaid = array_sum(array_column(array_column($projects, 'head_organization'), 'contracts_paid'));
+
+        $allChildOrgs = [];
+        foreach ($projects as $project) {
+            foreach ($project['child_organizations'] as $child) {
+                $allChildOrgs[] = $child;
+            }
+        }
+
+        $totalSubcontracts = array_sum(array_column($allChildOrgs, 'subcontracts_count'));
+        $totalSubAmount = array_sum(array_column($allChildOrgs, 'subcontracts_amount'));
+        $totalSubPaid = array_sum(array_column($allChildOrgs, 'subcontracts_paid'));
+        $totalMargin = array_sum(array_column($allChildOrgs, 'margin'));
+
+        $uniqueChildOrgs = count(array_unique(array_column($allChildOrgs, 'organization_id')));
+
+        return [
+            'total_projects' => $totalProjects,
+            'head_organization' => [
+                'contracts_count' => $totalHeadContracts,
+                'contracts_amount' => round($totalHeadAmount, 2),
+                'contracts_paid' => round($totalHeadPaid, 2),
+                'contracts_remaining' => round($totalHeadAmount - $totalHeadPaid, 2),
+            ],
+            'child_organizations' => [
+                'unique_count' => $uniqueChildOrgs,
+                'total_contracts_received' => count($allChildOrgs),
+                'subcontracts_count' => $totalSubcontracts,
+                'subcontracts_amount' => round($totalSubAmount, 2),
+                'subcontracts_paid' => round($totalSubPaid, 2),
+                'subcontracts_remaining' => round($totalSubAmount - $totalSubPaid, 2),
+            ],
+            'financial_analysis' => [
+                'total_margin' => round($totalMargin, 2),
+                'average_margin_percentage' => count($allChildOrgs) > 0 
+                    ? round(array_sum(array_column($allChildOrgs, 'margin_percentage')) / count($allChildOrgs), 2)
+                    : 0,
+                'internal_efficiency' => $totalHeadAmount > 0 
+                    ? round(($totalMargin / $totalHeadAmount) * 100, 2)
+                    : 0,
+            ],
+        ];
+    }
+
+    protected function exportIntraGroupReport(array $data, string $format): StreamedResponse
+    {
+        $headers = [
+            'Проект',
+            'Организация',
+            'Роль',
+            'Контрактов',
+            'Сумма контрактов',
+            'Оплачено',
+            'Маржа',
+            'Маржа %',
+        ];
+
+        $rows = [];
+        
+        foreach ($data['projects'] as $project) {
+            $rows[] = [
+                $project['project_name'],
+                $project['head_organization']['name'],
+                'Головная',
+                $project['head_organization']['contracts_count'],
+                $project['head_organization']['contracts_amount'],
+                $project['head_organization']['contracts_paid'],
+                '',
+                '',
+            ];
+
+            foreach ($project['child_organizations'] as $child) {
+                $rows[] = [
+                    '',
+                    $child['organization_name'],
+                    'Дочерняя (подрядчик)',
+                    $child['subcontracts_count'],
+                    $child['subcontracts_amount'],
+                    $child['subcontracts_paid'],
+                    $child['margin'],
+                    $child['margin_percentage'] . '%',
+                ];
+            }
+
+            $rows[] = ['', '', '', '', '', '', '', ''];
+        }
+
+        $filename = 'holding_intragroup_report_' . now()->format('Y-m-d_His');
 
         if ($format === 'csv') {
             return $this->csvExporter->streamDownload($filename . '.csv', $headers, $rows);
