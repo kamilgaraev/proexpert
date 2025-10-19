@@ -17,30 +17,43 @@ class HoldingContractsController extends Controller
 
     public function index(Request $request): JsonResponse
     {
-        $orgId = $request->attributes->get('current_organization_id');
-        $org = Organization::findOrFail($orgId);
+        try {
+            $orgId = $request->attributes->get('current_organization_id');
+            $org = Organization::findOrFail($orgId);
 
-        if (!$org->is_holding) {
+            if (!$org->is_holding) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Access restricted to holding organizations'
+                ], 403);
+            }
+
+            $filters = $request->get('filters', []);
+            $perPage = $request->get('per_page', 50);
+
+            $query = Contract::query();
+            $this->filterManager->applyHoldingFilters($query, $orgId, $filters);
+
+            $query->with(['organization:id,name,is_holding']);
+
+            $contracts = $query->orderBy('date', 'desc')->paginate($perPage);
+
+            return response()->json([
+                'success' => true,
+                'data' => $contracts,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('HoldingContractsController::index error', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return response()->json([
                 'success' => false,
-                'error' => 'Access restricted to holding organizations'
-            ], 403);
+                'error' => 'Internal server error',
+                'message' => $e->getMessage()
+            ], 500);
         }
-
-        $filters = $request->get('filters', []);
-        $perPage = $request->get('per_page', 50);
-
-        $query = Contract::query();
-        $this->filterManager->applyHoldingFilters($query, $orgId, $filters);
-
-        $query->with(['organization:id,name,is_holding', 'contractor', 'project:id,name']);
-
-        $contracts = $query->orderBy('date', 'desc')->paginate($perPage);
-
-        return response()->json([
-            'success' => true,
-            'data' => $contracts,
-        ]);
     }
 
     /**
@@ -75,7 +88,7 @@ class HoldingContractsController extends Controller
             'contractor.sourceOrganization:id,name,inn',
             'parentContract:id,number,date,total_amount,contractor_id,status',
             'parentContract.contractor:id,name',
-            'childContracts:id,contract_id,parent_contract_id,number,date,total_amount,status,contractor_id,subject',
+            'childContracts:id,parent_contract_id,number,date,total_amount,status,contractor_id,subject',
             'childContracts.contractor:id,name',
             'performanceActs:id,contract_id,act_number,act_date,amount,status,approved_at',
             'payments:id,contract_id,payment_date,amount,payment_type,reference_document_number,description',
