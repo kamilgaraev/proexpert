@@ -248,7 +248,7 @@ class HoldingReportService
 
         $materialsTotal = DB::table('material_receipts')
             ->whereIn('project_id', $projects->pluck('id'))
-            ->sum('total_price');
+            ->sum('total_amount');
 
         return [
             'total_projects' => $projects->count(),
