@@ -49,6 +49,8 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
 
         Route::get('/contracts-v2', [HoldingContractsController::class, 'index'])
             ->name('contractsV2.index');
+        Route::get('/contracts/{contractId}', [HoldingContractsController::class, 'show'])
+            ->name('contracts.show');
 
         Route::get('/child-organizations', [MultiOrganizationController::class, 'getChildOrganizations'])
             ->name('getChildOrganizations');

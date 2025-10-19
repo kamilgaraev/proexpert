@@ -42,5 +42,123 @@ class HoldingContractsController extends Controller
             'data' => $contracts,
         ]);
     }
+
+    /**
+     * Получить детальную информацию о контракте
+     * 
+     * GET /api/v1/landing/multi-organization/contracts/{contractId}
+     */
+    public function show(Request $request, int $contractId): JsonResponse
+    {
+        $orgId = $request->attributes->get('current_organization_id');
+        $org = Organization::findOrFail($orgId);
+
+        if (!$org->is_holding) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Access restricted to holding organizations'
+            ], 403);
+        }
+
+        // Получить список доступных организаций (холдинг + дочерние)
+        $childOrgs = Organization::where('parent_organization_id', $orgId)
+            ->pluck('id')
+            ->toArray();
+        $allowedOrgIds = array_merge([$orgId], $childOrgs);
+
+        // Найти контракт с проверкой доступа
+        $contract = Contract::with([
+            'organization:id,name,inn,phone,email,address,is_holding',
+            'project:id,name,address,status,start_date,end_date,budget_amount,organization_id',
+            'project.organization:id,name',
+            'contractor:id,name,contact_person,phone,email,legal_address,inn,kpp,contractor_type',
+            'contractor.sourceOrganization:id,name,inn',
+            'parentContract:id,number,date,total_amount,contractor_id,status',
+            'parentContract.contractor:id,name',
+            'childContracts:id,contract_id,parent_contract_id,number,date,total_amount,status,contractor_id,subject',
+            'childContracts.contractor:id,name',
+            'performanceActs:id,contract_id,act_number,act_date,amount,status,approved_at',
+            'payments:id,contract_id,payment_date,amount,payment_type,reference_document_number,description',
+            'completedWorks:id,contract_id,name,quantity,unit,rate,total_amount,completion_date,status',
+            'agreements:id,contract_id,agreement_number,agreement_date,change_amount,new_total_amount,reason',
+            'specifications:id,name,total_amount,created_at'
+        ])
+        ->whereIn('organization_id', $allowedOrgIds)
+        ->find($contractId);
+
+        if (!$contract) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Contract not found or access denied'
+            ], 404);
+        }
+
+        // Рассчитать агрегированные данные
+        $totalPaid = $contract->payments->sum('amount');
+        $totalActsAmount = $contract->performanceActs->where('status', 'approved')->sum('amount');
+        $totalWorksAmount = $contract->completedWorks->where('status', 'approved')->sum('total_amount');
+        $remainingAmount = $contract->total_amount - $totalPaid;
+        $completionPercentage = $contract->total_amount > 0 
+            ? round(($totalPaid / $contract->total_amount) * 100, 2)
+            : 0;
+
+        // Финансовые показатели
+        $financialSummary = [
+            'total_amount' => (float) $contract->total_amount,
+            'gp_amount' => (float) $contract->gp_amount,
+            'subcontract_amount' => (float) $contract->subcontract_amount,
+            'planned_advance' => (float) $contract->planned_advance_amount,
+            'actual_advance' => (float) $contract->actual_advance_amount,
+            'total_paid' => (float) $totalPaid,
+            'total_acts_approved' => (float) $totalActsAmount,
+            'total_works_approved' => (float) $totalWorksAmount,
+            'remaining_amount' => (float) $remainingAmount,
+            'completion_percentage' => $completionPercentage,
+        ];
+
+        // Статистика по дочерним контрактам
+        $childContractsSummary = [
+            'total_count' => $contract->childContracts->count(),
+            'total_amount' => (float) $contract->childContracts->sum('total_amount'),
+            'by_status' => $contract->childContracts->groupBy('status')->map(function($group) {
+                return [
+                    'count' => $group->count(),
+                    'total_amount' => (float) $group->sum('total_amount'),
+                ];
+            }),
+        ];
+
+        // Платежи по типам
+        $paymentsByType = $contract->payments->groupBy('payment_type')->map(function($group) {
+            return [
+                'count' => $group->count(),
+                'total_amount' => (float) $group->sum('amount'),
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'contract' => $contract,
+                'financial_summary' => $financialSummary,
+                'child_contracts_summary' => $childContractsSummary,
+                'payments_by_type' => $paymentsByType,
+                'timeline' => [
+                    'contract_date' => $contract->date,
+                    'start_date' => $contract->start_date,
+                    'end_date' => $contract->end_date,
+                    'days_total' => $contract->start_date && $contract->end_date 
+                        ? $contract->start_date->diffInDays($contract->end_date)
+                        : null,
+                    'days_passed' => $contract->start_date 
+                        ? $contract->start_date->diffInDays(now())
+                        : null,
+                    'days_remaining' => $contract->end_date 
+                        ? now()->diffInDays($contract->end_date, false)
+                        : null,
+                ],
+            ],
+        ]);
+    }
 }
 
