@@ -362,10 +362,13 @@ class SiteBlocksController extends Controller
     /**
      * Получить все блоки лендинга холдинга
      */
-    public function indexForHolding(Request $request, int $holdingId): JsonResponse
+    public function indexForHolding(Request $request): JsonResponse
     {
         try {
-            $site = $this->getHoldingLanding($holdingId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = \App\Models\OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = $this->getHoldingLanding($organizationGroup->id);
             $user = Auth::user();
 
             if (!$site->canUserEdit($user)) {
@@ -384,7 +387,7 @@ class SiteBlocksController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error getting holding landing blocks', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
             ]);
@@ -399,10 +402,13 @@ class SiteBlocksController extends Controller
     /**
      * Создать новый блок для лендинга холдинга
      */
-    public function storeForHolding(Request $request, int $holdingId): JsonResponse
+    public function storeForHolding(Request $request): JsonResponse
     {
         try {
-            $site = $this->getHoldingLanding($holdingId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = \App\Models\OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = $this->getHoldingLanding($organizationGroup->id);
             $user = Auth::user();
 
             if (!$site->canUserEdit($user)) {
@@ -416,7 +422,7 @@ class SiteBlocksController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error creating holding landing block', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
             ]);
@@ -431,10 +437,13 @@ class SiteBlocksController extends Controller
     /**
      * Обновить блок лендинга холдинга
      */
-    public function updateForHolding(Request $request, int $holdingId, int $blockId): JsonResponse
+    public function updateForHolding(Request $request, int $blockId): JsonResponse
     {
         try {
-            $site = $this->getHoldingLanding($holdingId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = \App\Models\OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = $this->getHoldingLanding($organizationGroup->id);
             $block = SiteContentBlock::where('id', $blockId)
                 ->where('holding_site_id', $site->id)
                 ->firstOrFail();
@@ -451,7 +460,7 @@ class SiteBlocksController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error updating holding landing block', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'block_id' => $blockId,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
@@ -467,10 +476,13 @@ class SiteBlocksController extends Controller
     /**
      * Опубликовать блок лендинга холдинга
      */
-    public function publishForHolding(Request $request, int $holdingId, int $blockId): JsonResponse
+    public function publishForHolding(Request $request, int $blockId): JsonResponse
     {
         try {
-            $site = $this->getHoldingLanding($holdingId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = \App\Models\OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = $this->getHoldingLanding($organizationGroup->id);
             $block = SiteContentBlock::where('id', $blockId)
                 ->where('holding_site_id', $site->id)
                 ->firstOrFail();
@@ -489,7 +501,7 @@ class SiteBlocksController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error publishing holding landing block', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'block_id' => $blockId,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
@@ -505,10 +517,13 @@ class SiteBlocksController extends Controller
     /**
      * Дублировать блок лендинга холдинга
      */
-    public function duplicateForHolding(Request $request, int $holdingId, int $blockId): JsonResponse
+    public function duplicateForHolding(Request $request, int $blockId): JsonResponse
     {
         try {
-            $site = $this->getHoldingLanding($holdingId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = \App\Models\OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = $this->getHoldingLanding($organizationGroup->id);
             $block = SiteContentBlock::where('id', $blockId)
                 ->where('holding_site_id', $site->id)
                 ->firstOrFail();
@@ -538,7 +553,7 @@ class SiteBlocksController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error duplicating holding landing block', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'block_id' => $blockId,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
@@ -554,10 +569,13 @@ class SiteBlocksController extends Controller
     /**
      * Удалить блок лендинга холдинга
      */
-    public function destroyForHolding(Request $request, int $holdingId, int $blockId): JsonResponse
+    public function destroyForHolding(Request $request, int $blockId): JsonResponse
     {
         try {
-            $site = $this->getHoldingLanding($holdingId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = \App\Models\OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = $this->getHoldingLanding($organizationGroup->id);
             $block = SiteContentBlock::where('id', $blockId)
                 ->where('holding_site_id', $site->id)
                 ->firstOrFail();
@@ -586,7 +604,7 @@ class SiteBlocksController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error deleting holding landing block', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'block_id' => $blockId,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
@@ -602,10 +620,13 @@ class SiteBlocksController extends Controller
     /**
      * Изменить порядок блоков лендинга холдинга (drag & drop как в Тильде)
      */
-    public function reorderForHolding(Request $request, int $holdingId): JsonResponse
+    public function reorderForHolding(Request $request): JsonResponse
     {
         try {
-            $site = $this->getHoldingLanding($holdingId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = \App\Models\OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = $this->getHoldingLanding($organizationGroup->id);
             $user = Auth::user();
 
             if (!$site->canUserEdit($user)) {
@@ -645,7 +666,7 @@ class SiteBlocksController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error reordering holding landing blocks', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
             ]);

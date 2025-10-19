@@ -216,10 +216,13 @@ class SiteAssetsController extends Controller
     /**
      * Получить все файлы лендинга холдинга
      */
-    public function indexForHolding(Request $request, int $holdingId): JsonResponse
+    public function indexForHolding(Request $request): JsonResponse
     {
         try {
-            $site = $this->getHoldingLanding($holdingId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = \App\Models\OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = $this->getHoldingLanding($organizationGroup->id);
             $user = Auth::user();
 
             if (!$site->canUserEdit($user)) {
@@ -241,7 +244,7 @@ class SiteAssetsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error getting holding landing assets', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
             ]);
@@ -256,10 +259,13 @@ class SiteAssetsController extends Controller
     /**
      * Загрузить файл для лендинга холдинга
      */
-    public function storeForHolding(Request $request, int $holdingId): JsonResponse
+    public function storeForHolding(Request $request): JsonResponse
     {
         try {
-            $site = $this->getHoldingLanding($holdingId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = \App\Models\OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = $this->getHoldingLanding($organizationGroup->id);
             $user = Auth::user();
 
             if (!$site->canUserEdit($user)) {
@@ -273,7 +279,7 @@ class SiteAssetsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error uploading holding landing asset', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
             ]);
@@ -288,10 +294,13 @@ class SiteAssetsController extends Controller
     /**
      * Обновить метаданные файла лендинга холдинга
      */
-    public function updateForHolding(Request $request, int $holdingId, int $assetId): JsonResponse
+    public function updateForHolding(Request $request, int $assetId): JsonResponse
     {
         try {
-            $site = $this->getHoldingLanding($holdingId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = \App\Models\OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = $this->getHoldingLanding($organizationGroup->id);
             $asset = SiteAsset::where('id', $assetId)
                 ->where('holding_site_id', $site->id)
                 ->firstOrFail();
@@ -308,7 +317,7 @@ class SiteAssetsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error updating holding landing asset', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'asset_id' => $assetId,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
@@ -324,10 +333,13 @@ class SiteAssetsController extends Controller
     /**
      * Удалить файл лендинга холдинга
      */
-    public function destroyForHolding(Request $request, int $holdingId, int $assetId): JsonResponse
+    public function destroyForHolding(Request $request, int $assetId): JsonResponse
     {
         try {
-            $site = $this->getHoldingLanding($holdingId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            $organizationGroup = \App\Models\OrganizationGroup::where('parent_organization_id', $organizationId)->firstOrFail();
+            
+            $site = $this->getHoldingLanding($organizationGroup->id);
             $asset = SiteAsset::where('id', $assetId)
                 ->where('holding_site_id', $site->id)
                 ->firstOrFail();
@@ -356,7 +368,7 @@ class SiteAssetsController extends Controller
 
         } catch (\Exception $e) {
             Log::error('Error deleting holding landing asset', [
-                'holding_id' => $holdingId,
+                'organization_id' => $organizationId ?? null,
                 'asset_id' => $assetId,
                 'error' => $e->getMessage(),
                 'user_id' => Auth::id()
