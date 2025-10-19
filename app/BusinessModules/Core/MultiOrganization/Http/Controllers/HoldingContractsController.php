@@ -81,11 +81,11 @@ class HoldingContractsController extends Controller
 
         // Найти контракт с проверкой доступа
         $contract = Contract::with([
-            'organization:id,name,inn,phone,email,address,is_holding',
+            'organization:id,name,tax_number,phone,email,address,is_holding',
             'project:id,name,address,status,start_date,end_date,budget_amount,organization_id',
             'project.organization:id,name',
             'contractor:id,name,contact_person,phone,email,legal_address,inn,kpp,contractor_type',
-            'contractor.sourceOrganization:id,name,inn',
+            'contractor.sourceOrganization:id,name,tax_number',
             'parentContract:id,number,date,total_amount,contractor_id,status',
             'parentContract.contractor:id,name',
             'childContracts:id,parent_contract_id,number,date,total_amount,status,contractor_id,subject',
