@@ -6,6 +6,7 @@ use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingDashboard
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingProjectsController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingContractsController;
 use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingFilterController;
+use App\BusinessModules\Core\MultiOrganization\Http\Controllers\HoldingReportsController;
 
 Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'module.access:multi-organization'])
     ->prefix('multi-organization')
@@ -103,6 +104,11 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
 
         // Сводные отчёты по холдингу
         Route::prefix('reports')->name('reports.')->group(function () {
+            Route::get('/projects-summary', [HoldingReportsController::class, 'projectsSummary'])
+                ->name('projects-summary');
+            Route::get('/contracts-summary', [HoldingReportsController::class, 'contractsSummary'])
+                ->name('contracts-summary');
+            
             Route::get('/contracts', [MultiOrganizationController::class, 'getHoldingContracts'])
                 ->name('contracts');
             Route::get('/contracts/summary', [MultiOrganizationController::class, 'getHoldingContractsSummary'])
