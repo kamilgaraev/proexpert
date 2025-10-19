@@ -921,9 +921,8 @@ class HoldingReportService
 
             foreach ($projects as $project) {
                 $contractsQuery = Contract::where('project_id', $project->id)
-                    ->where('organization_id', $org->id)
                     ->with([
-                        'contractor', 
+                        'contractor.organization',
                         'payments', 
                         'performanceActs', 
                         'completedWorks.workType',
@@ -1042,6 +1041,8 @@ class HoldingReportService
                             'email' => $contractor->email,
                             'contractor_type' => $contractor->contractor_type,
                             'organization_id' => $contractor->organization_id,
+                            'organization_name' => $contractor->organization?->name,
+                            'is_holding_member' => in_array($contractor->organization_id, $orgIds),
                         ] : null,
                         
                         'financial' => [
@@ -1242,6 +1243,8 @@ class HoldingReportService
             'Статус',
             'Подрядчик',
             'ИНН',
+            'Организация подрядчика',
+            'Член холдинга',
             'Контактное лицо',
             'Телефон',
             'Тип работ',
@@ -1269,26 +1272,28 @@ class HoldingReportService
                     $rows[] = [
                         $org['organization_name'],
                         $project['project_name'],
-                        $contract['contract_number'],
-                        $contract['contract_date'],
-                        $contract['contract_status'],
-                        $contractor ? $contractor['name'] : '-',
-                        $contractor ? $contractor['inn'] : '-',
-                        $contractor ? $contractor['contact_person'] : '-',
-                        $contractor ? $contractor['phone'] : '-',
+                        $contract['contract_number'] ?? '-',
+                        $contract['contract_date'] ?? '-',
+                        is_string($contract['contract_status']) ? $contract['contract_status'] : (string)$contract['contract_status'],
+                        $contractor ? ($contractor['name'] ?? '-') : '-',
+                        $contractor ? ($contractor['inn'] ?? '-') : '-',
+                        $contractor ? ($contractor['organization_name'] ?? '-') : '-',
+                        $contractor ? ($contractor['is_holding_member'] ? 'Да' : 'Нет') : '-',
+                        $contractor ? ($contractor['contact_person'] ?? '-') : '-',
+                        $contractor ? ($contractor['phone'] ?? '-') : '-',
                         $contract['work_type_category'] ?? '-',
-                        $contract['financial']['total_amount'],
-                        $contract['financial']['gp_amount'],
-                        $contract['financial']['gp_percentage'] . '%',
-                        $contract['financial']['total_paid'],
-                        $contract['financial']['total_acts'],
-                        $contract['financial']['total_works'],
-                        $contract['financial']['remaining'],
-                        $contract['financial']['completion_percentage'] . '%',
-                        $contract['financial']['payment_percentage'] . '%',
-                        $contract['payments_count'],
-                        $contract['acts_count'],
-                        $contract['works_count'],
+                        (float)($contract['financial']['total_amount'] ?? 0),
+                        (float)($contract['financial']['gp_amount'] ?? 0),
+                        (float)($contract['financial']['gp_percentage'] ?? 0),
+                        (float)($contract['financial']['total_paid'] ?? 0),
+                        (float)($contract['financial']['total_acts'] ?? 0),
+                        (float)($contract['financial']['total_works'] ?? 0),
+                        (float)($contract['financial']['remaining'] ?? 0),
+                        (float)($contract['financial']['completion_percentage'] ?? 0),
+                        (float)($contract['financial']['payment_percentage'] ?? 0),
+                        (int)($contract['payments_count'] ?? 0),
+                        (int)($contract['acts_count'] ?? 0),
+                        (int)($contract['works_count'] ?? 0),
                     ];
                 }
             }
