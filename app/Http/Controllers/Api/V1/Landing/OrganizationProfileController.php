@@ -132,7 +132,7 @@ class OrganizationProfileController extends Controller
     public function updateBusinessType(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'business_type' => 'required|string|in:' . implode(',', array_map(fn($c) => $c->value, OrganizationCapability::cases())),
+            'primary_business_type' => 'required|string|in:' . implode(',', array_map(fn($c) => $c->value, OrganizationCapability::cases())),
         ]);
         
         if ($validator->fails()) {
@@ -156,7 +156,7 @@ class OrganizationProfileController extends Controller
             
             $updatedOrg = $this->profileService->updatePrimaryBusinessType(
                 $organization,
-                $request->input('business_type')
+                $request->input('primary_business_type')
             );
             
             $profile = $this->profileService->getProfile($updatedOrg);
