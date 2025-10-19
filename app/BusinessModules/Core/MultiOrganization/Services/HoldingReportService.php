@@ -118,6 +118,48 @@ class HoldingReportService
         return $result;
     }
 
+    public function getConsolidatedReport(HoldingReportRequest $request, int $holdingId): array|StreamedResponse
+    {
+        $holding = $this->validateHoldingAccess($holdingId);
+        $availableOrgIds = $this->scope->getOrganizationScope($holdingId);
+        $filters = $this->extractFilters($request);
+
+        $selectedOrgIds = !empty($filters['organization_ids']) 
+            ? array_intersect($filters['organization_ids'], $availableOrgIds)
+            : $availableOrgIds;
+
+        Log::info('Holding consolidated report requested', [
+            'holding_id' => $holdingId,
+            'organizations' => count($selectedOrgIds),
+        ]);
+
+        $detailedData = $this->getConsolidatedDetailedData($selectedOrgIds, $filters);
+
+        $summary = $this->calculateConsolidatedSummary($detailedData);
+
+        $result = [
+            'title' => 'Консолидированный отчет холдинга',
+            'holding' => [
+                'id' => $holding->id,
+                'name' => $holding->name,
+            ],
+            'period' => [
+                'from' => $filters['date_from'],
+                'to' => $filters['date_to'],
+            ],
+            'filters' => $filters,
+            'summary' => $summary,
+            'data' => $detailedData,
+            'generated_at' => now()->toISOString(),
+        ];
+
+        if ($request->input('export_format')) {
+            return $this->exportConsolidatedReport($result, $request->input('export_format'));
+        }
+
+        return $result;
+    }
+
     public function getContractsSummaryReport(HoldingReportRequest $request, int $holdingId): array|StreamedResponse
     {
         $holding = $this->validateHoldingAccess($holdingId);
@@ -851,6 +893,408 @@ class HoldingReportService
         }
 
         $filename = 'holding_intragroup_report_' . now()->format('Y-m-d_His');
+
+        if ($format === 'csv') {
+            return $this->csvExporter->streamDownload($filename . '.csv', $headers, $rows);
+        }
+
+        return $this->excelExporter->streamDownload($filename . '.xlsx', $headers, $rows);
+    }
+
+    protected function getConsolidatedDetailedData(array $orgIds, array $filters): array
+    {
+        $organizations = Organization::whereIn('id', $orgIds)->get();
+        $result = [];
+
+        foreach ($organizations as $org) {
+            $projectsQuery = Project::where('organization_id', $org->id);
+            $this->applyProjectFilters($projectsQuery, $filters);
+            $projects = $projectsQuery->get();
+
+            $orgData = [
+                'organization_id' => $org->id,
+                'organization_name' => $org->name,
+                'organization_type' => $org->parent_organization_id ? 'child' : 'holding',
+                'projects_count' => $projects->count(),
+                'projects' => [],
+            ];
+
+            foreach ($projects as $project) {
+                $contractsQuery = Contract::where('project_id', $project->id)
+                    ->where('organization_id', $org->id)
+                    ->with([
+                        'contractor', 
+                        'payments', 
+                        'performanceActs', 
+                        'completedWorks.workType',
+                        'agreements',
+                        'specifications',
+                        'childContracts.contractor',
+                        'parentContract'
+                    ]);
+                
+                $this->applyContractFilters($contractsQuery, $filters);
+                $contracts = $contractsQuery->get();
+                
+                $materialReceipts = DB::table('material_receipts')
+                    ->join('materials', 'material_receipts.material_id', '=', 'materials.id')
+                    ->join('suppliers', 'material_receipts.supplier_id', '=', 'suppliers.id')
+                    ->where('material_receipts.project_id', $project->id)
+                    ->where('material_receipts.organization_id', $org->id)
+                    ->select(
+                        'material_receipts.id',
+                        'material_receipts.receipt_date',
+                        'material_receipts.quantity',
+                        'material_receipts.price',
+                        'material_receipts.total_amount',
+                        'material_receipts.document_number',
+                        'material_receipts.status',
+                        'materials.name as material_name',
+                        'materials.code as material_code',
+                        'suppliers.name as supplier_name'
+                    )
+                    ->get();
+                
+                $materialWriteOffs = DB::table('material_write_offs')
+                    ->join('materials', 'material_write_offs.material_id', '=', 'materials.id')
+                    ->where('material_write_offs.project_id', $project->id)
+                    ->where('material_write_offs.organization_id', $org->id)
+                    ->select(
+                        'material_write_offs.id',
+                        'material_write_offs.write_off_date',
+                        'material_write_offs.quantity',
+                        'material_write_offs.notes',
+                        'materials.name as material_name',
+                        'materials.code as material_code'
+                    )
+                    ->get();
+
+                $projectData = [
+                    'project_id' => $project->id,
+                    'project_name' => $project->name,
+                    'project_address' => $project->address,
+                    'project_status' => $project->status,
+                    'project_budget' => round($project->budget_amount ?? 0, 2),
+                    'customer' => $project->customer,
+                    'designer' => $project->designer,
+                    'site_area_m2' => round($project->site_area_m2 ?? 0, 2),
+                    'start_date' => $project->start_date?->format('Y-m-d'),
+                    'end_date' => $project->end_date?->format('Y-m-d'),
+                    'is_archived' => $project->is_archived,
+                    'contracts_count' => $contracts->count(),
+                    'contracts' => [],
+                    'material_receipts' => $materialReceipts->map(function ($receipt) {
+                        return [
+                            'id' => $receipt->id,
+                            'material_name' => $receipt->material_name,
+                            'material_code' => $receipt->material_code,
+                            'supplier_name' => $receipt->supplier_name,
+                            'quantity' => round($receipt->quantity, 3),
+                            'price' => round($receipt->price ?? 0, 2),
+                            'total_amount' => round($receipt->total_amount ?? 0, 2),
+                            'receipt_date' => $receipt->receipt_date,
+                            'document_number' => $receipt->document_number,
+                            'status' => $receipt->status,
+                        ];
+                    })->toArray(),
+                    'material_write_offs' => $materialWriteOffs->map(function ($writeOff) {
+                        return [
+                            'id' => $writeOff->id,
+                            'material_name' => $writeOff->material_name,
+                            'material_code' => $writeOff->material_code,
+                            'quantity' => round($writeOff->quantity, 3),
+                            'write_off_date' => $writeOff->write_off_date,
+                            'notes' => $writeOff->notes,
+                        ];
+                    })->toArray(),
+                    'materials_summary' => [
+                        'receipts_count' => $materialReceipts->count(),
+                        'receipts_total' => round($materialReceipts->sum('total_amount'), 2),
+                        'write_offs_count' => $materialWriteOffs->count(),
+                    ],
+                ];
+
+                foreach ($contracts as $contract) {
+                    $contractor = $contract->contractor;
+                    $payments = $contract->payments;
+                    $acts = $contract->performanceActs->where('is_approved', true);
+                    $works = $contract->completedWorks->where('status', 'confirmed');
+
+                    $totalPaid = $payments->sum('amount');
+                    $totalActs = $acts->sum('amount');
+                    $totalWorks = $works->sum('total_amount');
+
+                    $contractData = [
+                        'contract_id' => $contract->id,
+                        'contract_number' => $contract->number,
+                        'contract_date' => $contract->date?->format('Y-m-d'),
+                        'contract_status' => $contract->status->value ?? $contract->status,
+                        'work_type_category' => $contract->work_type_category,
+                        'start_date' => $contract->start_date?->format('Y-m-d'),
+                        'end_date' => $contract->end_date?->format('Y-m-d'),
+                        
+                        'contractor' => $contractor ? [
+                            'id' => $contractor->id,
+                            'name' => $contractor->name,
+                            'inn' => $contractor->inn,
+                            'contact_person' => $contractor->contact_person,
+                            'phone' => $contractor->phone,
+                            'email' => $contractor->email,
+                            'contractor_type' => $contractor->contractor_type,
+                            'organization_id' => $contractor->organization_id,
+                        ] : null,
+                        
+                        'financial' => [
+                            'total_amount' => round($contract->total_amount, 2),
+                            'gp_amount' => round($contract->gp_amount ?? 0, 2),
+                            'gp_percentage' => round($contract->gp_percentage ?? 0, 2),
+                            'subcontract_amount' => round($contract->subcontract_amount ?? 0, 2),
+                            'planned_advance' => round($contract->planned_advance_amount ?? 0, 2),
+                            'actual_advance' => round($contract->actual_advance_amount ?? 0, 2),
+                            'total_paid' => round($totalPaid, 2),
+                            'total_acts' => round($totalActs, 2),
+                            'total_works' => round($totalWorks, 2),
+                            'remaining' => round($contract->total_amount - $totalPaid, 2),
+                            'completion_percentage' => $contract->total_amount > 0 
+                                ? round(($totalActs / $contract->total_amount) * 100, 2) 
+                                : 0,
+                            'payment_percentage' => $contract->total_amount > 0 
+                                ? round(($totalPaid / $contract->total_amount) * 100, 2) 
+                                : 0,
+                        ],
+                        
+                        'payments' => $payments->map(function ($payment) {
+                            return [
+                                'id' => $payment->id,
+                                'amount' => round($payment->amount, 2),
+                                'payment_date' => $payment->payment_date?->format('Y-m-d'),
+                                'payment_type' => $payment->payment_type,
+                                'notes' => $payment->notes,
+                            ];
+                        })->toArray(),
+                        
+                        'acts' => $acts->map(function ($act) {
+                            return [
+                                'id' => $act->id,
+                                'number' => $act->number,
+                                'amount' => round($act->amount, 2),
+                                'act_date' => $act->act_date?->format('Y-m-d'),
+                                'is_approved' => $act->is_approved,
+                            ];
+                        })->toArray(),
+                        
+                        'completed_works' => $works->map(function ($work) {
+                            return [
+                                'id' => $work->id,
+                                'work_type' => $work->workType?->name,
+                                'quantity' => round($work->quantity ?? 0, 3),
+                                'price' => round($work->price ?? 0, 2),
+                                'total_amount' => round($work->total_amount ?? 0, 2),
+                                'completion_date' => $work->completion_date?->format('Y-m-d'),
+                                'status' => $work->status,
+                            ];
+                        })->toArray(),
+                        
+                        'payments_count' => $payments->count(),
+                        'acts_count' => $acts->count(),
+                        'works_count' => $works->count(),
+                        
+                        'agreements' => $contract->agreements->map(function ($agreement) {
+                            return [
+                                'id' => $agreement->id,
+                                'number' => $agreement->number,
+                                'date' => $agreement->date?->format('Y-m-d'),
+                                'amount_change' => round($agreement->amount_change ?? 0, 2),
+                                'description' => $agreement->description,
+                            ];
+                        })->toArray(),
+                        
+                        'specifications' => $contract->specifications->map(function ($spec) {
+                            return [
+                                'id' => $spec->id,
+                                'name' => $spec->name,
+                                'total_amount' => round($spec->total_amount ?? 0, 2),
+                            ];
+                        })->toArray(),
+                        
+                        'child_contracts' => $contract->childContracts->map(function ($child) {
+                            $childPaid = DB::table('contract_payments')
+                                ->where('contract_id', $child->id)
+                                ->sum('amount');
+                            
+                            return [
+                                'id' => $child->id,
+                                'number' => $child->number,
+                                'contractor_name' => $child->contractor?->name,
+                                'amount' => round($child->total_amount, 2),
+                                'paid' => round($childPaid, 2),
+                                'status' => $child->status->value ?? $child->status,
+                            ];
+                        })->toArray(),
+                        
+                        'parent_contract' => $contract->parentContract ? [
+                            'id' => $contract->parentContract->id,
+                            'number' => $contract->parentContract->number,
+                            'amount' => round($contract->parentContract->total_amount, 2),
+                        ] : null,
+                        
+                        'agreements_count' => $contract->agreements->count(),
+                        'specifications_count' => $contract->specifications->count(),
+                        'child_contracts_count' => $contract->childContracts->count(),
+                    ];
+
+                    $projectData['contracts'][] = $contractData;
+                }
+
+                if ($contracts->count() > 0) {
+                    $orgData['projects'][] = $projectData;
+                }
+            }
+
+            if (count($orgData['projects']) > 0) {
+                $result[] = $orgData;
+            }
+        }
+
+        return $result;
+    }
+
+    protected function calculateConsolidatedSummary(array $data): array
+    {
+        $totalOrganizations = count($data);
+        $totalProjects = 0;
+        $totalContracts = 0;
+        $totalAmount = 0;
+        $totalPaid = 0;
+        $totalActs = 0;
+        $totalPayments = 0;
+        $totalWorks = 0;
+        $totalAgreements = 0;
+        $totalSpecifications = 0;
+        $totalChildContracts = 0;
+        $totalMaterialReceipts = 0;
+        $totalMaterialReceiptsAmount = 0;
+        $totalMaterialWriteOffs = 0;
+        $uniqueContractors = [];
+
+        foreach ($data as $org) {
+            $totalProjects += count($org['projects']);
+            
+            foreach ($org['projects'] as $project) {
+                $totalContracts += count($project['contracts']);
+                $totalMaterialReceipts += $project['materials_summary']['receipts_count'];
+                $totalMaterialReceiptsAmount += $project['materials_summary']['receipts_total'];
+                $totalMaterialWriteOffs += $project['materials_summary']['write_offs_count'];
+                
+                foreach ($project['contracts'] as $contract) {
+                    $totalAmount += $contract['financial']['total_amount'];
+                    $totalPaid += $contract['financial']['total_paid'];
+                    $totalActs += $contract['financial']['total_acts'];
+                    $totalPayments += $contract['payments_count'];
+                    $totalWorks += $contract['works_count'];
+                    $totalAgreements += $contract['agreements_count'];
+                    $totalSpecifications += $contract['specifications_count'];
+                    $totalChildContracts += $contract['child_contracts_count'];
+                    
+                    if ($contract['contractor']) {
+                        $uniqueContractors[$contract['contractor']['id']] = $contract['contractor']['name'];
+                    }
+                }
+            }
+        }
+
+        return [
+            'total_organizations' => $totalOrganizations,
+            'total_projects' => $totalProjects,
+            'total_contracts' => $totalContracts,
+            'total_contractors' => count($uniqueContractors),
+            'financial' => [
+                'total_amount' => round($totalAmount, 2),
+                'total_paid' => round($totalPaid, 2),
+                'total_acts' => round($totalActs, 2),
+                'remaining' => round($totalAmount - $totalPaid, 2),
+                'completion_percentage' => $totalAmount > 0 ? round(($totalActs / $totalAmount) * 100, 2) : 0,
+                'payment_percentage' => $totalAmount > 0 ? round(($totalPaid / $totalAmount) * 100, 2) : 0,
+            ],
+            'details' => [
+                'total_payments' => $totalPayments,
+                'total_acts' => $totalActs,
+                'total_completed_works' => $totalWorks,
+                'total_agreements' => $totalAgreements,
+                'total_specifications' => $totalSpecifications,
+                'total_child_contracts' => $totalChildContracts,
+            ],
+            'materials' => [
+                'total_receipts' => $totalMaterialReceipts,
+                'receipts_amount' => round($totalMaterialReceiptsAmount, 2),
+                'total_write_offs' => $totalMaterialWriteOffs,
+            ],
+        ];
+    }
+
+    protected function exportConsolidatedReport(array $data, string $format): StreamedResponse
+    {
+        $headers = [
+            'Организация',
+            'Проект',
+            'Номер контракта',
+            'Дата контракта',
+            'Статус',
+            'Подрядчик',
+            'ИНН',
+            'Контактное лицо',
+            'Телефон',
+            'Тип работ',
+            'Сумма контракта',
+            'ГП сумма',
+            'ГП %',
+            'Оплачено',
+            'Актов',
+            'Работ выполнено',
+            'Остаток',
+            'Выполнение %',
+            'Оплата %',
+            'Кол-во платежей',
+            'Кол-во актов',
+            'Кол-во работ',
+        ];
+
+        $rows = [];
+        
+        foreach ($data['data'] as $org) {
+            foreach ($org['projects'] as $project) {
+                foreach ($project['contracts'] as $contract) {
+                    $contractor = $contract['contractor'];
+                    
+                    $rows[] = [
+                        $org['organization_name'],
+                        $project['project_name'],
+                        $contract['contract_number'],
+                        $contract['contract_date'],
+                        $contract['contract_status'],
+                        $contractor ? $contractor['name'] : '-',
+                        $contractor ? $contractor['inn'] : '-',
+                        $contractor ? $contractor['contact_person'] : '-',
+                        $contractor ? $contractor['phone'] : '-',
+                        $contract['work_type_category'] ?? '-',
+                        $contract['financial']['total_amount'],
+                        $contract['financial']['gp_amount'],
+                        $contract['financial']['gp_percentage'] . '%',
+                        $contract['financial']['total_paid'],
+                        $contract['financial']['total_acts'],
+                        $contract['financial']['total_works'],
+                        $contract['financial']['remaining'],
+                        $contract['financial']['completion_percentage'] . '%',
+                        $contract['financial']['payment_percentage'] . '%',
+                        $contract['payments_count'],
+                        $contract['acts_count'],
+                        $contract['works_count'],
+                    ];
+                }
+            }
+        }
+
+        $filename = 'holding_consolidated_report_' . now()->format('Y-m-d_His');
 
         if ($format === 'csv') {
             return $this->csvExporter->streamDownload($filename . '.csv', $headers, $rows);

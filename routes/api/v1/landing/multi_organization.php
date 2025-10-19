@@ -110,6 +110,8 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context', 'modu
                 ->name('contracts-summary');
             Route::get('/intra-group', [HoldingReportsController::class, 'intraGroup'])
                 ->name('intra-group');
+            Route::get('/consolidated', [HoldingReportsController::class, 'consolidated'])
+                ->name('consolidated');
             
             Route::get('/contracts', [MultiOrganizationController::class, 'getHoldingContracts'])
                 ->name('contracts');
