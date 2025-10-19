@@ -84,17 +84,13 @@ class HoldingContractsController extends Controller
             'organization:id,name,tax_number,phone,email,address,is_holding',
             'project:id,name,address,status,start_date,end_date,budget_amount,organization_id',
             'project.organization:id,name',
-            'contractor:id,name,contact_person,phone,email,legal_address,inn,kpp,contractor_type',
-            'contractor.sourceOrganization:id,name,tax_number',
-            'parentContract:id,number,date,total_amount,contractor_id,status',
-            'parentContract.contractor:id,name',
-            'childContracts:id,parent_contract_id,number,date,total_amount,status,contractor_id,subject',
-            'childContracts.contractor:id,name',
-            'performanceActs:id,contract_id,act_number,act_date,amount,status,approved_at',
-            'payments:id,contract_id,payment_date,amount,payment_type,reference_document_number,description',
-            'completedWorks:id,contract_id,name,quantity,unit,rate,total_amount,completion_date,status',
-            'agreements:id,contract_id,agreement_number,agreement_date,change_amount,new_total_amount,reason',
-            'specifications:id,name,total_amount,created_at'
+            'contractor',
+            'parentContract',
+            'childContracts',
+            'performanceActs',
+            'payments',
+            'completedWorks',
+            'agreements'
         ])
         ->whereIn('organization_id', $allowedOrgIds)
         ->find($contractId);
