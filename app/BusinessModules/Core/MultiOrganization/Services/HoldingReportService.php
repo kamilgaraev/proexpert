@@ -398,7 +398,7 @@ class HoldingReportService
                 'contractors.contractor_type',
                 DB::raw('COUNT(DISTINCT contracts.id) as contracts_count'),
                 DB::raw('COALESCE(SUM(contracts.total_amount), 0) as total_amount'),
-                DB::raw('GROUP_CONCAT(DISTINCT orgs.name SEPARATOR ", ") as organizations'),
+                DB::raw('STRING_AGG(DISTINCT orgs.name, \', \') as organizations'),
             ])
             ->join('contracts', 'contractors.id', '=', 'contracts.contractor_id')
             ->join('organizations as orgs', 'contracts.organization_id', '=', 'orgs.id')
