@@ -30,18 +30,6 @@ class RequestLoggingMiddleware
             $performanceContext->checkpoint('request_start');
         }
 
-        // Логировать входящий запрос (только для API)
-        if ($this->shouldLogRequest($request)) {
-            $this->loggingService->access([
-                'event' => 'http.request',
-                'method' => $request->method(),
-                'uri' => $request->getRequestUri(),
-                'content_length' => strlen($request->getContent()),
-                'has_files' => $request->hasFile('*'),
-                'query_params_count' => count($request->query())
-            ]);
-        }
-
         $response = null;
         $exception = null;
 
@@ -136,15 +124,13 @@ class RequestLoggingMiddleware
         }
 
         // ACCESS: Логируем завершенный запрос с полными метриками
-        $this->loggingService->access(array_merge([
-            'event' => 'http.request.completed',
+        $this->loggingService->access([
             'method' => $request->method(),
             'uri' => $request->getRequestUri(),
-            'status_code' => $response?->getStatusCode(),
             'content_length' => strlen($request->getContent()),
             'query_params_count' => count($request->query()),
             'has_files' => $request->hasFile('*')
-        ], $responseData, $performanceData));
+        ], $responseData);
 
         // TECHNICAL: Логируем производительность запросов для оптимизации
         if (App::bound(PerformanceContext::class)) {
