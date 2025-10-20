@@ -144,7 +144,7 @@ class ContractController extends Controller
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
         
-        if ($projectId && $contractData->project_id != $projectId) {
+        if ($projectId && (int)$contractData->project_id !== (int)$projectId) {
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
         
@@ -170,7 +170,7 @@ class ContractController extends Controller
                 return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
             }
             
-            if ($projectId && $existingContract->project_id != $projectId) {
+            if ($projectId && (int)$existingContract->project_id !== (int)$projectId) {
                 return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
             }
             
@@ -211,7 +211,7 @@ class ContractController extends Controller
                 return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
             }
             
-            if ($projectId && $existingContract->project_id != $projectId) {
+            if ($projectId && (int)$existingContract->project_id !== (int)$projectId) {
                 return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
             }
             
@@ -242,7 +242,7 @@ class ContractController extends Controller
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
         
-        if ($projectId && $contract->project_id != $projectId) {
+        if ($projectId && (int)$contract->project_id !== (int)$projectId) {
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
 
@@ -288,7 +288,7 @@ class ContractController extends Controller
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
         
-        if ($projectId && $contract->project_id != $projectId) {
+        if ($projectId && (int)$contract->project_id !== (int)$projectId) {
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
 

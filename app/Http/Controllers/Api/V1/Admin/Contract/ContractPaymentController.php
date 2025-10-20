@@ -27,7 +27,7 @@ class ContractPaymentController extends Controller
     private function validateProjectContext(Request $request, $payment): bool
     {
         $projectId = $request->route('project');
-        if ($projectId && $payment->contract && $payment->contract->project_id != $projectId) {
+        if ($projectId && $payment->contract && (int)$payment->contract->project_id !== (int)$projectId) {
             return false;
         }
         return true;

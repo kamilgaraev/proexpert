@@ -31,7 +31,7 @@ class ContractPerformanceActController extends Controller
     private function validateProjectContext(Request $request, $act): bool
     {
         $projectId = $request->route('project');
-        if ($projectId && $act->contract && $act->contract->project_id != $projectId) {
+        if ($projectId && $act->contract && (int)$act->contract->project_id !== (int)$projectId) {
             return false;
         }
         return true;
