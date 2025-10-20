@@ -35,12 +35,10 @@ class ContractPaymentController extends Controller
 
     public function index(Request $request, int $contractId)
     {
-        // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->user()?->current_organization_id;
+        $organization = $request->attributes->get('current_organization');
+        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
 
         try {
-            // Вместо int $contractId можно использовать Route Model Binding: Contract $contract
-            // Тогда проверка на организацию будет: if ($contract->organization_id !== $organizationId) throw ...
             $payments = $this->paymentService->getAllPaymentsForContract($contractId, $organizationId);
             return new ContractPaymentCollection($payments);
         } catch (Exception $e) {
@@ -50,11 +48,10 @@ class ContractPaymentController extends Controller
 
     public function store(StoreContractPaymentRequest $request, int $contractId)
     {
-        // $organizationId = Auth::user()->organization_id;
-        $organizationId = $request->user()?->current_organization_id;
+        $organization = $request->attributes->get('current_organization');
+        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
 
         try {
-            // Contract $contract (Route Model Binding)
             $paymentDTO = $request->toDto();
             $payment = $this->paymentService->createPaymentForContract($contractId, $organizationId, $paymentDTO);
             return (new ContractPaymentResource($payment))
@@ -67,7 +64,8 @@ class ContractPaymentController extends Controller
 
     public function show(Request $request, ContractPayment $payment)
     {
-        $organizationId = $request->user()?->current_organization_id;
+        $organization = $request->attributes->get('current_organization');
+        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
 
         try {
             $contract = $payment->contract;
@@ -87,7 +85,8 @@ class ContractPaymentController extends Controller
 
     public function update(UpdateContractPaymentRequest $request, ContractPayment $payment)
     {
-        $organizationId = $request->user()?->current_organization_id;
+        $organization = $request->attributes->get('current_organization');
+        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
         
         try {
             $contract = $payment->contract;
@@ -109,7 +108,8 @@ class ContractPaymentController extends Controller
 
     public function destroy(Request $request, ContractPayment $payment)
     {
-        $organizationId = $request->user()?->current_organization_id;
+        $organization = $request->attributes->get('current_organization');
+        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
 
         try {
             $contract = $payment->contract;
