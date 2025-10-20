@@ -156,13 +156,53 @@ class ContractController extends Controller
         
         $projectId = $request->route('project');
         
+        Log::info('ContractController@show attempt', [
+            'contract_id' => $contract,
+            'project_id' => $projectId,
+            'organization_id' => $organizationId,
+            'user_id' => $user->id
+        ]);
+        
         $contractData = $this->contractService->getContractById($contract, $organizationId);
+        
+        Log::info('ContractController@show after service', [
+            'found' => $contractData !== null,
+            'contract_org_id' => $contractData?->organization_id,
+            'contract_project_id' => $contractData?->project_id,
+        ]);
+        
         if (!$contractData) {
+            Log::warning('Contract not found by service', [
+                'contract_id' => $contract,
+                'organization_id' => $organizationId
+            ]);
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
         
         if ($projectId && (int)$contractData->project_id !== (int)$projectId) {
+            Log::warning('Contract project mismatch', [
+                'contract_id' => $contract,
+                'contract_project_id' => (int)$contractData->project_id,
+                'requested_project_id' => (int)$projectId,
+            ]);
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+        }
+        
+        // Проверка для подрядчика: может видеть только свои контракты
+        $projectContext = ProjectContextMiddleware::getProjectContext($request);
+        if ($projectContext && in_array($projectContext->role->value, ['contractor', 'subcontractor'])) {
+            $contractor = \App\Models\Contractor::where('organization_id', $organizationId)
+                ->where('source_organization_id', $projectContext->organizationId)
+                ->first();
+            
+            if ($contractor && (int)$contractData->contractor_id !== (int)$contractor->id) {
+                Log::warning('Contractor trying to view another contractor contract', [
+                    'contract_id' => $contract,
+                    'contract_contractor_id' => $contractData->contractor_id,
+                    'user_contractor_id' => $contractor->id,
+                ]);
+                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            }
         }
         
         return new ContractResource($contractData);
