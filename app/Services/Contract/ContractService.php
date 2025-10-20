@@ -73,13 +73,26 @@ class ContractService
             $contractorId = $contractDTO->contractor_id;
             
             if (in_array($projectContext->roleConfig->role->value, ['contractor', 'subcontractor'])) {
+                // Находим или создаём Contractor для текущей организации
+                $contractor = \App\Models\Contractor::firstOrCreate(
+                    [
+                        'organization_id' => $organizationId,
+                        'source_organization_id' => $projectContext->organizationId,
+                    ],
+                    [
+                        'name' => $projectContext->organizationName ?? 'Подрядчик',
+                        'contractor_type' => \App\Models\Contractor::TYPE_INVITED_ORGANIZATION,
+                        'connected_at' => now(),
+                    ]
+                );
+                
                 // Проверяем: если пытаются указать другого подрядчика - ошибка
-                if ($contractorId && $contractorId !== $projectContext->organizationId) {
+                if ($contractorId && $contractorId !== $contractor->id) {
                     throw new Exception('Подрядчик может создавать контракты только для себя');
                 }
                 
-                // Auto-fill
-                $contractorId = $projectContext->organizationId;
+                // Auto-fill правильным contractor_id
+                $contractorId = $contractor->id;
                 
                 // Создаем новый DTO с исправленным contractor_id
                 $contractDTO = new ContractDTO(

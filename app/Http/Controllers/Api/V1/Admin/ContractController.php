@@ -88,6 +88,19 @@ class ContractController extends Controller
         // ЖЕСТКО устанавливаем project_id из URL (игнорируем любые другие значения)
         $filters['project_id'] = $projectId;
         
+        // Если пользователь - подрядчик, показываем только его контракты
+        $projectContext = ProjectContextMiddleware::getProjectContext($request);
+        if ($projectContext && in_array($projectContext->role->value, ['contractor', 'subcontractor'])) {
+            // Находим Contractor для текущей организации
+            $contractor = \App\Models\Contractor::where('organization_id', $organizationId)
+                ->where('source_organization_id', $projectContext->organizationId)
+                ->first();
+            
+            if ($contractor) {
+                $filters['contractor_id'] = $contractor->id;
+            }
+        }
+        
         $sortBy = $request->input('sort_by', 'created_at');
         $sortDirection = $request->input('sort_direction', 'desc');
         $perPage = $request->input('per_page', 15);
@@ -113,44 +126,6 @@ class ContractController extends Controller
             
             // Получаем ProjectContext если доступен (для project-based routes)
             $projectContext = ProjectContextMiddleware::getProjectContext($request);
-            
-            // Если организация является подрядчиком в проекте, автоматически определяем contractor_id
-            if ($projectContext && $projectContext->role->value === 'contractor') {
-                $contractor = \App\Models\Contractor::firstOrCreate(
-                    [
-                        'organization_id' => $organizationId,
-                        'source_organization_id' => $organizationId,
-                    ],
-                    [
-                        'name' => $organization?->name ?? 'Подрядчик',
-                        'contractor_type' => \App\Models\Contractor::TYPE_INVITED_ORGANIZATION,
-                        'connected_at' => now(),
-                    ]
-                );
-                
-                // Перезаписываем contractor_id в DTO
-                $contractDTO = new \App\DTOs\Contract\ContractDTO(
-                    project_id: $contractDTO->project_id,
-                    contractor_id: $contractor->id,
-                    parent_contract_id: $contractDTO->parent_contract_id,
-                    number: $contractDTO->number,
-                    date: $contractDTO->date,
-                    subject: $contractDTO->subject,
-                    work_type_category: $contractDTO->work_type_category,
-                    payment_terms: $contractDTO->payment_terms,
-                    total_amount: $contractDTO->total_amount,
-                    gp_percentage: $contractDTO->gp_percentage,
-                    gp_calculation_type: $contractDTO->gp_calculation_type,
-                    gp_coefficient: $contractDTO->gp_coefficient,
-                    subcontract_amount: $contractDTO->subcontract_amount,
-                    planned_advance_amount: $contractDTO->planned_advance_amount,
-                    actual_advance_amount: $contractDTO->actual_advance_amount,
-                    status: $contractDTO->status,
-                    start_date: $contractDTO->start_date,
-                    end_date: $contractDTO->end_date,
-                    notes: $contractDTO->notes
-                );
-            }
             
             $contract = $this->contractService->createContract($organizationId, $contractDTO, $projectContext);
             
