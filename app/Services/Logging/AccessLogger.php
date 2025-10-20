@@ -30,10 +30,10 @@ class AccessLogger
      */
     public function logRequest(array $requestData = [], array $responseData = []): void
     {
-        $accessEntry = $this->createAccessEntry($requestData, $responseData);
-        
         // Определить уровень логирования на основе статуса ответа
         $level = $this->determineLogLevel($responseData['status_code'] ?? 200);
+        
+        $accessEntry = $this->createAccessEntry($requestData, $responseData, $level);
         
         match($level) {
             'error' => Log::error("[ACCESS]", $accessEntry),
@@ -48,14 +48,14 @@ class AccessLogger
     /**
      * Создать запись доступа
      */
-    protected function createAccessEntry(array $requestData, array $responseData): array
+    protected function createAccessEntry(array $requestData, array $responseData, string $level = 'info'): array
     {
         $metadata = $this->requestContext->getMetadata();
         $performance = $this->performanceContext->getMetrics();
         
         return [
             'timestamp' => now()->toISOString(),
-            'level' => 'INFO',
+            'level' => strtoupper($level),
             'category' => 'ACCESS',
             'event' => 'http.request',
             'correlation_id' => $this->requestContext->getCorrelationId(),
