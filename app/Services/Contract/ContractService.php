@@ -125,33 +125,42 @@ class ContractService
                 ]);
             }
 
-            // Валидация: contractor должен быть участником проекта
-            if ($contractorId) {
+            // Валидация: contractor должен быть участником проекта (только для генподрядчика)
+            if ($contractDTO->contractor_id && !in_array($projectContext->roleConfig->role->value, ['contractor', 'subcontractor'])) {
                 $project = Project::find($contractDTO->project_id);
                 
                 if (!$project) {
                     throw new Exception('Проект не найден');
                 }
                 
-                $contractorInProject = $project->hasOrganization($contractorId);
-                
-                if (!$contractorInProject) {
-                    throw new Exception(
-                        'Организация-подрядчик не является участником проекта. ' .
-                        'Сначала добавьте её в список участников.'
-                    );
+                // Получаем source_organization_id из Contractor
+                $contractor = \App\Models\Contractor::find($contractDTO->contractor_id);
+                if ($contractor && $contractor->source_organization_id) {
+                    $contractorInProject = $project->hasOrganization($contractor->source_organization_id);
+                    
+                    if (!$contractorInProject) {
+                        throw new Exception(
+                            'Организация-подрядчик не является участником проекта. ' .
+                            'Сначала добавьте её в список участников.'
+                        );
+                    }
                 }
             }
+        }
+        
+        // Финальная проверка: contractor_id обязателен
+        if (!$contractDTO->contractor_id) {
+            throw new Exception('Не указан подрядчик для контракта');
         }
         
         // BUSINESS: Начало создания договора - важная бизнес-операция
         $this->logging->business('contract.creation.started', [
             'organization_id' => $organizationId,
-            'contractor_id' => $contractDTO->contractor_id ?? null,
-            'total_amount' => $contractDTO->total_amount ?? null,
-            'subcontract_amount' => $contractDTO->subcontract_amount ?? null,
-            'contract_number' => $contractDTO->number ?? null,
-            'project_id' => $contractDTO->project_id ?? null,
+            'contractor_id' => $contractDTO->contractor_id,
+            'total_amount' => $contractDTO->total_amount,
+            'subcontract_amount' => $contractDTO->subcontract_amount,
+            'contract_number' => $contractDTO->number,
+            'project_id' => $contractDTO->project_id,
             'user_id' => Auth::id(),
             'has_project_context' => $projectContext !== null,
         ]);

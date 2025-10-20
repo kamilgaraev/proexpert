@@ -11,7 +11,7 @@ class ContractDTO
 {
     public function __construct(
         public readonly ?int $project_id,
-        public readonly int $contractor_id,
+        public readonly ?int $contractor_id,
         public readonly ?int $parent_contract_id,
         public readonly string $number,
         public readonly string $date, // Y-m-d format
