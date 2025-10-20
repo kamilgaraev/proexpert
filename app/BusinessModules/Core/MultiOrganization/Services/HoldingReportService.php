@@ -441,7 +441,7 @@ class HoldingReportService
 
         foreach ($organizations as $org) {
             $ownerQuery = Contract::where('organization_id', $org->id);
-            $this->applyContractFilters(clone $ownerQuery, $filters);
+            $this->applyContractFilters($ownerQuery, $filters);
             $ownerContracts = $ownerQuery->get();
             $ownerContractIds = $ownerContracts->pluck('id');
 
@@ -459,7 +459,7 @@ class HoldingReportService
             $contractorQuery = Contract::whereHas('contractor', function ($q) use ($org) {
                 $q->where('organization_id', $org->id);
             });
-            $this->applyContractFilters(clone $contractorQuery, $filters);
+            $this->applyContractFilters($contractorQuery, $filters);
             $contractorContracts = $contractorQuery->get();
             $contractorContractIds = $contractorContracts->pluck('id');
 
