@@ -144,7 +144,7 @@ class ContractController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(Request $request, int $contract)
+    public function show(int $project, int $contract, Request $request)
     {
         $user = $request->user();
         $organization = $request->attributes->get('current_organization');
@@ -154,7 +154,7 @@ class ContractController extends Controller
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
         
-        $projectId = $request->route('project');
+        $projectId = $project;
         
         Log::info('ContractController@show attempt', [
             'contract_id' => $contract,
@@ -253,7 +253,7 @@ class ContractController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(Request $request, int $contract)
+    public function destroy(int $project, int $contract, Request $request)
     {
         $user = $request->user();
         $organization = $request->attributes->get('current_organization');
@@ -262,7 +262,7 @@ class ContractController extends Controller
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
         
-        $projectId = $request->route('project');
+        $projectId = $project;
         
         try {
             $existingContract = $this->contractService->getContractById($contract, $organizationId);
@@ -284,7 +284,7 @@ class ContractController extends Controller
     /**
      * Получить аналитику по контракту
      */
-    public function analytics(Request $request, int $contract): JsonResponse
+    public function analytics(int $project, int $contract, Request $request): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
@@ -293,7 +293,7 @@ class ContractController extends Controller
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
         
-        $projectId = $request->route('project');
+        $projectId = $project;
 
         $contract = $this->contractService->getContractById($contract, $organizationId);
         
@@ -330,7 +330,7 @@ class ContractController extends Controller
     /**
      * Получить выполненные работы по контракту
      */
-    public function completedWorks(Request $request, int $contract): JsonResponse
+    public function completedWorks(int $project, int $contract, Request $request): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
@@ -339,7 +339,7 @@ class ContractController extends Controller
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
         
-        $projectId = $request->route('project');
+        $projectId = $project;
 
         $contract = $this->contractService->getContractById($contract, $organizationId);
         
@@ -366,7 +366,7 @@ class ContractController extends Controller
     /**
      * Получить полную информацию по контракту (все данные в одном запросе)
      */
-    public function fullDetails(Request $request, int $contract): JsonResponse
+    public function fullDetails(int $project, int $contract, Request $request): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
@@ -375,7 +375,7 @@ class ContractController extends Controller
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
         
-        $projectId = $request->route('project');
+        $projectId = $project;
 
         try {
             $fullDetails = $this->contractService->getFullContractDetails($contract, $organizationId);
