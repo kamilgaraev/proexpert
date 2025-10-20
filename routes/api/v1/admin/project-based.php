@@ -9,6 +9,8 @@ use App\Http\Controllers\Api\V1\Admin\CustomReportController;
 use App\Http\Controllers\Api\V1\Admin\SpecificationController;
 use App\Http\Controllers\Api\V1\Admin\AgreementController;
 use App\Http\Controllers\Api\V1\Admin\ProjectContextController;
+use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
+use App\Http\Controllers\Api\V1\Admin\Contract\ContractPaymentController;
 
 /**
  * PROJECT-BASED ROUTES
@@ -51,20 +53,20 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         
         // Contract Performance Acts
         Route::prefix('{contract}/acts')->group(function () {
-            Route::get('/', [ContractController::class, 'getActs']);
-            Route::post('/', [ContractController::class, 'createAct']);
-            Route::get('/{act}', [ContractController::class, 'showAct']);
-            Route::put('/{act}', [ContractController::class, 'updateAct']);
-            Route::delete('/{act}', [ContractController::class, 'destroyAct']);
+            Route::get('/', [ContractPerformanceActController::class, 'index']);
+            Route::post('/', [ContractPerformanceActController::class, 'store']);
+            Route::get('/{act}', [ContractPerformanceActController::class, 'show']);
+            Route::put('/{act}', [ContractPerformanceActController::class, 'update']);
+            Route::delete('/{act}', [ContractPerformanceActController::class, 'destroy']);
         });
         
         // Contract Payments
         Route::prefix('{contract}/payments')->group(function () {
-            Route::get('/', [ContractController::class, 'getPayments']);
-            Route::post('/', [ContractController::class, 'createPayment']);
-            Route::get('/{payment}', [ContractController::class, 'showPayment']);
-            Route::put('/{payment}', [ContractController::class, 'updatePayment']);
-            Route::delete('/{payment}', [ContractController::class, 'destroyPayment']);
+            Route::get('/', [ContractPaymentController::class, 'index']);
+            Route::post('/', [ContractPaymentController::class, 'store']);
+            Route::get('/{payment}', [ContractPaymentController::class, 'show']);
+            Route::put('/{payment}', [ContractPaymentController::class, 'update']);
+            Route::delete('/{payment}', [ContractPaymentController::class, 'destroy']);
         });
     });
     

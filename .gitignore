@@ -40,3 +40,7 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 !README.md
 !CHANGELOG.md
 .gigaide
+*.bat
+*.docx
+*.py
+*.png

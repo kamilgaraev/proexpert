@@ -136,10 +136,18 @@ class ContractController extends Controller
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
+        
+        $projectId = $request->route('project');
+        
         $contractData = $this->contractService->getContractById($contract, $organizationId);
         if (!$contractData) {
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
+        
+        if ($projectId && $contractData->project_id != $projectId) {
+            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+        }
+        
         return new ContractResource($contractData);
     }
 
@@ -153,7 +161,19 @@ class ContractController extends Controller
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
+        
+        $projectId = $request->route('project');
+        
         try {
+            $existingContract = $this->contractService->getContractById($contract, $organizationId);
+            if (!$existingContract) {
+                return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
+            }
+            
+            if ($projectId && $existingContract->project_id != $projectId) {
+                return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
+            }
+            
             $contractDTO = $request->toDto();
             $updatedContract = $this->contractService->updateContract($contract, $organizationId, $contractDTO);
             return new ContractResource($updatedContract);
@@ -182,7 +202,19 @@ class ContractController extends Controller
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
+        
+        $projectId = $request->route('project');
+        
         try {
+            $existingContract = $this->contractService->getContractById($contract, $organizationId);
+            if (!$existingContract) {
+                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            }
+            
+            if ($projectId && $existingContract->project_id != $projectId) {
+                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            }
+            
             $this->contractService->deleteContract($contract, $organizationId);
             return response()->json(null, Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
@@ -201,10 +233,16 @@ class ContractController extends Controller
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
+        
+        $projectId = $request->route('project');
 
         $contract = $this->contractService->getContractById($contract, $organizationId);
         
         if (!$contract) {
+            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+        }
+        
+        if ($projectId && $contract->project_id != $projectId) {
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
 
@@ -241,10 +279,16 @@ class ContractController extends Controller
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
+        
+        $projectId = $request->route('project');
 
         $contract = $this->contractService->getContractById($contract, $organizationId);
         
         if (!$contract) {
+            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+        }
+        
+        if ($projectId && $contract->project_id != $projectId) {
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
 
@@ -271,10 +315,16 @@ class ContractController extends Controller
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
+        
+        $projectId = $request->route('project');
 
         try {
             $fullDetails = $this->contractService->getFullContractDetails($contract, $organizationId);
             $contract = $fullDetails['contract'];
+            
+            if ($projectId && $contract->project_id != $projectId) {
+                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            }
             
             return response()->json([
                 'success' => true,

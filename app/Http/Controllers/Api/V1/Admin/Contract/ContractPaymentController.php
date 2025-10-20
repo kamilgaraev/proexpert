@@ -22,8 +22,15 @@ class ContractPaymentController extends Controller
     public function __construct(ContractPaymentService $paymentService)
     {
         $this->paymentService = $paymentService;
-        // Middleware для авторизации можно добавить здесь, например, для всего ресурса:
-        // $this->authorizeResource(ContractPayment::class, 'payment');
+    }
+    
+    private function validateProjectContext(Request $request, $payment): bool
+    {
+        $projectId = $request->route('project');
+        if ($projectId && $payment->contract && $payment->contract->project_id != $projectId) {
+            return false;
+        }
+        return true;
     }
 
     public function index(Request $request, int $contractId)
@@ -67,6 +74,11 @@ class ContractPaymentController extends Controller
             if (!$contract || $contract->organization_id !== $organizationId) {
                 return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
             }
+            
+            if (!$this->validateProjectContext($request, $payment)) {
+                return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
+            }
+            
             return new ContractPaymentResource($payment);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to retrieve payment', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
@@ -80,6 +92,10 @@ class ContractPaymentController extends Controller
         try {
             $contract = $payment->contract;
             if (!$contract || $contract->organization_id !== $organizationId) {
+                return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
+            }
+            
+            if (!$this->validateProjectContext($request, $payment)) {
                 return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
             }
 
@@ -98,6 +114,10 @@ class ContractPaymentController extends Controller
         try {
             $contract = $payment->contract;
             if (!$contract || $contract->organization_id !== $organizationId) {
+                return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
+            }
+            
+            if (!$this->validateProjectContext($request, $payment)) {
                 return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
             }
 
