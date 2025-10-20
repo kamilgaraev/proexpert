@@ -144,7 +144,7 @@ class ContractController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(int $contract, Request $request)
+    public function show(Request $request, int $contract)
     {
         $user = $request->user();
         $organization = $request->attributes->get('current_organization');
@@ -253,7 +253,7 @@ class ContractController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(int $contract, Request $request)
+    public function destroy(Request $request, int $contract)
     {
         $user = $request->user();
         $organization = $request->attributes->get('current_organization');
@@ -284,7 +284,7 @@ class ContractController extends Controller
     /**
      * Получить аналитику по контракту
      */
-    public function analytics(int $contract, Request $request): JsonResponse
+    public function analytics(Request $request, int $contract): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
@@ -330,7 +330,7 @@ class ContractController extends Controller
     /**
      * Получить выполненные работы по контракту
      */
-    public function completedWorks(int $contract, Request $request): JsonResponse
+    public function completedWorks(Request $request, int $contract): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
@@ -366,7 +366,7 @@ class ContractController extends Controller
     /**
      * Получить полную информацию по контракту (все данные в одном запросе)
      */
-    public function fullDetails(int $contract, Request $request): JsonResponse
+    public function fullDetails(Request $request, int $contract): JsonResponse
     {
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
