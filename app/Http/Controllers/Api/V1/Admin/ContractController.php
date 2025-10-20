@@ -139,12 +139,40 @@ class ContractController extends Controller
         
         $projectId = $request->route('project');
         
+        Log::info('ContractController@show debug', [
+            'contract_id' => $contract,
+            'project_id_from_route' => $projectId,
+            'organization_id' => $organizationId,
+            'user_id' => $user->id
+        ]);
+        
         $contractData = $this->contractService->getContractById($contract, $organizationId);
+        
+        Log::info('ContractController@show after service call', [
+            'contract_found' => $contractData !== null,
+            'contract_project_id' => $contractData ? $contractData->project_id : null,
+            'contract_organization_id' => $contractData ? $contractData->organization_id : null
+        ]);
+        
         if (!$contractData) {
+            Log::warning('Contract not found in service', [
+                'contract_id' => $contract,
+                'organization_id' => $organizationId
+            ]);
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
         
         if ($projectId && (int)$contractData->project_id !== (int)$projectId) {
+            Log::warning('Contract project mismatch', [
+                'contract_id' => $contract,
+                'contract_project_id' => $contractData->project_id,
+                'requested_project_id' => $projectId,
+                'comparison' => [
+                    'contract_project_id_int' => (int)$contractData->project_id,
+                    'requested_project_id_int' => (int)$projectId,
+                    'are_equal' => (int)$contractData->project_id === (int)$projectId
+                ]
+            ]);
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
         
