@@ -180,10 +180,10 @@ class HoldingReportService
             ->where(function ($q) use ($selectedOrgIds) {
                 $q->whereIn('organization_id', $selectedOrgIds)
                   ->orWhereHas('contractor', function ($contractorQuery) use ($selectedOrgIds) {
-                      $contractorQuery->whereIn('organization_id', $selectedOrgIds);
+                      $contractorQuery->whereIn('source_organization_id', $selectedOrgIds);
                   });
             })
-            ->with(['organization:id,name', 'contractor:id,name,contact_person,organization_id', 'contractor.organization:id,name', 'project:id,name']);
+            ->with(['organization:id,name', 'contractor:id,name,contact_person,organization_id,source_organization_id', 'contractor.sourceOrganization:id,name', 'project:id,name']);
 
         $this->applyContractFilters($query, $filters);
 
@@ -456,8 +456,9 @@ class HoldingReportService
 
             $ownerAmount = $ownerContracts->sum('total_amount');
 
-            $contractorQuery = Contract::whereHas('contractor', function ($q) use ($org) {
-                $q->where('organization_id', $org->id);
+            $contractorQuery = Contract::whereHas('contractor', function ($q) use ($org, $orgIds) {
+                $q->where('source_organization_id', $org->id)
+                  ->whereIn('source_organization_id', $orgIds);
             });
             $this->applyContractFilters($contractorQuery, $filters);
             $contractorContracts = $contractorQuery->get();
@@ -533,7 +534,7 @@ class HoldingReportService
             ->join('organizations as orgs', 'contracts.organization_id', '=', 'orgs.id')
             ->where(function ($q) use ($orgIds) {
                 $q->whereIn('contracts.organization_id', $orgIds)
-                  ->orWhereIn('contractors.organization_id', $orgIds);
+                  ->orWhereIn('contractors.source_organization_id', $orgIds);
             })
             ->groupBy([
                 'contractors.id',
