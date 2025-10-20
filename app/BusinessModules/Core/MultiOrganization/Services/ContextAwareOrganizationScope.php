@@ -24,7 +24,8 @@ class ContextAwareOrganizationScope implements OrganizationScopeInterface
 
     private function isHoldingPanel(string $route): bool
     {
-        return str_starts_with($route, 'multiOrganization.');
+        return str_starts_with($route, 'multiOrganization.') 
+            || str_contains($route, '.multiOrganization.');
     }
 
     private function getFullHoldingScope(int $currentOrgId): array
