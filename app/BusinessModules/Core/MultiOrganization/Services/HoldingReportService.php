@@ -440,40 +440,75 @@ class HoldingReportService
         $result = [];
 
         foreach ($organizations as $org) {
-            $query = Contract::where(function ($q) use ($org) {
-                $q->where('organization_id', $org->id)
-                  ->orWhereHas('contractor', function ($contractorQuery) use ($org) {
-                      $contractorQuery->where('organization_id', $org->id);
-                  });
-            });
-            $this->applyContractFilters($query, $filters);
-            
-            $contracts = $query->get();
-            $contractIds = $contracts->pluck('id');
+            $ownerQuery = Contract::where('organization_id', $org->id);
+            $this->applyContractFilters(clone $ownerQuery, $filters);
+            $ownerContracts = $ownerQuery->get();
+            $ownerContractIds = $ownerContracts->pluck('id');
 
-            $totalPaid = DB::table('contract_payments')
-                ->whereIn('contract_id', $contractIds)
+            $ownerPaid = DB::table('contract_payments')
+                ->whereIn('contract_id', $ownerContractIds)
                 ->sum('amount');
 
-            $totalActs = DB::table('contract_performance_acts')
-                ->whereIn('contract_id', $contractIds)
+            $ownerActs = DB::table('contract_performance_acts')
+                ->whereIn('contract_id', $ownerContractIds)
                 ->where('is_approved', true)
                 ->sum('amount');
 
-            $totalAmount = $contracts->sum('total_amount');
+            $ownerAmount = $ownerContracts->sum('total_amount');
+
+            $contractorQuery = Contract::whereHas('contractor', function ($q) use ($org) {
+                $q->where('organization_id', $org->id);
+            });
+            $this->applyContractFilters(clone $contractorQuery, $filters);
+            $contractorContracts = $contractorQuery->get();
+            $contractorContractIds = $contractorContracts->pluck('id');
+
+            $contractorPaid = DB::table('contract_payments')
+                ->whereIn('contract_id', $contractorContractIds)
+                ->sum('amount');
+
+            $contractorActs = DB::table('contract_performance_acts')
+                ->whereIn('contract_id', $contractorContractIds)
+                ->where('is_approved', true)
+                ->sum('amount');
+
+            $contractorAmount = $contractorContracts->sum('total_amount');
+
+            $allContracts = $ownerContracts->merge($contractorContracts);
+            $totalAmount = $ownerAmount + $contractorAmount;
+            $totalPaid = $ownerPaid + $contractorPaid;
+            $totalActs = $ownerActs + $contractorActs;
+
+            if ($allContracts->count() === 0) {
+                continue;
+            }
 
             $result[] = [
                 'organization_id' => $org->id,
                 'organization_name' => $org->name,
-                'contracts_count' => $contracts->count(),
+                'total_contracts' => $allContracts->count(),
                 'total_amount' => round($totalAmount, 2),
-                'total_gp_amount' => round($contracts->sum(fn($c) => $c->gp_amount ?? 0), 2),
+                'total_gp_amount' => round($allContracts->sum(fn($c) => $c->gp_amount ?? 0), 2),
                 'total_paid' => round($totalPaid, 2),
                 'total_acts_approved' => round($totalActs, 2),
                 'remaining_amount' => round($totalAmount - $totalPaid, 2),
                 'completion_percentage' => $totalAmount > 0 ? round(($totalActs / $totalAmount) * 100, 2) : 0,
                 'payment_percentage' => $totalAmount > 0 ? round(($totalPaid / $totalAmount) * 100, 2) : 0,
-                'by_status' => $contracts->groupBy('status')->map(fn($g) => $g->count())->toArray(),
+                'as_owner' => [
+                    'contracts_count' => $ownerContracts->count(),
+                    'total_amount' => round($ownerAmount, 2),
+                    'total_paid' => round($ownerPaid, 2),
+                    'total_acts_approved' => round($ownerActs, 2),
+                    'by_status' => $ownerContracts->groupBy('status')->map(fn($g) => $g->count())->toArray(),
+                ],
+                'as_contractor' => [
+                    'contracts_count' => $contractorContracts->count(),
+                    'total_amount' => round($contractorAmount, 2),
+                    'total_paid' => round($contractorPaid, 2),
+                    'total_acts_approved' => round($contractorActs, 2),
+                    'by_status' => $contractorContracts->groupBy('status')->map(fn($g) => $g->count())->toArray(),
+                ],
+                'by_status' => $allContracts->groupBy('status')->map(fn($g) => $g->count())->toArray(),
             ];
         }
 
