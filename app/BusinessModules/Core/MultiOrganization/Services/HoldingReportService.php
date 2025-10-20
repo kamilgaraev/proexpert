@@ -438,12 +438,6 @@ class HoldingReportService
     {
         $organizations = Organization::whereIn('id', $orgIds)->get();
         $result = [];
-        
-        Log::info('getContractsByOrganization START', [
-            'orgIds_input' => $orgIds,
-            'organizations_count' => $organizations->count(),
-            'org_ids_found' => $organizations->pluck('id')->toArray(),
-        ]);
 
         foreach ($organizations as $org) {
             $ownerQuery = Contract::where('organization_id', $org->id);
@@ -486,15 +480,6 @@ class HoldingReportService
             $totalAmount = $ownerAmount + $contractorAmount;
             $totalPaid = $ownerPaid + $contractorPaid;
             $totalActs = $ownerActs + $contractorActs;
-            
-            Log::info('Organization contracts summary', [
-                'org_id' => $org->id,
-                'org_name' => $org->name,
-                'owner_contracts' => $ownerContracts->count(),
-                'contractor_contracts' => $contractorContracts->count(),
-                'all_contracts' => $allContracts->count(),
-                'will_skip' => $allContracts->count() === 0
-            ]);
 
             if ($allContracts->count() === 0) {
                 continue;
