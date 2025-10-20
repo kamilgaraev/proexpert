@@ -29,10 +29,16 @@ class StoreContractRequest extends FormRequest
      */
     public function rules(): array
     {
-        // $organizationId = Auth::user()->organization_id; // или $this->route('organization')->id если есть в роуте
+        // Определяем, является ли организация подрядчиком
+        $projectContext = \App\Http\Middleware\ProjectContextMiddleware::getProjectContext($this);
+        $isContractor = $projectContext && in_array($projectContext->role->value, ['contractor', 'subcontractor']);
+        
         return [
-            'project_id' => ['nullable', 'integer', 'exists:projects,id'], // TODO: 'exists:projects,id,organization_id,'.$organizationId
-            'contractor_id' => ['required', 'integer', 'exists:contractors,id'], // TODO: 'exists:contractors,id,organization_id,'.$organizationId
+            'project_id' => ['nullable', 'integer', 'exists:projects,id'],
+            // contractor_id обязателен для генподрядчика, опционален для подрядчика (auto-fill)
+            'contractor_id' => $isContractor 
+                ? ['nullable', 'integer', 'exists:contractors,id']
+                : ['required', 'integer', 'exists:contractors,id'],
             'parent_contract_id' => ['nullable', 'integer', new ParentContractValid],
             'number' => ['required', 'string', 'max:255'],
             'date' => ['required', 'date_format:Y-m-d'],
