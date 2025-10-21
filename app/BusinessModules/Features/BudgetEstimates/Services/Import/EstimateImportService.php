@@ -88,9 +88,12 @@ class EstimateImportService
         return $fileId;
     }
 
-    public function detectFormat(string $fileId): array
+    public function detectFormat(string $fileId, ?int $suggestedHeaderRow = null): array
     {
-        Log::info('[EstimateImport] detectFormat started', ['file_id' => $fileId]);
+        Log::info('[EstimateImport] detectFormat started', [
+            'file_id' => $fileId,
+            'suggested_header_row' => $suggestedHeaderRow,
+        ]);
         
         try {
             $fileData = $this->getFileData($fileId);
@@ -109,11 +112,21 @@ class EstimateImportService
         $parser = $this->getParser($fileData['file_path']);
         Log::info('[EstimateImport] Parser created', ['parser' => get_class($parser)]);
         
-        $structure = $parser->detectStructure($fileData['file_path']);
+        // Используем предложенную пользователем строку или автоматическое определение
+        if ($suggestedHeaderRow !== null) {
+            Log::info('[EstimateImport] Using suggested header row', ['row' => $suggestedHeaderRow]);
+            $structure = $parser->detectStructureFromRow($fileData['file_path'], $suggestedHeaderRow);
+        } else {
+            $structure = $parser->detectStructure($fileData['file_path']);
+        }
+        
         Log::info('[EstimateImport] Structure detected', [
             'columns_count' => count($structure['detected_columns'] ?? []),
             'header_row' => $structure['header_row'] ?? null,
         ]);
+        
+        // Получаем кандидатов на роль заголовков
+        $headerCandidates = $parser->getHeaderCandidates();
         
         Cache::put("estimate_import_structure:{$fileId}", $structure, now()->addHours(24));
         
@@ -122,6 +135,7 @@ class EstimateImportService
             'detected_columns' => $structure['detected_columns'],
             'raw_headers' => $structure['raw_headers'],
             'header_row' => $structure['header_row'],
+            'header_candidates' => $headerCandidates, // Для UI выбора
             'sample_rows' => $this->getSampleRows($fileData['file_path'], $structure),
         ];
     }

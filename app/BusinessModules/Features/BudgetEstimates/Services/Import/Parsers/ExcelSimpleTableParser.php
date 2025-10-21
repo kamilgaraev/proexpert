@@ -5,6 +5,12 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers;
 use App\BusinessModules\Features\BudgetEstimates\Contracts\EstimateImportParserInterface;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportDTO;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection\CompositeHeaderDetector;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection\Detectors\KeywordBasedDetector;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection\Detectors\MergedCellsAwareDetector;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection\Detectors\MultilineHeaderDetector;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection\Detectors\NumericHeaderDetector;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\MergedCellResolver;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Cell\Cell;
@@ -12,6 +18,7 @@ use Illuminate\Support\Facades\Log;
 
 class ExcelSimpleTableParser implements EstimateImportParserInterface
 {
+    private array $headerCandidates = [];
     private array $columnKeywords = [
         'name' => [
             'наименование', 
@@ -194,452 +201,60 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
 
     private function detectHeaderRow(Worksheet $sheet): ?int
     {
-        // Увеличиваем до 50 строк для поиска заголовков (локальные сметы имеют много служебной информации)
-        $maxRow = min($sheet->getHighestRow(), 50);
-        
-        Log::info('[ExcelParser] Detecting header row', [
-            'max_row' => $maxRow,
-            'highest_row' => $sheet->getHighestRow(),
+        // Используем новую архитектуру детекторов
+        $detector = new CompositeHeaderDetector([
+            new MergedCellsAwareDetector(),
+            new MultilineHeaderDetector(),
+            new KeywordBasedDetector($this->columnKeywords),
+            new NumericHeaderDetector(),
         ]);
         
-        // Собираем кандидатов с оценкой (scoring system)
-        $candidates = [];
-        $attemptedRows = [];
+        Log::info('[ExcelParser] Detecting header row with composite detector');
         
-        for ($row = 1; $row <= $maxRow; $row++) {
-            $rowData = [];
-            $rowCells = []; // Сохраняем оригинальные значения для логирования
-            
-            // Детальное логирование для строк 30-40 (где должны быть заголовки)
-            $isTargetRange = ($row >= 30 && $row <= 40);
-            
-            foreach (range('A', $sheet->getHighestColumn()) as $col) {
-                $cell = $sheet->getCell($col . $row);
-                $value = $cell->getValue();
-                
-                // Учитываем объединенные ячейки
-                if ($sheet->getCell($col . $row)->isInMergeRange()) {
-                    $mergeRange = $cell->getMergeRange();
-                    if ($mergeRange) {
-                        // Берем значение из первой ячейки объединенного диапазона
-                        $mergeStart = explode(':', $mergeRange)[0];
-                        $value = $sheet->getCell($mergeStart)->getValue();
-                    }
-                }
-                
-                if ($value !== null && trim((string)$value) !== '') {
-                    $normalizedValue = mb_strtolower(trim((string)$value));
-                    $rowData[] = $normalizedValue;
-                    $rowCells[$col] = $normalizedValue;
-                }
-            }
-            
-            // Расширенный список ключевых слов для российских локальных смет
-            $requiredKeywords = [
-                'наименование', 
-                'количество', 
-                'цена', 
-                'стоимость',
-                'обоснование',
-                'единица',
-                'измерения',
-                'работ',
-                'затрат',
-                'ед.изм',
-                'ед. изм',
-                'п/п', // номер по порядку
-                '№ п/п',
-                'коэффициент',
-                'всего',
-                'индекс',
-                'базисн', // базисных ценах
-                'текущ' // текущих ценах
-            ];
-            
-            // Исключаем строки со служебной информацией
-            $hasServiceInfo = false;
-            $hasDocumentTitle = false;
-            
-            foreach ($rowData as $cellValue) {
-                // Служебная информация о программе и приказах
-                if (
-                    str_contains($cellValue, 'приказ') ||
-                    str_contains($cellValue, 'минстрой') ||
-                    str_contains($cellValue, 'гранд-смета') ||
-                    str_contains($cellValue, 'версия') ||
-                    str_contains($cellValue, 'программного продукта') ||
-                    str_contains($cellValue, 'редакции сметных')
-                ) {
-                    $hasServiceInfo = true;
-                    break;
-                }
-                
-                // Заголовки документа (обычно одна большая ячейка с названием)
-                if (
-                    str_contains($cellValue, 'локальный сметный') ||
-                    str_contains($cellValue, 'локальная смета') ||
-                    str_contains($cellValue, 'объектная смета') ||
-                    str_contains($cellValue, 'сводная смета') ||
-                    (str_contains($cellValue, 'смета') && str_contains($cellValue, 'расчет'))
-                ) {
-                    $hasDocumentTitle = true;
-                }
-                
-                // Служебная информация (основание, составлен и т.д.)
-                // Но НЕ строки заголовков таблицы!
-                // ВАЖНО: "обоснование" (заголовок) != "основание" (служебная инфо)
-                if (
-                    str_contains($cellValue, 'составлен') ||
-                    (str_contains($cellValue, 'основание') && !str_contains($cellValue, 'обоснование')) ||
-                    (str_contains($cellValue, 'проектная') && !str_contains($cellValue, 'п/п')) ||
-                    str_contains($cellValue, 'техническая документация') ||
-                    str_contains($cellValue, 'общестроительные работы') ||
-                    str_contains($cellValue, 'в том числе')
-                ) {
-                    $hasServiceInfo = true;
-                }
-                
-                // Описания в скобках (обычно пояснения, а не заголовки)
-                if (preg_match('/^\(.+\)$/', $cellValue)) {
-                    $hasServiceInfo = true;
-                }
-            }
-            
-            if ($hasServiceInfo || $hasDocumentTitle) {
-                $attemptedRows[] = [
-                    'row' => $row,
-                    'reason' => $hasServiceInfo ? 'service_info' : 'document_title',
-                    'sample' => array_slice($rowData, 0, 3),
-                ];
-                
-                if ($isTargetRange) {
-                    Log::debug('[ExcelParser] Target range row rejected (filters)', [
-                        'row' => $row,
-                        'reason' => $hasServiceInfo ? 'service_info' : 'document_title',
-                        'sample' => array_slice($rowData, 0, 2),
-                    ]);
-                }
-                
-                continue; // Пропускаем служебную информацию и заголовки документа
-            }
-            
-            // Считаем количество КОЛОНОК с ключевыми словами
-            $columnsWithKeywords = 0;
-            $matchedKeywords = [];
-            $uniqueKeywords = [];
-            
-            foreach ($rowCells as $col => $cellValue) {
-                $hasKeywordInThisColumn = false;
-                
-                foreach ($requiredKeywords as $keyword) {
-                    if (str_contains(mb_strtolower($cellValue), $keyword)) {
-                        $hasKeywordInThisColumn = true;
-                        $matchedKeywords[] = "$col:$keyword";
-                        
-                        // Собираем уникальные ключевые слова
-                        if (!in_array($keyword, $uniqueKeywords)) {
-                            $uniqueKeywords[] = $keyword;
-                        }
-                        break; // Одно ключевое слово на колонку достаточно
-                    }
-                }
-                
-                if ($hasKeywordInThisColumn) {
-                    $columnsWithKeywords++;
-                }
-            }
-            
-            $matchCount = $columnsWithKeywords;
-            
-            // Динамический порог: если много колонок - можно с меньшим количеством совпадений
-            $requiredMatches = count($rowCells) >= 6 ? 2 : 3;
-            
-            if ($isTargetRange && $matchCount > 0) {
-                Log::debug('[ExcelParser] Target range row analyzed', [
-                    'row' => $row,
-                    'match_count' => $matchCount,
-                    'required' => $requiredMatches,
-                    'unique_keywords' => $uniqueKeywords,
-                    'filled_columns' => count($rowCells),
-                    'passed' => $matchCount >= $requiredMatches,
-                ]);
-            }
-            
-            // Для российских смет достаточно 2-3 совпадений (у них сложная структура заголовков)
-            if ($matchCount >= $requiredMatches) {
-                // КРИТИЧНО: Если только 1 колонка заполнена - это НЕ заголовки таблицы
-                if (count($rowCells) <= 1) {
-                    Log::debug('[ExcelParser] Candidate rejected: only 1 column', [
-                        'row' => $row,
-                        'cell' => $rowCells,
-                    ]);
-                    continue;
-                }
-                
-                // Вычисляем score для этой строки
-                $score = $this->scoreHeaderCandidate($sheet, $row, $matchCount, $matchedKeywords, $rowCells);
-                
-                $candidates[] = [
-                    'row' => $row,
-                    'score' => $score,
-                    'match_count' => $matchCount,
-                    'matched_keywords' => $matchedKeywords,
-                    'cells' => $rowCells,
-                ];
-                
-                Log::debug('[ExcelParser] Header candidate found', [
-                    'row' => $row,
-                    'score' => $score,
-                    'matches' => $matchCount,
-                    'keywords' => $matchedKeywords,
-                    'filled_columns' => count($rowCells),
-                ]);
-            }
-        }
+        $candidates = $detector->detectCandidates($sheet);
         
-        // Выбираем лучшего кандидата
         if (empty($candidates)) {
-            Log::error('[ExcelParser] No header candidates found', [
-                'searched_rows' => $maxRow,
-                'attempted_rows' => count($attemptedRows),
-                'rejected_samples' => array_slice($attemptedRows, 0, 5),
-            ]);
+            Log::error('[ExcelParser] No header candidates found');
             return null;
         }
         
-        // Сортируем по score (от большего к меньшему)
-        usort($candidates, fn($a, $b) => $b['score'] <=> $a['score']);
-        
-        // КРИТИЧНО: Фильтруем кандидатов с объединенными ячейками
-        // Подсчитываем реальные НЕ-пустые значения (не через merge logic!)
-        $candidatesWithRealCount = [];
+        // Сохраняем всех кандидатов для API
+        $this->headerCandidates = [];
         foreach ($candidates as $candidate) {
-            $row = $candidate['row'];
-            $realFilledCount = 0;
-            $totalColumns = 0;
+            $score = $detector->scoreCandidate($candidate, ['sheet' => $sheet]);
             
-            // Подсчитываем реальные непустые значения в сырых данных
-            foreach (range('A', $sheet->getHighestColumn()) as $col) {
-                $totalColumns++;
-                $rawValue = $sheet->getCell($col . $row)->getValue();
-                if ($rawValue !== null && trim((string)$rawValue) !== '') {
-                    $realFilledCount++;
-                }
-            }
-            
-            $candidate['real_filled'] = $realFilledCount;
-            $candidate['total_columns'] = $totalColumns;
-            $candidatesWithRealCount[] = $candidate;
-            
-            Log::debug('[ExcelParser] Candidate real values', [
-                'row' => $row,
-                'real_filled' => $realFilledCount,
-                'total_columns' => $totalColumns,
-                'score' => $candidate['score'],
-            ]);
+            $this->headerCandidates[] = [
+                'row' => $candidate['row'],
+                'confidence' => round($score, 2),
+                'columns_count' => $candidate['filled_columns'] ?? 0,
+                'preview' => array_values(array_slice($candidate['raw_values'] ?? [], 0, 5)),
+                'issues' => $this->detectIssues($candidate),
+                'detectors' => $candidate['detectors'] ?? [],
+            ];
         }
         
-        // Сортируем по количеству РЕАЛЬНЫХ непустых колонок (больше = лучше)
-        usort($candidatesWithRealCount, function($a, $b) {
-            // Сначала по количеству реальных значений (больше лучше)
-            if ($a['real_filled'] !== $b['real_filled']) {
-                return $b['real_filled'] <=> $a['real_filled'];
-            }
-            // Потом по score
-            return $b['score'] <=> $a['score'];
-        });
+        // Сортируем кандидатов по confidence
+        usort($this->headerCandidates, fn($a, $b) => $b['confidence'] <=> $a['confidence']);
         
-        // Фильтруем - минимум 5 реальных значений
-        $filteredCandidates = array_filter($candidatesWithRealCount, fn($c) => $c['real_filled'] >= 5);
+        // Выбираем лучшего
+        $best = $detector->selectBest($candidates);
         
-        if (empty($filteredCandidates)) {
-            Log::warning('[ExcelParser] All candidates have < 5 real values, using best anyway', [
-                'best_candidate_real_filled' => $candidatesWithRealCount[0]['real_filled'] ?? 0,
-            ]);
-            $filteredCandidates = [$candidatesWithRealCount[0]];
-        }
-        
-        if (empty($filteredCandidates)) {
-            Log::warning('[ExcelParser] All candidates rejected, using best scored one anyway');
-            $filteredCandidates = [$candidates[0]];
-        }
-        
-        $bestCandidate = $filteredCandidates[0];
-        
-        // FALLBACK: Если лучший кандидат имеет очень низкий score, ищем строку с максимумом колонок
-        if ($bestCandidate['score'] < 50) {
-            Log::warning('[ExcelParser] Best candidate has low score, trying fallback', [
-                'best_score' => $bestCandidate['score'],
-                'best_row' => $bestCandidate['row'],
-            ]);
-            
-            // Ищем строку с максимальным количеством колонок в диапазоне 20-40
-            $fallbackCandidate = null;
-            $maxColumns = 0;
-            
-            foreach ($candidates as $candidate) {
-                $row = $candidate['row'];
-                $columnsCount = count($candidate['cells']);
-                
-                if ($row >= 20 && $row <= 40 && $columnsCount > $maxColumns) {
-                    $maxColumns = $columnsCount;
-                    $fallbackCandidate = $candidate;
-                }
-            }
-            
-            if ($fallbackCandidate && $maxColumns >= 5) {
-                Log::info('[ExcelParser] Fallback candidate selected', [
-                    'row' => $fallbackCandidate['row'],
-                    'columns' => $maxColumns,
-                ]);
-                $bestCandidate = $fallbackCandidate;
-            }
+        if (!$best) {
+            Log::error('[ExcelParser] Failed to select best candidate');
+            return null;
         }
         
         Log::info('[ExcelParser] Best header candidate selected', [
-            'row' => $bestCandidate['row'],
-            'score' => $bestCandidate['score'],
-            'filled_columns' => count($bestCandidate['cells']),
-            'total_candidates' => count($candidates),
-            'all_candidates' => array_map(fn($c) => [
-                'row' => $c['row'], 
-                'score' => $c['score'],
-                'columns' => count($c['cells'])
-            ], array_slice($candidates, 0, 5)),
+            'row' => $best['row'],
+            'confidence' => $best['confidence'] ?? 0,
+            'columns' => $best['filled_columns'] ?? 0,
+            'detectors' => $best['detectors'] ?? [],
         ]);
         
-        return $bestCandidate['row'];
+        return $best['row'];
     }
 
-    private function scoreHeaderCandidate(Worksheet $sheet, int $row, int $matchCount, array $matchedKeywords, array $rowCells): float
-    {
-        $score = 0.0;
-        $highestCol = $sheet->getHighestColumn();
-        $filledColumns = count($rowCells);
-        
-        // 1. Базовый score за совпадение ключевых слов (10 баллов за колонку)
-        $score += $matchCount * 10;
-        
-        // 1.1. Бонус за РАЗНООБРАЗИЕ ключевых слов (не дубликаты)
-        // Если в 9 колонках 9 раз слово "работ" - это хуже, чем 5 разных слов
-        $uniqueKeywordsCount = count(array_unique($matchedKeywords));
-        if ($uniqueKeywordsCount >= 5) {
-            $score += 40; // Много разных ключевых слов = отличные заголовки
-        } elseif ($uniqueKeywordsCount >= 3) {
-            $score += 20; // Приемлемое разнообразие
-        } elseif ($uniqueKeywordsCount <= 2 && $matchCount > 5) {
-            $score -= 30; // Мало уникальных слов при многих колонках = дубликаты
-        }
-        
-        // 2. Бонус за позицию в файле (заголовки обычно после 15-20 строки в сметах)
-        if ($row >= 15 && $row <= 40) {
-            $score += 50; // Оптимальная позиция
-        } elseif ($row >= 10 && $row < 15) {
-            $score += 20; // Допустимая позиция
-        } elseif ($row < 10) {
-            $score -= 30; // Слишком рано - скорее всего служебная информация
-        }
-        
-        // 3. Количество заполненных колонок (заголовки таблицы имеют 5-12 колонок)
-        if ($filledColumns >= 6 && $filledColumns <= 12) {
-            $score += 30; // Идеальное количество колонок
-        } elseif ($filledColumns >= 4 && $filledColumns < 6) {
-            $score += 10; // Приемлемо
-        } elseif ($filledColumns > 12) {
-            $score -= 20; // Слишком много - скорее всего не заголовки
-        } elseif ($filledColumns < 4) {
-            $score -= 40; // Слишком мало
-        }
-        
-        // 4. Длина текста в ячейках (заголовки обычно короткие)
-        $avgLength = 0;
-        $shortCellsCount = 0;
-        foreach ($rowCells as $cellValue) {
-            $len = mb_strlen($cellValue);
-            $avgLength += $len;
-            if ($len > 5 && $len < 50) { // Нормальная длина для заголовка
-                $shortCellsCount++;
-            }
-        }
-        $avgLength = $filledColumns > 0 ? $avgLength / $filledColumns : 0;
-        
-        if ($avgLength > 10 && $avgLength < 40) {
-            $score += 20; // Оптимальная длина заголовков
-        } elseif ($avgLength > 100) {
-            $score -= 30; // Слишком длинные тексты - скорее всего не заголовки
-        }
-        
-        // 5. Проверка на специфичные ключевые слова заголовков
-        $specificHeaderKeywords = ['п/п', '№', 'единица', 'количество', 'обоснование'];
-        $specificMatches = 0;
-        foreach ($matchedKeywords as $keyword) {
-            if (in_array($keyword, $specificHeaderKeywords)) {
-                $specificMatches++;
-            }
-        }
-        $score += $specificMatches * 15;
-        
-        // 6. Проверка наличия данных после этой строки
-        $hasDataAfter = $this->validateHeaderRow($sheet, $row);
-        if ($hasDataAfter) {
-            $score += 40; // Критически важно
-        } else {
-            $score -= 50; // Нет данных - скорее всего не заголовки
-        }
-        
-        // 7. Штраф за очень длинные тексты в одной ячейке (скорее всего описание)
-        foreach ($rowCells as $cellValue) {
-            if (mb_strlen($cellValue) > 150) {
-                $score -= 25; // Это скорее всего текстовое описание, а не заголовок
-            }
-        }
-        
-        // 8. Бонус если есть номера/индексы в колонках
-        $hasNumbers = false;
-        foreach ($rowCells as $col => $cellValue) {
-            if (preg_match('/^\d+$/', $cellValue) || preg_match('/^[A-Z]$/', $cellValue)) {
-                $hasNumbers = true;
-                break;
-            }
-        }
-        if ($hasNumbers) {
-            $score -= 20; // Заголовки не должны содержать только цифры
-        }
-        
-        // 9. КРИТИЧНО: Заголовки таблицы должны иметь несколько заполненных колонок
-        // Если только 1-2 колонки заполнены - это скорее всего название раздела/блока
-        if ($filledColumns <= 2) {
-            $score -= 80; // Очень сильный штраф
-        }
-        
-        // 10. Очень длинная ячейка в первой колонке часто означает название раздела
-        if (isset($rowCells['A']) && mb_strlen($rowCells['A']) > 50) {
-            $score -= 30;
-        }
-        
-        // 11. Бонус за равномерное распределение текста по колонкам
-        $nonEmptyCells = 0;
-        foreach ($rowCells as $cellValue) {
-            if (mb_strlen($cellValue) > 0) {
-                $nonEmptyCells++;
-            }
-        }
-        if ($nonEmptyCells >= 5) {
-            $score += 25; // Много заполненных колонок = хорошие заголовки
-        }
-        
-        Log::debug('[ExcelParser] Score calculated', [
-            'row' => $row,
-            'score' => $score,
-            'filled_columns' => $filledColumns,
-            'non_empty_cells' => $nonEmptyCells,
-            'avg_length' => round($avgLength, 2),
-            'has_data_after' => $hasDataAfter,
-            'specific_matches' => $specificMatches,
-        ]);
-        
-        return $score;
-    }
+    // Старый метод scoreHeaderCandidate удален - используется новая архитектура детекторов
 
     private function validateHeaderRow(Worksheet $sheet, int $headerRow): bool
     {
@@ -725,91 +340,14 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
 
     private function extractHeaders(Worksheet $sheet, int $headerRow): array
     {
-        $headers = [];
+        // Используем MergedCellResolver для корректной обработки объединенных ячеек
+        $resolver = new MergedCellResolver();
+        $headers = $resolver->resolveHeaders($sheet, $headerRow);
         
-        // Проверяем следующую строку - может быть многострочный заголовок
-        $nextRow = $headerRow + 1;
-        $hasMultilineHeader = false;
-        
-        // Считаем заполненные колонки в текущей и следующей строке
-        $currentFilledCount = 0;
-        $nextFilledCount = 0;
-        $currentRowDebug = [];
-        $nextRowDebug = [];
-        
-        foreach (range('A', $sheet->getHighestColumn()) as $col) {
-            $currentValue = $sheet->getCell($col . $headerRow)->getValue();
-            $nextValue = $sheet->getCell($col . $nextRow)->getValue();
-            
-            $currentRowDebug[$col] = $currentValue;
-            $nextRowDebug[$col] = $nextValue;
-            
-            if ($currentValue !== null && trim((string)$currentValue) !== '') {
-                $currentFilledCount++;
-            }
-            
-            // Если в следующей строке тоже есть текст (не число), это многострочный заголовок
-            if ($nextValue !== null && trim((string)$nextValue) !== '' && !is_numeric($nextValue)) {
-                $hasMultilineHeader = true;
-                $nextFilledCount++;
-            }
-        }
-        
-        Log::debug('[ExcelParser] Raw header rows comparison', [
-            'current_row' => $headerRow,
-            'current_data' => array_slice($currentRowDebug, 0, 12), // First 12 columns
-            'next_row' => $nextRow,
-            'next_data' => array_slice($nextRowDebug, 0, 12),
-        ]);
-        
-        Log::info('[ExcelParser] Comparing header rows', [
-            'current_row' => $headerRow,
-            'current_filled' => $currentFilledCount,
-            'next_row' => $nextRow,
-            'next_filled' => $nextFilledCount,
-            'has_multiline' => $hasMultilineHeader,
-        ]);
-        
-        // КРИТИЧНО: Если следующая строка имеет БОЛЬШЕ заполненных колонок - это настоящие заголовки!
-        // (Текущая строка - это объединенные группы типа "Количество", "Сметная стоимость")
-        if ($hasMultilineHeader && $nextFilledCount > $currentFilledCount) {
-            Log::info('[ExcelParser] Next row has more filled columns, using it as header', [
-                'current_row' => $headerRow,
-                'next_row' => $nextRow,
-            ]);
-            $headerRow = $nextRow;
-            $hasMultilineHeader = false; // Больше не нужно объединять строки
-        }
-        
-        foreach (range('A', $sheet->getHighestColumn()) as $col) {
-            $value = $sheet->getCell($col . $headerRow)->getValue();
-            
-            // Для многострочных заголовков объединяем строки
-            if ($hasMultilineHeader) {
-                $nextValue = $sheet->getCell($col . $nextRow)->getValue();
-                if ($nextValue !== null && trim((string)$nextValue) !== '' && !is_numeric($nextValue)) {
-                    $currentValueStr = $value !== null ? trim((string)$value) : '';
-                    $nextValueStr = trim((string)$nextValue);
-                    
-                    if ($currentValueStr !== '') {
-                        $value = $currentValueStr . ' ' . $nextValueStr;
-                    } else {
-                        // Верхняя ячейка пуста (объединена), берем значение из нижней
-                        $value = $nextValueStr;
-                    }
-                }
-            }
-            
-            // Добавляем ВСЕ колонки, даже с пустыми заголовками
-            // (пустые заголовки будут иметь field=null и confidence=0)
-            $headerText = $value !== null ? trim((string)$value) : '';
-            $headers[$col] = $headerText;
-        }
-        
-        Log::info('[ExcelParser] Headers extracted', [
+        Log::info('[ExcelParser] Headers extracted using MergedCellResolver', [
             'header_row' => $headerRow,
-            'multiline' => $hasMultilineHeader,
-            'headers' => $headers,
+            'headers_count' => count($headers),
+            'sample' => array_slice($headers, 0, 10),
         ]);
         
         return $headers;
@@ -1013,6 +551,112 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'total_quantity' => $totalQuantity,
             'items_count' => count($items),
         ];
+    }
+
+    /**
+     * Возвращает всех кандидатов на роль заголовка
+     *
+     * @return array
+     */
+    public function getHeaderCandidates(): array
+    {
+        return $this->headerCandidates;
+    }
+
+    /**
+     * Определяет структуру файла из указанной строки заголовков
+     *
+     * @param string $filePath
+     * @param int $headerRow
+     * @return array
+     */
+    public function detectStructureFromRow(string $filePath, int $headerRow): array
+    {
+        $spreadsheet = IOFactory::load($filePath);
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        Log::info('[ExcelParser] Detecting structure from specified row', [
+            'header_row' => $headerRow,
+        ]);
+        
+        // Используем MergedCellResolver для извлечения заголовков
+        $resolver = new MergedCellResolver();
+        $headers = $resolver->resolveHeaders($sheet, $headerRow);
+        
+        // Определяем маппинг колонок
+        $columnMapping = $this->detectColumns($headers);
+        
+        // Формируем detected_columns
+        $detectedColumns = [];
+        $reverseMapping = array_flip(array_filter($columnMapping)); // field => columnLetter
+        
+        foreach ($headers as $columnLetter => $headerText) {
+            // Ищем распознанное поле для этой колонки
+            $field = $reverseMapping[$columnLetter] ?? null;
+            
+            if ($field) {
+                // Колонка распознана
+                $detectedColumns[$columnLetter] = [
+                    'field' => $field,
+                    'header' => $headerText,
+                    'confidence' => $this->calculateColumnConfidence($headerText, $field),
+                ];
+            } else {
+                // Колонка не распознана - возвращаем как есть
+                $detectedColumns[$columnLetter] = [
+                    'field' => null, // Не распознано
+                    'header' => $headerText,
+                    'confidence' => 0.0,
+                ];
+            }
+        }
+        
+        return [
+            'format' => 'excel_simple_table',
+            'header_row' => $headerRow,
+            'raw_headers' => $headers,
+            'column_mapping' => $columnMapping,
+            'detected_columns' => $detectedColumns,
+            'total_rows' => $sheet->getHighestRow(),
+            'total_columns' => count($headers),
+        ];
+    }
+
+    /**
+     * Обнаруживает проблемы в кандидате на заголовок
+     *
+     * @param array $candidate
+     * @return array
+     */
+    private function detectIssues(array $candidate): array
+    {
+        $issues = [];
+        
+        // Проверка на объединенные ячейки
+        if ($candidate['has_merged_cells'] ?? false) {
+            $issues[] = 'merged_cells_detected';
+        }
+        
+        // Проверка на малое количество колонок
+        $filledColumns = $candidate['filled_columns'] ?? 0;
+        if ($filledColumns < 5) {
+            $issues[] = 'few_columns';
+        }
+        
+        // Проверка на многострочность
+        if ($candidate['is_multiline'] ?? false) {
+            $issues[] = 'multiline_header';
+        }
+        
+        // Проверка позиции
+        $row = $candidate['row'] ?? 0;
+        if ($row < 10) {
+            $issues[] = 'early_position';
+        } elseif ($row > 50) {
+            $issues[] = 'late_position';
+        }
+        
+        return $issues;
     }
 }
 

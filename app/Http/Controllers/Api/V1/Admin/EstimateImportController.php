@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
 use App\Http\Requests\Admin\Estimate\UploadEstimateImportRequest;
+use App\Http\Requests\Admin\Estimate\DetectEstimateImportRequest;
 use App\Http\Requests\Admin\Estimate\MapEstimateImportRequest;
 use App\Http\Requests\Admin\Estimate\ExecuteEstimateImportRequest;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateImportPreviewResource;
@@ -101,45 +102,32 @@ class EstimateImportController extends Controller
         }
     }
 
-    public function detect(Request $request): JsonResponse
+    public function detect(DetectEstimateImportRequest $request): JsonResponse
     {
-        $fileIdRaw = $request->input('file_id');
+        $fileId = $request->input('file_id');
+        $suggestedHeaderRow = $request->input('suggested_header_row');
         
         Log::info('[EstimateImport] Detect started', [
-            'request_data' => $request->all(),
-            'file_id_type' => gettype($fileIdRaw),
-            'file_id_value' => $fileIdRaw,
+            'file_id' => $fileId,
+            'suggested_header_row' => $suggestedHeaderRow,
         ]);
-        
-        $request->validate([
-            'file_id' => ['required'],
-        ]);
-        
-        // Handle array input (e.g. from form data)
-        if (is_array($fileIdRaw)) {
-            $fileId = (string) ($fileIdRaw[0] ?? $fileIdRaw['file_id'] ?? '');
-        } else {
-            $fileId = (string) $fileIdRaw;
-        }
-        
-        if (empty($fileId)) {
-            Log::error('[EstimateImport] Empty file_id after processing', [
-                'raw_value' => $fileIdRaw,
-            ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid file_id provided',
-            ], 400);
-        }
         
         try {
-            $detection = $this->importService->detectFormat($fileId);
+            $detection = $this->importService->detectFormat($fileId, $suggestedHeaderRow);
             
-            Log::info('[EstimateImport] Detect completed successfully');
+            Log::info('[EstimateImport] Detect completed successfully', [
+                'header_row' => $detection['header_row'] ?? null,
+                'candidates_count' => count($detection['header_candidates'] ?? []),
+            ]);
             
             return response()->json([
                 'success' => true,
-                ...$detection,
+                'format' => $detection['format'],
+                'detected_columns' => $detection['detected_columns'],
+                'raw_headers' => $detection['raw_headers'],
+                'header_row' => $detection['header_row'],
+                'header_candidates' => $detection['header_candidates'], // Топ кандидатов для UI
+                'sample_rows' => $detection['sample_rows'],
             ]);
             
         } catch (\Exception $e) {
