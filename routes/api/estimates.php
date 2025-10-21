@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Admin\EstimateSectionController;
 use App\Http\Controllers\Api\V1\Admin\EstimateItemController;
 use App\Http\Controllers\Api\V1\Admin\EstimateVersionController;
 use App\Http\Controllers\Api\V1\Admin\EstimateTemplateController;
+use App\Http\Controllers\Api\V1\Admin\EstimateImportController;
 
 Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
     
@@ -61,6 +62,16 @@ Route::middleware(['auth:sanctum'])->prefix('v1')->group(function () {
         Route::delete('/{template}', [EstimateTemplateController::class, 'destroy']);
         Route::post('/{template}/apply', [EstimateTemplateController::class, 'apply']);
         Route::post('/{template}/share', [EstimateTemplateController::class, 'share']);
+    });
+    
+    Route::prefix('estimates/import')->group(function () {
+        Route::post('/upload', [EstimateImportController::class, 'upload']);
+        Route::post('/detect', [EstimateImportController::class, 'detect']);
+        Route::post('/map', [EstimateImportController::class, 'map']);
+        Route::post('/match', [EstimateImportController::class, 'match']);
+        Route::post('/execute', [EstimateImportController::class, 'execute']);
+        Route::get('/status/{jobId}', [EstimateImportController::class, 'status']);
+        Route::get('/history', [EstimateImportController::class, 'history']);
     });
 });
 
