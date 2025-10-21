@@ -274,9 +274,14 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                     str_contains($cellValue, 'основание') ||
                     (str_contains($cellValue, 'проектная') && !str_contains($cellValue, 'п/п')) ||
                     str_contains($cellValue, 'техническая документация') ||
-                    (str_contains($cellValue, 'общестроительные работы') && strlen($cellValue) < 50) ||
+                    str_contains($cellValue, 'общестроительные работы') ||
                     str_contains($cellValue, 'в том числе')
                 ) {
+                    $hasServiceInfo = true;
+                }
+                
+                // Описания в скобках (обычно пояснения, а не заголовки)
+                if (preg_match('/^\(.+\)$/', $cellValue)) {
                     $hasServiceInfo = true;
                 }
             }

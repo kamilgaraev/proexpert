@@ -526,10 +526,46 @@ class EstimateImportService
 
     private function getSampleRows(string $filePath, array $structure): array
     {
-        $parser = $this->getParser($filePath);
-        $importDTO = $parser->parse($filePath);
-        
-        return array_slice($importDTO->items, 0, 5);
+        try {
+            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
+            $sheet = $spreadsheet->getActiveSheet();
+            
+            $headerRow = $structure['header_row'] ?? null;
+            if ($headerRow === null) {
+                return [];
+            }
+            
+            $samples = [];
+            $maxSamples = 5;
+            $currentRow = $headerRow + 1;
+            $maxRow = min($headerRow + 20, $sheet->getHighestRow()); // Первые 20 строк после заголовков
+            
+            while (count($samples) < $maxSamples && $currentRow <= $maxRow) {
+                $rowData = [];
+                $hasData = false;
+                
+                foreach (range('A', $sheet->getHighestColumn()) as $col) {
+                    $value = $sheet->getCell($col . $currentRow)->getValue();
+                    if ($value !== null && trim((string)$value) !== '') {
+                        $hasData = true;
+                    }
+                    $rowData[] = $value;
+                }
+                
+                if ($hasData) {
+                    $samples[] = $rowData;
+                }
+                
+                $currentRow++;
+            }
+            
+            return $samples;
+        } catch (\Exception $e) {
+            Log::error('[EstimateImport] Failed to get sample rows', [
+                'error' => $e->getMessage(),
+            ]);
+            return [];
+        }
     }
 
     private function getParser(string $filePath): EstimateImportParserInterface
