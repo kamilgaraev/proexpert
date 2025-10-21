@@ -19,11 +19,11 @@ class YandexGPTProvider implements LLMProviderInterface
     public function __construct(LoggingService $logging)
     {
         $this->logging = $logging;
-        $this->apiKey = config('ai-assistant.llm.yandex.api_key', '');
-        $this->folderId = config('ai-assistant.llm.yandex.folder_id', '');
-        $this->modelUri = config('ai-assistant.llm.yandex.model_uri', '');
-        $this->maxTokens = config('ai-assistant.llm.yandex.max_tokens', 2000);
-        $this->temperature = config('ai-assistant.llm.yandex.temperature', 0.7);
+        $this->apiKey = config('ai-assistant.llm.yandex.api_key') ?? '';
+        $this->folderId = config('ai-assistant.llm.yandex.folder_id') ?? '';
+        $this->modelUri = config('ai-assistant.llm.yandex.model_uri') ?? '';
+        $this->maxTokens = config('ai-assistant.llm.yandex.max_tokens') ?? 2000;
+        $this->temperature = config('ai-assistant.llm.yandex.temperature') ?? 0.7;
     }
 
     public function chat(array $messages, array $options = []): array
