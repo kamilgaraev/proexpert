@@ -79,29 +79,55 @@ class MergedCellResolver
     {
         $sheetHighest = $sheet->getHighestColumn();
         
-        // Анализируем строки с данными (после заголовков) чтобы определить реальное количество колонок
-        $maxFilledColumn = 'A';
-        $rowsToCheck = min(20, $sheet->getHighestRow() - $startRow);
+        Log::debug('[MergedCellResolver] Starting column detection', [
+            'sheet_highest' => $sheetHighest,
+            'start_row' => $startRow,
+        ]);
         
-        for ($i = 1; $i <= $rowsToCheck; $i++) {
-            $row = $startRow + $i;
-            
-            foreach (range('A', $sheetHighest) as $col) {
-                $value = $sheet->getCell($col . $row)->getValue();
-                
-                if ($value !== null && trim((string)$value) !== '') {
-                    if ($col > $maxFilledColumn) {
-                        $maxFilledColumn = $col;
+        // КРИТИЧНО: PhpSpreadsheet->getHighestColumn() может ошибаться из-за merged cells
+        // Нужно сканировать ВСЕ строки файла для поиска максимальной колонки
+        
+        $maxFilledColumn = 'A';
+        $highestRow = $sheet->getHighestRow();
+        
+        // Сканируем ВСЕ строки (или максимум 500 для производительности)
+        $rowsToCheck = min(500, $highestRow);
+        
+        // ВАЖНО: Сканируем до колонки Z (не только до sheetHighest)
+        // Потому что sheetHighest может быть неправильным
+        $maxColumnToCheck = 'Z';
+        
+        for ($row = 1; $row <= $rowsToCheck; $row++) {
+            foreach (range('A', $maxColumnToCheck) as $col) {
+                try {
+                    $cell = $sheet->getCell($col . $row);
+                    $value = $cell->getValue();
+                    
+                    if ($value !== null && trim((string)$value) !== '') {
+                        if ($col > $maxFilledColumn) {
+                            $maxFilledColumn = $col;
+                            
+                            Log::debug('[MergedCellResolver] Found new max column', [
+                                'column' => $col,
+                                'row' => $row,
+                                'value' => mb_substr((string)$value, 0, 50),
+                            ]);
+                        }
                     }
+                } catch (\Exception $e) {
+                    // Колонка не существует, останавливаем поиск в этой строке
+                    break;
                 }
             }
         }
 
-        Log::debug('[MergedCellResolver] Actual highest column', [
+        Log::info('[MergedCellResolver] Actual highest column detected', [
             'sheet_highest' => $sheetHighest,
             'actual_highest' => $maxFilledColumn,
+            'rows_scanned' => $rowsToCheck,
         ]);
 
+        // Возвращаем максимум между определенным PhpSpreadsheet и найденным нами
         return max($sheetHighest, $maxFilledColumn);
     }
 
