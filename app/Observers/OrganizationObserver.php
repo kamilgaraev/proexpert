@@ -2,75 +2,172 @@
 
 namespace App\Observers;
 
+use App\BusinessModules\Core\MultiOrganization\Services\HoldingContractorSyncService;
 use App\Models\Organization;
-use App\Models\Module;
-use App\Models\OrganizationModuleActivation;
+use App\Modules\Core\AccessController;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * Observer для автоматической синхронизации подрядчиков при изменениях в организациях холдинга
+ */
 class OrganizationObserver
 {
+    protected HoldingContractorSyncService $contractorSync;
+    protected AccessController $accessController;
+
+    public function __construct(
+        HoldingContractorSyncService $contractorSync,
+        AccessController $accessController
+    ) {
+        $this->contractorSync = $contractorSync;
+        $this->accessController = $accessController;
+    }
+
     /**
-     * Handle the Organization "created" event.
-     * Автоматически настраиваем S3 бакет и активируем базовый склад для новой организации
+     * Вызывается после создания организации
      */
     public function created(Organization $organization): void
     {
-        // Устанавливаем S3 бакет, если не установлен
-        $this->setupS3Bucket($organization);
-        
-        // Активируем базовый склад по умолчанию
-        $this->activateBasicWarehouse($organization);
+        // При создании организации синхронизация не нужна
+        // Она будет выполнена при установке parent_organization_id
     }
 
     /**
-     * Настроить S3 бакет для организации
+     * Вызывается после обновления организации
      */
-    protected function setupS3Bucket(Organization $organization): void
+    public function updated(Organization $organization): void
     {
-        // Если s3_bucket уже установлен при создании, ничего не делаем
-        if ($organization->s3_bucket) {
+        // Проверяем, изменилось ли поле parent_organization_id
+        if ($organization->isDirty('parent_organization_id')) {
+            $this->handleParentOrganizationChange($organization);
+        }
+
+        // Проверяем, изменились ли данные организации (для синхронизации подрядчиков)
+        $syncableFields = ['name', 'phone', 'email', 'address', 'tax_number'];
+        $hasChanges = false;
+        
+        foreach ($syncableFields as $field) {
+            if ($organization->isDirty($field)) {
+                $hasChanges = true;
+                break;
+            }
+        }
+
+        if ($hasChanges) {
+            $this->syncContractorData($organization);
+        }
+
+        // Проверяем изменение статуса is_active
+        if ($organization->isDirty('is_active')) {
+            $this->handleActiveStatusChange($organization);
+        }
+    }
+
+    /**
+     * Обрабатывает изменение parent_organization_id
+     */
+    protected function handleParentOrganizationChange(Organization $organization): void
+    {
+        $oldParentId = $organization->getOriginal('parent_organization_id');
+        $newParentId = $organization->parent_organization_id;
+
+        Log::info('Organization parent changed', [
+            'organization_id' => $organization->id,
+            'old_parent_id' => $oldParentId,
+            'new_parent_id' => $newParentId,
+        ]);
+
+        // Удаляем старые связи, если были
+        if ($oldParentId) {
+            $this->contractorSync->removeFromHolding($organization->id);
+        }
+
+        // Создаем новые связи, если добавлена в холдинг
+        if ($newParentId && $this->isMultiOrgActive($newParentId)) {
+            $result = $this->contractorSync->syncHoldingContractors($organization->id);
+            
+            Log::info('Organization added to holding, contractors synced', [
+                'organization_id' => $organization->id,
+                'parent_id' => $newParentId,
+                'result' => $result,
+            ]);
+        }
+    }
+
+    /**
+     * Синхронизирует данные подрядчиков при изменении данных организации
+     */
+    protected function syncContractorData(Organization $organization): void
+    {
+        // Синхронизируем только если организация в холдинге
+        if (!$organization->parent_organization_id && !$organization->is_holding) {
             return;
         }
 
-        // Устанавливаем общий бакет для всех организаций
-        $mainBucket = config('filesystems.disks.s3.bucket', 'prohelper-storage');
-        
-        $organization->forceFill([
-            's3_bucket' => $mainBucket,
-            'bucket_region' => 'ru-central1',
-        ])->saveQuietly();
+        // Проверяем наличие модуля multi-organization
+        if (!$this->isMultiOrgActive($organization->id)) {
+            return;
+        }
 
-        Log::info("S3 бакет автоматически установлен для организации {$organization->id}: {$mainBucket}");
+        $result = $this->contractorSync->syncContractorData($organization->id);
+        
+        if ($result['synced'] > 0) {
+            Log::info('Organization data synced to contractors', [
+                'organization_id' => $organization->id,
+                'synced_count' => $result['synced'],
+            ]);
+        }
     }
 
     /**
-     * Активировать базовый склад для организации
+     * Обрабатывает изменение статуса is_active
      */
-    protected function activateBasicWarehouse(Organization $organization): void
+    protected function handleActiveStatusChange(Organization $organization): void
     {
-        $basicWarehouseModule = Module::where('slug', 'basic-warehouse')->first();
-        
-        if ($basicWarehouseModule) {
-            // Проверяем, не активирован ли уже
-            $existing = OrganizationModuleActivation::where('organization_id', $organization->id)
-                ->where('module_id', $basicWarehouseModule->id)
-                ->first();
-            
-            if (!$existing) {
-                OrganizationModuleActivation::create([
-                    'organization_id' => $organization->id,
-                    'module_id' => $basicWarehouseModule->id,
-                    'activated_at' => now(),
-                    'is_active' => true,
-                    'module_settings' => [
-                        'auto_activated' => true,
-                        'is_default' => true,
-                    ],
-                ]);
-                
-                Log::info("Basic warehouse автоматически активирован для организации {$organization->id}");
+        if (!$organization->is_active) {
+            // При деактивации организации логируем событие
+            // Подрядчики остаются, но при необходимости можно добавить логику их деактивации
+            Log::warning('Organization deactivated', [
+                'organization_id' => $organization->id,
+                'name' => $organization->name,
+            ]);
+        } else {
+            // При активации организации синхронизируем подрядчиков
+            if ($organization->parent_organization_id && $this->isMultiOrgActive($organization->parent_organization_id)) {
+                $this->contractorSync->syncHoldingContractors($organization->id);
             }
         }
     }
-}
 
+    /**
+     * Вызывается перед удалением организации
+     */
+    public function deleting(Organization $organization): void
+    {
+        // При удалении организации удаляем связанных подрядчиков
+        if ($organization->parent_organization_id || $organization->is_holding) {
+            $result = $this->contractorSync->removeFromHolding($organization->id);
+            
+            Log::info('Organization contractors removed before deletion', [
+                'organization_id' => $organization->id,
+                'deleted_count' => $result['deleted'] ?? 0,
+            ]);
+        }
+    }
+
+    /**
+     * Проверяет, активен ли модуль multi-organization для организации
+     */
+    protected function isMultiOrgActive(int $organizationId): bool
+    {
+        try {
+            return $this->accessController->hasModuleAccess($organizationId, 'multi-organization');
+        } catch (\Exception $e) {
+            Log::error('Failed to check multi-organization access', [
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+            ]);
+            return false;
+        }
+    }
+}

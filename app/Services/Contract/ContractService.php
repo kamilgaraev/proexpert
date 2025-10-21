@@ -14,6 +14,7 @@ use App\Services\Logging\LoggingService;
 use App\Services\Project\ProjectContextService;
 use App\Domain\Project\ValueObjects\ProjectContext;
 use App\BusinessModules\Core\MultiOrganization\Contracts\OrganizationScopeInterface;
+use App\BusinessModules\Core\MultiOrganization\Contracts\ContractorSharingInterface;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Auth;
@@ -29,6 +30,7 @@ class ContractService
     protected LoggingService $logging;
     protected ProjectContextService $projectContextService;
     protected OrganizationScopeInterface $orgScope;
+    protected ContractorSharingInterface $contractorSharing;
 
     public function __construct(
         ContractRepositoryInterface $contractRepository,
@@ -37,7 +39,8 @@ class ContractService
         ContractPaymentRepositoryInterface $paymentRepository,
         LoggingService $logging,
         ProjectContextService $projectContextService,
-        OrganizationScopeInterface $orgScope
+        OrganizationScopeInterface $orgScope,
+        ContractorSharingInterface $contractorSharing
     ) {
         $this->contractRepository = $contractRepository;
         $this->contractorRepository = $contractorRepository;
@@ -46,6 +49,7 @@ class ContractService
         $this->logging = $logging;
         $this->projectContextService = $projectContextService;
         $this->orgScope = $orgScope;
+        $this->contractorSharing = $contractorSharing;
     }
 
     public function getAllContracts(int $organizationId, int $perPage = 15, array $filters = [], string $sortBy = 'date', string $sortDirection = 'desc'): LengthAwarePaginator
@@ -151,6 +155,17 @@ class ContractService
         // Финальная проверка: contractor_id обязателен
         if (!$contractDTO->contractor_id) {
             throw new Exception('Не указан подрядчик для контракта');
+        }
+        
+        // Проверяем доступность подрядчика для организации (через ContractorSharing)
+        if (!$this->contractorSharing->canUseContractor($contractDTO->contractor_id, $organizationId)) {
+            $contractor = \App\Models\Contractor::find($contractDTO->contractor_id);
+            $contractorName = $contractor ? $contractor->name : "ID {$contractDTO->contractor_id}";
+            
+            throw new Exception(
+                "Подрядчик \"{$contractorName}\" недоступен для вашей организации. " .
+                "Возможно, это подрядчик из другой организации, не входящей в ваш холдинг."
+            );
         }
         
         // BUSINESS: Начало создания договора - важная бизнес-операция

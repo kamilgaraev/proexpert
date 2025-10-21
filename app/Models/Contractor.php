@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\ContractorType;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -13,8 +14,10 @@ class Contractor extends Model
 {
     use HasFactory, SoftDeletes;
 
+    // Для обратной совместимости со старым кодом
     const TYPE_MANUAL = 'manual';
     const TYPE_INVITED_ORGANIZATION = 'invited_organization';
+    const TYPE_HOLDING_MEMBER = 'holding_member';
 
     protected $fillable = [
         'organization_id',
@@ -39,6 +42,7 @@ class Contractor extends Model
         'connected_at' => 'datetime',
         'last_sync_at' => 'datetime',
         'sync_settings' => 'array',
+        'contractor_type' => ContractorType::class,
     ];
 
     public function organization(): BelongsTo
@@ -63,41 +67,80 @@ class Contractor extends Model
 
     public function scopeManual($query)
     {
-        return $query->where('contractor_type', self::TYPE_MANUAL);
+        return $query->where('contractor_type', ContractorType::MANUAL->value);
     }
 
     public function scopeInvitedOrganizations($query)
     {
-        return $query->where('contractor_type', self::TYPE_INVITED_ORGANIZATION);
+        return $query->where('contractor_type', ContractorType::INVITED_ORGANIZATION->value);
+    }
+
+    public function scopeHoldingMembers($query)
+    {
+        return $query->where('contractor_type', ContractorType::HOLDING_MEMBER->value);
     }
 
     public function scopeNeedingSync($query)
     {
-        return $query->where('contractor_type', self::TYPE_INVITED_ORGANIZATION)
+        return $query->whereIn('contractor_type', [
+                        ContractorType::INVITED_ORGANIZATION->value,
+                        ContractorType::HOLDING_MEMBER->value,
+                    ])
                     ->where(function($q) {
                         $q->whereNull('last_sync_at')
                           ->orWhere('last_sync_at', '<', now()->subHours(24));
                     });
     }
 
-    public function scopeByType($query, string $type)
+    public function scopeByType($query, ContractorType|string $type)
     {
-        return $query->where('contractor_type', $type);
+        $value = $type instanceof ContractorType ? $type->value : $type;
+        return $query->where('contractor_type', $value);
     }
 
     public function isInvitedOrganization(): bool
     {
-        return $this->contractor_type === self::TYPE_INVITED_ORGANIZATION;
+        return $this->contractor_type === ContractorType::INVITED_ORGANIZATION;
     }
 
     public function isManual(): bool
     {
-        return $this->contractor_type === self::TYPE_MANUAL;
+        return $this->contractor_type === ContractorType::MANUAL;
+    }
+
+    public function isHoldingMember(): bool
+    {
+        return $this->contractor_type === ContractorType::HOLDING_MEMBER;
+    }
+
+    /**
+     * Проверяет, является ли подрядчик частью холдинга (головная или дочерняя организация)
+     */
+    public function isPartOfHolding(): bool
+    {
+        return $this->contractor_type === ContractorType::HOLDING_MEMBER;
+    }
+
+    /**
+     * Проверяет, можно ли редактировать данные подрядчика
+     */
+    public function isEditable(): bool
+    {
+        return $this->contractor_type?->isEditable() ?? true;
+    }
+
+    /**
+     * Проверяет, можно ли удалить подрядчика
+     */
+    public function isDeletable(): bool
+    {
+        return $this->contractor_type?->isDeletable() ?? true;
     }
 
     public function needsSync(): bool
     {
-        if (!$this->isInvitedOrganization()) {
+        // Проверяем, требуется ли автосинхронизация для этого типа
+        if (!$this->contractor_type?->needsAutoSync()) {
             return false;
         }
 
@@ -111,7 +154,8 @@ class Contractor extends Model
 
     public function syncFromSourceOrganization(): bool
     {
-        if (!$this->isInvitedOrganization() || !$this->sourceOrganization) {
+        // Синхронизация работает для invited_organization и holding_member
+        if (!$this->contractor_type?->needsAutoSync() || !$this->sourceOrganization) {
             return false;
         }
 
@@ -170,7 +214,7 @@ class Contractor extends Model
                     static::create([
                         'organization_id' => $childOrgId,
                         'source_organization_id' => $parentOrgId,
-                        'contractor_type' => self::TYPE_INVITED_ORGANIZATION,
+                        'contractor_type' => ContractorType::INVITED_ORGANIZATION,
                         'name' => $parentContractor->name,
                         'phone' => $parentContractor->phone,
                         'email' => $parentContractor->email,
