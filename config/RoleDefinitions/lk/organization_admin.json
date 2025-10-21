@@ -161,6 +161,21 @@
       "advanced_warehouse.forecasts",
       "advanced_warehouse.mobile_scanner",
       "advanced_warehouse.api_access"
+    ],
+    "budget-estimates": [
+      "estimates.view",
+      "estimates.view_all",
+      "estimates.create",
+      "estimates.edit",
+      "estimates.edit_approved",
+      "estimates.delete",
+      "estimates.approve",
+      "estimates.import",
+      "estimates.export",
+      "estimates.templates.manage",
+      "estimates.versions.create",
+      "estimates.versions.compare",
+      "estimates.versions.rollback"
     ]
   },
   

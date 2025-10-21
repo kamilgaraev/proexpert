@@ -75,6 +75,9 @@
       "advanced-dashboard.dashboards.view",
       "advanced-dashboard.analytics.financial.view",
       "advanced-dashboard.analytics.hr.view"
+    ],
+    "budget-estimates": [
+      "estimates.view"
     ]
   },
   

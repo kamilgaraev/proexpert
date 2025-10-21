@@ -93,6 +93,12 @@
       "advanced-dashboard.export.pdf",
       "advanced-dashboard.export.excel",
       "advanced-dashboard.export.scheduled_reports"
+    ],
+    "budget-estimates": [
+      "estimates.view",
+      "estimates.view_all",
+      "estimates.export",
+      "estimates.versions.compare"
     ]
   },
   

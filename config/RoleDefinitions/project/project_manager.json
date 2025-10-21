@@ -100,6 +100,14 @@
     "schedule-management": [
       "schedule.view", "schedule.create", "schedule.edit", "schedule.assign",
       "schedule.approve", "schedule.notifications"
+    ],
+    "budget-estimates": [
+      "estimates.view",
+      "estimates.create",
+      "estimates.edit",
+      "estimates.import",
+      "estimates.export",
+      "estimates.templates.manage"
     ]
   },
   

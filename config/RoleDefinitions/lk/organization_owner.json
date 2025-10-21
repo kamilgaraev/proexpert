@@ -53,7 +53,8 @@
     "advanced-dashboard": ["*"],
     "ai-assistant": ["*"],
     "basic-warehouse": ["*"],
-    "advanced-warehouse": ["*"]
+    "advanced-warehouse": ["*"],
+    "budget-estimates": ["*"]
   },
   
   "interface_access": ["lk", "admin", "mobile"],
