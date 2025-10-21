@@ -43,8 +43,6 @@ class ContractResource extends JsonResource
             'project' => new ProjectMiniResource($this->whenLoaded('project')),
             'contractor_id' => $this->contractor_id,
             'contractor' => new ContractorMiniResource($this->whenLoaded('contractor')),
-            'parent_contract_id' => $this->parent_contract_id,
-            'parent_contract' => new ContractMiniResource($this->whenLoaded('parentContract')),
             'number' => $this->number,
             'date' => $this->date, // Предполагается, что в модели кастуется в нужный формат (Y-m-d)
             // type удалён
@@ -129,6 +127,254 @@ class ContractResource extends JsonResource
             'performance_acts' => ContractPerformanceActResource::collection($this->whenLoaded('performanceActs')), 
             'payments' => ContractPaymentResource::collection($this->whenLoaded('payments')),
             
+            // === ФИНАНСОВАЯ СВОДКА ===
+            'financial_summary' => [
+                // Базовая сумма контракта (без Д/С)
+                'base_amount' => $baseTotalAmount,
+                
+                // Дополнительные соглашения
+                'agreements_total_change' => $agreementsDelta,
+                'agreements_count' => $this->whenLoaded('agreements', fn() => $this->agreements->count(), 0),
+                
+                // Итоговая сумма с учетом всех Д/С
+                'total_amount_with_agreements' => $effectiveTotalAmount,
+                
+                // Спецификации
+                'specifications_total' => (float) $this->whenLoaded('specifications', function() {
+                    return $this->specifications->sum('total_amount') ?? 0;
+                }, 0),
+                'specifications_count' => $this->whenLoaded('specifications', fn() => $this->specifications->count(), 0),
+                
+                // Акты выполненных работ
+                'acts_total_amount' => (float) $this->whenLoaded('performanceActs', function() {
+                    $totalAmount = 0;
+                    foreach ($this->performanceActs->where('is_approved', true) as $act) {
+                        if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                            $totalAmount += $act->completedWorks->sum('pivot.included_amount');
+                        } else {
+                            $totalAmount += $act->amount ?? 0;
+                        }
+                    }
+                    return $totalAmount;
+                }, 0),
+                'acts_count' => $this->whenLoaded('performanceActs', fn() => $this->performanceActs->where('is_approved', true)->count(), 0),
+                'acts_pending_count' => $this->whenLoaded('performanceActs', fn() => $this->performanceActs->where('is_approved', false)->count(), 0),
+                
+                // Платежи
+                'payments_total_amount' => (float) $this->whenLoaded('payments', fn() => $this->payments->sum('amount') ?? 0, 0),
+                'payments_count' => $this->whenLoaded('payments', fn() => $this->payments->count(), 0),
+                'advance_payments' => (float) $this->whenLoaded('payments', function() {
+                    return $this->payments->where('payment_type', 'advance')->sum('amount') ?? 0;
+                }, 0),
+                'regular_payments' => (float) $this->whenLoaded('payments', function() {
+                    return $this->payments->where('payment_type', 'regular')->sum('amount') ?? 0;
+                }, 0),
+                
+                // Расчетные показатели
+                'remaining_to_perform' => max(0, $effectiveTotalAmount - (float) $this->whenLoaded('performanceActs', function() {
+                    $totalAmount = 0;
+                    foreach ($this->performanceActs->where('is_approved', true) as $act) {
+                        if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                            $totalAmount += $act->completedWorks->sum('pivot.included_amount');
+                        } else {
+                            $totalAmount += $act->amount ?? 0;
+                        }
+                    }
+                    return $totalAmount;
+                }, 0)),
+                
+                'remaining_to_pay' => max(0, (float) $this->whenLoaded('performanceActs', function() {
+                    $totalAmount = 0;
+                    foreach ($this->performanceActs->where('is_approved', true) as $act) {
+                        if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                            $totalAmount += $act->completedWorks->sum('pivot.included_amount');
+                        } else {
+                            $totalAmount += $act->amount ?? 0;
+                        }
+                    }
+                    return $totalAmount;
+                }, 0) - (float) $this->whenLoaded('payments', fn() => $this->payments->sum('amount') ?? 0, 0)),
+                
+                // Проценты выполнения
+                'performance_percentage' => $effectiveTotalAmount > 0 ? 
+                    round((((float) $this->whenLoaded('performanceActs', function() {
+                        $totalAmount = 0;
+                        foreach ($this->performanceActs->where('is_approved', true) as $act) {
+                            if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                                $totalAmount += $act->completedWorks->sum('pivot.included_amount');
+                            } else {
+                                $totalAmount += $act->amount ?? 0;
+                            }
+                        }
+                        return $totalAmount;
+                    }, 0)) / $effectiveTotalAmount) * 100, 2) : 0.0,
+                    
+                'payment_percentage' => $effectiveTotalAmount > 0 ? 
+                    round(((float) $this->whenLoaded('payments', fn() => $this->payments->sum('amount') ?? 0, 0) / $effectiveTotalAmount) * 100, 2) : 0.0,
+                
+                // Дополнительные метрики
+                'payment_vs_performance_diff' => (float) $this->whenLoaded('payments', function() {
+                    $totalPaid = $this->payments->sum('amount') ?? 0;
+                    $totalPerformed = 0;
+                    if ($this->relationLoaded('performanceActs')) {
+                        foreach ($this->performanceActs->where('is_approved', true) as $act) {
+                            if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                                $totalPerformed += $act->completedWorks->sum('pivot.included_amount');
+                            } else {
+                                $totalPerformed += $act->amount ?? 0;
+                            }
+                        }
+                    }
+                    return $totalPaid - $totalPerformed; // Положительное = переплата, отрицательное = долг
+                }, 0),
+                
+                // Аванс
+                'advance_status' => [
+                    'planned' => (float) ($this->planned_advance_amount ?? 0),
+                    'actual' => (float) ($this->actual_advance_amount ?? 0),
+                    'remaining' => (float) ($this->remaining_advance_amount ?? 0),
+                    'percentage_paid' => (float) ($this->advance_payment_percentage ?? 0),
+                    'is_fully_paid' => $this->is_advance_fully_paid ?? false,
+                ],
+                
+                // Генподрядный процент (если применяется)
+                'gp_info' => $this->gp_percentage != 0 || $this->gp_coefficient != 0 ? [
+                    'percentage' => (float) ($this->gp_percentage ?? 0),
+                    'coefficient' => (float) ($this->gp_coefficient ?? 0),
+                    'calculation_type' => $this->gp_calculation_type?->value,
+                    'gp_amount' => (float) ($this->gp_amount ?? 0),
+                    'total_with_gp' => $effectiveTotalAmount + (float) ($this->gp_amount ?? 0),
+                ] : null,
+                
+                // Субподряд
+                'subcontract_amount' => (float) ($this->subcontract_amount ?? 0),
+                'has_subcontract' => (float) ($this->subcontract_amount ?? 0) > 0,
+                
+                // Временные метрики
+                'days_info' => [
+                    'duration_days' => $this->start_date && $this->end_date 
+                        ? $this->start_date->diffInDays($this->end_date) 
+                        : null,
+                    'days_passed' => $this->start_date 
+                        ? max(0, $this->start_date->diffInDays(now())) 
+                        : null,
+                    'days_remaining' => $this->end_date && $this->end_date->isFuture()
+                        ? now()->diffInDays($this->end_date)
+                        : 0,
+                    'is_overdue' => $this->is_overdue ?? false,
+                ],
+                
+                // Эффективность
+                'efficiency_metrics' => [
+                    // Средняя сумма акта
+                    'avg_act_amount' => $this->whenLoaded('performanceActs', function() {
+                        $approvedActs = $this->performanceActs->where('is_approved', true);
+                        return $approvedActs->count() > 0 
+                            ? round($approvedActs->avg('amount'), 2) 
+                            : 0;
+                    }, 0),
+                    
+                    // Средняя сумма платежа
+                    'avg_payment_amount' => $this->whenLoaded('payments', function() {
+                        return $this->payments->count() > 0 
+                            ? round($this->payments->avg('amount'), 2) 
+                            : 0;
+                    }, 0),
+                    
+                    // Средний срок между актами (в днях)
+                    'avg_days_between_acts' => $this->whenLoaded('performanceActs', function() {
+                        $acts = $this->performanceActs->where('is_approved', true)
+                            ->sortBy('act_date')
+                            ->values();
+                        
+                        if ($acts->count() < 2) return null;
+                        
+                        $totalDays = 0;
+                        for ($i = 1; $i < $acts->count(); $i++) {
+                            $totalDays += $acts[$i-1]->act_date->diffInDays($acts[$i]->act_date);
+                        }
+                        
+                        return round($totalDays / ($acts->count() - 1), 1);
+                    }, null),
+                    
+                    // Индекс выполнения (CPI - Cost Performance Index)
+                    // CPI > 1 = эффективно, CPI < 1 = перерасход
+                    'cost_performance_index' => $this->whenLoaded('payments', function() {
+                        $totalPaid = $this->payments->sum('amount') ?? 0;
+                        $totalPerformed = 0;
+                        
+                        if ($this->relationLoaded('performanceActs')) {
+                            foreach ($this->performanceActs->where('is_approved', true) as $act) {
+                                if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                                    $totalPerformed += $act->completedWorks->sum('pivot.included_amount');
+                                } else {
+                                    $totalPerformed += $act->amount ?? 0;
+                                }
+                            }
+                        }
+                        
+                        return $totalPaid > 0 
+                            ? round($totalPerformed / $totalPaid, 3) 
+                            : null;
+                    }, null),
+                    
+                    // Индекс выполнения по срокам (SPI - Schedule Performance Index)
+                    // SPI > 1 = опережение, SPI < 1 = отставание
+                    'schedule_performance_index' => $this->start_date && $this->end_date && $this->end_date->isFuture() ? function() {
+                        $totalDuration = $this->start_date->diffInDays($this->end_date);
+                        $daysPassed = $this->start_date->diffInDays(now());
+                        
+                        if ($totalDuration <= 0) return null;
+                        
+                        $plannedProgress = ($daysPassed / $totalDuration) * 100;
+                        $actualProgress = $this->completion_percentage ?? 0;
+                        
+                        return $plannedProgress > 0 
+                            ? round($actualProgress / $plannedProgress, 3) 
+                            : null;
+                    } : null,
+                ],
+                
+                // Риски
+                'risk_indicators' => [
+                    'is_nearing_budget_limit' => $this->is_nearing_limit ?? false, // >= 90%
+                    'is_overdue' => $this->is_overdue ?? false,
+                    'has_unpaid_acts' => $this->whenLoaded('performanceActs', function() {
+                        $totalPerformed = 0;
+                        foreach ($this->performanceActs->where('is_approved', true) as $act) {
+                            if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                                $totalPerformed += $act->completedWorks->sum('pivot.included_amount');
+                            } else {
+                                $totalPerformed += $act->amount ?? 0;
+                            }
+                        }
+                        
+                        $totalPaid = $this->relationLoaded('payments') 
+                            ? $this->payments->sum('amount') 
+                            : 0;
+                        
+                        return $totalPerformed > $totalPaid;
+                    }, false),
+                    
+                    'payment_delay_amount' => max(0, (float) $this->whenLoaded('performanceActs', function() {
+                        $totalPerformed = 0;
+                        foreach ($this->performanceActs->where('is_approved', true) as $act) {
+                            if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
+                                $totalPerformed += $act->completedWorks->sum('pivot.included_amount');
+                            } else {
+                                $totalPerformed += $act->amount ?? 0;
+                            }
+                        }
+                        
+                        $totalPaid = $this->relationLoaded('payments') 
+                            ? $this->payments->sum('amount') 
+                            : 0;
+                        
+                        return $totalPerformed - $totalPaid;
+                    }, 0)),
+                ],
+            ],
+            
             // === АГРЕГИРОВАННЫЕ ДАННЫЕ ===
             // Заказчик (организация-владелец проекта)
             'customer' => $this->when(
@@ -162,32 +408,6 @@ class ContractResource extends JsonResource
                         'contact_person' => $this->contractor->contact_person,
                         'contact_person_phone' => $this->contractor->contact_person_phone,
                     ];
-                }
-            ),
-            
-            // Участники проекта (из project_organization)
-            'project_participants' => $this->when(
-                $this->relationLoaded('project') && $this->project?->relationLoaded('organizations'),
-                function() {
-                    return $this->project->organizations->map(function($org) {
-                        return [
-                            'organization_id' => $org->id,
-                            'organization_name' => $org->name,
-                            'role' => $org->pivot->role_new ?? $org->pivot->role,
-                            'role_label' => match($org->pivot->role_new ?? $org->pivot->role) {
-                                'owner' => 'Заказчик/Генподрядчик',
-                                'general_contractor' => 'Генподрядчик',
-                                'contractor' => 'Подрядчик',
-                                'subcontractor' => 'Субподрядчик',
-                                'supplier' => 'Поставщик',
-                                'supervisor' => 'Технический надзор',
-                                default => 'Участник'
-                            },
-                            'is_active' => $org->pivot->is_active,
-                            'invited_at' => $org->pivot->invited_at,
-                            'accepted_at' => $org->pivot->accepted_at,
-                        ];
-                    });
                 }
             ),
         ];

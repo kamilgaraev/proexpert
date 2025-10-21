@@ -251,7 +251,6 @@ class ContractService
                 'contractor', 
                 'project', 
                 'project.organization',           // Для customer (заказчик)
-                'project.organizations',          // Для project_participants
                 'agreements',                     // Дополнительные соглашения
                 'specifications',                 // Спецификации
                 'performanceActs',

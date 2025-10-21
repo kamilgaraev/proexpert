@@ -315,10 +315,6 @@ class HoldingReportService
         if ($filters['work_type_category']) {
             $query->where('work_type_category', $filters['work_type_category']);
         }
-
-        if (!$filters['include_child_contracts']) {
-            $query->whereNull('parent_contract_id');
-        }
     }
 
     protected function calculateProjectsSummary($query, array $orgIds): array
