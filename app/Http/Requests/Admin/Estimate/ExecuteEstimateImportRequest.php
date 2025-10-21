@@ -14,7 +14,7 @@ class ExecuteEstimateImportRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'file_id' => ['required', 'string'],
+            'file_id' => ['required'],
             'matching_config' => ['required', 'array'],
             'matching_config.create_new_work_types' => ['required', 'boolean'],
             'matching_config.skip_unmatched' => ['sometimes', 'boolean'],

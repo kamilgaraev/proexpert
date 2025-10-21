@@ -103,11 +103,16 @@ class EstimateImportController extends Controller
 
     public function detect(Request $request): JsonResponse
     {
-        $request->validate([
-            'file_id' => ['required', 'string'],
+        Log::info('[EstimateImport] Detect started', [
+            'request_data' => $request->all(),
+            'file_id_type' => gettype($request->input('file_id')),
         ]);
         
-        $fileId = $request->input('file_id');
+        $request->validate([
+            'file_id' => ['required'],
+        ]);
+        
+        $fileId = (string) $request->input('file_id');
         
         try {
             $detection = $this->importService->detectFormat($fileId);
@@ -127,7 +132,7 @@ class EstimateImportController extends Controller
 
     public function map(MapEstimateImportRequest $request): JsonResponse
     {
-        $fileId = $request->input('file_id');
+        $fileId = (string) $request->input('file_id');
         $columnMapping = $request->input('column_mapping');
         
         try {
@@ -152,10 +157,10 @@ class EstimateImportController extends Controller
     public function match(Request $request): JsonResponse
     {
         $request->validate([
-            'file_id' => ['required', 'string'],
+            'file_id' => ['required'],
         ]);
         
-        $fileId = $request->input('file_id');
+        $fileId = (string) $request->input('file_id');
         $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
         
         try {
@@ -173,7 +178,7 @@ class EstimateImportController extends Controller
 
     public function execute(ExecuteEstimateImportRequest $request): JsonResponse
     {
-        $fileId = $request->input('file_id');
+        $fileId = (string) $request->input('file_id');
         $matchingConfig = $request->input('matching_config');
         $estimateSettings = $request->input('estimate_settings');
         

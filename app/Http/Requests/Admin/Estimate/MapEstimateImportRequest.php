@@ -14,7 +14,7 @@ class MapEstimateImportRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'file_id' => ['required', 'string'],
+            'file_id' => ['required'],
             'column_mapping' => ['required', 'array'],
             'column_mapping.*' => [
                 'required',
