@@ -14,6 +14,7 @@ use App\Services\Organization\OrganizationContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 
 class EstimateImportController extends Controller
 {
@@ -23,7 +24,7 @@ class EstimateImportController extends Controller
 
     public function upload(UploadEstimateImportRequest $request): JsonResponse
     {
-        \Log::info('[EstimateImport] Upload started', [
+        Log::info('[EstimateImport] Upload started', [
             'user_id' => $request->user()?->id,
             'has_file' => $request->hasFile('file'),
         ]);
@@ -31,13 +32,13 @@ class EstimateImportController extends Controller
         $user = $request->user();
         $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
         
-        \Log::info('[EstimateImport] Context loaded', [
+        Log::info('[EstimateImport] Context loaded', [
             'user_id' => $user?->id,
             'organization_id' => $organization?->id,
         ]);
         
         if (!$organization) {
-            \Log::error('[EstimateImport] Organization not found');
+            Log::error('[EstimateImport] Organization not found');
             return response()->json([
                 'success' => false,
                 'message' => 'Organization context not found',
@@ -46,24 +47,28 @@ class EstimateImportController extends Controller
         
         $file = $request->file('file');
         
+        // Get file info BEFORE moving
+        $fileName = $file->getClientOriginalName();
+        $fileSize = $file->getSize();
+        
         try {
-            \Log::info('[EstimateImport] Starting file upload', [
-                'file_name' => $file->getClientOriginalName(),
-                'file_size' => $file->getSize(),
+            Log::info('[EstimateImport] Starting file upload', [
+                'file_name' => $fileName,
+                'file_size' => $fileSize,
             ]);
             
             $fileId = $this->importService->uploadFile($file, $user->id, $organization->id);
             
-            \Log::info('[EstimateImport] Upload successful', ['file_id' => $fileId]);
+            Log::info('[EstimateImport] Upload successful', ['file_id' => $fileId]);
             
             return response()->json([
                 'file_id' => $fileId,
-                'file_name' => $file->getClientOriginalName(),
-                'file_size' => $file->getSize(),
+                'file_name' => $fileName,
+                'file_size' => $fileSize,
                 'expires_at' => now()->addHours(24)->toIso8601String(),
             ]);
         } catch (\Exception $e) {
-            \Log::error('[EstimateImport] Upload failed', [
+            Log::error('[EstimateImport] Upload failed', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
