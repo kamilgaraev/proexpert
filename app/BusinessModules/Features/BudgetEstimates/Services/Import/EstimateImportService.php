@@ -18,6 +18,7 @@ use App\Models\MeasurementUnit;
 use App\Jobs\ProcessEstimateImportJob;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Http\UploadedFile;
@@ -89,10 +90,30 @@ class EstimateImportService
 
     public function detectFormat(string $fileId): array
     {
-        $fileData = $this->getFileData($fileId);
+        Log::info('[EstimateImport] detectFormat started', ['file_id' => $fileId]);
+        
+        try {
+            $fileData = $this->getFileData($fileId);
+            Log::info('[EstimateImport] File data retrieved', [
+                'file_path' => $fileData['file_path'],
+                'file_exists' => file_exists($fileData['file_path']),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[EstimateImport] Failed to get file data', [
+                'file_id' => $fileId,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+        
         $parser = $this->getParser($fileData['file_path']);
+        Log::info('[EstimateImport] Parser created', ['parser' => get_class($parser)]);
         
         $structure = $parser->detectStructure($fileData['file_path']);
+        Log::info('[EstimateImport] Structure detected', [
+            'columns_count' => count($structure['detected_columns'] ?? []),
+            'header_row' => $structure['header_row'] ?? null,
+        ]);
         
         Cache::put("estimate_import_structure:{$fileId}", $structure, now()->addHours(24));
         

@@ -117,12 +117,20 @@ class EstimateImportController extends Controller
         try {
             $detection = $this->importService->detectFormat($fileId);
             
+            Log::info('[EstimateImport] Detect completed successfully');
+            
             return response()->json([
                 'success' => true,
                 ...$detection,
             ]);
             
         } catch (\Exception $e) {
+            Log::error('[EstimateImport] Detect failed', [
+                'file_id' => $fileId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Не удалось определить структуру файла: ' . $e->getMessage(),
