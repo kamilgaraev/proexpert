@@ -142,16 +142,33 @@ class EstimateImportService
 
     public function preview(string $fileId, ?array $columnMapping = null): EstimateImportDTO
     {
+        Log::info('[EstimateImport] Starting preview', [
+            'file_id' => $fileId,
+            'has_column_mapping' => $columnMapping !== null,
+        ]);
+        
         $fileData = $this->getFileData($fileId);
         $parser = $this->getParser($fileData['file_path']);
         
         if ($columnMapping !== null) {
             Cache::put("estimate_import_mapping:{$fileId}", $columnMapping, now()->addHours(24));
+            Log::debug('[EstimateImport] Column mapping saved to cache', [
+                'file_id' => $fileId,
+                'mapping' => $columnMapping,
+            ]);
         }
         
+        Log::debug('[EstimateImport] Parsing file', ['file_path' => $fileData['file_path']]);
         $importDTO = $parser->parse($fileData['file_path']);
         
-        Cache::put("estimate_import_preview:{$fileId}", $importDTO->toArray(), now()->addHours(24));
+        $previewArray = $importDTO->toArray();
+        Cache::put("estimate_import_preview:{$fileId}", $previewArray, now()->addHours(24));
+        
+        Log::info('[EstimateImport] Preview completed and cached', [
+            'file_id' => $fileId,
+            'items_count' => count($previewArray['items'] ?? []),
+            'sections_count' => count($previewArray['sections'] ?? []),
+        ]);
         
         return $importDTO;
     }
@@ -161,7 +178,13 @@ class EstimateImportService
         $previewData = Cache::get("estimate_import_preview:{$fileId}");
         
         if ($previewData === null) {
-            throw new \Exception('Preview data not found. Please call preview() first.');
+            Log::info('[EstimateImport] Preview data not found in cache, generating automatically', [
+                'file_id' => $fileId,
+            ]);
+            
+            $columnMapping = Cache::get("estimate_import_mapping:{$fileId}");
+            $importDTO = $this->preview($fileId, $columnMapping);
+            $previewData = $importDTO->toArray();
         }
         
         $items = $previewData['items'];
