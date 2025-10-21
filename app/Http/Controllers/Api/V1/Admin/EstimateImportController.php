@@ -13,6 +13,7 @@ use App\Http\Resources\Api\V1\Admin\Estimate\EstimateImportHistoryResource;
 use App\Services\Organization\OrganizationContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 class EstimateImportController extends Controller
 {
@@ -23,17 +24,32 @@ class EstimateImportController extends Controller
     public function upload(UploadEstimateImportRequest $request): JsonResponse
     {
         $user = $request->user();
-        $organization = OrganizationContext::getOrganization();
+        $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
+        
+        if (!$organization) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization context not found',
+            ], 400);
+        }
         
         $file = $request->file('file');
-        $fileId = $this->importService->uploadFile($file, $user->id, $organization->id);
         
-        return response()->json([
-            'file_id' => $fileId,
-            'file_name' => $file->getClientOriginalName(),
-            'file_size' => $file->getSize(),
-            'expires_at' => now()->addHours(24)->toIso8601String(),
-        ]);
+        try {
+            $fileId = $this->importService->uploadFile($file, $user->id, $organization->id);
+            
+            return response()->json([
+                'file_id' => $fileId,
+                'file_name' => $file->getClientOriginalName(),
+                'file_size' => $file->getSize(),
+                'expires_at' => now()->addHours(24)->toIso8601String(),
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to upload file: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     public function detect(Request $request): JsonResponse
@@ -47,12 +63,15 @@ class EstimateImportController extends Controller
         try {
             $detection = $this->importService->detectFormat($fileId);
             
-            return response()->json($detection);
+            return response()->json([
+                'success' => true,
+                ...$detection,
+            ]);
             
         } catch (\Exception $e) {
             return response()->json([
-                'error' => 'Не удалось определить структуру файла',
-                'message' => $e->getMessage(),
+                'success' => false,
+                'message' => 'Не удалось определить структуру файла: ' . $e->getMessage(),
             ], 422);
         }
     }
@@ -88,7 +107,7 @@ class EstimateImportController extends Controller
         ]);
         
         $fileId = $request->input('file_id');
-        $organization = OrganizationContext::getOrganization();
+        $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
         
         try {
             $matchResult = $this->importService->analyzeMatches($fileId, $organization->id);
@@ -109,7 +128,7 @@ class EstimateImportController extends Controller
         $matchingConfig = $request->input('matching_config');
         $estimateSettings = $request->input('estimate_settings');
         
-        $organization = OrganizationContext::getOrganization();
+        $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
         $estimateSettings['organization_id'] = $organization->id;
         
         try {
@@ -142,7 +161,7 @@ class EstimateImportController extends Controller
 
     public function history(Request $request): JsonResponse
     {
-        $organization = OrganizationContext::getOrganization();
+        $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
         $limit = $request->input('limit', 50);
         
         $history = $this->importService->getImportHistory($organization->id, $limit);

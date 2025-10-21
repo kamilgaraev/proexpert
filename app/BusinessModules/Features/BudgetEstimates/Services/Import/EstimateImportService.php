@@ -41,16 +41,38 @@ class EstimateImportService
         $extension = $file->getClientOriginalExtension();
         $originalName = $file->getClientOriginalName();
         
+        // Check file is valid
+        if (!$file->isValid()) {
+            throw new \RuntimeException('Uploaded file is not valid');
+        }
+        
+        // Prepare directory
         $tempPath = storage_path("app/temp/estimate-imports/{$organizationId}");
         if (!file_exists($tempPath)) {
-            mkdir($tempPath, 0755, true);
+            if (!mkdir($tempPath, 0755, true)) {
+                throw new \RuntimeException('Failed to create upload directory');
+            }
+        }
+        
+        if (!is_writable($tempPath)) {
+            throw new \RuntimeException('Upload directory is not writable');
         }
         
         $fileName = "{$fileId}.{$extension}";
         $fullPath = "{$tempPath}/{$fileName}";
         
-        $file->move($tempPath, $fileName);
+        // Move file with error handling
+        try {
+            $file->move($tempPath, $fileName);
+        } catch (\Exception $e) {
+            throw new \RuntimeException('Failed to move uploaded file: ' . $e->getMessage());
+        }
         
+        if (!file_exists($fullPath)) {
+            throw new \RuntimeException('File was not moved successfully');
+        }
+        
+        // Cache file metadata
         $cacheKey = "estimate_import_file:{$fileId}";
         Cache::put($cacheKey, [
             'file_id' => $fileId,
