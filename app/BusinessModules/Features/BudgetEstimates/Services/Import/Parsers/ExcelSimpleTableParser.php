@@ -694,13 +694,22 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             if ($hasMultilineHeader) {
                 $nextValue = $sheet->getCell($col . $nextRow)->getValue();
                 if ($nextValue !== null && trim((string)$nextValue) !== '' && !is_numeric($nextValue)) {
-                    $value = trim((string)$value) . ' ' . trim((string)$nextValue);
+                    $currentValueStr = $value !== null ? trim((string)$value) : '';
+                    $nextValueStr = trim((string)$nextValue);
+                    
+                    if ($currentValueStr !== '') {
+                        $value = $currentValueStr . ' ' . $nextValueStr;
+                    } else {
+                        // Верхняя ячейка пуста (объединена), берем значение из нижней
+                        $value = $nextValueStr;
+                    }
                 }
             }
             
-            if ($value !== null && trim((string)$value) !== '') {
-                $headers[$col] = trim((string)$value);
-            }
+            // Добавляем ВСЕ колонки, даже с пустыми заголовками
+            // (пустые заголовки будут иметь field=null и confidence=0)
+            $headerText = $value !== null ? trim((string)$value) : '';
+            $headers[$col] = $headerText;
         }
         
         Log::info('[ExcelParser] Headers extracted', [
