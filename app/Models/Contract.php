@@ -77,10 +77,7 @@ class Contract extends Model
 
     public function childContracts(): HasMany
     {
-        return $this->hasMany(Contract::class, 'parent_contract_id')
-                    ->where(function($query) {
-                        $query->where('organization_id', $this->organization_id);
-                    });
+        return $this->hasMany(Contract::class, 'parent_contract_id');
     }
 
     public function performanceActs(): HasMany
