@@ -119,24 +119,6 @@
               type: string
               format: binary
 
-/materials/{id}/balances:
-  get:
-    tags: [Catalogs]
-    summary: Получить балансы материала
-    parameters:
-      - in: path
-        name: id
-        required: true
-        schema:
-          type: integer
-    responses:
-      "200":
-        description: Балансы
-        content:
-          application/json:
-            schema:
-              $ref: '../components/schemas/ApiResponse.yaml'
-
 /materials/{id}/consumption-rates:
   get:
     tags: [Catalogs]

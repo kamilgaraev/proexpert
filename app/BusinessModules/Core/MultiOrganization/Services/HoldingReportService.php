@@ -993,34 +993,35 @@ class HoldingReportService
                 $this->applyContractFilters($contractsQuery, $filters);
                 $contracts = $contractsQuery->get();
                 
-                $materialReceipts = DB::table('material_receipts')
-                    ->join('materials', 'material_receipts.material_id', '=', 'materials.id')
-                    ->join('suppliers', 'material_receipts.supplier_id', '=', 'suppliers.id')
-                    ->where('material_receipts.project_id', $project->id)
-                    ->where('material_receipts.organization_id', $org->id)
+                $materialReceipts = DB::table('warehouse_movements')
+                    ->join('materials', 'warehouse_movements.material_id', '=', 'materials.id')
+                    ->where('warehouse_movements.project_id', $project->id)
+                    ->where('warehouse_movements.organization_id', $org->id)
+                    ->where('warehouse_movements.movement_type', 'receipt')
                     ->select(
-                        'material_receipts.id',
-                        'material_receipts.receipt_date',
-                        'material_receipts.quantity',
-                        'material_receipts.price',
-                        'material_receipts.total_amount',
-                        'material_receipts.document_number',
-                        'material_receipts.status',
+                        'warehouse_movements.id',
+                        'warehouse_movements.movement_date as receipt_date',
+                        'warehouse_movements.quantity',
+                        'warehouse_movements.price',
+                        DB::raw('(warehouse_movements.quantity * warehouse_movements.price) as total_amount'),
+                        'warehouse_movements.document_number',
+                        DB::raw("'confirmed' as status"),
                         'materials.name as material_name',
                         'materials.code as material_code',
-                        'suppliers.name as supplier_name'
+                        DB::raw("'-' as supplier_name")
                     )
                     ->get();
                 
-                $materialWriteOffs = DB::table('material_write_offs')
-                    ->join('materials', 'material_write_offs.material_id', '=', 'materials.id')
-                    ->where('material_write_offs.project_id', $project->id)
-                    ->where('material_write_offs.organization_id', $org->id)
+                $materialWriteOffs = DB::table('warehouse_movements')
+                    ->join('materials', 'warehouse_movements.material_id', '=', 'materials.id')
+                    ->where('warehouse_movements.project_id', $project->id)
+                    ->where('warehouse_movements.organization_id', $org->id)
+                    ->where('warehouse_movements.movement_type', 'write_off')
                     ->select(
-                        'material_write_offs.id',
-                        'material_write_offs.write_off_date',
-                        'material_write_offs.quantity',
-                        'material_write_offs.notes',
+                        'warehouse_movements.id',
+                        'warehouse_movements.movement_date as write_off_date',
+                        'warehouse_movements.quantity',
+                        'warehouse_movements.reason as notes',
                         'materials.name as material_name',
                         'materials.code as material_code'
                     )

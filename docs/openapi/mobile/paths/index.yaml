@@ -8,8 +8,6 @@
   $ref: './auth.yaml#/~1auth~1logout'
 /projects:
   $ref: './projects.yaml#/~1projects'
-/projects/{projectId}/material-balances:
-  $ref: './projects.yaml#/~1projects~1{projectId}~1material-balances'
 /projects/{projectId}/contracts:
   $ref: './projects.yaml#/~1projects~1{projectId}~1contracts'
 /work-types:
@@ -18,11 +16,6 @@
   $ref: './catalogs.yaml#/~1materials'
 /suppliers:
   $ref: './catalogs.yaml#/~1suppliers'
-/logs/material-receipts:
-  $ref: './log.yaml#/~1logs~1material-receipts'
-/logs/material-write-offs:
-  $ref: './log.yaml#/~1logs~1material-write-offs'
-# путь логирования выполнения работ удалён
 
 /completed-works:
   $ref: './completed_works.yaml#/~1completed-works'
