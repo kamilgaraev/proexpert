@@ -272,9 +272,10 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 
                 // Служебная информация (основание, составлен и т.д.)
                 // Но НЕ строки заголовков таблицы!
+                // ВАЖНО: "обоснование" (заголовок) != "основание" (служебная инфо)
                 if (
                     str_contains($cellValue, 'составлен') ||
-                    str_contains($cellValue, 'основание') ||
+                    (str_contains($cellValue, 'основание') && !str_contains($cellValue, 'обоснование')) ||
                     (str_contains($cellValue, 'проектная') && !str_contains($cellValue, 'п/п')) ||
                     str_contains($cellValue, 'техническая документация') ||
                     str_contains($cellValue, 'общестроительные работы') ||
@@ -307,23 +308,33 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 continue; // Пропускаем служебную информацию и заголовки документа
             }
             
-            $matchCount = 0;
+            // Считаем количество КОЛОНОК с ключевыми словами
+            $columnsWithKeywords = 0;
             $matchedKeywords = [];
-            $uniqueKeywords = []; // Для подсчета уникальных совпадений
+            $uniqueKeywords = [];
             
-            foreach ($rowData as $cellValue) {
+            foreach ($rowCells as $col => $cellValue) {
+                $hasKeywordInThisColumn = false;
+                
                 foreach ($requiredKeywords as $keyword) {
-                    if (str_contains($cellValue, $keyword)) {
-                        // Считаем только уникальные ключевые слова
+                    if (str_contains(mb_strtolower($cellValue), $keyword)) {
+                        $hasKeywordInThisColumn = true;
+                        $matchedKeywords[] = "$col:$keyword";
+                        
+                        // Собираем уникальные ключевые слова
                         if (!in_array($keyword, $uniqueKeywords)) {
-                            $matchCount++;
                             $uniqueKeywords[] = $keyword;
                         }
-                        $matchedKeywords[] = $keyword; // Для логирования
-                        break;
+                        break; // Одно ключевое слово на колонку достаточно
                     }
                 }
+                
+                if ($hasKeywordInThisColumn) {
+                    $columnsWithKeywords++;
+                }
             }
+            
+            $matchCount = $columnsWithKeywords;
             
             // Динамический порог: если много колонок - можно с меньшим количеством совпадений
             $requiredMatches = count($rowCells) >= 6 ? 2 : 3;
@@ -437,8 +448,19 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $highestCol = $sheet->getHighestColumn();
         $filledColumns = count($rowCells);
         
-        // 1. Базовый score за совпадение ключевых слов (10 баллов за каждое)
+        // 1. Базовый score за совпадение ключевых слов (10 баллов за колонку)
         $score += $matchCount * 10;
+        
+        // 1.1. Бонус за РАЗНООБРАЗИЕ ключевых слов (не дубликаты)
+        // Если в 9 колонках 9 раз слово "работ" - это хуже, чем 5 разных слов
+        $uniqueKeywordsCount = count(array_unique($matchedKeywords));
+        if ($uniqueKeywordsCount >= 5) {
+            $score += 40; // Много разных ключевых слов = отличные заголовки
+        } elseif ($uniqueKeywordsCount >= 3) {
+            $score += 20; // Приемлемое разнообразие
+        } elseif ($uniqueKeywordsCount <= 2 && $matchCount > 5) {
+            $score -= 30; // Мало уникальных слов при многих колонках = дубликаты
+        }
         
         // 2. Бонус за позицию в файле (заголовки обычно после 15-20 строки в сметах)
         if ($row >= 15 && $row <= 40) {
