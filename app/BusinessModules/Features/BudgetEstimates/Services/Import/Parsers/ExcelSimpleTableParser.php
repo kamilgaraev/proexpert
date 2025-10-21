@@ -410,7 +410,49 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         // Сортируем по score (от большего к меньшему)
         usort($candidates, fn($a, $b) => $b['score'] <=> $a['score']);
         
-        $bestCandidate = $candidates[0];
+        // КРИТИЧНО: Фильтруем кандидатов с объединенными ячейками
+        // Если у строки много пустых колонок (null), но высокий score - это объединенная ячейка
+        $filteredCandidates = [];
+        foreach ($candidates as $candidate) {
+            $row = $candidate['row'];
+            $nullCount = 0;
+            $filledCount = count($candidate['cells']);
+            
+            // Подсчитываем реальные null в сырых данных
+            foreach (range('A', $sheet->getHighestColumn()) as $col) {
+                $rawValue = $sheet->getCell($col . $row)->getValue();
+                if ($rawValue === null || trim((string)$rawValue) === '') {
+                    $nullCount++;
+                }
+            }
+            
+            // Если больше 30% колонок пустые - скорее всего объединенные ячейки
+            $nullPercent = $nullCount / max($filledCount, 1);
+            
+            if ($nullPercent < 0.3) {
+                $filteredCandidates[] = $candidate;
+                Log::debug('[ExcelParser] Candidate accepted', [
+                    'row' => $row,
+                    'null_count' => $nullCount,
+                    'filled_count' => $filledCount,
+                    'null_percent' => round($nullPercent * 100, 1) . '%',
+                ]);
+            } else {
+                Log::debug('[ExcelParser] Candidate rejected (merged cells)', [
+                    'row' => $row,
+                    'null_count' => $nullCount,
+                    'filled_count' => $filledCount,
+                    'null_percent' => round($nullPercent * 100, 1) . '%',
+                ]);
+            }
+        }
+        
+        if (empty($filteredCandidates)) {
+            Log::warning('[ExcelParser] All candidates rejected, using best scored one anyway');
+            $filteredCandidates = [$candidates[0]];
+        }
+        
+        $bestCandidate = $filteredCandidates[0];
         
         // FALLBACK: Если лучший кандидат имеет очень низкий score, ищем строку с максимумом колонок
         if ($bestCandidate['score'] < 50) {
