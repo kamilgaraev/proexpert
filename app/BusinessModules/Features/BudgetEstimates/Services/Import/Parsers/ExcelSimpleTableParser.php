@@ -676,15 +676,36 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $nextRow = $headerRow + 1;
         $hasMultilineHeader = false;
         
+        // Считаем заполненные колонки в текущей и следующей строке
+        $currentFilledCount = 0;
+        $nextFilledCount = 0;
+        
         foreach (range('A', $sheet->getHighestColumn()) as $col) {
             $currentValue = $sheet->getCell($col . $headerRow)->getValue();
             $nextValue = $sheet->getCell($col . $nextRow)->getValue();
             
+            if ($currentValue !== null && trim((string)$currentValue) !== '') {
+                $currentFilledCount++;
+            }
+            
             // Если в следующей строке тоже есть текст (не число), это многострочный заголовок
             if ($nextValue !== null && trim((string)$nextValue) !== '' && !is_numeric($nextValue)) {
                 $hasMultilineHeader = true;
-                break;
+                $nextFilledCount++;
             }
+        }
+        
+        // КРИТИЧНО: Если следующая строка имеет БОЛЬШЕ заполненных колонок - это настоящие заголовки!
+        // (Текущая строка - это объединенные группы типа "Количество", "Сметная стоимость")
+        if ($hasMultilineHeader && $nextFilledCount > $currentFilledCount) {
+            Log::info('[ExcelParser] Next row has more filled columns, using it as header', [
+                'current_row' => $headerRow,
+                'current_filled' => $currentFilledCount,
+                'next_row' => $nextRow,
+                'next_filled' => $nextFilledCount,
+            ]);
+            $headerRow = $nextRow;
+            $hasMultilineHeader = false; // Больше не нужно объединять строки
         }
         
         foreach (range('A', $sheet->getHighestColumn()) as $col) {
