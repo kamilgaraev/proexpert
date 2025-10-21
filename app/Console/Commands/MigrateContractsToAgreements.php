@@ -30,6 +30,9 @@ class MigrateContractsToAgreements extends Command
             'errors' => [],
         ];
 
+        // Для dry-run создаем виртуальный кэш сумм контрактов
+        $parentAmountsCache = [];
+
         // Находим все контракты с parent_contract_id
         $childContracts = Contract::whereNotNull('parent_contract_id')->get();
 
@@ -46,7 +49,7 @@ class MigrateContractsToAgreements extends Command
                 $isAgreement = $this->isSupplementaryAgreement($contract);
 
                 if ($isAgreement) {
-                    $this->migrateToAgreement($contract, $stats, $dryRun);
+                    $this->migrateToAgreement($contract, $stats, $dryRun, $parentAmountsCache);
                 } else {
                     $stats['skipped']++;
                     $this->warn("\n⚠️  Контракт #{$contract->id} ({$contract->number}) пропущен - не является Д/С");
@@ -112,10 +115,20 @@ class MigrateContractsToAgreements extends Command
         return $sameOrganization && $sameContractor && $hasAgreementPattern;
     }
 
-    protected function migrateToAgreement(Contract $contract, array &$stats, bool $dryRun): void
+    protected function migrateToAgreement(Contract $contract, array &$stats, bool $dryRun, array &$parentAmountsCache): void
     {
         // ВАЖНО: Перезагружаем родителя из БД для получения актуальной суммы
         $parent = Contract::find($contract->parent_contract_id);
+
+        // В dry-run режиме используем кэш для накопления изменений
+        if ($dryRun) {
+            if (!isset($parentAmountsCache[$parent->id])) {
+                $parentAmountsCache[$parent->id] = $parent->total_amount;
+            }
+            $currentParentAmount = $parentAmountsCache[$parent->id];
+        } else {
+            $currentParentAmount = $parent->total_amount;
+        }
 
         $agreementData = [
             'contract_id' => $parent->id,
@@ -156,7 +169,7 @@ class MigrateContractsToAgreements extends Command
                 DB::commit();
 
                 $this->info("\n✅ Контракт #{$contract->id} ({$contract->number}) → Agreement #{$agreement->id}");
-                $this->info("   Родитель #{$parent->id}: {$parent->total_amount} ₽ (было: " . ($parent->total_amount - $contract->total_amount) . " ₽)");
+                $this->info("   Родитель #{$parent->id}: {$parent->total_amount} ₽ (было: " . ($currentParentAmount) . " ₽)");
 
                 Log::info('Contract migrated to agreement', [
                     'old_contract_id' => $contract->id,
@@ -171,10 +184,16 @@ class MigrateContractsToAgreements extends Command
                 throw $e;
             }
         } else {
+            $newParentAmount = $currentParentAmount + $contract->total_amount;
             $this->info("\n🔍 [DRY-RUN] Контракт #{$contract->id} ({$contract->number}):");
             $this->info("   Будет создан Agreement для контракта #{$parent->id}");
             $this->info("   change_amount: {$contract->total_amount} ₽");
-            $this->info("   Новая сумма родителя: " . ($parent->total_amount + $contract->total_amount) . " ₽");
+            $this->info("   Текущая сумма родителя: {$currentParentAmount} ₽");
+            $this->info("   Новая сумма родителя: {$newParentAmount} ₽");
+            
+            // Обновляем кэш
+            $parentAmountsCache[$parent->id] = $newParentAmount;
+            
             $stats['migrated']++;
         }
     }
