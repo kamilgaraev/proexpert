@@ -16,9 +16,10 @@ class MapEstimateImportRequest extends FormRequest
         return [
             // Allow both string and array (will be normalized in controller)
             'file_id' => ['required'],
-            'column_mapping' => ['required', 'array'],
+            // column_mapping может быть пустым - тогда вернем автоматический маппинг
+            'column_mapping' => ['present', 'array'],
             'column_mapping.*' => [
-                'required',
+                'nullable',
                 'string',
             ],
         ];
@@ -39,7 +40,7 @@ class MapEstimateImportRequest extends FormRequest
     {
         return [
             'file_id.required' => 'Не указан идентификатор файла',
-            'column_mapping.required' => 'Необходимо указать маппинг колонок',
+            'column_mapping.present' => 'Необходимо указать маппинг колонок',
             'column_mapping.array' => 'Маппинг колонок должен быть массивом',
         ];
     }
