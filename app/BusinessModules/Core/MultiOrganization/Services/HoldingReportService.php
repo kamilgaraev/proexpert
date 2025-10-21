@@ -531,7 +531,6 @@ class HoldingReportService
                 'contractors.email',
                 'contractors.contractor_type',
                 DB::raw('COUNT(DISTINCT contracts.id) as contracts_count'),
-                DB::raw('COALESCE(SUM(contracts.total_amount), 0) as total_amount'),
                 DB::raw('STRING_AGG(DISTINCT orgs.name, \', \') as organizations'),
             ])
             ->join('contracts', 'contractors.id', '=', 'contracts.contractor_id')
@@ -579,7 +578,10 @@ class HoldingReportService
             $contractIds = DB::table('contracts')
                 ->where('contractor_id', $contractor->id)
                 ->whereIn('organization_id', $orgIds)
-                ->pluck('id');
+                ->pluck('id')
+                ->toArray();
+
+            $totalAmount = $this->calculateContractAmountFromDb($contractIds);
 
             $totalPaid = DB::table('contract_payments')
                 ->whereIn('contract_id', $contractIds)
@@ -598,15 +600,15 @@ class HoldingReportService
                 'email' => $contractor->email,
                 'contractor_type' => $contractor->contractor_type,
                 'contracts_count' => $contractor->contracts_count,
-                'total_amount' => round($contractor->total_amount, 2),
+                'total_amount' => round($totalAmount, 2),
                 'total_paid' => round($totalPaid, 2),
                 'total_acts_approved' => round($totalActs, 2),
-                'remaining_amount' => round($contractor->total_amount - $totalPaid, 2),
-                'completion_percentage' => $contractor->total_amount > 0 
-                    ? round(($totalActs / $contractor->total_amount) * 100, 2) 
+                'remaining_amount' => round($totalAmount - $totalPaid, 2),
+                'completion_percentage' => $totalAmount > 0 
+                    ? round(($totalActs / $totalAmount) * 100, 2) 
                     : 0,
-                'payment_percentage' => $contractor->total_amount > 0 
-                    ? round(($totalPaid / $contractor->total_amount) * 100, 2) 
+                'payment_percentage' => $totalAmount > 0 
+                    ? round(($totalPaid / $totalAmount) * 100, 2) 
                     : 0,
                 'organizations' => $contractor->organizations,
             ];
@@ -1078,6 +1080,8 @@ class HoldingReportService
                     $totalPaid = $payments->sum('amount');
                     $totalActs = $acts->sum('amount');
                     $totalWorks = $works->sum('total_amount');
+                    
+                    $contractEffectiveAmount = (float)$contract->total_amount + ($contract->agreements->sum('change_amount') ?? 0);
 
                     $contractData = [
                         'contract_id' => $contract->id,
@@ -1102,7 +1106,7 @@ class HoldingReportService
                         ] : null,
                         
                         'financial' => [
-                            'total_amount' => round($contract->total_amount, 2),
+                            'total_amount' => round($contractEffectiveAmount, 2),
                             'gp_amount' => round($contract->gp_amount ?? 0, 2),
                             'gp_percentage' => round($contract->gp_percentage ?? 0, 2),
                             'subcontract_amount' => round($contract->subcontract_amount ?? 0, 2),
@@ -1111,12 +1115,12 @@ class HoldingReportService
                             'total_paid' => round($totalPaid, 2),
                             'total_acts' => round($totalActs, 2),
                             'total_works' => round($totalWorks, 2),
-                            'remaining' => round($contract->total_amount - $totalPaid, 2),
-                            'completion_percentage' => $contract->total_amount > 0 
-                                ? round(($totalActs / $contract->total_amount) * 100, 2) 
+                            'remaining' => round($contractEffectiveAmount - $totalPaid, 2),
+                            'completion_percentage' => $contractEffectiveAmount > 0 
+                                ? round(($totalActs / $contractEffectiveAmount) * 100, 2) 
                                 : 0,
-                            'payment_percentage' => $contract->total_amount > 0 
-                                ? round(($totalPaid / $contract->total_amount) * 100, 2) 
+                            'payment_percentage' => $contractEffectiveAmount > 0 
+                                ? round(($totalPaid / $contractEffectiveAmount) * 100, 2) 
                                 : 0,
                         ],
                         
