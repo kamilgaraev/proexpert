@@ -124,12 +124,20 @@ class RequestLoggingMiddleware
         }
 
         // ACCESS: Логируем завершенный запрос с полными метриками
+        // Safe check for files - RoadRunner/Octane может удалить временные файлы после обработки
+        $hasFiles = false;
+        try {
+            $hasFiles = $request->hasFile('*');
+        } catch (\Throwable $e) {
+            // Игнорируем - файлы уже удалены
+        }
+        
         $this->loggingService->access([
             'method' => $request->method(),
             'uri' => $request->getRequestUri(),
             'content_length' => strlen($request->getContent()),
             'query_params_count' => count($request->query()),
-            'has_files' => $request->hasFile('*')
+            'has_files' => $hasFiles
         ], $responseData);
 
         // TECHNICAL: Логируем производительность запросов для оптимизации

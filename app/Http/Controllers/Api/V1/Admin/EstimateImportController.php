@@ -24,32 +24,53 @@ class EstimateImportController extends Controller
 
     public function upload(UploadEstimateImportRequest $request): JsonResponse
     {
-        Log::info('[EstimateImport] Upload started', [
-            'user_id' => $request->user()?->id,
-            'has_file' => $request->hasFile('file'),
-        ]);
-        
         $user = $request->user();
         $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
         
-        Log::info('[EstimateImport] Context loaded', [
-            'user_id' => $user?->id,
-            'organization_id' => $organization?->id,
-        ]);
+        // Get file FIRST before any other operations
+        $file = $request->file('file');
+        
+        if (!$file) {
+            Log::error('[EstimateImport] No file in request');
+            return response()->json([
+                'success' => false,
+                'message' => 'No file uploaded',
+            ], 400);
+        }
+        
+        // Get file info IMMEDIATELY while file is still available
+        try {
+            $fileName = $file->getClientOriginalName();
+            $fileSize = $file->getSize();
+            $filePath = $file->getRealPath();
+            
+            Log::info('[EstimateImport] File info captured', [
+                'file_name' => $fileName,
+                'file_size' => $fileSize,
+                'file_exists' => file_exists($filePath),
+                'file_path' => $filePath,
+                'user_id' => $user?->id,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('[EstimateImport] Failed to get file info', [
+                'error' => $e->getMessage(),
+                'user_id' => $user?->id,
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process uploaded file: ' . $e->getMessage(),
+            ], 500);
+        }
         
         if (!$organization) {
-            Log::error('[EstimateImport] Organization not found');
+            Log::error('[EstimateImport] Organization not found', [
+                'user_id' => $user?->id,
+            ]);
             return response()->json([
                 'success' => false,
                 'message' => 'Organization context not found',
             ], 400);
         }
-        
-        $file = $request->file('file');
-        
-        // Get file info BEFORE moving
-        $fileName = $file->getClientOriginalName();
-        $fileSize = $file->getSize();
         
         try {
             Log::info('[EstimateImport] Starting file upload', [
