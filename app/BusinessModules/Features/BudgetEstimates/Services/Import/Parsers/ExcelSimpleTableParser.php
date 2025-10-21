@@ -387,19 +387,81 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $normalized = mb_strtolower(trim($headerText));
         $keywords = $this->columnKeywords[$field] ?? [];
         
+        if (empty($normalized)) {
+            return 0.0;
+        }
+        
         $maxConfidence = 0;
-        foreach ($keywords as $keyword) {
+        $matchedKeywords = 0;
+        $keywordImportance = $this->getKeywordImportance($field);
+        
+        foreach ($keywords as $index => $keyword) {
+            // Точное совпадение - максимальный confidence
             if ($normalized === $keyword) {
                 return 1.0;
             }
             
             if (str_contains($normalized, $keyword)) {
-                $confidence = mb_strlen($keyword) / max(mb_strlen($normalized), 1);
+                $matchedKeywords++;
+                
+                // Базовый confidence на основе длины ключевого слова
+                $lengthRatio = mb_strlen($keyword) / max(mb_strlen($normalized), 1);
+                
+                // Важность ключевого слова (первые в списке - важнее)
+                $importance = $keywordImportance[$index] ?? 1.0;
+                
+                // Позиция в тексте (начало важнее)
+                $position = mb_strpos($normalized, $keyword);
+                $positionBonus = ($position === 0) ? 0.2 : (($position < 10) ? 0.1 : 0);
+                
+                // Итоговый confidence для этого ключевого слова
+                $confidence = min(
+                    $lengthRatio * $importance + $positionBonus,
+                    1.0
+                );
+                
                 $maxConfidence = max($maxConfidence, $confidence);
             }
         }
         
+        // Бонус если совпало несколько ключевых слов
+        if ($matchedKeywords > 1) {
+            $maxConfidence = min($maxConfidence + ($matchedKeywords - 1) * 0.1, 1.0);
+        }
+        
+        // Минимум 0.8 если есть хотя бы одно совпадение с важным ключевым словом
+        if ($maxConfidence > 0.5 && $matchedKeywords > 0) {
+            $maxConfidence = max($maxConfidence, 0.85);
+        }
+        
         return $maxConfidence;
+    }
+
+    /**
+     * Возвращает важность ключевых слов для поля
+     * Первые в списке - самые важные
+     */
+    private function getKeywordImportance(string $field): array
+    {
+        // Веса для ключевых слов (по их позиции в массиве)
+        // Первые 3 - самые важные (вес 1.2)
+        // Следующие 3 - важные (вес 1.1)
+        // Остальные - обычные (вес 1.0)
+        
+        $keywords = $this->columnKeywords[$field] ?? [];
+        $importance = [];
+        
+        foreach ($keywords as $index => $keyword) {
+            if ($index < 3) {
+                $importance[$index] = 1.2; // Очень важные
+            } elseif ($index < 6) {
+                $importance[$index] = 1.1; // Важные
+            } else {
+                $importance[$index] = 1.0; // Обычные
+            }
+        }
+        
+        return $importance;
     }
 
     private function extractRows(Worksheet $sheet, int $startRow, array $columnMapping): array
