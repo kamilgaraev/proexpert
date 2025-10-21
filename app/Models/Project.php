@@ -193,22 +193,6 @@ class Project extends Model
     }
 
     /**
-     * Получить приемки материалов по проекту.
-     */
-    public function materialReceipts(): HasMany
-    {
-        return $this->hasMany(MaterialReceipt::class);
-    }
-
-    /**
-     * Получить списания материалов по проекту.
-     */
-    public function materialWriteOffs(): HasMany
-    {
-        return $this->hasMany(MaterialWriteOff::class);
-    }
-
-    /**
      * Получить выполненные работы по проекту.
      */
     public function completedWorks(): HasMany
@@ -217,29 +201,11 @@ class Project extends Model
     }
 
     /**
-     * Получить остатки материалов по проекту.
-     */
-    public function materialBalances(): HasMany
-    {
-        return $this->hasMany(MaterialBalance::class);
-    }
-
-    /**
      * Получить файлы, прикрепленные к проекту.
      */
     public function files()
     {
         return $this->morphMany(File::class, 'fileable');
-    }
-
-    /**
-     * Получить материалы, связанные с проектом (по приемкам и списаниям).
-     */
-    public function materials()
-    {
-        // Если материалы привязаны к проекту через MaterialReceipt и MaterialWriteOff,
-        // то можно использовать hasManyThrough или кастомный запрос. Для простоты — через MaterialReceipt.
-        return $this->hasMany(MaterialReceipt::class)->select('material_id', 'project_id');
     }
 
     /**

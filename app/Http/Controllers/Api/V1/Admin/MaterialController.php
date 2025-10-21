@@ -194,25 +194,6 @@ class MaterialController extends Controller
         }
     }
 
-    public function getMaterialBalances(int $id, Request $request): JsonResponse
-    {
-        try {
-            $balances = $this->materialService->getMaterialBalancesByMaterial(
-                $id,
-                $request->get('per_page', 15),
-                $request->get('project_id'),
-                $request->get('sort_by', 'created_at'),
-                $request->get('sort_direction', 'desc')
-            );
-            return response()->json(['success' => true, 'data' => $balances]);
-        } catch (BusinessLogicException $e) {
-            return response()->json(['success' => false, 'message' => $e->getMessage()], $e->getCode() ?: 400);
-        } catch (\Throwable $e) {
-            Log::error('Error in MaterialController@getMaterialBalances', ['id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()]);
-            return response()->json(['success' => false, 'message' => 'Внутренняя ошибка сервера при получении балансов материала.'], 500);
-        }
-    }
-
     public function getMeasurementUnits(Request $request): JsonResponse
     {
         try {

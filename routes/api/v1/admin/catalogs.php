@@ -23,10 +23,6 @@ use App\Http\Controllers\Api\V1\Admin\MeasurementUnitController;
 // Маршрут для получения единиц измерения должен быть определен ПЕРЕД apiResource для материалов
 // Route::get('/materials/measurement-units', [MaterialController::class, 'getMeasurementUnits'])->name('materials.measurementUnits');
 
-// Маршруты для балансов материалов (если ID материала передается как параметр)
-// Пример: /materials/{materialId}/balances
-Route::get('/materials/{id}/balances', [MaterialController::class, 'getMaterialBalances'])->name('materials.balances');
-
 // Маршрут для импорта материалов
 Route::post('/materials/import', [MaterialController::class, 'importMaterials'])
     ->middleware('authorize:admin.materials.import')

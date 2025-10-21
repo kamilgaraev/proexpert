@@ -56,14 +56,6 @@ class WorkType extends Model
     }
 
     /**
-     * Получить списания материалов по данному виду работ.
-     */
-    public function materialWriteOffs(): HasMany
-    {
-        return $this->hasMany(MaterialWriteOff::class);
-    }
-
-    /**
      * Материалы, используемые для данного вида работ (с нормами по умолчанию).
      */
     public function materials(): BelongsToMany

@@ -58,30 +58,6 @@ class Material extends Model
     }
 
     /**
-     * Получить приемки данного материала.
-     */
-    public function receipts(): HasMany
-    {
-        return $this->hasMany(MaterialReceipt::class);
-    }
-
-    /**
-     * Получить списания данного материала.
-     */
-    public function writeOffs(): HasMany
-    {
-        return $this->hasMany(MaterialWriteOff::class);
-    }
-
-    /**
-     * Получить остатки данного материала по проектам.
-     */
-    public function balances(): HasMany
-    {
-        return $this->hasMany(MaterialBalance::class);
-    }
-
-    /**
      * Материалы с указанным внешним кодом.
      *
      * @param \Illuminate\Database\Eloquent\Builder $query

@@ -14,7 +14,6 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Log;
 use App\Http\Resources\Api\V1\Admin\MeasurementUnitResource;
 use App\Models\Material;
-use App\Models\MaterialBalance;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use Illuminate\Support\Facades\DB;
@@ -245,8 +244,6 @@ class MaterialService
             });
         }
 
-        // Fallback: если MaterialBalance пустая, пересчитываем из логов (медленнее)
-        // Это нужно для старых данных до внедрения observers
         $logsPaginator = $this->materialUsageLogRepository->getPaginatedLogs(
             $organizationId, 
             100000, 

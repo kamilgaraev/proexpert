@@ -38,12 +38,4 @@ class Supplier extends Model
     {
         return $this->belongsTo(Organization::class);
     }
-
-    /**
-     * Получить приемки материалов от этого поставщика.
-     */
-    public function materialReceipts(): HasMany
-    {
-        return $this->hasMany(MaterialReceipt::class);
-    }
 }
