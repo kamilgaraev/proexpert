@@ -195,6 +195,9 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             $rowData = [];
             $rowCells = []; // Сохраняем оригинальные значения для логирования
             
+            // Детальное логирование для строк 30-40 (где должны быть заголовки)
+            $isTargetRange = ($row >= 30 && $row <= 40);
+            
             foreach (range('A', $sheet->getHighestColumn()) as $col) {
                 $cell = $sheet->getCell($col . $row);
                 $value = $cell->getValue();
@@ -292,24 +295,61 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                     'reason' => $hasServiceInfo ? 'service_info' : 'document_title',
                     'sample' => array_slice($rowData, 0, 3),
                 ];
+                
+                if ($isTargetRange) {
+                    Log::debug('[ExcelParser] Target range row rejected (filters)', [
+                        'row' => $row,
+                        'reason' => $hasServiceInfo ? 'service_info' : 'document_title',
+                        'sample' => array_slice($rowData, 0, 2),
+                    ]);
+                }
+                
                 continue; // Пропускаем служебную информацию и заголовки документа
             }
             
             $matchCount = 0;
             $matchedKeywords = [];
+            $uniqueKeywords = []; // Для подсчета уникальных совпадений
             
             foreach ($rowData as $cellValue) {
                 foreach ($requiredKeywords as $keyword) {
                     if (str_contains($cellValue, $keyword)) {
-                        $matchCount++;
-                        $matchedKeywords[] = $keyword;
+                        // Считаем только уникальные ключевые слова
+                        if (!in_array($keyword, $uniqueKeywords)) {
+                            $matchCount++;
+                            $uniqueKeywords[] = $keyword;
+                        }
+                        $matchedKeywords[] = $keyword; // Для логирования
                         break;
                     }
                 }
             }
             
-            // Для российских смет достаточно 3 совпадений (у них сложная структура заголовков)
-            if ($matchCount >= 3) {
+            // Динамический порог: если много колонок - можно с меньшим количеством совпадений
+            $requiredMatches = count($rowCells) >= 6 ? 2 : 3;
+            
+            if ($isTargetRange && $matchCount > 0) {
+                Log::debug('[ExcelParser] Target range row analyzed', [
+                    'row' => $row,
+                    'match_count' => $matchCount,
+                    'required' => $requiredMatches,
+                    'unique_keywords' => $uniqueKeywords,
+                    'filled_columns' => count($rowCells),
+                    'passed' => $matchCount >= $requiredMatches,
+                ]);
+            }
+            
+            // Для российских смет достаточно 2-3 совпадений (у них сложная структура заголовков)
+            if ($matchCount >= $requiredMatches) {
+                // КРИТИЧНО: Если только 1 колонка заполнена - это НЕ заголовки таблицы
+                if (count($rowCells) <= 1) {
+                    Log::debug('[ExcelParser] Candidate rejected: only 1 column', [
+                        'row' => $row,
+                        'cell' => $rowCells,
+                    ]);
+                    continue;
+                }
+                
                 // Вычисляем score для этой строки
                 $score = $this->scoreHeaderCandidate($sheet, $row, $matchCount, $matchedKeywords, $rowCells);
                 
@@ -326,6 +366,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                     'score' => $score,
                     'matches' => $matchCount,
                     'keywords' => $matchedKeywords,
+                    'filled_columns' => count($rowCells),
                 ]);
             }
         }
@@ -345,11 +386,46 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         
         $bestCandidate = $candidates[0];
         
+        // FALLBACK: Если лучший кандидат имеет очень низкий score, ищем строку с максимумом колонок
+        if ($bestCandidate['score'] < 50) {
+            Log::warning('[ExcelParser] Best candidate has low score, trying fallback', [
+                'best_score' => $bestCandidate['score'],
+                'best_row' => $bestCandidate['row'],
+            ]);
+            
+            // Ищем строку с максимальным количеством колонок в диапазоне 20-40
+            $fallbackCandidate = null;
+            $maxColumns = 0;
+            
+            foreach ($candidates as $candidate) {
+                $row = $candidate['row'];
+                $columnsCount = count($candidate['cells']);
+                
+                if ($row >= 20 && $row <= 40 && $columnsCount > $maxColumns) {
+                    $maxColumns = $columnsCount;
+                    $fallbackCandidate = $candidate;
+                }
+            }
+            
+            if ($fallbackCandidate && $maxColumns >= 5) {
+                Log::info('[ExcelParser] Fallback candidate selected', [
+                    'row' => $fallbackCandidate['row'],
+                    'columns' => $maxColumns,
+                ]);
+                $bestCandidate = $fallbackCandidate;
+            }
+        }
+        
         Log::info('[ExcelParser] Best header candidate selected', [
             'row' => $bestCandidate['row'],
             'score' => $bestCandidate['score'],
+            'filled_columns' => count($bestCandidate['cells']),
             'total_candidates' => count($candidates),
-            'all_candidates' => array_map(fn($c) => ['row' => $c['row'], 'score' => $c['score']], $candidates),
+            'all_candidates' => array_map(fn($c) => [
+                'row' => $c['row'], 
+                'score' => $c['score'],
+                'columns' => count($c['cells'])
+            ], array_slice($candidates, 0, 5)),
         ]);
         
         return $bestCandidate['row'];
