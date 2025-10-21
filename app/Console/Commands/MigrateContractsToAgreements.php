@@ -114,7 +114,8 @@ class MigrateContractsToAgreements extends Command
 
     protected function migrateToAgreement(Contract $contract, array &$stats, bool $dryRun): void
     {
-        $parent = $contract->parentContract;
+        // ВАЖНО: Перезагружаем родителя из БД для получения актуальной суммы
+        $parent = Contract::find($contract->parent_contract_id);
 
         $agreementData = [
             'contract_id' => $parent->id,
