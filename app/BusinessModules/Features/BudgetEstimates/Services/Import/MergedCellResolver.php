@@ -22,37 +22,61 @@ class MergedCellResolver
         // Получаем информацию об объединениях
         $mergeRanges = $this->getMergeRanges($sheet, $headerRow);
         
-        // Проверяем следующую строку для подзаголовков
-        $nextRow = $headerRow + 1;
-        $hasSubheaders = $this->hasSubheaders($sheet, $nextRow);
+        // Проверяем следующие 2 строки для подзаголовков (многоуровневые заголовки)
+        $nextRow1 = $headerRow + 1;
+        $nextRow2 = $headerRow + 2;
+        $hasSubheaders1 = $this->hasSubheaders($sheet, $nextRow1);
+        $hasSubheaders2 = $this->hasSubheaders($sheet, $nextRow2);
         
         Log::info('[MergedCellResolver] Resolving headers', [
             'header_row' => $headerRow,
             'highest_column' => $highestColumn,
             'merge_ranges_count' => count($mergeRanges),
-            'has_subheaders' => $hasSubheaders,
+            'has_subheaders_row1' => $hasSubheaders1,
+            'has_subheaders_row2' => $hasSubheaders2,
         ]);
 
         foreach (range('A', $highestColumn) as $col) {
             $currentValue = $sheet->getCell($col . $headerRow)->getValue();
             $headerText = '';
 
+            // Основной заголовок
             if ($currentValue !== null && trim((string)$currentValue) !== '') {
                 $headerText = trim((string)$currentValue);
+            } else {
+                // Если в основном заголовке пусто - ищем значение в объединенной ячейке слева
+                $headerText = $this->findMergedHeaderValue($sheet, $headerRow, $col, $mergeRanges);
             }
 
-            // Если есть подзаголовки, комбинируем значения
-            if ($hasSubheaders) {
-                $subheaderValue = $sheet->getCell($col . $nextRow)->getValue();
+            // Комбинируем с подзаголовками (строка +1)
+            if ($hasSubheaders1) {
+                $subheaderValue1 = $sheet->getCell($col . $nextRow1)->getValue();
                 
-                if ($subheaderValue !== null && trim((string)$subheaderValue) !== '' && !is_numeric($subheaderValue)) {
-                    $subheaderText = trim((string)$subheaderValue);
+                if ($subheaderValue1 !== null && trim((string)$subheaderValue1) !== '' && !is_numeric($subheaderValue1)) {
+                    $subheaderText1 = trim((string)$subheaderValue1);
                     
-                    // Комбинируем если текущий заголовок не пуст
                     if ($headerText !== '') {
-                        $headerText = $headerText . ' ' . $subheaderText;
+                        $headerText = $headerText . ' ' . $subheaderText1;
                     } else {
-                        $headerText = $subheaderText;
+                        $headerText = $subheaderText1;
+                    }
+                }
+            }
+
+            // Комбинируем с подзаголовками (строка +2)
+            if ($hasSubheaders2) {
+                $subheaderValue2 = $sheet->getCell($col . $nextRow2)->getValue();
+                
+                if ($subheaderValue2 !== null && trim((string)$subheaderValue2) !== '' && !is_numeric($subheaderValue2)) {
+                    $subheaderText2 = trim((string)$subheaderValue2);
+                    
+                    // Только добавляем если это не повтор
+                    if (!str_contains($headerText, $subheaderText2)) {
+                        if ($headerText !== '') {
+                            $headerText = $headerText . ' ' . $subheaderText2;
+                        } else {
+                            $headerText = $subheaderText2;
+                        }
                     }
                 }
             }
@@ -62,10 +86,29 @@ class MergedCellResolver
 
         Log::debug('[MergedCellResolver] Resolved headers', [
             'headers_count' => count(array_filter($headers)),
-            'sample' => array_slice($headers, 0, 10),
+            'sample' => array_slice($headers, 0, 15),
         ]);
 
         return $headers;
+    }
+
+    /**
+     * Ищет значение заголовка в объединенной ячейке слева
+     */
+    private function findMergedHeaderValue(Worksheet $sheet, int $row, string $col, array $mergeRanges): string
+    {
+        foreach ($mergeRanges as $range) {
+            // Проверяем попадает ли текущая колонка в диапазон объединения
+            if ($col >= $range['start_col'] && $col <= $range['end_col']) {
+                // Берем значение из начала объединенной ячейки
+                $value = $sheet->getCell($range['start_col'] . $row)->getValue();
+                if ($value !== null && trim((string)$value) !== '') {
+                    return trim((string)$value);
+                }
+            }
+        }
+        
+        return '';
     }
 
     /**
