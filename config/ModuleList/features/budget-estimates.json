@@ -1,0 +1,74 @@
+{
+  "name": "Сметное дело",
+  "slug": "budget-estimates",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "management",
+  "description": "Полный цикл работы со сметами: создание, импорт из Excel, расчеты, версионирование и экспорт",
+  
+  "class_name": "App\\BusinessModules\\Features\\BudgetEstimates\\BudgetEstimatesModule",
+  "service_provider": "App\\BusinessModules\\Features\\BudgetEstimates\\BudgetEstimatesServiceProvider",
+  
+  "pricing": {
+    "base_price": 5000,
+    "currency": "RUB",
+    "included_in_plans": ["profi", "enterprise"],
+    "duration_days": 30
+  },
+  
+  "permissions": [
+    "estimates.view",
+    "estimates.view_all",
+    "estimates.create",
+    "estimates.edit",
+    "estimates.edit_approved",
+    "estimates.delete",
+    "estimates.approve",
+    "estimates.import",
+    "estimates.export",
+    "estimates.templates.manage",
+    "estimates.analytics",
+    "estimates.versions.create",
+    "estimates.versions.compare"
+  ],
+  
+  "features": [
+    "Создание и управление сметами",
+    "Импорт из Excel и других форматов",
+    "Автоматические расчеты с коэффициентами",
+    "Управление разделами и позициями",
+    "Версионирование и история изменений",
+    "Шаблоны смет",
+    "Экспорт в Excel и PDF",
+    "Интеграция с проектами и контрактами",
+    "Аналитика и сравнение смет",
+    "Умное сопоставление позиций при импорте"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management",
+    "contract-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_estimates": null,
+    "max_items_per_estimate": 10000,
+    "max_sections_per_estimate": 500,
+    "max_templates": 50
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "calculator",
+  "display_order": 30
+}
+
