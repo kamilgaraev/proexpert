@@ -62,13 +62,15 @@ Route::prefix('estimate-templates')->group(function () {
     Route::post('/{template}/share', [EstimateTemplateController::class, 'share']);
 });
 
-Route::prefix('estimates/import')->group(function () {
-    Route::post('/upload', [EstimateImportController::class, 'upload']);
-    Route::post('/detect', [EstimateImportController::class, 'detect']);
-    Route::post('/map', [EstimateImportController::class, 'map']);
-    Route::post('/match', [EstimateImportController::class, 'match']);
-    Route::post('/execute', [EstimateImportController::class, 'execute']);
-    Route::get('/status/{jobId}', [EstimateImportController::class, 'status']);
-    Route::get('/history', [EstimateImportController::class, 'history']);
+Route::prefix('estimates')->group(function () {
+    Route::prefix('import')->group(function () {
+        Route::post('/upload', [EstimateImportController::class, 'upload']);
+        Route::post('/detect', [EstimateImportController::class, 'detect']);
+        Route::post('/map', [EstimateImportController::class, 'map']);
+        Route::post('/match', [EstimateImportController::class, 'match']);
+        Route::post('/execute', [EstimateImportController::class, 'execute']);
+        Route::get('/status/{jobId}', [EstimateImportController::class, 'status']);
+        Route::get('/history', [EstimateImportController::class, 'history']);
+    });
 });
 
