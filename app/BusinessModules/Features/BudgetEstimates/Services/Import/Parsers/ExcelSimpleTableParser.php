@@ -439,10 +439,33 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             $score -= 20; // Заголовки не должны содержать только цифры
         }
         
+        // 9. КРИТИЧНО: Заголовки таблицы должны иметь несколько заполненных колонок
+        // Если только 1-2 колонки заполнены - это скорее всего название раздела/блока
+        if ($filledColumns <= 2) {
+            $score -= 80; // Очень сильный штраф
+        }
+        
+        // 10. Очень длинная ячейка в первой колонке часто означает название раздела
+        if (isset($rowCells['A']) && mb_strlen($rowCells['A']) > 50) {
+            $score -= 30;
+        }
+        
+        // 11. Бонус за равномерное распределение текста по колонкам
+        $nonEmptyCells = 0;
+        foreach ($rowCells as $cellValue) {
+            if (mb_strlen($cellValue) > 0) {
+                $nonEmptyCells++;
+            }
+        }
+        if ($nonEmptyCells >= 5) {
+            $score += 25; // Много заполненных колонок = хорошие заголовки
+        }
+        
         Log::debug('[ExcelParser] Score calculated', [
             'row' => $row,
             'score' => $score,
             'filled_columns' => $filledColumns,
+            'non_empty_cells' => $nonEmptyCells,
             'avg_length' => round($avgLength, 2),
             'has_data_after' => $hasDataAfter,
             'specific_matches' => $specificMatches,
