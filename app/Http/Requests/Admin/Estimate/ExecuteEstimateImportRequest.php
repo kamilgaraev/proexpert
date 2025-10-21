@@ -25,6 +25,17 @@ class ExecuteEstimateImportRequest extends FormRequest
             'estimate_settings.contract_id' => ['sometimes', 'nullable', 'integer', 'exists:contracts,id'],
         ];
     }
+    
+    protected function prepareForValidation(): void
+    {
+        // Normalize file_id if it's an array
+        $fileId = $this->input('file_id');
+        if (is_array($fileId)) {
+            $this->merge([
+                'file_id' => $fileId[0] ?? '',
+            ]);
+        }
+    }
 
     public function messages(): array
     {

@@ -103,16 +103,34 @@ class EstimateImportController extends Controller
 
     public function detect(Request $request): JsonResponse
     {
+        $fileIdRaw = $request->input('file_id');
+        
         Log::info('[EstimateImport] Detect started', [
             'request_data' => $request->all(),
-            'file_id_type' => gettype($request->input('file_id')),
+            'file_id_type' => gettype($fileIdRaw),
+            'file_id_value' => $fileIdRaw,
         ]);
         
         $request->validate([
             'file_id' => ['required'],
         ]);
         
-        $fileId = (string) $request->input('file_id');
+        // Handle array input (e.g. from form data)
+        if (is_array($fileIdRaw)) {
+            $fileId = (string) ($fileIdRaw[0] ?? $fileIdRaw['file_id'] ?? '');
+        } else {
+            $fileId = (string) $fileIdRaw;
+        }
+        
+        if (empty($fileId)) {
+            Log::error('[EstimateImport] Empty file_id after processing', [
+                'raw_value' => $fileIdRaw,
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid file_id provided',
+            ], 400);
+        }
         
         try {
             $detection = $this->importService->detectFormat($fileId);
@@ -140,7 +158,8 @@ class EstimateImportController extends Controller
 
     public function map(MapEstimateImportRequest $request): JsonResponse
     {
-        $fileId = (string) $request->input('file_id');
+        $fileIdRaw = $request->input('file_id');
+        $fileId = is_array($fileIdRaw) ? (string) ($fileIdRaw[0] ?? '') : (string) $fileIdRaw;
         $columnMapping = $request->input('column_mapping');
         
         try {
@@ -168,7 +187,8 @@ class EstimateImportController extends Controller
             'file_id' => ['required'],
         ]);
         
-        $fileId = (string) $request->input('file_id');
+        $fileIdRaw = $request->input('file_id');
+        $fileId = is_array($fileIdRaw) ? (string) ($fileIdRaw[0] ?? '') : (string) $fileIdRaw;
         $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
         
         try {
@@ -186,7 +206,8 @@ class EstimateImportController extends Controller
 
     public function execute(ExecuteEstimateImportRequest $request): JsonResponse
     {
-        $fileId = (string) $request->input('file_id');
+        $fileIdRaw = $request->input('file_id');
+        $fileId = is_array($fileIdRaw) ? (string) ($fileIdRaw[0] ?? '') : (string) $fileIdRaw;
         $matchingConfig = $request->input('matching_config');
         $estimateSettings = $request->input('estimate_settings');
         
