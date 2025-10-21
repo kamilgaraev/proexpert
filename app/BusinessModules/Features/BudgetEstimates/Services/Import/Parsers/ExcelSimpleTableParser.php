@@ -133,13 +133,27 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $headers = $this->extractHeaders($sheet, $headerRow);
         $columnMapping = $this->detectColumns($headers);
         
+        // Возвращаем ВСЕ колонки, даже нераспознанные
         $detectedColumns = [];
-        foreach ($columnMapping as $field => $columnLetter) {
-            if ($columnLetter !== null) {
+        $reverseMapping = array_flip(array_filter($columnMapping)); // field => columnLetter
+        
+        foreach ($headers as $columnLetter => $headerText) {
+            // Ищем распознанное поле для этой колонки
+            $field = $reverseMapping[$columnLetter] ?? null;
+            
+            if ($field) {
+                // Колонка распознана
                 $detectedColumns[$columnLetter] = [
                     'field' => $field,
-                    'header' => $headers[$columnLetter] ?? '',
-                    'confidence' => $this->calculateColumnConfidence($headers[$columnLetter] ?? '', $field),
+                    'header' => $headerText,
+                    'confidence' => $this->calculateColumnConfidence($headerText, $field),
+                ];
+            } else {
+                // Колонка не распознана - возвращаем как есть
+                $detectedColumns[$columnLetter] = [
+                    'field' => null, // Не распознано
+                    'header' => $headerText,
+                    'confidence' => 0.0,
                 ];
             }
         }
