@@ -171,12 +171,36 @@ class EstimateImportController extends Controller
 
     public function match(Request $request): JsonResponse
     {
+        Log::info('[EstimateImport] Match request received', [
+            'all_input' => $request->all(),
+            'file_id_raw' => $request->input('file_id'),
+            'file_id_type' => gettype($request->input('file_id')),
+        ]);
+        
         $request->validate([
-            'file_id' => ['required'],
+            'file_id' => ['required', 'string'],
         ]);
         
         $fileIdRaw = $request->input('file_id');
         $fileId = is_array($fileIdRaw) ? (string) ($fileIdRaw[0] ?? '') : (string) $fileIdRaw;
+        
+        Log::info('[EstimateImport] Parsed file_id', [
+            'file_id' => $fileId,
+            'length' => strlen($fileId),
+        ]);
+        
+        if (empty($fileId)) {
+            Log::warning('[EstimateImport] Empty file_id received in match request', [
+                'request_data' => $request->all(),
+            ]);
+            
+            return response()->json([
+                'error' => 'Некорректный запрос',
+                'message' => 'file_id не может быть пустым. Убедитесь, что вы передаете file_id полученный от /upload.',
+                'hint' => 'Проверьте документацию: @docs/FRONTEND_FIX_MATCH_ENDPOINT.md',
+            ], 422);
+        }
+        
         $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
         
         try {
