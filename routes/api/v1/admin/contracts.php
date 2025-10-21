@@ -20,11 +20,6 @@ Route::group(['prefix' => 'contracts'], function () {
         ->name('contracts.completed-works');
     Route::get('{contract}/available-works-for-acts', [ContractPerformanceActController::class, 'availableWorks'])
         ->name('contracts.available-works-for-acts');
-    
-    Route::post('{contract}/attach-parent', [ContractController::class, 'attachToParent'])
-        ->name('contracts.attach-parent');
-    Route::delete('{contract}/detach-parent', [ContractController::class, 'detachFromParent'])
-        ->name('contracts.detach-parent');
 });
 
 // Вложенные маршруты для Актов выполненных работ к Контрактам

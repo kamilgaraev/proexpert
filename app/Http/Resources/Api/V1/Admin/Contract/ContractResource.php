@@ -8,6 +8,8 @@ use App\Http\Resources\Api\V1\Admin\Project\ProjectMiniResource;
 use App\Http\Resources\Api\V1\Admin\Contractor\ContractorMiniResource;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Payment\ContractPaymentResource;
+use App\Http\Resources\Api\V1\Admin\Contract\Agreement\SupplementaryAgreementResource;
+use App\Http\Resources\Api\V1\Admin\Contract\Specification\SpecificationResource;
 
 class ContractResource extends JsonResource
 {
@@ -122,7 +124,8 @@ class ContractResource extends JsonResource
             'can_add_work' => !in_array($this->status->value, ['completed', 'terminated']),
 
             // Связанные данные (если загружены)
-            'child_contracts' => ContractMiniResource::collection($this->whenLoaded('childContracts')),
+            'agreements' => SupplementaryAgreementResource::collection($this->whenLoaded('agreements')),
+            'specifications' => SpecificationResource::collection($this->whenLoaded('specifications')),
             'performance_acts' => ContractPerformanceActResource::collection($this->whenLoaded('performanceActs')), 
             'payments' => ContractPaymentResource::collection($this->whenLoaded('payments')),
             

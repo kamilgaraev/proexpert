@@ -252,8 +252,8 @@ class ContractService
                 'project', 
                 'project.organization',           // Для customer (заказчик)
                 'project.organizations',          // Для project_participants
-                'parentContract', 
-                'childContracts', 
+                'agreements',                     // Дополнительные соглашения
+                'specifications',                 // Спецификации
                 'performanceActs',
                 'performanceActs.completedWorks',
                 'payments'

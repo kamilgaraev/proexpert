@@ -21,7 +21,6 @@ class Contract extends Model
         'organization_id',
         'project_id',
         'contractor_id',
-        'parent_contract_id',
         'number',
         'date',
         'subject',
@@ -68,16 +67,6 @@ class Contract extends Model
     public function contractor(): BelongsTo
     {
         return $this->belongsTo(Contractor::class);
-    }
-
-    public function parentContract(): BelongsTo
-    {
-        return $this->belongsTo(Contract::class, 'parent_contract_id');
-    }
-
-    public function childContracts(): HasMany
-    {
-        return $this->hasMany(Contract::class, 'parent_contract_id');
     }
 
     public function performanceActs(): HasMany

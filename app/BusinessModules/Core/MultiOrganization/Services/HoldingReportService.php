@@ -977,9 +977,7 @@ class HoldingReportService
                         'performanceActs', 
                         'completedWorks.workType',
                         'agreements',
-                        'specifications',
-                        'childContracts.contractor',
-                        'parentContract'
+                        'specifications'
                     ]);
                 
                 $this->applyContractFilters($contractsQuery, $filters);
@@ -1168,30 +1166,21 @@ class HoldingReportService
                             ];
                         })->toArray(),
                         
-                        'child_contracts' => $contract->childContracts->map(function ($child) {
-                            $childPaid = DB::table('contract_payments')
-                                ->where('contract_id', $child->id)
-                                ->sum('amount');
-                            
+                        'agreements' => $contract->agreements->map(function ($agreement) {
                             return [
-                                'id' => $child->id,
-                                'number' => $child->number,
-                                'contractor_name' => $child->contractor?->name,
-                                'amount' => round($child->total_amount, 2),
-                                'paid' => round($childPaid, 2),
-                                'status' => $child->status->value ?? $child->status,
+                                'id' => $agreement->id,
+                                'number' => $agreement->number,
+                                'agreement_date' => $agreement->agreement_date?->format('Y-m-d'),
+                                'change_amount' => round($agreement->change_amount, 2),
                             ];
                         })->toArray(),
                         
-                        'parent_contract' => $contract->parentContract ? [
-                            'id' => $contract->parentContract->id,
-                            'number' => $contract->parentContract->number,
-                            'amount' => round($contract->parentContract->total_amount, 2),
-                        ] : null,
-                        
                         'agreements_count' => $contract->agreements->count(),
                         'specifications_count' => $contract->specifications->count(),
-                        'child_contracts_count' => $contract->childContracts->count(),
+                        'total_with_agreements' => round(
+                            $contract->total_amount + $contract->agreements->sum('change_amount'),
+                            2
+                        ),
                     ];
 
                     $projectData['contracts'][] = $contractData;
@@ -1222,7 +1211,6 @@ class HoldingReportService
         $totalWorks = 0;
         $totalAgreements = 0;
         $totalSpecifications = 0;
-        $totalChildContracts = 0;
         $totalMaterialReceipts = 0;
         $totalMaterialReceiptsAmount = 0;
         $totalMaterialWriteOffs = 0;
@@ -1245,7 +1233,6 @@ class HoldingReportService
                     $totalWorks += $contract['works_count'];
                     $totalAgreements += $contract['agreements_count'];
                     $totalSpecifications += $contract['specifications_count'];
-                    $totalChildContracts += $contract['child_contracts_count'];
                     
                     if ($contract['contractor']) {
                         $uniqueContractors[$contract['contractor']['id']] = $contract['contractor']['name'];
@@ -1273,7 +1260,6 @@ class HoldingReportService
                 'total_completed_works' => $totalWorks,
                 'total_agreements' => $totalAgreements,
                 'total_specifications' => $totalSpecifications,
-                'total_child_contracts' => $totalChildContracts,
             ],
             'materials' => [
                 'total_receipts' => $totalMaterialReceipts,
