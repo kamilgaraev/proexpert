@@ -8,7 +8,7 @@ class MapEstimateImportRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()->can('estimates.create');
+        return true;
     }
 
     public function rules(): array

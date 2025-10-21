@@ -23,10 +23,21 @@ class EstimateImportController extends Controller
 
     public function upload(UploadEstimateImportRequest $request): JsonResponse
     {
+        \Log::info('[EstimateImport] Upload started', [
+            'user_id' => $request->user()?->id,
+            'has_file' => $request->hasFile('file'),
+        ]);
+        
         $user = $request->user();
         $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
         
+        \Log::info('[EstimateImport] Context loaded', [
+            'user_id' => $user?->id,
+            'organization_id' => $organization?->id,
+        ]);
+        
         if (!$organization) {
+            \Log::error('[EstimateImport] Organization not found');
             return response()->json([
                 'success' => false,
                 'message' => 'Organization context not found',
@@ -36,7 +47,14 @@ class EstimateImportController extends Controller
         $file = $request->file('file');
         
         try {
+            \Log::info('[EstimateImport] Starting file upload', [
+                'file_name' => $file->getClientOriginalName(),
+                'file_size' => $file->getSize(),
+            ]);
+            
             $fileId = $this->importService->uploadFile($file, $user->id, $organization->id);
+            
+            \Log::info('[EstimateImport] Upload successful', ['file_id' => $fileId]);
             
             return response()->json([
                 'file_id' => $fileId,
@@ -45,6 +63,11 @@ class EstimateImportController extends Controller
                 'expires_at' => now()->addHours(24)->toIso8601String(),
             ]);
         } catch (\Exception $e) {
+            \Log::error('[EstimateImport] Upload failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to upload file: ' . $e->getMessage(),
