@@ -474,7 +474,14 @@ class EstimateImportService
                     'work_type_id' => $workType?->id,
                     'unit' => $item['unit'],
                     'quantity' => $item['quantity'],
+                    'quantity_coefficient' => $item['quantity_coefficient'] ?? null,
+                    'quantity_total' => $item['quantity_total'] ?? null,
                     'unit_price' => $item['unit_price'],
+                    'base_unit_price' => $item['base_unit_price'] ?? null,
+                    'price_index' => $item['price_index'] ?? null,
+                    'current_unit_price' => $item['current_unit_price'] ?? null,
+                    'price_coefficient' => $item['price_coefficient'] ?? null,
+                    'current_total_amount' => $item['current_total_amount'] ?? null,
                     'code' => $item['code'] ?? null,
                 ], $estimate);
                 

@@ -40,6 +40,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'ед.изм.'
         ],
         'quantity' => [
+            'количество на единицу',
             'количество', 
             'кол-во', 
             'объем', 
@@ -47,17 +48,48 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'объём',
             'кол.'
         ],
+        'quantity_coefficient' => [
+            'коэффициенты',
+            'коэф.',
+            'к-т',
+        ],
+        'quantity_total' => [
+            'всего с учетом коэффициентов',
+            'количество всего',
+            'итого количество',
+        ],
+        'base_unit_price' => [
+            'базисном уровне цен на единицу',
+            'на единицу измерения в базисном',
+            'в базисном уровне',
+            'базисный уровень',
+        ],
+        'price_index' => [
+            'индекс',
+            'индекс пересчета',
+        ],
+        'current_unit_price' => [
+            'текущем уровне цен на единицу',
+            'на единицу измерения в текущем',
+            'в текущем уровне',
+            'текущий уровень',
+        ],
+        'price_coefficient' => [
+            'коэффициенты стоимость',
+            'коэф. стоимость',
+        ],
+        'current_total_amount' => [
+            'всего в текущем уровне',
+            'всего текущий',
+            'сметная стоимость всего',
+        ],
         'unit_price' => [
-            'текущем уровне цен',  // ПРИОРИТЕТ: "на единицу измерения в текущем уровне цен"
-            'базисном уровне цен', // "на единицу измерения в базисном уровне цен"
-            'сметная стоимость', // "Сметная стоимость, руб."
+            'сметная стоимость',
             'цена', 
             'стоимость', 
             'расценка', 
             'цена за ед', 
             'стоимость единицы',
-            'текущих ценах',
-            'базисных ценах'
         ],
         'code' => [
             'код', 
@@ -504,8 +536,27 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'name' => null,
             'unit' => null,
             'quantity' => null,
+            'quantity_coefficient' => null,
+            'quantity_total' => null,
             'unit_price' => null,
+            'base_unit_price' => null,
+            'price_index' => null,
+            'current_unit_price' => null,
+            'price_coefficient' => null,
+            'current_total_amount' => null,
             'code' => null,
+        ];
+        
+        $numericFields = [
+            'quantity',
+            'quantity_coefficient',
+            'quantity_total',
+            'unit_price',
+            'base_unit_price',
+            'price_index',
+            'current_unit_price',
+            'price_coefficient',
+            'current_total_amount',
         ];
         
         foreach ($columnMapping as $field => $columnLetter) {
@@ -513,7 +564,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 $cell = $sheet->getCell($columnLetter . $rowNum);
                 $value = $cell->getValue();
                 
-                if ($field === 'quantity' || $field === 'unit_price') {
+                if (in_array($field, $numericFields)) {
                     $data[$field] = $this->parseNumericValue($value);
                 } else {
                     $data[$field] = $value !== null ? trim((string)$value) : null;
