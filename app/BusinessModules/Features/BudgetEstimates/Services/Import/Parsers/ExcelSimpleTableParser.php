@@ -8,16 +8,67 @@ use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateImportRowDTO;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Cell\Cell;
+use Illuminate\Support\Facades\Log;
 
 class ExcelSimpleTableParser implements EstimateImportParserInterface
 {
     private array $columnKeywords = [
-        'name' => ['наименование', 'название', 'работа', 'позиция', 'наименование работ'],
-        'unit' => ['ед.изм', 'единица', 'ед', 'измерение', 'ед. изм'],
-        'quantity' => ['количество', 'кол-во', 'объем', 'кол', 'объём'],
-        'unit_price' => ['цена', 'стоимость', 'расценка', 'цена за ед', 'стоимость единицы'],
-        'code' => ['код', 'шифр', 'обоснование', 'гэсн', 'фер', 'шифр расценки'],
-        'section_number' => ['№', 'номер', '№ п/п', 'п/п', 'n'],
+        'name' => [
+            'наименование', 
+            'название', 
+            'работа', 
+            'позиция', 
+            'наименование работ',
+            'наименование работ и затрат',
+            'наименование работ затрат',
+            'работ и затрат'
+        ],
+        'unit' => [
+            'ед.изм', 
+            'единица', 
+            'ед', 
+            'измерение', 
+            'ед. изм',
+            'единица измерения',
+            'ед.изм.'
+        ],
+        'quantity' => [
+            'количество', 
+            'кол-во', 
+            'объем', 
+            'кол', 
+            'объём',
+            'кол.'
+        ],
+        'unit_price' => [
+            'цена', 
+            'стоимость', 
+            'расценка', 
+            'цена за ед', 
+            'стоимость единицы',
+            'на единицу',
+            'единицу измерения',
+            'текущих ценах',
+            'базисных ценах'
+        ],
+        'code' => [
+            'код', 
+            'шифр', 
+            'обоснование', 
+            'гэсн', 
+            'фер',
+            'тер',
+            'шифр расценки',
+            'шифр нормы'
+        ],
+        'section_number' => [
+            '№', 
+            'номер', 
+            '№ п/п', 
+            'п/п', 
+            'n',
+            '№п/п'
+        ],
     ];
 
     public function parse(string $filePath): EstimateImportDTO
@@ -128,33 +179,86 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
 
     private function detectHeaderRow(Worksheet $sheet): ?int
     {
-        $maxRow = min($sheet->getHighestRow(), 20);
+        // Увеличиваем до 50 строк для поиска заголовков (локальные сметы имеют много служебной информации)
+        $maxRow = min($sheet->getHighestRow(), 50);
+        
+        Log::info('[ExcelParser] Detecting header row', [
+            'max_row' => $maxRow,
+            'highest_row' => $sheet->getHighestRow(),
+        ]);
         
         for ($row = 1; $row <= $maxRow; $row++) {
             $rowData = [];
+            $rowCells = []; // Сохраняем оригинальные значения для логирования
+            
             foreach (range('A', $sheet->getHighestColumn()) as $col) {
-                $value = $sheet->getCell($col . $row)->getValue();
-                if ($value !== null) {
-                    $rowData[] = mb_strtolower(trim((string)$value));
+                $cell = $sheet->getCell($col . $row);
+                $value = $cell->getValue();
+                
+                // Учитываем объединенные ячейки
+                if ($sheet->getCell($col . $row)->isInMergeRange()) {
+                    $mergeRange = $cell->getMergeRange();
+                    if ($mergeRange) {
+                        // Берем значение из первой ячейки объединенного диапазона
+                        $mergeStart = explode(':', $mergeRange)[0];
+                        $value = $sheet->getCell($mergeStart)->getValue();
+                    }
+                }
+                
+                if ($value !== null && trim((string)$value) !== '') {
+                    $normalizedValue = mb_strtolower(trim((string)$value));
+                    $rowData[] = $normalizedValue;
+                    $rowCells[$col] = $normalizedValue;
                 }
             }
             
+            // Расширенный список ключевых слов для российских локальных смет
+            $requiredKeywords = [
+                'наименование', 
+                'количество', 
+                'цена', 
+                'стоимость',
+                'обоснование',
+                'единица',
+                'измерения',
+                'работ',
+                'затрат',
+                'ед.изм',
+                'ед. изм',
+                'п/п', // номер по порядку
+                'коэффициент',
+                'всего'
+            ];
+            
             $matchCount = 0;
-            $requiredKeywords = ['наименование', 'количество', 'цена', 'стоимость'];
+            $matchedKeywords = [];
             
             foreach ($rowData as $cellValue) {
                 foreach ($requiredKeywords as $keyword) {
                     if (str_contains($cellValue, $keyword)) {
                         $matchCount++;
+                        $matchedKeywords[] = $keyword;
                         break;
                     }
                 }
             }
             
-            if ($matchCount >= 2) {
+            // Для российских смет достаточно 3 совпадений (у них сложная структура заголовков)
+            if ($matchCount >= 3) {
+                Log::info('[ExcelParser] Header row detected', [
+                    'row' => $row,
+                    'match_count' => $matchCount,
+                    'matched_keywords' => $matchedKeywords,
+                    'row_cells' => $rowCells,
+                ]);
                 return $row;
             }
         }
+        
+        Log::error('[ExcelParser] Header row not found', [
+            'searched_rows' => $maxRow,
+            'tip' => 'Try increasing search depth or check if file is a valid estimate',
+        ]);
         
         return null;
     }
@@ -162,12 +266,44 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     private function extractHeaders(Worksheet $sheet, int $headerRow): array
     {
         $headers = [];
+        
+        // Проверяем следующую строку - может быть многострочный заголовок
+        $nextRow = $headerRow + 1;
+        $hasMultilineHeader = false;
+        
+        foreach (range('A', $sheet->getHighestColumn()) as $col) {
+            $currentValue = $sheet->getCell($col . $headerRow)->getValue();
+            $nextValue = $sheet->getCell($col . $nextRow)->getValue();
+            
+            // Если в следующей строке тоже есть текст (не число), это многострочный заголовок
+            if ($nextValue !== null && trim((string)$nextValue) !== '' && !is_numeric($nextValue)) {
+                $hasMultilineHeader = true;
+                break;
+            }
+        }
+        
         foreach (range('A', $sheet->getHighestColumn()) as $col) {
             $value = $sheet->getCell($col . $headerRow)->getValue();
+            
+            // Для многострочных заголовков объединяем строки
+            if ($hasMultilineHeader) {
+                $nextValue = $sheet->getCell($col . $nextRow)->getValue();
+                if ($nextValue !== null && trim((string)$nextValue) !== '' && !is_numeric($nextValue)) {
+                    $value = trim((string)$value) . ' ' . trim((string)$nextValue);
+                }
+            }
+            
             if ($value !== null && trim((string)$value) !== '') {
                 $headers[$col] = trim((string)$value);
             }
         }
+        
+        Log::info('[ExcelParser] Headers extracted', [
+            'header_row' => $headerRow,
+            'multiline' => $hasMultilineHeader,
+            'headers' => $headers,
+        ]);
+        
         return $headers;
     }
 
