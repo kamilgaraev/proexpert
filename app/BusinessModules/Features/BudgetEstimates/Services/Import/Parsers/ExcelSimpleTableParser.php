@@ -412,7 +412,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         
         // КРИТИЧНО: Фильтруем кандидатов с объединенными ячейками
         // Подсчитываем реальные НЕ-пустые значения (не через merge logic!)
-        $filteredCandidates = [];
+        $candidatesWithRealCount = [];
         foreach ($candidates as $candidate) {
             $row = $candidate['row'];
             $realFilledCount = 0;
@@ -427,24 +427,36 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 }
             }
             
-            // Хороший заголовок должен иметь минимум 5 реальных значений (не объединенных)
-            // Для российских смет: A, B, C, H, I минимум = 5 колонок
-            if ($realFilledCount >= 5) {
-                $filteredCandidates[] = $candidate;
-                Log::debug('[ExcelParser] Candidate accepted', [
-                    'row' => $row,
-                    'real_filled' => $realFilledCount,
-                    'total_columns' => $totalColumns,
-                    'percent' => round(($realFilledCount / $totalColumns) * 100, 1) . '%',
-                ]);
-            } else {
-                Log::debug('[ExcelParser] Candidate rejected (too few real values)', [
-                    'row' => $row,
-                    'real_filled' => $realFilledCount,
-                    'total_columns' => $totalColumns,
-                    'percent' => round(($realFilledCount / $totalColumns) * 100, 1) . '%',
-                ]);
+            $candidate['real_filled'] = $realFilledCount;
+            $candidate['total_columns'] = $totalColumns;
+            $candidatesWithRealCount[] = $candidate;
+            
+            Log::debug('[ExcelParser] Candidate real values', [
+                'row' => $row,
+                'real_filled' => $realFilledCount,
+                'total_columns' => $totalColumns,
+                'score' => $candidate['score'],
+            ]);
+        }
+        
+        // Сортируем по количеству РЕАЛЬНЫХ непустых колонок (больше = лучше)
+        usort($candidatesWithRealCount, function($a, $b) {
+            // Сначала по количеству реальных значений (больше лучше)
+            if ($a['real_filled'] !== $b['real_filled']) {
+                return $b['real_filled'] <=> $a['real_filled'];
             }
+            // Потом по score
+            return $b['score'] <=> $a['score'];
+        });
+        
+        // Фильтруем - минимум 5 реальных значений
+        $filteredCandidates = array_filter($candidatesWithRealCount, fn($c) => $c['real_filled'] >= 5);
+        
+        if (empty($filteredCandidates)) {
+            Log::warning('[ExcelParser] All candidates have < 5 real values, using best anyway', [
+                'best_candidate_real_filled' => $candidatesWithRealCount[0]['real_filled'] ?? 0,
+            ]);
+            $filteredCandidates = [$candidatesWithRealCount[0]];
         }
         
         if (empty($filteredCandidates)) {
