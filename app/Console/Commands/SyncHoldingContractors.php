@@ -121,16 +121,17 @@ class SyncHoldingContractors extends Command
         }
 
         if ($all) {
-            return Organization::where(function($query) {
+            $allOrgs = Organization::where(function($query) {
                     $query->where('is_holding', true)
                           ->orWhereNotNull('parent_organization_id');
                 })
                 ->where('is_active', true)
-                ->whereHas('moduleActivations', function($q) {
-                    $q->where('module_key', 'multi-organization')
-                      ->where('is_active', true);
-                })
                 ->get();
+            
+            // Фильтруем только те, у которых есть доступ к модулю
+            return $allOrgs->filter(function($org) {
+                return $this->hasMultiOrgAccess($org->id);
+            });
         }
 
         $this->error('❌ Укажите --organization=ID или --all');
