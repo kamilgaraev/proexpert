@@ -392,7 +392,14 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'name' => null,
             'unit' => null,
             'quantity' => null,
+            'quantity_coefficient' => null,
+            'quantity_total' => null,
             'unit_price' => null,
+            'base_unit_price' => null,
+            'price_index' => null,
+            'current_unit_price' => null,
+            'price_coefficient' => null,
+            'current_total_amount' => null,
             'code' => null,
         ];
         
@@ -400,7 +407,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             $normalized = mb_strtolower(trim($headerText));
             
             foreach ($this->columnKeywords as $field => $keywords) {
-                if ($mapping[$field] === null) {
+                if (!isset($mapping[$field]) || $mapping[$field] === null) {
                     foreach ($keywords as $keyword) {
                         if (str_contains($normalized, $keyword)) {
                             $mapping[$field] = $columnLetter;
