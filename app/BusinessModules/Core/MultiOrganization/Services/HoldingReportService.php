@@ -320,11 +320,15 @@ class HoldingReportService
     protected function calculateProjectsSummary($query, array $orgIds): array
     {
         $projects = $query->get();
-
-        $contractsTotal = DB::table('contracts')
+        
+        $projectIds = $projects->pluck('id')->toArray();
+        $contractIds = DB::table('contracts')
             ->whereIn('organization_id', $orgIds)
-            ->whereIn('project_id', $projects->pluck('id'))
-            ->sum('total_amount');
+            ->whereIn('project_id', $projectIds)
+            ->pluck('id')
+            ->toArray();
+
+        $contractsTotal = $this->calculateContractAmountFromDb($contractIds);
 
         $completedWorksTotal = DB::table('completed_works')
             ->whereIn('project_id', $projects->pluck('id'))
@@ -353,7 +357,7 @@ class HoldingReportService
 
     protected function calculateContractsSummary($query): array
     {
-        $contracts = $query->get();
+        $contracts = $query->with('agreements')->get();
         $contractIds = $contracts->pluck('id');
 
         $totalPaid = DB::table('contract_payments')
@@ -365,7 +369,7 @@ class HoldingReportService
             ->where('is_approved', true)
             ->sum('amount');
 
-        $totalAmount = $contracts->sum('total_amount');
+        $totalAmount = $this->calculateTotalContractAmount($contracts);
         $totalGp = $contracts->sum(function ($contract) {
             return $contract->gp_amount ?? 0;
         });
@@ -385,7 +389,7 @@ class HoldingReportService
                 return [
                     'status' => $status,
                     'count' => $group->count(),
-                    'total_amount' => round($group->sum('total_amount'), 2),
+                    'total_amount' => round($this->calculateTotalContractAmount($group), 2),
                 ];
             })->values(),
         ];
@@ -401,12 +405,15 @@ class HoldingReportService
             $this->applyProjectFilters($query, $filters);
             
             $projects = $query->get();
-            $projectIds = $projects->pluck('id');
+            $projectIds = $projects->pluck('id')->toArray();
 
-            $contractsAmount = DB::table('contracts')
+            $contractIds = DB::table('contracts')
                 ->where('organization_id', $org->id)
                 ->whereIn('project_id', $projectIds)
-                ->sum('total_amount');
+                ->pluck('id')
+                ->toArray();
+            
+            $contractsAmount = $this->calculateContractAmountFromDb($contractIds);
 
             $completedWorks = DB::table('completed_works')
                 ->whereIn('project_id', $projectIds)
@@ -438,7 +445,7 @@ class HoldingReportService
         foreach ($organizations as $org) {
             $ownerQuery = Contract::where('organization_id', $org->id);
             $this->applyContractFilters($ownerQuery, $filters);
-            $ownerContracts = $ownerQuery->get();
+            $ownerContracts = $ownerQuery->with('agreements')->get();
             $ownerContractIds = $ownerContracts->pluck('id');
 
             $ownerPaid = DB::table('contract_payments')
@@ -450,7 +457,7 @@ class HoldingReportService
                 ->where('is_approved', true)
                 ->sum('amount');
 
-            $ownerAmount = $ownerContracts->sum('total_amount');
+            $ownerAmount = $this->calculateTotalContractAmount($ownerContracts);
 
             $contractorQuery = Contract::where('organization_id', '!=', $org->id)
                 ->whereHas('contractor', function ($q) use ($org, $orgIds) {
@@ -458,7 +465,7 @@ class HoldingReportService
                       ->whereIn('source_organization_id', $orgIds);
                 });
             $this->applyContractFilters($contractorQuery, $filters);
-            $contractorContracts = $contractorQuery->get();
+            $contractorContracts = $contractorQuery->with('agreements')->get();
             $contractorContractIds = $contractorContracts->pluck('id');
 
             $contractorPaid = DB::table('contract_payments')
@@ -470,7 +477,7 @@ class HoldingReportService
                 ->where('is_approved', true)
                 ->sum('amount');
 
-            $contractorAmount = $contractorContracts->sum('total_amount');
+            $contractorAmount = $this->calculateTotalContractAmount($contractorContracts);
 
             $allContracts = $ownerContracts->merge($contractorContracts);
             $totalAmount = $ownerAmount + $contractorAmount;
@@ -742,10 +749,10 @@ class HoldingReportService
         foreach ($projects as $project) {
             $projectContracts = Contract::where('project_id', $project->id)
                 ->where('organization_id', $holdingId)
-                ->with(['contractor:id,name,organization_id'])
+                ->with(['contractor:id,name,organization_id', 'agreements'])
                 ->get();
 
-            $totalHeadAmount = $projectContracts->sum('total_amount');
+            $totalHeadAmount = $this->calculateTotalContractAmount($projectContracts);
             $totalHeadPaid = DB::table('contract_payments')
                 ->whereIn('contract_id', $projectContracts->pluck('id'))
                 ->sum('amount');
@@ -772,17 +779,20 @@ class HoldingReportService
                 $subcontracts = Contract::where('project_id', $project->id)
                     ->where('organization_id', $childOrg->id)
                     ->whereNull('deleted_at')
+                    ->with('agreements')
                     ->get();
 
-                $totalSubAmount = $subcontracts->sum('total_amount');
+                $totalSubAmount = $this->calculateTotalContractAmount($subcontracts);
                 $totalSubPaid = DB::table('contract_payments')
                     ->whereIn('contract_id', $subcontracts->pluck('id'))
                     ->sum('amount');
 
                 $existingIndex = array_search($childOrg->id, array_column($childOrganizationsData, 'organization_id'));
+                
+                $contractEffectiveAmount = (float)$contract->total_amount + ($contract->agreements->sum('change_amount') ?? 0);
 
                 if ($existingIndex !== false) {
-                    $childOrganizationsData[$existingIndex]['parent_contract_amount'] += (float) $contract->total_amount;
+                    $childOrganizationsData[$existingIndex]['parent_contract_amount'] += $contractEffectiveAmount;
                     $childOrganizationsData[$existingIndex]['subcontracts_count'] += $subcontracts->count();
                     $childOrganizationsData[$existingIndex]['subcontracts_amount'] += $totalSubAmount;
                     $childOrganizationsData[$existingIndex]['subcontracts_paid'] += $totalSubPaid;
@@ -793,25 +803,27 @@ class HoldingReportService
                         'role' => 'subcontractor',
                         'parent_contract_id' => $contract->id,
                         'parent_contract_number' => $contract->number,
-                        'parent_contract_amount' => (float) $contract->total_amount,
+                        'parent_contract_amount' => $contractEffectiveAmount,
                         'subcontracts_count' => $subcontracts->count(),
                         'subcontracts_amount' => round($totalSubAmount, 2),
                         'subcontracts_paid' => round($totalSubPaid, 2),
                         'subcontracts_remaining' => round($totalSubAmount - $totalSubPaid, 2),
-                        'margin' => round($contract->total_amount - $totalSubAmount, 2),
-                        'margin_percentage' => $contract->total_amount > 0 
-                            ? round((($contract->total_amount - $totalSubAmount) / $contract->total_amount) * 100, 2) 
+                        'margin' => round($contractEffectiveAmount - $totalSubAmount, 2),
+                        'margin_percentage' => $contractEffectiveAmount > 0 
+                            ? round((($contractEffectiveAmount - $totalSubAmount) / $contractEffectiveAmount) * 100, 2) 
                             : 0,
                         'subcontracts' => $subcontracts->map(function ($sub) {
                             $paid = DB::table('contract_payments')
                                 ->where('contract_id', $sub->id)
                                 ->sum('amount');
+                            
+                            $subEffectiveAmount = (float)$sub->total_amount + ($sub->agreements->sum('change_amount') ?? 0);
 
                             return [
                                 'id' => $sub->id,
                                 'number' => $sub->number,
                                 'contractor_name' => $sub->contractor?->name,
-                                'amount' => round($sub->total_amount, 2),
+                                'amount' => round($subEffectiveAmount, 2),
                                 'paid' => round($paid, 2),
                                 'status' => $sub->status,
                             ];
@@ -1338,6 +1350,66 @@ class HoldingReportService
         }
 
         return $this->excelExporter->streamDownload($filename . '.xlsx', $headers, $rows);
+    }
+
+    /**
+     * Рассчитать сумму контрактов с учетом дополнительных соглашений (для коллекций Eloquent).
+     */
+    private function calculateTotalContractAmount($contracts): float
+    {
+        $total = 0;
+        foreach ($contracts as $contract) {
+            $baseAmount = (float) ($contract->total_amount ?? 0);
+            $agreementsDelta = 0;
+            
+            if ($contract->relationLoaded('agreements')) {
+                $agreementsDelta = $contract->agreements->sum('change_amount') ?? 0;
+            } elseif (isset($contract->agreements)) {
+                $agreementsDelta = $contract->agreements->sum('change_amount') ?? 0;
+            }
+            
+            $total += $baseAmount + $agreementsDelta;
+        }
+        return $total;
+    }
+
+    /**
+     * Рассчитать сумму контрактов с учетом дополнительных соглашений (для DB запросов).
+     * Возвращает сумму по contract_id.
+     */
+    private function calculateContractAmountFromDb(array $contractIds): float
+    {
+        if (empty($contractIds)) {
+            return 0;
+        }
+
+        $contractsBase = DB::table('contracts')
+            ->whereIn('id', $contractIds)
+            ->sum('total_amount');
+
+        $agreementsTotal = DB::table('supplementary_agreements')
+            ->whereIn('contract_id', $contractIds)
+            ->whereNull('deleted_at')
+            ->sum('change_amount');
+
+        return $contractsBase + $agreementsTotal;
+    }
+
+    /**
+     * Рассчитать сумму контрактов с учетом дополнительных соглашений (для запросов с условиями).
+     */
+    private function calculateContractAmountFromDbWithConditions(array $organizationIds, array $projectIds = null): float
+    {
+        $contractsQuery = DB::table('contracts')
+            ->whereIn('organization_id', $organizationIds);
+        
+        if ($projectIds !== null) {
+            $contractsQuery->whereIn('project_id', $projectIds);
+        }
+        
+        $contractIds = $contractsQuery->pluck('id')->toArray();
+        
+        return $this->calculateContractAmountFromDb($contractIds);
     }
 }
 

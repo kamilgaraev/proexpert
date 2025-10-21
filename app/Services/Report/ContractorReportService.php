@@ -177,7 +177,7 @@ class ContractorReportService
         $contractsQuery = Contract::where('contractor_id', $contractorId)
             ->where('project_id', $projectId)
             ->where('organization_id', $organizationId)
-            ->with(['completedWorks', 'payments']);
+            ->with(['completedWorks', 'payments', 'agreements']);
 
         $contracts = $contractsQuery->get();
 
@@ -251,7 +251,8 @@ class ContractorReportService
         // Получаем контракты подрядчика по проекту
         $contractsQuery = Contract::where('contractor_id', $contractor->id)
             ->where('project_id', $projectId)
-            ->where('organization_id', $organizationId);
+            ->where('organization_id', $organizationId)
+            ->with('agreements');
 
         if ($contractStatus) {
             $contractsQuery->where('status', $contractStatus);
@@ -259,7 +260,7 @@ class ContractorReportService
 
         $contracts = $contractsQuery->get();
 
-        $totalContractAmount = $contracts->sum('total_amount');
+        $totalContractAmount = $this->calculateTotalContractAmount($contracts);
         $totalCompletedAmount = 0;
         $totalPaymentAmount = 0;
         $contractsCount = $contracts->count();
@@ -320,6 +321,8 @@ class ContractorReportService
      */
     private function getContractDetailData(Contract $contract, ?string $dateFrom, ?string $dateTo): array
     {
+        $contract->load('agreements');
+        
         $completedWorksQuery = $contract->completedWorks();
         $paymentsQuery = $contract->payments();
 
@@ -338,18 +341,20 @@ class ContractorReportService
 
         $completedAmount = $completedWorks->sum('total_amount');
         $paymentAmount = $payments->sum('amount');
+        
+        $effectiveTotalAmount = $this->calculateSingleContractAmount($contract);
 
         return [
             'contract_id' => $contract->id,
             'contract_number' => $contract->contract_number,
             'contract_date' => $contract->contract_date?->format('Y-m-d'),
             'status' => $contract->status,
-            'total_amount' => round($contract->total_amount, 2),
+            'total_amount' => round($effectiveTotalAmount, 2),
             'completed_amount' => round($completedAmount, 2),
             'payment_amount' => round($paymentAmount, 2),
-            'remaining_amount' => round($contract->total_amount - $paymentAmount, 2),
-            'completion_percentage' => $contract->total_amount > 0 ? round(($completedAmount / $contract->total_amount) * 100, 2) : 0,
-            'payment_percentage' => $contract->total_amount > 0 ? round(($paymentAmount / $contract->total_amount) * 100, 2) : 0,
+            'remaining_amount' => round($effectiveTotalAmount - $paymentAmount, 2),
+            'completion_percentage' => $effectiveTotalAmount > 0 ? round(($completedAmount / $effectiveTotalAmount) * 100, 2) : 0,
+            'payment_percentage' => $effectiveTotalAmount > 0 ? round(($paymentAmount / $effectiveTotalAmount) * 100, 2) : 0,
             'completed_works' => $completedWorks->map(function ($work) {
                 return [
                     'id' => $work->id,
@@ -703,5 +708,31 @@ class ContractorReportService
         $csvExporter->saveToFile($exportData, $headers, $filePath);
     }
 
+    /**
+     * Рассчитать общую сумму контрактов с учетом дополнительных соглашений.
+     */
+    private function calculateTotalContractAmount($contracts): float
+    {
+        $total = 0;
+        foreach ($contracts as $contract) {
+            $total += $this->calculateSingleContractAmount($contract);
+        }
+        return $total;
+    }
+
+    /**
+     * Рассчитать сумму одного контракта с учетом дополнительных соглашений.
+     */
+    private function calculateSingleContractAmount(Contract $contract): float
+    {
+        $baseAmount = (float) ($contract->total_amount ?? 0);
+        $agreementsDelta = 0;
+        
+        if ($contract->relationLoaded('agreements')) {
+            $agreementsDelta = $contract->agreements->sum('change_amount') ?? 0;
+        }
+        
+        return $baseAmount + $agreementsDelta;
+    }
 
 }
