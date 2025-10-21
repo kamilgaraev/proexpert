@@ -187,6 +187,8 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'highest_row' => $sheet->getHighestRow(),
         ]);
         
+        $attemptedRows = [];
+        
         for ($row = 1; $row <= $maxRow; $row++) {
             $rowData = [];
             $rowCells = []; // Сохраняем оригинальные значения для логирования
@@ -226,9 +228,65 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 'ед.изм',
                 'ед. изм',
                 'п/п', // номер по порядку
+                '№ п/п',
                 'коэффициент',
-                'всего'
+                'всего',
+                'индекс',
+                'базисн', // базисных ценах
+                'текущ' // текущих ценах
             ];
+            
+            // Исключаем строки со служебной информацией
+            $hasServiceInfo = false;
+            $hasDocumentTitle = false;
+            
+            foreach ($rowData as $cellValue) {
+                // Служебная информация о программе и приказах
+                if (
+                    str_contains($cellValue, 'приказ') ||
+                    str_contains($cellValue, 'минстрой') ||
+                    str_contains($cellValue, 'гранд-смета') ||
+                    str_contains($cellValue, 'версия') ||
+                    str_contains($cellValue, 'программного продукта') ||
+                    str_contains($cellValue, 'редакции сметных')
+                ) {
+                    $hasServiceInfo = true;
+                    break;
+                }
+                
+                // Заголовки документа (обычно одна большая ячейка с названием)
+                if (
+                    str_contains($cellValue, 'локальный сметный') ||
+                    str_contains($cellValue, 'локальная смета') ||
+                    str_contains($cellValue, 'объектная смета') ||
+                    str_contains($cellValue, 'сводная смета') ||
+                    (str_contains($cellValue, 'смета') && str_contains($cellValue, 'расчет'))
+                ) {
+                    $hasDocumentTitle = true;
+                }
+                
+                // Служебная информация (основание, составлен и т.д.)
+                // Но НЕ строки заголовков таблицы!
+                if (
+                    str_contains($cellValue, 'составлен') ||
+                    str_contains($cellValue, 'основание') ||
+                    (str_contains($cellValue, 'проектная') && !str_contains($cellValue, 'п/п')) ||
+                    str_contains($cellValue, 'техническая документация') ||
+                    (str_contains($cellValue, 'общестроительные работы') && strlen($cellValue) < 50) ||
+                    str_contains($cellValue, 'в том числе')
+                ) {
+                    $hasServiceInfo = true;
+                }
+            }
+            
+            if ($hasServiceInfo || $hasDocumentTitle) {
+                $attemptedRows[] = [
+                    'row' => $row,
+                    'reason' => $hasServiceInfo ? 'service_info' : 'document_title',
+                    'sample' => array_slice($rowData, 0, 3),
+                ];
+                continue; // Пропускаем служебную информацию и заголовки документа
+            }
             
             $matchCount = 0;
             $matchedKeywords = [];
@@ -245,22 +303,120 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             
             // Для российских смет достаточно 3 совпадений (у них сложная структура заголовков)
             if ($matchCount >= 3) {
-                Log::info('[ExcelParser] Header row detected', [
-                    'row' => $row,
-                    'match_count' => $matchCount,
-                    'matched_keywords' => $matchedKeywords,
-                    'row_cells' => $rowCells,
-                ]);
-                return $row;
+                // Дополнительная проверка: после заголовков должны идти ДАННЫЕ, а не текст
+                if ($this->validateHeaderRow($sheet, $row)) {
+                    Log::info('[ExcelParser] Header row detected', [
+                        'row' => $row,
+                        'match_count' => $matchCount,
+                        'matched_keywords' => $matchedKeywords,
+                        'row_cells' => $rowCells,
+                    ]);
+                    return $row;
+                } else {
+                    $attemptedRows[] = [
+                        'row' => $row,
+                        'reason' => 'no_data_after',
+                        'matches' => $matchCount,
+                        'keywords' => $matchedKeywords,
+                    ];
+                    Log::debug('[ExcelParser] Header candidate rejected (no data rows after)', [
+                        'row' => $row,
+                        'matched_keywords' => $matchedKeywords,
+                    ]);
+                }
             }
         }
         
         Log::error('[ExcelParser] Header row not found', [
             'searched_rows' => $maxRow,
+            'attempted_rows' => count($attemptedRows),
+            'rejected_samples' => array_slice($attemptedRows, 0, 5),
             'tip' => 'Try increasing search depth or check if file is a valid estimate',
         ]);
         
         return null;
+    }
+
+    private function validateHeaderRow(Worksheet $sheet, int $headerRow): bool
+    {
+        // Проверяем 5-10 строк после потенциальных заголовков (в сметах первые строки - разделы)
+        $checkRows = min(10, $sheet->getHighestRow() - $headerRow);
+        
+        if ($checkRows < 2) {
+            return false; // Слишком мало строк после заголовков
+        }
+        
+        $dataRowsFound = 0;
+        $sectionRowsFound = 0; // Разделы/блоки (текст без чисел)
+        $highestCol = $sheet->getHighestColumn();
+        
+        for ($i = 1; $i <= $checkRows; $i++) {
+            $currentRow = $headerRow + $i;
+            $hasNumericData = false;
+            $hasTextData = false;
+            $cellsWithData = 0;
+            $serviceCells = 0;
+            
+            foreach (range('A', $highestCol) as $col) {
+                $value = $sheet->getCell($col . $currentRow)->getValue();
+                
+                if ($value === null || trim((string)$value) === '') {
+                    continue;
+                }
+                
+                $cellsWithData++;
+                $strValue = mb_strtolower(trim((string)$value));
+                
+                // Проверяем на служебную информацию
+                if (
+                    str_contains($strValue, 'приказ') ||
+                    str_contains($strValue, 'минстрой') ||
+                    str_contains($strValue, 'гранд-смета') ||
+                    str_contains($strValue, 'версия') ||
+                    str_contains($strValue, 'программ')
+                ) {
+                    $serviceCells++;
+                }
+                
+                if (is_numeric($value)) {
+                    $hasNumericData = true;
+                } else {
+                    $hasTextData = true;
+                }
+            }
+            
+            // Если слишком много служебной информации, это не таблица данных
+            if ($serviceCells > $cellsWithData / 2) {
+                Log::debug('[ExcelParser] Service info detected in row', [
+                    'row' => $currentRow,
+                    'service_cells' => $serviceCells,
+                    'total_cells' => $cellsWithData,
+                ]);
+                continue;
+            }
+            
+            // Строка с данными (текст + числа)
+            if ($hasNumericData && $hasTextData && $cellsWithData >= 2) {
+                $dataRowsFound++;
+            }
+            
+            // Строка раздела/блока (только текст, например "Раздел 1. Земляные работы")
+            if ($hasTextData && !$hasNumericData && $cellsWithData >= 1) {
+                $sectionRowsFound++;
+            }
+        }
+        
+        // Валидная таблица: минимум 1 строка данных ИЛИ минимум 2 строки разделов
+        $isValid = ($dataRowsFound >= 1) || ($sectionRowsFound >= 2);
+        
+        Log::debug('[ExcelParser] Header validation', [
+            'header_row' => $headerRow,
+            'data_rows_found' => $dataRowsFound,
+            'section_rows_found' => $sectionRowsFound,
+            'is_valid' => $isValid,
+        ]);
+        
+        return $isValid;
     }
 
     private function extractHeaders(Worksheet $sheet, int $headerRow): array
