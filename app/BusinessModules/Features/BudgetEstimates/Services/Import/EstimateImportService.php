@@ -189,14 +189,21 @@ class EstimateImportService
         
         $items = $previewData['items'];
         $matchResults = [];
+        $workItems = array_filter($items, fn($item) => ($item['item_type'] ?? 'work') === 'work');
+        
         $summary = [
             'exact_matches' => 0,
             'fuzzy_matches' => 0,
             'new_work_types_needed' => 0,
             'total_items' => count($items),
+            'works_count' => count($workItems),
+            'materials_count' => count(array_filter($items, fn($item) => ($item['item_type'] ?? '') === 'material')),
+            'equipment_count' => count(array_filter($items, fn($item) => ($item['item_type'] ?? '') === 'equipment')),
+            'labor_count' => count(array_filter($items, fn($item) => ($item['item_type'] ?? '') === 'labor')),
+            'summary_count' => count(array_filter($items, fn($item) => ($item['item_type'] ?? '') === 'summary')),
         ];
         
-        foreach ($items as $item) {
+        foreach ($workItems as $item) {
             $importedText = $item['item_name'];
             $matches = $this->matchingService->findMatches($importedText, $organizationId);
             
@@ -483,16 +490,22 @@ class EstimateImportService
                     $sectionId = $sectionsMap[$item['section_path']];
                 }
                 
-                $workType = $this->findWorkType($item['item_name'], $newWorkTypes, $organizationId);
+                $itemType = $item['item_type'] ?? 'work';
+                $workType = null;
                 
-                if ($workType === null && !($matchingConfig['skip_unmatched'] ?? false)) {
-                    $skipped++;
-                    continue;
+                if ($itemType === 'work') {
+                    $workType = $this->findWorkType($item['item_name'], $newWorkTypes, $organizationId);
+                    
+                    if ($workType === null && !($matchingConfig['skip_unmatched'] ?? false)) {
+                        $skipped++;
+                        continue;
+                    }
                 }
                 
                 $this->itemService->addItem([
                     'estimate_id' => $estimate->id,
                     'estimate_section_id' => $sectionId,
+                    'item_type' => $itemType,
                     'name' => $item['item_name'],
                     'work_type_id' => $workType?->id,
                     'unit' => $item['unit'],

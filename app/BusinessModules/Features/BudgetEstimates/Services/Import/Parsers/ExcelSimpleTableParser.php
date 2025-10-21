@@ -11,6 +11,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection\Detectors\MultilineHeaderDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection\Detectors\NumericHeaderDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\MergedCellResolver;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateItemTypeDetector;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Cell\Cell;
@@ -18,7 +19,13 @@ use Illuminate\Support\Facades\Log;
 
 class ExcelSimpleTableParser implements EstimateImportParserInterface
 {
+    private EstimateItemTypeDetector $typeDetector;
     private array $headerCandidates = [];
+    
+    public function __construct()
+    {
+        $this->typeDetector = new EstimateItemTypeDetector();
+    }
     private array $columnKeywords = [
         'name' => [
             'наименование', 
@@ -518,6 +525,12 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             $isSection = $this->isSectionRow($rowData);
             $level = $this->calculateSectionLevel($rowData['section_number']);
             
+            $itemType = $this->typeDetector->detectType(
+                $rowData['code'],
+                $rowData['name'],
+                $rowData['section_number']
+            );
+            
             $rows[] = new EstimateImportRowDTO(
                 rowNumber: $rowNum,
                 sectionNumber: $rowData['section_number'],
@@ -527,6 +540,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 unitPrice: $rowData['unit_price'],
                 code: $rowData['code'],
                 isSection: $isSection,
+                itemType: $itemType,
                 level: $level,
                 sectionPath: null,
                 rawData: $rowData

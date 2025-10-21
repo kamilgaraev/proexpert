@@ -15,6 +15,7 @@ class EstimateItem extends Model
     protected $fillable = [
         'estimate_id',
         'estimate_section_id',
+        'item_type',
         'position_number',
         'name',
         'description',
@@ -99,6 +100,61 @@ class EstimateItem extends Model
     public function scopeFromCatalog($query)
     {
         return $query->where('is_manual', false);
+    }
+
+    public function scopeWorks($query)
+    {
+        return $query->where('item_type', 'work');
+    }
+
+    public function scopeMaterials($query)
+    {
+        return $query->where('item_type', 'material');
+    }
+
+    public function scopeEquipment($query)
+    {
+        return $query->where('item_type', 'equipment');
+    }
+
+    public function scopeLabor($query)
+    {
+        return $query->where('item_type', 'labor');
+    }
+
+    public function scopeSummary($query)
+    {
+        return $query->where('item_type', 'summary');
+    }
+
+    public function scopeByType($query, string $type)
+    {
+        return $query->where('item_type', $type);
+    }
+
+    public function isWork(): bool
+    {
+        return $this->item_type === 'work';
+    }
+
+    public function isMaterial(): bool
+    {
+        return $this->item_type === 'material';
+    }
+
+    public function isEquipment(): bool
+    {
+        return $this->item_type === 'equipment';
+    }
+
+    public function isLabor(): bool
+    {
+        return $this->item_type === 'labor';
+    }
+
+    public function isSummary(): bool
+    {
+        return $this->item_type === 'summary';
     }
 
     public function calculateTotal(): float

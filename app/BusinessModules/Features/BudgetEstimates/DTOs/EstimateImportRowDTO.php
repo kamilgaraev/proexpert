@@ -13,6 +13,7 @@ class EstimateImportRowDTO
         public ?float $unitPrice,
         public ?string $code,
         public bool $isSection,
+        public string $itemType = 'work',
         public int $level = 0,
         public ?string $sectionPath = null,
         public ?array $rawData = null
@@ -29,6 +30,7 @@ class EstimateImportRowDTO
             'unit_price' => $this->unitPrice,
             'code' => $this->code,
             'is_section' => $this->isSection,
+            'item_type' => $this->itemType,
             'level' => $this->level,
             'section_path' => $this->sectionPath,
             'raw_data' => $this->rawData,
