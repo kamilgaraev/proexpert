@@ -411,38 +411,38 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         usort($candidates, fn($a, $b) => $b['score'] <=> $a['score']);
         
         // КРИТИЧНО: Фильтруем кандидатов с объединенными ячейками
-        // Если у строки много пустых колонок (null), но высокий score - это объединенная ячейка
+        // Подсчитываем реальные НЕ-пустые значения (не через merge logic!)
         $filteredCandidates = [];
         foreach ($candidates as $candidate) {
             $row = $candidate['row'];
-            $nullCount = 0;
-            $filledCount = count($candidate['cells']);
+            $realFilledCount = 0;
+            $totalColumns = 0;
             
-            // Подсчитываем реальные null в сырых данных
+            // Подсчитываем реальные непустые значения в сырых данных
             foreach (range('A', $sheet->getHighestColumn()) as $col) {
+                $totalColumns++;
                 $rawValue = $sheet->getCell($col . $row)->getValue();
-                if ($rawValue === null || trim((string)$rawValue) === '') {
-                    $nullCount++;
+                if ($rawValue !== null && trim((string)$rawValue) !== '') {
+                    $realFilledCount++;
                 }
             }
             
-            // Если больше 30% колонок пустые - скорее всего объединенные ячейки
-            $nullPercent = $nullCount / max($filledCount, 1);
-            
-            if ($nullPercent < 0.3) {
+            // Хороший заголовок должен иметь минимум 5 реальных значений (не объединенных)
+            // Для российских смет: A, B, C, H, I минимум = 5 колонок
+            if ($realFilledCount >= 5) {
                 $filteredCandidates[] = $candidate;
                 Log::debug('[ExcelParser] Candidate accepted', [
                     'row' => $row,
-                    'null_count' => $nullCount,
-                    'filled_count' => $filledCount,
-                    'null_percent' => round($nullPercent * 100, 1) . '%',
+                    'real_filled' => $realFilledCount,
+                    'total_columns' => $totalColumns,
+                    'percent' => round(($realFilledCount / $totalColumns) * 100, 1) . '%',
                 ]);
             } else {
-                Log::debug('[ExcelParser] Candidate rejected (merged cells)', [
+                Log::debug('[ExcelParser] Candidate rejected (too few real values)', [
                     'row' => $row,
-                    'null_count' => $nullCount,
-                    'filled_count' => $filledCount,
-                    'null_percent' => round($nullPercent * 100, 1) . '%',
+                    'real_filled' => $realFilledCount,
+                    'total_columns' => $totalColumns,
+                    'percent' => round(($realFilledCount / $totalColumns) * 100, 1) . '%',
                 ]);
             }
         }
