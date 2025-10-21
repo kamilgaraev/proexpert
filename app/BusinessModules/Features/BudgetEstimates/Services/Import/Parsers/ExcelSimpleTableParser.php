@@ -187,6 +187,8 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'highest_row' => $sheet->getHighestRow(),
         ]);
         
+        // Собираем кандидатов с оценкой (scoring system)
+        $candidates = [];
         $attemptedRows = [];
         
         for ($row = 1; $row <= $maxRow; $row++) {
@@ -303,38 +305,145 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             
             // Для российских смет достаточно 3 совпадений (у них сложная структура заголовков)
             if ($matchCount >= 3) {
-                // Дополнительная проверка: после заголовков должны идти ДАННЫЕ, а не текст
-                if ($this->validateHeaderRow($sheet, $row)) {
-                    Log::info('[ExcelParser] Header row detected', [
-                        'row' => $row,
-                        'match_count' => $matchCount,
-                        'matched_keywords' => $matchedKeywords,
-                        'row_cells' => $rowCells,
-                    ]);
-                    return $row;
-                } else {
-                    $attemptedRows[] = [
-                        'row' => $row,
-                        'reason' => 'no_data_after',
-                        'matches' => $matchCount,
-                        'keywords' => $matchedKeywords,
-                    ];
-                    Log::debug('[ExcelParser] Header candidate rejected (no data rows after)', [
-                        'row' => $row,
-                        'matched_keywords' => $matchedKeywords,
-                    ]);
-                }
+                // Вычисляем score для этой строки
+                $score = $this->scoreHeaderCandidate($sheet, $row, $matchCount, $matchedKeywords, $rowCells);
+                
+                $candidates[] = [
+                    'row' => $row,
+                    'score' => $score,
+                    'match_count' => $matchCount,
+                    'matched_keywords' => $matchedKeywords,
+                    'cells' => $rowCells,
+                ];
+                
+                Log::debug('[ExcelParser] Header candidate found', [
+                    'row' => $row,
+                    'score' => $score,
+                    'matches' => $matchCount,
+                    'keywords' => $matchedKeywords,
+                ]);
             }
         }
         
-        Log::error('[ExcelParser] Header row not found', [
-            'searched_rows' => $maxRow,
-            'attempted_rows' => count($attemptedRows),
-            'rejected_samples' => array_slice($attemptedRows, 0, 5),
-            'tip' => 'Try increasing search depth or check if file is a valid estimate',
+        // Выбираем лучшего кандидата
+        if (empty($candidates)) {
+            Log::error('[ExcelParser] No header candidates found', [
+                'searched_rows' => $maxRow,
+                'attempted_rows' => count($attemptedRows),
+                'rejected_samples' => array_slice($attemptedRows, 0, 5),
+            ]);
+            return null;
+        }
+        
+        // Сортируем по score (от большего к меньшему)
+        usort($candidates, fn($a, $b) => $b['score'] <=> $a['score']);
+        
+        $bestCandidate = $candidates[0];
+        
+        Log::info('[ExcelParser] Best header candidate selected', [
+            'row' => $bestCandidate['row'],
+            'score' => $bestCandidate['score'],
+            'total_candidates' => count($candidates),
+            'all_candidates' => array_map(fn($c) => ['row' => $c['row'], 'score' => $c['score']], $candidates),
         ]);
         
-        return null;
+        return $bestCandidate['row'];
+    }
+
+    private function scoreHeaderCandidate(Worksheet $sheet, int $row, int $matchCount, array $matchedKeywords, array $rowCells): float
+    {
+        $score = 0.0;
+        $highestCol = $sheet->getHighestColumn();
+        $filledColumns = count($rowCells);
+        
+        // 1. Базовый score за совпадение ключевых слов (10 баллов за каждое)
+        $score += $matchCount * 10;
+        
+        // 2. Бонус за позицию в файле (заголовки обычно после 15-20 строки в сметах)
+        if ($row >= 15 && $row <= 40) {
+            $score += 50; // Оптимальная позиция
+        } elseif ($row >= 10 && $row < 15) {
+            $score += 20; // Допустимая позиция
+        } elseif ($row < 10) {
+            $score -= 30; // Слишком рано - скорее всего служебная информация
+        }
+        
+        // 3. Количество заполненных колонок (заголовки таблицы имеют 5-12 колонок)
+        if ($filledColumns >= 6 && $filledColumns <= 12) {
+            $score += 30; // Идеальное количество колонок
+        } elseif ($filledColumns >= 4 && $filledColumns < 6) {
+            $score += 10; // Приемлемо
+        } elseif ($filledColumns > 12) {
+            $score -= 20; // Слишком много - скорее всего не заголовки
+        } elseif ($filledColumns < 4) {
+            $score -= 40; // Слишком мало
+        }
+        
+        // 4. Длина текста в ячейках (заголовки обычно короткие)
+        $avgLength = 0;
+        $shortCellsCount = 0;
+        foreach ($rowCells as $cellValue) {
+            $len = mb_strlen($cellValue);
+            $avgLength += $len;
+            if ($len > 5 && $len < 50) { // Нормальная длина для заголовка
+                $shortCellsCount++;
+            }
+        }
+        $avgLength = $filledColumns > 0 ? $avgLength / $filledColumns : 0;
+        
+        if ($avgLength > 10 && $avgLength < 40) {
+            $score += 20; // Оптимальная длина заголовков
+        } elseif ($avgLength > 100) {
+            $score -= 30; // Слишком длинные тексты - скорее всего не заголовки
+        }
+        
+        // 5. Проверка на специфичные ключевые слова заголовков
+        $specificHeaderKeywords = ['п/п', '№', 'единица', 'количество', 'обоснование'];
+        $specificMatches = 0;
+        foreach ($matchedKeywords as $keyword) {
+            if (in_array($keyword, $specificHeaderKeywords)) {
+                $specificMatches++;
+            }
+        }
+        $score += $specificMatches * 15;
+        
+        // 6. Проверка наличия данных после этой строки
+        $hasDataAfter = $this->validateHeaderRow($sheet, $row);
+        if ($hasDataAfter) {
+            $score += 40; // Критически важно
+        } else {
+            $score -= 50; // Нет данных - скорее всего не заголовки
+        }
+        
+        // 7. Штраф за очень длинные тексты в одной ячейке (скорее всего описание)
+        foreach ($rowCells as $cellValue) {
+            if (mb_strlen($cellValue) > 150) {
+                $score -= 25; // Это скорее всего текстовое описание, а не заголовок
+            }
+        }
+        
+        // 8. Бонус если есть номера/индексы в колонках
+        $hasNumbers = false;
+        foreach ($rowCells as $col => $cellValue) {
+            if (preg_match('/^\d+$/', $cellValue) || preg_match('/^[A-Z]$/', $cellValue)) {
+                $hasNumbers = true;
+                break;
+            }
+        }
+        if ($hasNumbers) {
+            $score -= 20; // Заголовки не должны содержать только цифры
+        }
+        
+        Log::debug('[ExcelParser] Score calculated', [
+            'row' => $row,
+            'score' => $score,
+            'filled_columns' => $filledColumns,
+            'avg_length' => round($avgLength, 2),
+            'has_data_after' => $hasDataAfter,
+            'specific_matches' => $specificMatches,
+        ]);
+        
+        return $score;
     }
 
     private function validateHeaderRow(Worksheet $sheet, int $headerRow): bool
