@@ -9,22 +9,22 @@ class EstimatePolicy
 {
     public function viewAny(User $user): bool
     {
-        return $user->hasPermission('estimates.view') || $user->hasPermission('estimates.view_all');
+        return $user->hasPermission('budget-estimates.view') || $user->hasPermission('budget-estimates.view_all');
     }
 
     public function view(User $user, Estimate $estimate): bool
     {
-        if ($user->hasPermission('estimates.view_all')) {
+        if ($user->hasPermission('budget-estimates.view_all')) {
             return $user->current_organization_id === $estimate->organization_id;
         }
         
-        return $user->hasPermission('estimates.view') 
+        return $user->hasPermission('budget-estimates.view') 
             && $user->current_organization_id === $estimate->organization_id;
     }
 
     public function create(User $user): bool
     {
-        return $user->hasPermission('estimates.create');
+        return $user->hasPermission('budget-estimates.create');
     }
 
     public function update(User $user, Estimate $estimate): bool
@@ -34,34 +34,34 @@ class EstimatePolicy
         }
         
         if ($estimate->isApproved()) {
-            return $user->hasPermission('estimates.edit_approved');
+            return $user->hasPermission('budget-estimates.edit_approved');
         }
         
-        return $user->hasPermission('estimates.edit');
+        return $user->hasPermission('budget-estimates.edit');
     }
 
     public function delete(User $user, Estimate $estimate): bool
     {
-        return $user->hasPermission('estimates.delete') 
+        return $user->hasPermission('budget-estimates.delete') 
             && $user->current_organization_id === $estimate->organization_id
             && !$estimate->isApproved();
     }
 
     public function approve(User $user, Estimate $estimate): bool
     {
-        return $user->hasPermission('estimates.approve') 
+        return $user->hasPermission('budget-estimates.approve') 
             && $user->current_organization_id === $estimate->organization_id
             && $estimate->status === 'in_review';
     }
 
     public function import(User $user): bool
     {
-        return $user->hasPermission('estimates.import');
+        return $user->hasPermission('budget-estimates.import');
     }
 
     public function export(User $user, Estimate $estimate): bool
     {
-        return $user->hasPermission('estimates.export') 
+        return $user->hasPermission('budget-estimates.export') 
             && $user->current_organization_id === $estimate->organization_id;
     }
 }
