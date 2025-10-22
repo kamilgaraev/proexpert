@@ -92,8 +92,17 @@ class EstimateItemRepository
 
     public function getNextPositionNumber(int $estimateId): string
     {
+        $driver = config('database.default');
+        $connection = config("database.connections.{$driver}.driver");
+        
+        if ($connection === 'pgsql') {
+            $orderBy = 'CAST(position_number AS INTEGER) DESC';
+        } else {
+            $orderBy = 'CAST(position_number AS UNSIGNED) DESC';
+        }
+        
         $lastItem = EstimateItem::where('estimate_id', $estimateId)
-            ->orderByRaw('CAST(position_number AS UNSIGNED) DESC')
+            ->orderByRaw($orderBy)
             ->first();
 
         if (!$lastItem) {

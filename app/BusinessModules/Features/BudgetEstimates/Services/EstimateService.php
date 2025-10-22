@@ -138,9 +138,18 @@ class EstimateService
         $year = now()->year;
         $prefix = "СМ-{$year}-";
         
+        $driver = config('database.default');
+        $connection = config("database.connections.{$driver}.driver");
+        
+        if ($connection === 'pgsql') {
+            $orderBy = 'CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS INTEGER) DESC';
+        } else {
+            $orderBy = 'CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS UNSIGNED) DESC';
+        }
+        
         $lastEstimate = Estimate::where('organization_id', $organizationId)
             ->where('number', 'like', $prefix . '%')
-            ->orderByRaw('CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS UNSIGNED) DESC')
+            ->orderByRaw($orderBy)
             ->first();
         
         if ($lastEstimate) {
