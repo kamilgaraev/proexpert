@@ -455,6 +455,10 @@ class EstimateImportService
         $sectionsMap = [];
         
         foreach ($sections as $sectionData) {
+            if (empty($sectionData['section_number'])) {
+                continue;
+            }
+            
             $parentId = null;
             
             if ($sectionData['level'] > 0) {
