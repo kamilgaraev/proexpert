@@ -310,7 +310,9 @@ class EstimateImportService
             'organization_id' => $fileData['organization_id'],
             'user_id' => $fileData['user_id'],
             'file_name' => $fileData['file_name'],
+            'file_path' => $fileData['file_path'],
             'file_size' => $fileData['file_size'],
+            'file_format' => $this->detectFileFormat($fileData['file_path']),
             'status' => 'queued',
             'job_id' => $jobId,
             'progress' => 0,
@@ -648,13 +650,27 @@ class EstimateImportService
             'organization_id' => $fileData['organization_id'],
             'user_id' => $fileData['user_id'],
             'file_name' => $fileData['file_name'],
+            'file_path' => $fileData['file_path'],
             'file_size' => $fileData['file_size'],
+            'file_format' => $this->detectFileFormat($fileData['file_path']),
             'status' => $status,
             'estimate_id' => $result?->estimateId,
             'items_imported' => $result?->itemsImported ?? 0,
             'result_log' => $result?->toArray() ?? ['error' => $error],
             'processing_time_ms' => $result?->processingTimeMs,
         ]);
+    }
+
+    private function detectFileFormat(string $filePath): string
+    {
+        $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        
+        return match ($extension) {
+            'xlsx', 'xls' => 'excel_simple',
+            'csv' => 'csv',
+            'xml' => 'xml',
+            default => 'unknown',
+        };
     }
 
     private function cleanup(string $fileId): void

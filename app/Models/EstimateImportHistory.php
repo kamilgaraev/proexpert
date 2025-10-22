@@ -16,11 +16,13 @@ class EstimateImportHistory extends Model
         'organization_id',
         'user_id',
         'estimate_id',
+        'job_id',
         'file_name',
         'file_path',
         'file_size',
         'file_format',
         'status',
+        'progress',
         'items_total',
         'items_imported',
         'items_skipped',
@@ -31,6 +33,7 @@ class EstimateImportHistory extends Model
 
     protected $casts = [
         'file_size' => 'integer',
+        'progress' => 'integer',
         'items_total' => 'integer',
         'items_imported' => 'integer',
         'items_skipped' => 'integer',
