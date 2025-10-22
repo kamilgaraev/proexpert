@@ -52,7 +52,8 @@ class ProcessEstimateImportJob implements ShouldQueue
             $result = $service->syncImport(
                 $this->fileId,
                 $this->matchingConfig,
-                $this->estimateSettings
+                $this->estimateSettings,
+                $this->jobId
             );
             
             $history->update([

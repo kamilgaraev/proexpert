@@ -262,7 +262,7 @@ class EstimateImportService
         }
     }
 
-    public function syncImport(string $fileId, array $matchingConfig, array $estimateSettings): array
+    public function syncImport(string $fileId, array $matchingConfig, array $estimateSettings, ?string $jobId = null): array
     {
         $startTime = microtime(true);
         
@@ -280,7 +280,7 @@ class EstimateImportService
         );
         
         try {
-            $result = $this->createEstimateFromImport($importDTO, $matchingConfig, $estimateSettings);
+            $result = $this->createEstimateFromImport($importDTO, $matchingConfig, $estimateSettings, $jobId);
             
             $processingTime = (microtime(true) - $startTime) * 1000;
             $result->processingTimeMs = (int)$processingTime;
@@ -360,11 +360,14 @@ class EstimateImportService
     private function createEstimateFromImport(
         EstimateImportDTO $importDTO,
         array $matchingConfig,
-        array $settings
+        array $settings,
+        ?string $jobId = null
     ): EstimateImportResultDTO {
         DB::beginTransaction();
         
         try {
+            $this->updateProgress($jobId, 10);
+            
             $estimate = $this->estimateService->create([
                 'name' => $settings['name'],
                 'type' => $settings['type'],
@@ -375,12 +378,18 @@ class EstimateImportService
                 'estimate_date' => now()->toDateString(),
             ]);
             
+            $this->updateProgress($jobId, 25);
+            
             $newWorkTypes = [];
             if ($matchingConfig['create_new_work_types'] ?? false) {
                 $newWorkTypes = $this->createMissingWorkTypes($importDTO, $settings['organization_id']);
             }
             
+            $this->updateProgress($jobId, 40);
+            
             $sectionsMap = $this->createSections($estimate, $importDTO->sections);
+            
+            $this->updateProgress($jobId, 50);
             
             $itemsResult = $this->createItems(
                 $estimate,
@@ -391,7 +400,11 @@ class EstimateImportService
                 $settings['organization_id']
             );
             
+            $this->updateProgress($jobId, 85);
+            
             $this->calculationService->recalculateAll($estimate);
+            
+            $this->updateProgress($jobId, 95);
             
             DB::commit();
             
@@ -699,6 +712,16 @@ class EstimateImportService
         Cache::forget("estimate_import_preview:{$fileId}");
         Cache::forget("estimate_import_mapping:{$fileId}");
         Cache::forget("estimate_import_matches:{$fileId}");
+    }
+
+    private function updateProgress(?string $jobId, int $progress): void
+    {
+        if ($jobId === null) {
+            return;
+        }
+
+        EstimateImportHistory::where('job_id', $jobId)
+            ->update(['progress' => $progress]);
     }
 }
 
