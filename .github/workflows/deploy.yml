@@ -67,6 +67,11 @@ jobs:
             php artisan optimize
             echo "✅ Optimization completed successfully"
             
+            # Перезапуск queue workers
+            echo "🔄 Restarting queue workers..."
+            supervisorctl restart laravel-worker:* || true
+            echo "✅ Queue workers restarted"
+            
             php artisan up || true
             php artisan octane:reload || sudo systemctl reload prohelper-octane || sudo systemctl restart prohelper-octane
 
