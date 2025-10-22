@@ -432,7 +432,7 @@ class EstimateImportService
             $matches = $this->matchingService->findMatches($name, $organizationId);
             
             if ($matches->isEmpty() || $matches->first()['confidence'] < 85) {
-                $unit = $this->findOrCreateUnit($item['unit'] ?? 'шт');
+                $unit = $this->findOrCreateUnit($item['unit'] ?? 'шт', $organizationId);
                 
                 $workType = WorkType::create([
                     'organization_id' => $organizationId,
@@ -555,14 +555,17 @@ class EstimateImportService
         return null;
     }
 
-    private function findOrCreateUnit(string $unitName): MeasurementUnit
+    private function findOrCreateUnit(string $unitName, int $organizationId): MeasurementUnit
     {
         $normalized = mb_strtolower(trim($unitName));
         
-        $unit = MeasurementUnit::whereRaw('LOWER(name) = ?', [$normalized])->first();
+        $unit = MeasurementUnit::where('organization_id', $organizationId)
+            ->whereRaw('LOWER(name) = ?', [$normalized])
+            ->first();
         
         if ($unit === null) {
             $unit = MeasurementUnit::create([
+                'organization_id' => $organizationId,
                 'name' => $unitName,
                 'abbreviation' => $unitName,
             ]);
