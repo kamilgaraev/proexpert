@@ -564,10 +564,15 @@ class EstimateImportService
             ->first();
         
         if ($unit === null) {
+            $shortName = mb_strlen($unitName) > 10 
+                ? mb_substr($unitName, 0, 10) 
+                : $unitName;
+            
             $unit = MeasurementUnit::create([
                 'organization_id' => $organizationId,
                 'name' => $unitName,
-                'abbreviation' => $unitName,
+                'short_name' => $shortName,
+                'type' => 'work',
             ]);
         }
         
