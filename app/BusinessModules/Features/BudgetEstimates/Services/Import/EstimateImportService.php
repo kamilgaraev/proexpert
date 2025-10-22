@@ -462,7 +462,8 @@ class EstimateImportService
                 $parentId = $sectionsMap[$parentPath] ?? null;
             }
             
-            $section = $this->sectionService->createSection($estimate->id, [
+            $section = $this->sectionService->createSection([
+                'estimate_id' => $estimate->id,
                 'section_number' => $sectionData['section_number'],
                 'name' => $sectionData['item_name'],
                 'parent_section_id' => $parentId,
