@@ -213,17 +213,10 @@ class ContractController extends Controller
      */
     public function update(UpdateContractRequest $request, int $contract)
     {
-        $user = $request->user();
-        $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
-        if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
-        }
-        
         $projectId = $request->route('project');
         
         try {
-            $existingContract = $this->contractService->getContractById($contract, $organizationId);
+            $existingContract = \App\Models\Contract::find($contract);
             if (!$existingContract) {
                 return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
             }
@@ -231,6 +224,8 @@ class ContractController extends Controller
             if ($projectId && (int)$existingContract->project_id !== (int)$projectId) {
                 return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
             }
+            
+            $organizationId = $existingContract->organization_id;
             
             $contractDTO = $request->toDto();
             $updatedContract = $this->contractService->updateContract($contract, $organizationId, $contractDTO);
@@ -242,7 +237,7 @@ class ContractController extends Controller
         } catch (Exception $e) {
             Log::error('Ошибка обновления контракта', [
                 'contract_id' => $contract,
-                'organization_id' => $organizationId,
+                'organization_id' => $existingContract->organization_id ?? null,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
