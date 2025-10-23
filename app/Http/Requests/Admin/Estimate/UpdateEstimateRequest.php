@@ -14,7 +14,6 @@ class UpdateEstimateRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'project_id' => 'sometimes|nullable|exists:projects,id',
             'contract_id' => 'sometimes|nullable|exists:contracts,id',
             'name' => 'sometimes|string|max:255',
             'description' => 'nullable|string',

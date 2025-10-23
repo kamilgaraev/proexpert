@@ -14,7 +14,6 @@ class CreateEstimateRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'project_id' => 'nullable|exists:projects,id',
             'contract_id' => 'nullable|exists:contracts,id',
             'number' => 'nullable|string|max:255',
             'name' => 'required|string|max:255',

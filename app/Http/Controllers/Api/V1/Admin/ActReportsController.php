@@ -19,6 +19,8 @@ use Illuminate\Support\Facades\Storage;
 use App\Models\File;
 use App\Services\Storage\FileService;
 use App\Models\Organization;
+use App\Models\PersonalFile;
+use Illuminate\Support\Str;
 
 class ActReportsController extends Controller
 {
@@ -299,7 +301,8 @@ class ActReportsController extends Controller
                 'contract.organization',
                 'completedWorks.workType',
                 'completedWorks.materials',
-                'completedWorks.user'
+                'completedWorks.user',
+                'files.user'
             ]);
 
             return response()->json([
@@ -1071,5 +1074,346 @@ class ActReportsController extends Controller
         }
 
         return trim($result);
+    }
+
+    public function uploadFile(Request $request, ContractPerformanceAct $act): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId) {
+                return response()->json(['error' => 'Не определена организация пользователя'], 400);
+            }
+
+            $act->load('contract');
+
+            if ($act->contract->organization_id !== $organizationId) {
+                return response()->json(['error' => 'Доступ запрещен'], 403);
+            }
+
+            $request->validate([
+                'file' => 'required|file|max:51200',
+                'description' => 'nullable|string|max:500'
+            ]);
+
+            $uploadedFile = $request->file('file');
+            $description = $request->input('description');
+
+            $fileService = app(FileService::class);
+            $org = Organization::find($organizationId);
+            
+            $directory = "acts/{$act->id}/attachments";
+            $path = $fileService->upload($uploadedFile, $directory, null, 'private', $org);
+
+            if (!$path) {
+                return response()->json([
+                    'error' => 'Ошибка при загрузке файла'
+                ], 500);
+            }
+
+            $file = File::create([
+                'organization_id' => $organizationId,
+                'fileable_id' => $act->id,
+                'fileable_type' => ContractPerformanceAct::class,
+                'user_id' => $user->id,
+                'name' => basename($path),
+                'original_name' => $uploadedFile->getClientOriginalName(),
+                'path' => $path,
+                'mime_type' => $uploadedFile->getClientMimeType(),
+                'size' => $uploadedFile->getSize(),
+                'disk' => 's3',
+                'type' => 'attachment',
+                'category' => 'act_attachment',
+                'additional_info' => [
+                    'description' => $description
+                ]
+            ]);
+
+            $disk = $fileService->disk($org);
+            $downloadUrl = $disk->temporaryUrl($path, now()->addHours(1));
+
+            return response()->json([
+                'data' => [
+                    'id' => $file->id,
+                    'name' => $file->original_name,
+                    'size' => $file->size,
+                    'mime_type' => $file->mime_type,
+                    'uploaded_by' => $user->name,
+                    'uploaded_at' => $file->created_at->toIso8601String(),
+                    'description' => $description,
+                    'download_url' => $downloadUrl
+                ],
+                'message' => 'Файл успешно загружен'
+            ], 201);
+
+        } catch (Exception $e) {
+            Log::error('Ошибка загрузки файла к акту', [
+                'act_id' => $act->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'error' => 'Ошибка при загрузке файла',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getFiles(Request $request, ContractPerformanceAct $act): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId) {
+                return response()->json(['error' => 'Не определена организация пользователя'], 400);
+            }
+
+            $act->load('contract');
+
+            if ($act->contract->organization_id !== $organizationId) {
+                return response()->json(['error' => 'Доступ запрещен'], 403);
+            }
+
+            $act->load(['files.user']);
+
+            $fileService = app(FileService::class);
+            $org = Organization::find($organizationId);
+            $disk = $fileService->disk($org);
+
+            $files = $act->files->map(function ($file) use ($disk) {
+                $downloadUrl = null;
+                try {
+                    if ($disk->exists($file->path)) {
+                        $downloadUrl = $disk->temporaryUrl($file->path, now()->addHours(1));
+                    }
+                } catch (Exception $e) {
+                    Log::warning('Не удалось создать временный URL для файла', [
+                        'file_id' => $file->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+
+                return [
+                    'id' => $file->id,
+                    'name' => $file->original_name,
+                    'size' => $file->size,
+                    'mime_type' => $file->mime_type,
+                    'uploaded_by' => $file->user->name ?? 'Неизвестно',
+                    'uploaded_at' => $file->created_at->toIso8601String(),
+                    'description' => $file->additional_info['description'] ?? null,
+                    'download_url' => $downloadUrl
+                ];
+            });
+
+            return response()->json([
+                'data' => $files,
+                'message' => 'Файлы получены успешно'
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Ошибка получения файлов акта', [
+                'act_id' => $act->id,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'error' => 'Ошибка при получении файлов',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function downloadFile(Request $request, ContractPerformanceAct $act, File $file)
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId || $file->organization_id !== $organizationId) {
+                return response()->json(['error' => 'Доступ запрещен'], 403);
+            }
+
+            if ($file->fileable_id !== $act->id || $file->fileable_type !== ContractPerformanceAct::class) {
+                return response()->json(['error' => 'Файл не принадлежит данному акту'], 403);
+            }
+
+            $fileService = app(FileService::class);
+            $org = Organization::find($organizationId);
+            $disk = $fileService->disk($org);
+
+            if (!$disk->exists($file->path)) {
+                return response()->json(['error' => 'Файл не найден в хранилище'], 404);
+            }
+
+            $contents = $disk->get($file->path);
+            
+            return response($contents, 200, [
+                'Content-Type' => $file->mime_type,
+                'Content-Disposition' => 'attachment; filename="' . $file->original_name . '"',
+                'Content-Length' => strlen($contents)
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Ошибка скачивания файла акта', [
+                'act_id' => $act->id,
+                'file_id' => $file->id,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'error' => 'Ошибка при скачивании файла',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function deleteFile(Request $request, ContractPerformanceAct $act, File $file): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId || $file->organization_id !== $organizationId) {
+                return response()->json(['error' => 'Доступ запрещен'], 403);
+            }
+
+            if ($file->fileable_id !== $act->id || $file->fileable_type !== ContractPerformanceAct::class) {
+                return response()->json(['error' => 'Файл не принадлежит данному акту'], 403);
+            }
+
+            $fileService = app(FileService::class);
+            $org = Organization::find($organizationId);
+            $disk = $fileService->disk($org);
+
+            try {
+                if ($disk->exists($file->path)) {
+                    $disk->delete($file->path);
+                }
+            } catch (Exception $e) {
+                Log::warning('Не удалось удалить файл из хранилища', [
+                    'file_id' => $file->id,
+                    'path' => $file->path,
+                    'error' => $e->getMessage()
+                ]);
+            }
+
+            $file->delete();
+
+            return response()->json([
+                'message' => 'Файл успешно удален'
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Ошибка удаления файла акта', [
+                'act_id' => $act->id,
+                'file_id' => $file->id,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'error' => 'Ошибка при удалении файла',
+                'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function copyToPersonalStorage(Request $request, ContractPerformanceAct $act, File $file): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $organizationId = $user->organization_id ?? $user->current_organization_id;
+
+            if (!$organizationId || $file->organization_id !== $organizationId) {
+                return response()->json(['error' => 'Доступ запрещен'], 403);
+            }
+
+            if ($file->fileable_id !== $act->id || $file->fileable_type !== ContractPerformanceAct::class) {
+                return response()->json(['error' => 'Файл не принадлежит данному акту'], 403);
+            }
+
+            $fileService = app(FileService::class);
+            $org = Organization::find($organizationId);
+            $disk = $fileService->disk($org);
+
+            if (!$disk->exists($file->path)) {
+                return response()->json(['error' => 'Файл не найден в хранилище'], 404);
+            }
+
+            $actsFolder = $user->id . '/acts/';
+            
+            $actFolderPath = $actsFolder . $act->act_document_number . '/';
+            
+            $personalPath = $actFolderPath . $file->original_name;
+
+            if ($disk->exists($personalPath)) {
+                $extension = pathinfo($file->original_name, PATHINFO_EXTENSION);
+                $filename = pathinfo($file->original_name, PATHINFO_FILENAME);
+                $personalPath = $actFolderPath . $filename . '_' . time() . '.' . $extension;
+            }
+
+            $fileContents = $disk->get($file->path);
+            $disk->put($personalPath, $fileContents);
+
+            $existingFolder = PersonalFile::where('user_id', $user->id)
+                ->where('path', $actsFolder)
+                ->where('is_folder', true)
+                ->first();
+
+            if (!$existingFolder) {
+                PersonalFile::create([
+                    'user_id' => $user->id,
+                    'path' => $actsFolder,
+                    'filename' => 'acts',
+                    'size' => 0,
+                    'is_folder' => true,
+                ]);
+            }
+
+            $existingActFolder = PersonalFile::where('user_id', $user->id)
+                ->where('path', $actFolderPath)
+                ->where('is_folder', true)
+                ->first();
+
+            if (!$existingActFolder) {
+                PersonalFile::create([
+                    'user_id' => $user->id,
+                    'path' => $actFolderPath,
+                    'filename' => $act->act_document_number,
+                    'size' => 0,
+                    'is_folder' => true,
+                ]);
+            }
+
+            PersonalFile::create([
+                'user_id' => $user->id,
+                'path' => $personalPath,
+                'filename' => basename($personalPath),
+                'size' => strlen($fileContents),
+                'is_folder' => false,
+            ]);
+
+            return response()->json([
+                'message' => 'Файл успешно скопирован в личное хранилище',
+                'data' => [
+                    'path' => $personalPath,
+                    'filename' => basename($personalPath)
+                ]
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Ошибка копирования файла в личное хранилище', [
+                'act_id' => $act->id,
+                'file_id' => $file->id,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'error' => 'Ошибка при копировании файла',
+                'message' => $e->getMessage()
+            ], 500);
+        }
     }
 } 

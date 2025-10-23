@@ -53,4 +53,27 @@ Route::prefix('act-reports')->group(function () {
     // Обновить основную информацию акта
     Route::put('{act}', [ActReportsController::class, 'update'])
         ->name('act-reports.update');
+    
+    // Маршруты для работы с файлами актов
+    Route::prefix('{act}/files')->group(function () {
+        // Загрузить файл к акту
+        Route::post('/', [ActReportsController::class, 'uploadFile'])
+            ->name('act-reports.files.upload');
+        
+        // Получить список файлов акта
+        Route::get('/', [ActReportsController::class, 'getFiles'])
+            ->name('act-reports.files.index');
+        
+        // Скачать файл акта
+        Route::get('{file}', [ActReportsController::class, 'downloadFile'])
+            ->name('act-reports.files.download');
+        
+        // Скопировать файл в личное хранилище
+        Route::post('{file}/copy-to-personal', [ActReportsController::class, 'copyToPersonalStorage'])
+            ->name('act-reports.files.copy-to-personal');
+        
+        // Удалить файл
+        Route::delete('{file}', [ActReportsController::class, 'deleteFile'])
+            ->name('act-reports.files.delete');
+    });
 }); 

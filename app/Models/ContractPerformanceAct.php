@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class ContractPerformanceAct extends Model
 {
@@ -52,5 +53,10 @@ class ContractPerformanceAct extends Model
         $totalAmount = $this->completedWorks()->sum('performance_act_completed_works.included_amount');
         $this->update(['amount' => $totalAmount]);
         return $totalAmount;
+    }
+
+    public function files(): MorphMany
+    {
+        return $this->morphMany(File::class, 'fileable');
     }
 } 

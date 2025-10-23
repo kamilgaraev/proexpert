@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\Admin\AgreementController;
 use App\Http\Controllers\Api\V1\Admin\ProjectContextController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPaymentController;
+use App\Http\Controllers\Api\V1\Admin\EstimateController;
 
 /**
  * PROJECT-BASED ROUTES
@@ -117,6 +118,20 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::get('/{report}', [CustomReportController::class, 'show']);
         Route::post('/{report}/generate', [CustomReportController::class, 'generate']);
         Route::delete('/{report}', [CustomReportController::class, 'destroy']);
+    });
+    
+    // === ESTIMATES (сметы в контексте проекта) ===
+    Route::prefix('estimates')->group(function () {
+        Route::get('/', [EstimateController::class, 'index']);
+        Route::post('/', [EstimateController::class, 'store']);
+        Route::get('/{estimate}', [EstimateController::class, 'show']);
+        Route::put('/{estimate}', [EstimateController::class, 'update']);
+        Route::delete('/{estimate}', [EstimateController::class, 'destroy']);
+        
+        Route::post('/{estimate}/duplicate', [EstimateController::class, 'duplicate']);
+        Route::post('/{estimate}/recalculate', [EstimateController::class, 'recalculate']);
+        Route::get('/{estimate}/dashboard', [EstimateController::class, 'dashboard']);
+        Route::get('/{estimate}/structure', [EstimateController::class, 'structure']);
     });
 });
 

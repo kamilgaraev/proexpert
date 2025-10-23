@@ -29,7 +29,7 @@ class EstimateController extends Controller
         $filters = [
             'status' => $request->input('status'),
             'type' => $request->input('type'),
-            'project_id' => $request->input('project_id'),
+            'project_id' => $request->route('project') ?? $request->input('project_id'),
             'contract_id' => $request->input('contract_id'),
             'search' => $request->input('search'),
         ];
@@ -54,6 +54,15 @@ class EstimateController extends Controller
     {
         $data = $request->validated();
         $data['organization_id'] = $request->user()->current_organization_id;
+        
+        $projectId = $request->route('project');
+        if (!$projectId) {
+            return response()->json([
+                'message' => 'Смета должна быть создана в контексте проекта'
+            ], 422);
+        }
+        
+        $data['project_id'] = $projectId;
         
         $estimate = $this->estimateService->create($data);
         

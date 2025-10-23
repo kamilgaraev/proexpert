@@ -251,6 +251,11 @@ class Project extends Model
         return $this->hasMany(Contract::class);
     }
 
+    public function estimates(): HasMany
+    {
+        return $this->hasMany(Estimate::class);
+    }
+
     /**
      * Получить используемые в проекте виды работ через CompletedWork.
      */

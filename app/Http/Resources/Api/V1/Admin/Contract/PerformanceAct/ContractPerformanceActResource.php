@@ -44,6 +44,22 @@ class ContractPerformanceActResource extends JsonResource
                     ];
                 });
             }, []),
+
+            'files' => $this->whenLoaded('files', function() {
+                return $this->files->map(function($file) {
+                    return [
+                        'id' => $file->id,
+                        'name' => $file->original_name,
+                        'size' => $file->size,
+                        'mime_type' => $file->mime_type,
+                        'uploaded_by' => $file->user->name ?? 'Неизвестно',
+                        'uploaded_at' => $file->created_at->toIso8601String(),
+                        'description' => $file->additional_info['description'] ?? null,
+                    ];
+                });
+            }, []),
+
+            'files_count' => $this->whenCounted('files'),
         ];
     }
 } 

@@ -205,6 +205,7 @@ Route::prefix('v1/admin')->name('admin.')->group(function () {
         require __DIR__ . '/api/v1/admin/personal_files.php';
         require __DIR__ . '/api/v1/admin/report_files.php';
         require __DIR__ . '/api/v1/admin/act_reports.php';
+        require __DIR__ . '/api/v1/admin/act_files.php';
         require __DIR__ . '/api/v1/admin/advance_settings.php';
         // Подключаем маршруты для учета времени
         require __DIR__ . '/api/v1/admin/time_tracking.php';
