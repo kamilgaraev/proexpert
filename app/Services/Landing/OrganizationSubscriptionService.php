@@ -12,6 +12,7 @@ use App\Services\Logging\LoggingService;
 use App\Models\Organization;
 use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Services\SubscriptionModuleSyncService;
+use App\Services\Billing\SubscriptionLimitsService;
 
 class OrganizationSubscriptionService
 {
@@ -19,15 +20,18 @@ class OrganizationSubscriptionService
     protected BalanceServiceInterface $balanceService;
     protected LoggingService $logging;
     protected SubscriptionModuleSyncService $moduleSyncService;
+    protected SubscriptionLimitsService $limitsService;
 
     public function __construct(
         LoggingService $logging,
-        SubscriptionModuleSyncService $moduleSyncService
+        SubscriptionModuleSyncService $moduleSyncService,
+        SubscriptionLimitsService $limitsService
     ) {
         $this->repo = new OrganizationSubscriptionRepository();
         $this->balanceService = app(BalanceServiceInterface::class);
         $this->logging = $logging;
         $this->moduleSyncService = $moduleSyncService;
+        $this->limitsService = $limitsService;
     }
 
     public function getCurrentSubscription($organizationId)
@@ -116,6 +120,8 @@ class OrganizationSubscriptionService
                     'modules' => $moduleSyncResult['modules']
                 ]);
             }
+
+            $this->limitsService->clearOrganizationSubscriptionCache($organizationId);
 
             return $subscription;
 
@@ -220,6 +226,8 @@ class OrganizationSubscriptionService
                 'performed_by' => Auth::id() ?? 'system'
             ]);
 
+            $this->limitsService->clearOrganizationSubscriptionCache($organizationId);
+
             return $subscription;
 
         } catch (InsufficientBalanceException $e) {
@@ -319,6 +327,8 @@ class OrganizationSubscriptionService
                 'reason' => 'subscription_canceled'
             ]);
         }
+
+        $this->limitsService->clearOrganizationSubscriptionCache($organizationId);
 
         return [
             'success' => true,
@@ -511,6 +521,8 @@ class OrganizationSubscriptionService
                 'converted_count' => $moduleSyncResult['converted_count']
             ]);
         }
+
+        $this->limitsService->clearOrganizationSubscriptionCache($organizationId);
 
         return [
             'success' => true,
@@ -708,6 +720,8 @@ class OrganizationSubscriptionService
                 ]);
             }
 
+            $this->limitsService->clearOrganizationSubscriptionCache($organizationId);
+
             return [
                 'success' => true,
                 'subscription' => $subscription->fresh(),
@@ -728,6 +742,8 @@ class OrganizationSubscriptionService
                 'required_amount_cents' => (int) round(((float) $plan->price) * 100),
                 'failure_reason' => 'insufficient_balance',
             ], 'warning');
+            
+            $this->limitsService->clearOrganizationSubscriptionCache($organizationId);
             
             return [
                 'success' => false,

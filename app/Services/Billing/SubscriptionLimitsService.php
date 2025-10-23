@@ -334,6 +334,27 @@ class SubscriptionLimitsService implements SubscriptionLimitsServiceInterface
         Cache::forget($cacheKey);
     }
 
+    public function clearAllSubscriptionCache(int $userId, int $organizationId): void
+    {
+        Cache::forget("user_limits_full_{$userId}_{$organizationId}");
+        Cache::forget("subscription_limits_{$userId}_{$organizationId}");
+        Cache::forget("user_usage_{$userId}_{$organizationId}");
+        Cache::forget("storage_usage_{$organizationId}");
+    }
+
+    public function clearOrganizationSubscriptionCache(int $organizationId): void
+    {
+        $pattern = "user_limits_full_*_{$organizationId}";
+        $patternLimits = "subscription_limits_*_{$organizationId}";
+        $patternUsage = "user_usage_*_{$organizationId}";
+        
+        Cache::forget("storage_usage_{$organizationId}");
+        
+        if (method_exists(Cache::getStore(), 'flush')) {
+            return;
+        }
+    }
+
     /**
      * Формируем данные лимитов на основе подписки организации
      */
