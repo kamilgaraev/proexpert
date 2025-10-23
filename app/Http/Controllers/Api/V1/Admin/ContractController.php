@@ -86,7 +86,15 @@ class ContractController extends Controller
         ]);
         
         // ЖЕСТКО устанавливаем project_id из URL (игнорируем любые другие значения)
-        $filters['project_id'] = $projectId;
+        if ($projectId) {
+            $filters['project_id'] = (int)$projectId;
+        }
+        
+        Log::info('Contracts index called', [
+            'organization_id' => $organizationId,
+            'project_id_from_url' => $projectId,
+            'filters' => $filters
+        ]);
         
         // Если пользователь - подрядчик, показываем только его контракты
         $projectContext = ProjectContextMiddleware::getProjectContext($request);
@@ -218,26 +226,13 @@ class ContractController extends Controller
         try {
             $existingContract = \App\Models\Contract::find($contract);
             
-            Log::info('Contract update attempt', [
-                'contract_id' => $contract,
-                'project_id' => $projectId,
-                'contract_found' => $existingContract ? 'yes' : 'no',
-                'contract_project_id' => $existingContract?->project_id,
-                'match' => $existingContract && $projectId ? ((int)$existingContract->project_id === (int)$projectId ? 'yes' : 'no') : 'n/a'
-            ]);
-            
             if (!$existingContract) {
-                return response()->json(['message' => 'Контракт не найден (not found in DB)'], Response::HTTP_NOT_FOUND);
+                return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
             }
             
+            // Строгая проверка: контракт должен принадлежать проекту из URL
             if ($projectId && (int)$existingContract->project_id !== (int)$projectId) {
-                return response()->json([
-                    'message' => 'Контракт не найден (wrong project)',
-                    'debug' => [
-                        'contract_project_id' => $existingContract->project_id,
-                        'requested_project_id' => $projectId
-                    ]
-                ], Response::HTTP_NOT_FOUND);
+                return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
             }
             
             $organizationId = $existingContract->organization_id;
