@@ -21,7 +21,7 @@ class OrganizationSubscriptionController extends Controller
         $service = app(OrganizationSubscriptionService::class);
         $subscription = $service->getCurrentSubscription($organizationId);
         
-        if (!$subscription) {
+        if (!$subscription || $subscription->status !== 'active' || $subscription->ends_at <= now()) {
             return response()->json([
                 'success' => true,
                 'data' => [

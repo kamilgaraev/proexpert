@@ -130,6 +130,31 @@ Schedule::command('projects:geocode --limit=50 --delay=2')
     })
     ->appendOutputTo(storage_path('logs/schedule-projects-geocode.log'));
 
+// Автоматическое продление подписок (3 раза в день для надежности)
+Schedule::command('subscriptions:renew --days-ahead=1')
+    ->dailyAt('02:00')
+    ->withoutOverlapping(120)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled subscriptions:renew command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-subscriptions-renew.log'));
+
+Schedule::command('subscriptions:renew --days-ahead=1')
+    ->dailyAt('12:00')
+    ->withoutOverlapping(120)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled subscriptions:renew command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-subscriptions-renew.log'));
+
+Schedule::command('subscriptions:renew --days-ahead=1')
+    ->dailyAt('20:00')
+    ->withoutOverlapping(120)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled subscriptions:renew command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-subscriptions-renew.log'));
+
 Artisan::command('projects:geocode-help', function () {
     $this->info('Available geocoding command:');
     $this->info('  php artisan projects:geocode [options]');

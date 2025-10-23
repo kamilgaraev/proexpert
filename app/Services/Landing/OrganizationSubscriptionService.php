@@ -47,6 +47,7 @@ class OrganizationSubscriptionService
             'status' => 'active',
             'starts_at' => $now,
             'ends_at' => $now->copy()->addDays($durationDays),
+            'next_billing_at' => $now->copy()->addDays($durationDays),
             'is_auto_payment_enabled' => $isAutoPaymentEnabled,
         ];
 
@@ -579,6 +580,174 @@ class OrganizationSubscriptionService
             return 'downgrade';
         } else {
             return 'same_price_change';
+        }
+    }
+
+    public function renewSubscription($organizationId): array
+    {
+        $subscription = $this->repo->getByOrganizationId($organizationId);
+        
+        if (!$subscription) {
+            return [
+                'success' => false,
+                'message' => 'Подписка не найдена',
+                'reason' => 'not_found'
+            ];
+        }
+
+        if (!$subscription->is_auto_payment_enabled) {
+            $this->logging->business('subscription.renewal.skipped.auto_payment_disabled', [
+                'organization_id' => $organizationId,
+                'subscription_id' => $subscription->id,
+            ], 'info');
+            
+            return [
+                'success' => false,
+                'message' => 'Автопродление отключено',
+                'reason' => 'auto_payment_disabled'
+            ];
+        }
+
+        if ($subscription->isCanceled()) {
+            $this->logging->business('subscription.renewal.skipped.canceled', [
+                'organization_id' => $organizationId,
+                'subscription_id' => $subscription->id,
+                'canceled_at' => $subscription->canceled_at,
+            ], 'info');
+            
+            return [
+                'success' => false,
+                'message' => 'Подписка отменена',
+                'reason' => 'canceled'
+            ];
+        }
+
+        if ($subscription->ends_at > now()->addDay()) {
+            return [
+                'success' => false,
+                'message' => 'Подписка еще не заканчивается',
+                'reason' => 'not_expiring'
+            ];
+        }
+
+        $plan = $subscription->plan;
+        if (!$plan || !$plan->is_active) {
+            $this->logging->business('subscription.renewal.failed.plan_inactive', [
+                'organization_id' => $organizationId,
+                'subscription_id' => $subscription->id,
+                'plan_id' => $subscription->subscription_plan_id,
+            ], 'error');
+            
+            return [
+                'success' => false,
+                'message' => 'Тарифный план неактивен',
+                'reason' => 'plan_inactive'
+            ];
+        }
+
+        $organization = Organization::findOrFail($organizationId);
+        $now = Carbon::now();
+        $durationDays = $plan->duration_in_days ?? 30;
+        
+        $this->logging->business('subscription.renewal.started', [
+            'organization_id' => $organizationId,
+            'subscription_id' => $subscription->id,
+            'plan_id' => $plan->id,
+            'plan_slug' => $plan->slug,
+            'plan_price' => $plan->price,
+            'duration_days' => $durationDays,
+            'old_ends_at' => $subscription->ends_at,
+        ]);
+
+        try {
+            if (((float) $plan->price) > 0) {
+                $amountCents = (int) round(((float) $plan->price) * 100);
+                
+                $this->balanceService->debitBalance(
+                    $organization,
+                    $amountCents,
+                    "Автопродление подписки '{$plan->name}'"
+                );
+            }
+
+            $subscription->update([
+                'status' => 'active',
+                'starts_at' => $now,
+                'ends_at' => $now->copy()->addDays($durationDays),
+                'next_billing_at' => $now->copy()->addDays($durationDays),
+                'canceled_at' => null,
+            ]);
+
+            $this->logging->business('subscription.renewed', [
+                'organization_id' => $organizationId,
+                'subscription_id' => $subscription->id,
+                'plan_id' => $plan->id,
+                'plan_slug' => $plan->slug,
+                'amount_charged_cents' => ((float) $plan->price) > 0 ? $amountCents : 0,
+                'amount_charged_rubles' => $plan->price,
+                'starts_at' => $subscription->starts_at,
+                'ends_at' => $subscription->ends_at,
+                'renewal_type' => 'automatic',
+            ]);
+
+            $this->logging->audit('subscription.renewed', [
+                'organization_id' => $organizationId,
+                'subscription_id' => $subscription->id,
+                'plan_id' => $plan->id,
+                'transaction_type' => 'subscription_renewed',
+                'performed_by' => 'system'
+            ]);
+
+            $updatedCount = $this->moduleSyncService->syncModulesOnRenew($subscription);
+            
+            if ($updatedCount > 0) {
+                $this->logging->business('subscription.renewal.modules_synced', [
+                    'subscription_id' => $subscription->id,
+                    'organization_id' => $organizationId,
+                    'updated_modules_count' => $updatedCount,
+                ]);
+            }
+
+            return [
+                'success' => true,
+                'subscription' => $subscription->fresh(),
+                'message' => 'Подписка успешно продлена до ' . $subscription->ends_at->format('d.m.Y'),
+            ];
+
+        } catch (InsufficientBalanceException $e) {
+            $subscription->update([
+                'status' => 'expired',
+                'is_auto_payment_enabled' => false,
+            ]);
+
+            $this->logging->business('subscription.renewal.failed.insufficient_balance', [
+                'organization_id' => $organizationId,
+                'subscription_id' => $subscription->id,
+                'plan_slug' => $plan->slug,
+                'plan_price' => $plan->price,
+                'required_amount_cents' => (int) round(((float) $plan->price) * 100),
+                'failure_reason' => 'insufficient_balance',
+            ], 'warning');
+            
+            return [
+                'success' => false,
+                'message' => 'Недостаточно средств для автопродления. Подписка истекла.',
+                'reason' => 'insufficient_balance',
+                'required_amount' => $plan->price,
+            ];
+            
+        } catch (\Exception $e) {
+            $this->logging->business('subscription.renewal.failed.error', [
+                'organization_id' => $organizationId,
+                'subscription_id' => $subscription->id,
+                'error' => $e->getMessage(),
+            ], 'error');
+            
+            return [
+                'success' => false,
+                'message' => 'Ошибка при продлении подписки: ' . $e->getMessage(),
+                'reason' => 'error',
+            ];
         }
     }
 } 
