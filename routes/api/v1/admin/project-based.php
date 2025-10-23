@@ -64,6 +64,8 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
             Route::delete('/{act}', [ContractPerformanceActController::class, 'destroy']);
         });
         
+        Route::get('/{contract}/available-works-for-acts', [ContractPerformanceActController::class, 'availableWorks']);
+        
         // Contract Payments
         Route::prefix('{contract}/payments')->group(function () {
             Route::get('/', [ContractPaymentController::class, 'index']);
