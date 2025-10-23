@@ -12,6 +12,9 @@ use App\Http\Controllers\Api\V1\Admin\ProjectContextController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPaymentController;
 use App\Http\Controllers\Api\V1\Admin\EstimateController;
+use App\Http\Controllers\Api\V1\Admin\EstimateImportController;
+use App\Http\Controllers\Api\V1\Admin\EstimateSectionController;
+use App\Http\Controllers\Api\V1\Admin\EstimateItemController;
 
 /**
  * PROJECT-BASED ROUTES
@@ -132,6 +135,27 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::post('/{estimate}/recalculate', [EstimateController::class, 'recalculate']);
         Route::get('/{estimate}/dashboard', [EstimateController::class, 'dashboard']);
         Route::get('/{estimate}/structure', [EstimateController::class, 'structure']);
+        
+        Route::prefix('{estimate}/sections')->group(function () {
+            Route::get('/', [EstimateSectionController::class, 'index']);
+            Route::post('/', [EstimateSectionController::class, 'store']);
+        });
+        
+        Route::prefix('{estimate}/items')->group(function () {
+            Route::get('/', [EstimateItemController::class, 'index']);
+            Route::post('/', [EstimateItemController::class, 'store']);
+            Route::post('/bulk', [EstimateItemController::class, 'bulkStore']);
+        });
+        
+        Route::prefix('import')->name('estimates.import.')->group(function () {
+            Route::post('/upload', [EstimateImportController::class, 'upload'])->name('upload');
+            Route::post('/detect', [EstimateImportController::class, 'detect'])->name('detect');
+            Route::post('/map', [EstimateImportController::class, 'map'])->name('map');
+            Route::post('/match', [EstimateImportController::class, 'match'])->name('match');
+            Route::post('/execute', [EstimateImportController::class, 'execute'])->name('execute');
+            Route::get('/status/{jobId}', [EstimateImportController::class, 'status'])->name('status');
+            Route::get('/history', [EstimateImportController::class, 'history'])->name('history');
+        });
     });
 });
 

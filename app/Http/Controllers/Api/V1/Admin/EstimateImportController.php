@@ -226,6 +226,18 @@ class EstimateImportController extends Controller
         $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
         $estimateSettings['organization_id'] = $organization->id;
         
+        $projectId = $request->route('project');
+        if ($projectId && !isset($estimateSettings['project_id'])) {
+            $estimateSettings['project_id'] = $projectId;
+        }
+        
+        if (!isset($estimateSettings['project_id'])) {
+            return response()->json([
+                'error' => 'Смета должна быть импортирована в контексте проекта',
+                'message' => 'Параметр project_id обязателен',
+            ], 422);
+        }
+        
         try {
             $result = $this->importService->execute($fileId, $matchingConfig, $estimateSettings);
             
