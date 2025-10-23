@@ -108,22 +108,25 @@ class CompletedWorkService
                 ]);
             }
 
-            // Валидация: contractor должен быть участником проекта
-            if ($contractorId) {
+            // Валидация: contractor должен быть участником проекта (только для генподрядчика/владельца)
+            if ($dto->contractor_id && !in_array($projectContext->roleConfig->role->value, ['contractor', 'subcontractor'])) {
                 $project = Project::find($dto->project_id);
                 
                 if (!$project) {
                     throw new BusinessLogicException('Проект не найден', 404);
                 }
                 
-                $contractorInProject = $project->hasOrganization($contractorId);
-                
-                if (!$contractorInProject) {
-                    throw new BusinessLogicException(
-                        'Организация-подрядчик не является участником проекта. ' .
-                        'Сначала добавьте её в список участников.',
-                        422
-                    );
+                $contractor = \App\Models\Contractor::find($dto->contractor_id);
+                if ($contractor && $contractor->source_organization_id) {
+                    $contractorInProject = $project->hasOrganization($contractor->source_organization_id);
+                    
+                    if (!$contractorInProject) {
+                        throw new BusinessLogicException(
+                            'Организация-подрядчик не является участником проекта. ' .
+                            'Сначала добавьте её в список участников.',
+                            422
+                        );
+                    }
                 }
             }
         }
