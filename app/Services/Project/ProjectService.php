@@ -702,8 +702,50 @@ class ProjectService
             'added_by' => $user?->id,
         ]);
         
+        if (in_array($role->value, ['contractor', 'subcontractor'])) {
+            $this->ensureContractorExists($project->organization_id, $organizationId);
+        }
+        
         // Dispatch event
         event(new ProjectOrganizationAdded($project, $organization, $role, $user));
+    }
+
+    private function ensureContractorExists(int $forOrgId, int $sourceOrgId): void
+    {
+        $sourceOrg = \App\Models\Organization::find($sourceOrgId);
+        if (!$sourceOrg) {
+            return;
+        }
+
+        $exists = \App\Models\Contractor::where('organization_id', $forOrgId)
+            ->where('source_organization_id', $sourceOrgId)
+            ->exists();
+
+        if ($exists) {
+            return;
+        }
+
+        \App\Models\Contractor::create([
+            'organization_id' => $forOrgId,
+            'source_organization_id' => $sourceOrgId,
+            'name' => $sourceOrg->name,
+            'inn' => $sourceOrg->tax_number,
+            'legal_address' => $sourceOrg->address,
+            'phone' => $sourceOrg->phone,
+            'email' => $sourceOrg->email,
+            'contractor_type' => \App\Models\Contractor::TYPE_INVITED_ORGANIZATION,
+            'connected_at' => now(),
+            'sync_settings' => [
+                'sync_fields' => ['name', 'phone', 'email', 'legal_address', 'inn'],
+                'sync_interval_hours' => 24,
+            ],
+        ]);
+
+        $this->logging->business('Contractor created from project participant', [
+            'for_organization_id' => $forOrgId,
+            'source_organization_id' => $sourceOrgId,
+            'contractor_name' => $sourceOrg->name,
+        ]);
     }
 
     /**
