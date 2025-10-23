@@ -23,11 +23,11 @@ class SyncProjectContractors extends Command
         
         $this->info('Поиск участников проектов с ролью подрядчик...');
         
-        $query = DB::table('project_organizations')
-            ->join('projects', 'project_organizations.project_id', '=', 'projects.id')
-            ->join('organizations', 'project_organizations.organization_id', '=', 'organizations.id')
-            ->whereIn('project_organizations.role_new', ['contractor', 'subcontractor'])
-            ->where('project_organizations.is_active', true)
+        $query = DB::table('project_organization')
+            ->join('projects', 'project_organization.project_id', '=', 'projects.id')
+            ->join('organizations', 'project_organization.organization_id', '=', 'organizations.id')
+            ->whereIn('project_organization.role_new', ['contractor', 'subcontractor'])
+            ->where('project_organization.is_active', true)
             ->select(
                 'projects.organization_id as owner_org_id',
                 'organizations.id as contractor_org_id',
@@ -36,7 +36,7 @@ class SyncProjectContractors extends Command
                 'organizations.address',
                 'organizations.phone',
                 'organizations.email',
-                'project_organizations.role_new as role',
+                'project_organization.role_new as role',
                 'projects.id as project_id',
                 'projects.name as project_name'
             );
