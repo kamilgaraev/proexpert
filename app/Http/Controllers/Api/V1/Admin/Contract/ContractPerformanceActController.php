@@ -152,8 +152,8 @@ class ContractPerformanceActController extends Controller
      */
     public function availableWorks(Request $request, int $contractId)
     {
-        $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $projectContext = \App\Http\Middleware\ProjectContextMiddleware::getProjectContext($request);
+        $organizationId = $projectContext->organizationId ?? $request->user()?->current_organization_id;
 
         try {
             $works = $this->actService->getAvailableWorksForAct($contractId, $organizationId);
