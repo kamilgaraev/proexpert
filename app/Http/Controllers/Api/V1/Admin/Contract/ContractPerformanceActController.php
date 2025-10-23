@@ -153,7 +153,13 @@ class ContractPerformanceActController extends Controller
     public function availableWorks(Request $request, int $contractId)
     {
         $projectContext = \App\Http\Middleware\ProjectContextMiddleware::getProjectContext($request);
-        $organizationId = $projectContext->organizationId ?? $request->user()?->current_organization_id;
+        
+        $contract = \App\Models\Contract::find($contractId);
+        if (!$contract) {
+            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+        }
+        
+        $organizationId = $contract->organization_id;
 
         try {
             $works = $this->actService->getAvailableWorksForAct($contractId, $organizationId);
