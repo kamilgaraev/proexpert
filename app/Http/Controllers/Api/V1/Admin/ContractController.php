@@ -217,12 +217,27 @@ class ContractController extends Controller
         
         try {
             $existingContract = \App\Models\Contract::find($contract);
+            
+            Log::info('Contract update attempt', [
+                'contract_id' => $contract,
+                'project_id' => $projectId,
+                'contract_found' => $existingContract ? 'yes' : 'no',
+                'contract_project_id' => $existingContract?->project_id,
+                'match' => $existingContract && $projectId ? ((int)$existingContract->project_id === (int)$projectId ? 'yes' : 'no') : 'n/a'
+            ]);
+            
             if (!$existingContract) {
-                return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
+                return response()->json(['message' => 'Контракт не найден (not found in DB)'], Response::HTTP_NOT_FOUND);
             }
             
             if ($projectId && (int)$existingContract->project_id !== (int)$projectId) {
-                return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
+                return response()->json([
+                    'message' => 'Контракт не найден (wrong project)',
+                    'debug' => [
+                        'contract_project_id' => $existingContract->project_id,
+                        'requested_project_id' => $projectId
+                    ]
+                ], Response::HTTP_NOT_FOUND);
             }
             
             $organizationId = $existingContract->organization_id;
@@ -231,7 +246,7 @@ class ContractController extends Controller
             $updatedContract = $this->contractService->updateContract($contract, $organizationId, $contractDTO);
             return new ContractResource($updatedContract);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
+            return response()->json(['message' => 'Контракт не найден (ModelNotFoundException)'], Response::HTTP_NOT_FOUND);
         } catch (\InvalidArgumentException $e) {
             return response()->json(['message' => 'Некорректные данные', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
         } catch (Exception $e) {
