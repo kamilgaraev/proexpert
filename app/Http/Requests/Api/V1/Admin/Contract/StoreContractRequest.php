@@ -41,7 +41,7 @@ class StoreContractRequest extends FormRequest
                 : ['required', 'integer', 'exists:contractors,id'],
             'parent_contract_id' => ['nullable', 'integer', new ParentContractValid],
             'number' => ['required', 'string', 'max:255'],
-            'date' => ['required', 'date_format:Y-m-d'],
+            'date' => ['required', 'date'],
             // поле type больше не используется
             'subject' => ['nullable', 'string'],
             'work_type_category' => ['nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
@@ -55,11 +55,11 @@ class StoreContractRequest extends FormRequest
             'actual_advance_amount' => ['nullable', 'numeric', 'min:0'],
             'advance_payments' => ['nullable', 'array'],
             'advance_payments.*.amount' => ['required', 'numeric', 'min:0'],
-            'advance_payments.*.payment_date' => ['nullable', 'date_format:Y-m-d'],
+            'advance_payments.*.payment_date' => ['nullable', 'date'],
             'advance_payments.*.description' => ['nullable', 'string'],
             'status' => ['required', new Enum(ContractStatusEnum::class)],
-            'start_date' => ['nullable', 'date_format:Y-m-d'],
-            'end_date' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:start_date'],
+            'start_date' => ['nullable', 'date'],
+            'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['nullable', 'string'],
             // Временное поле для примера в контроллере, в реальности organization_id не должен приходить из запроса на создание
             'organization_id_for_creation' => ['sometimes', 'integer'] 
@@ -73,7 +73,7 @@ class StoreContractRequest extends FormRequest
             contractor_id: $this->validated('contractor_id'),
             parent_contract_id: $this->validated('parent_contract_id'),
             number: $this->validated('number'),
-            date: $this->validated('date'),
+            date: $this->validated('date') ? \Carbon\Carbon::parse($this->validated('date'))->format('Y-m-d') : null,
             subject: $this->validated('subject'),
             work_type_category: $this->validated('work_type_category') ? ContractWorkTypeCategoryEnum::from($this->validated('work_type_category')) : null,
             payment_terms: $this->validated('payment_terms'),
@@ -85,8 +85,8 @@ class StoreContractRequest extends FormRequest
             planned_advance_amount: $this->validated('planned_advance_amount') !== null ? (float) $this->validated('planned_advance_amount') : null,
             actual_advance_amount: $this->validated('actual_advance_amount') !== null ? (float) $this->validated('actual_advance_amount') : null,
             status: ContractStatusEnum::from($this->validated('status')),
-            start_date: $this->validated('start_date'),
-            end_date: $this->validated('end_date'),
+            start_date: $this->validated('start_date') ? \Carbon\Carbon::parse($this->validated('start_date'))->format('Y-m-d') : null,
+            end_date: $this->validated('end_date') ? \Carbon\Carbon::parse($this->validated('end_date'))->format('Y-m-d') : null,
             notes: $this->validated('notes'),
             advance_payments: $this->validated('advance_payments')
         );

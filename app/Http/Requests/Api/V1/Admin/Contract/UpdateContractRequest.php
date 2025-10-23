@@ -30,7 +30,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'contractor_id' => ['sometimes', 'nullable', 'integer', 'exists:contractors,id'],
             'parent_contract_id' => ['sometimes', 'nullable', 'integer', new ParentContractValid], 
             'number' => ['sometimes', 'nullable', 'string', 'max:255'],
-            'date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+            'date' => ['sometimes', 'nullable', 'date'],
             'subject' => ['sometimes', 'nullable', 'string'],
             'work_type_category' => ['sometimes', 'nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'payment_terms' => ['sometimes', 'nullable', 'string'],
@@ -42,8 +42,8 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'planned_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'actual_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'status' => ['sometimes', 'nullable', new Enum(ContractStatusEnum::class)],
-            'start_date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
-            'end_date' => ['sometimes', 'nullable', 'date_format:Y-m-d', 'after_or_equal:start_date'],
+            'start_date' => ['sometimes', 'nullable', 'date'],
+            'end_date' => ['sometimes', 'nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['sometimes', 'nullable', 'string'],
         ];
     }
@@ -67,7 +67,9 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
                 ? $validatedData['parent_contract_id'] 
                 : $contract->parent_contract_id,
             number: $validatedData['number'] ?? $contract->number,
-            date: $validatedData['date'] ?? $contract->date->format('Y-m-d'),
+            date: isset($validatedData['date']) 
+                ? (\Carbon\Carbon::parse($validatedData['date'])->format('Y-m-d'))
+                : ($contract->date ? $contract->date->format('Y-m-d') : null),
             subject: array_key_exists('subject', $validatedData) 
                 ? $validatedData['subject'] 
                 : $contract->subject,
@@ -102,10 +104,10 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
                 ? ContractStatusEnum::from($validatedData['status']) 
                 : $contract->status,
             start_date: array_key_exists('start_date', $validatedData) 
-                ? $validatedData['start_date'] 
+                ? (\Carbon\Carbon::parse($validatedData['start_date'])->format('Y-m-d'))
                 : ($contract->start_date ? $contract->start_date->format('Y-m-d') : null),
             end_date: array_key_exists('end_date', $validatedData) 
-                ? $validatedData['end_date'] 
+                ? (\Carbon\Carbon::parse($validatedData['end_date'])->format('Y-m-d'))
                 : ($contract->end_date ? $contract->end_date->format('Y-m-d') : null),
             notes: array_key_exists('notes', $validatedData) 
                 ? $validatedData['notes'] 
