@@ -35,15 +35,14 @@ Route::prefix('reports')->name('reports.')->group(function () {
         Route::get('time-tracking', [ReportController::class, 'timeTrackingReport'])->name('time_tracking');
         Route::get('project-profitability', [ReportController::class, 'projectProfitabilityReport'])->name('project_profitability');
         Route::get('project-timelines', [ReportController::class, 'projectTimelinesReport'])->name('project_timelines');
+        
+        Route::get('contractor-summary', [ContractorReportController::class, 'contractorSummaryReport'])->name('contractor_summary');
+        Route::get('contractor-detail/{contractorId}', [ContractorReportController::class, 'contractorDetailReport'])->name('contractor_detail');
     });
     
     // ПРОДВИНУТЫЕ ОТЧЕТЫ (модуль advanced-reports - платный)
     Route::middleware(['module.access:advanced-reports'])->group(function () {
         Route::get('foreman-activity', [ReportController::class, 'foremanActivityReport'])->name('foreman_activity');
         Route::get('official-material-usage', [ReportController::class, 'officialMaterialUsageReport'])->name('official_material_usage');
-        
-        // Отчеты по подрядчикам (тоже продвинутые)
-        Route::get('contractor-summary', [ContractorReportController::class, 'contractorSummaryReport'])->name('contractor_summary');
-        Route::get('contractor-detail/{contractorId}', [ContractorReportController::class, 'contractorDetailReport'])->name('contractor_detail');
     });
 });

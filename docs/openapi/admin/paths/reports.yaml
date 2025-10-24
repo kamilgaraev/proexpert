@@ -617,12 +617,12 @@
 /reports/contractor-summary:
   get:
     tags: [Reports]
-    summary: Сводный отчет по подрядчикам (продвинутый модуль)
+    summary: Сводный отчет по подрядчикам
     description: |
       Генерирует сводный отчет по итогам работы подрядчиков за выбранный проект
       с анализом выполненных работ, платежей и материалов.
       
-      **Требования:** Доступ к модулю "advanced_reports"
+      **Требования:** Доступ к модулю "basic-reports"
     parameters:
       - name: project_id
         in: query
@@ -754,12 +754,12 @@
 /reports/contractor-detail/{contractorId}:
   get:
     tags: [Reports]
-    summary: Детальный отчет по подрядчику (продвинутый модуль)
+    summary: Детальный отчет по подрядчику
     description: |
       Генерирует детальный отчет по конкретному подрядчику в рамках проекта
       с подробной разбивкой по работам, контрактам и платежам.
       
-      **Требования:** Доступ к модулю "advanced_reports"
+      **Требования:** Доступ к модулю "basic-reports"
     parameters:
       - name: contractorId
         in: path
