@@ -27,12 +27,12 @@ class ContractorReportService
 
     protected ExcelExporterService $excelExporter;
 
-    protected ?ReportTemplateService $templateService;
+    protected ReportTemplateService $templateService;
 
     public function __construct(
         CsvExporterService $csvExporter,
         ExcelExporterService $excelExporter,
-        ?ReportTemplateService $templateService = null
+        ReportTemplateService $templateService
     ) {
         $this->csvExporter = $csvExporter;
         $this->excelExporter = $excelExporter;
@@ -152,12 +152,11 @@ class ContractorReportService
             Log::info('[ContractorReport] Export requested', [
                 'template_id' => $templateId,
                 'format' => $exportFormat,
-                'has_template_service' => $this->templateService !== null,
                 'module_active' => $this->isTemplateModuleActive()
             ]);
             
             // Пытаемся использовать шаблон если модуль активен
-            if ($templateId && $this->templateService && $this->isTemplateModuleActive()) {
+            if ($templateId && $this->isTemplateModuleActive()) {
                 try {
                     Log::info('[ContractorReport] Using template export', ['template_id' => $templateId]);
                     return $this->exportWithTemplate($result, $templateId, $exportFormat, $request);
@@ -171,7 +170,7 @@ class ContractorReportService
                 }
             } else {
                 Log::info('[ContractorReport] Using default export (no template)', [
-                    'reason' => !$templateId ? 'no_template_id' : (!$this->templateService ? 'no_service' : 'module_inactive')
+                    'reason' => !$templateId ? 'no_template_id' : 'module_inactive'
                 ]);
             }
             

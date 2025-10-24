@@ -122,27 +122,6 @@ class AppServiceProvider extends ServiceProvider
         // Регистрируем складские модули
         $this->app->register(\App\BusinessModules\Features\BasicWarehouse\BasicWarehouseServiceProvider::class);
         $this->app->register(\App\BusinessModules\Features\AdvancedWarehouse\AdvancedWarehouseServiceProvider::class);
-        
-        // Условная инжекция ReportTemplateService для ContractorReportService
-        $this->app->when(\App\Services\Report\ContractorReportService::class)
-            ->needs(\App\Services\Report\ReportTemplateService::class)
-            ->give(function ($app) {
-                try {
-                    $accessController = $app->make(\App\Modules\Core\AccessController::class);
-                    $user = \Illuminate\Support\Facades\Auth::user();
-                    
-                    if ($user && $user->current_organization_id) {
-                        if ($accessController->hasModuleAccess($user->current_organization_id, 'report-templates')) {
-                            return $app->make(\App\Services\Report\ReportTemplateService::class);
-                        }
-                    }
-                } catch (\Exception $e) {
-                    // Если ошибка - не инжектим
-                    Log::debug('Failed to inject ReportTemplateService', ['error' => $e->getMessage()]);
-                }
-                
-                return null;
-            });
     }
 
     /**
