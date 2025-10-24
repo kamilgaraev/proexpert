@@ -200,6 +200,14 @@ class ContractorReportService
             $totalSummary['total_payment_amount'] += $contractData['payment_amount'];
         }
 
+        // Преобразуем enum contractor_type в строку для безопасного использования
+        $contractorType = $contractor->contractor_type;
+        if ($contractorType instanceof \BackedEnum) {
+            $contractorType = $contractorType->value;
+        } elseif ($contractorType instanceof \UnitEnum) {
+            $contractorType = $contractorType->name;
+        }
+
         $result = [
             'title' => 'Детальный отчет по подрядчику',
             'contractor' => [
@@ -208,7 +216,7 @@ class ContractorReportService
                 'contact_person' => $contractor->contact_person,
                 'phone' => $contractor->phone,
                 'email' => $contractor->email,
-                'contractor_type' => $contractor->contractor_type,
+                'contractor_type' => $contractorType,
             ],
             'project' => [
                 'id' => $project->id,
@@ -307,13 +315,21 @@ class ContractorReportService
             $totalPaymentAmount = $paymentsQuery->sum('amount');
         }
 
+        // Преобразуем enum contractor_type в строку для безопасного использования
+        $contractorType = $contractor->contractor_type;
+        if ($contractorType instanceof \BackedEnum) {
+            $contractorType = $contractorType->value;
+        } elseif ($contractorType instanceof \UnitEnum) {
+            $contractorType = $contractorType->name;
+        }
+
         return [
             'contractor_id' => $contractor->id,
             'contractor_name' => $contractor->name,
             'contact_person' => $contractor->contact_person,
             'phone' => $contractor->phone,
             'email' => $contractor->email,
-            'contractor_type' => $contractor->contractor_type,
+            'contractor_type' => $contractorType,
             'contracts_count' => $contractsCount,
             'total_contract_amount' => round($totalContractAmount, 2),
             'total_completed_amount' => round($totalCompletedAmount, 2),
