@@ -145,36 +145,56 @@ class ContractorReportService
             'generated_at' => now()->toISOString(),
         ];
 
-        // Экспорт в файл, если требуется (кроме json)
-        if ($exportFormat && $exportFormat !== 'json') {
-            $templateId = $request->validated('template_id');
-            
-            Log::info('[ContractorReport] Export requested', [
-                'template_id' => $templateId,
-                'format' => $exportFormat,
-                'module_active' => $this->isTemplateModuleActive()
-            ]);
-            
-            // Пытаемся использовать шаблон если модуль активен
-            if ($templateId && $this->isTemplateModuleActive()) {
-                try {
-                    Log::info('[ContractorReport] Using template export', ['template_id' => $templateId]);
-                    return $this->exportWithTemplate($result, $templateId, $exportFormat, $request);
-                } catch (\Exception $e) {
-                    // Fallback на дефолт при ошибке
-                    Log::warning('[ContractorReport] Failed to use template, using default export', [
+        $templateId = $request->validated('template_id');
+        
+        // Применяем шаблон к данным если указан (для всех форматов включая JSON)
+        if ($templateId && $this->isTemplateModuleActive()) {
+            try {
+                $reportTemplate = $this->templateService->getTemplateForReport('contractor_summary', $request, $templateId);
+                
+                if ($reportTemplate && !empty($reportTemplate->columns_config)) {
+                    // Получаем список data_key из шаблона
+                    $allowedKeys = collect($reportTemplate->columns_config)
+                        ->pluck('data_key')
+                        ->toArray();
+                    
+                    // Фильтруем каждого подрядчика, оставляя только выбранные колонки
+                    $result['contractors'] = array_map(function ($contractor) use ($allowedKeys) {
+                        return array_intersect_key($contractor, array_flip($allowedKeys));
+                    }, $result['contractors']);
+                    
+                    Log::info('[ContractorReport] Template applied to data', [
                         'template_id' => $templateId,
-                        'error' => $e->getMessage(),
-                        'trace' => $e->getTraceAsString()
+                        'columns_count' => count($allowedKeys)
                     ]);
                 }
-            } else {
-                Log::info('[ContractorReport] Using default export (no template)', [
-                    'reason' => !$templateId ? 'no_template_id' : 'module_inactive'
+            } catch (\Exception $e) {
+                Log::warning('[ContractorReport] Failed to apply template to data', [
+                    'template_id' => $templateId,
+                    'error' => $e->getMessage()
                 ]);
             }
+        }
+        
+        // Экспорт в файл, если требуется (кроме json)
+        if ($exportFormat && $exportFormat !== 'json') {
+            Log::info('[ContractorReport] File export requested', [
+                'template_id' => $templateId,
+                'format' => $exportFormat
+            ]);
             
-            // Дефолтный экспорт (текущая логика)
+            // Для файлового экспорта используем специальную логику
+            if ($templateId && $this->isTemplateModuleActive()) {
+                try {
+                    return $this->exportWithTemplate($result, $templateId, $exportFormat, $request);
+                } catch (\Exception $e) {
+                    Log::warning('[ContractorReport] Failed to use template export, using default', [
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+            
+            // Дефолтный файловый экспорт
             if ($exportFormat === 'csv') {
                 $filename = 'contractor_summary_report_' . now()->format('d-m-Y_H-i');
                 return $this->exportToCsv($result, $filename);
@@ -267,6 +287,48 @@ class ContractorReportService
             'generated_at' => now()->toISOString(),
         ];
 
+        $templateId = $request->validated('template_id');
+        
+        // Применяем шаблон к данным если указан (для всех форматов включая JSON)
+        if ($templateId && $this->isTemplateModuleActive()) {
+            try {
+                $reportTemplate = $this->templateService->getTemplateForReport('contractor_detail', $request, $templateId);
+                
+                if ($reportTemplate && !empty($reportTemplate->columns_config)) {
+                    // Получаем список data_key из шаблона
+                    $allowedKeys = collect($reportTemplate->columns_config)
+                        ->pluck('data_key')
+                        ->toArray();
+                    
+                    // Фильтруем каждый контракт, оставляя только выбранные колонки
+                    $result['contracts'] = array_map(function ($contract) use ($allowedKeys) {
+                        // Основные поля контракта
+                        $filtered = array_intersect_key($contract, array_flip($allowedKeys));
+                        
+                        // Сохраняем вложенные массивы (completed_works, payments) если они есть
+                        if (isset($contract['completed_works'])) {
+                            $filtered['completed_works'] = $contract['completed_works'];
+                        }
+                        if (isset($contract['payments'])) {
+                            $filtered['payments'] = $contract['payments'];
+                        }
+                        
+                        return $filtered;
+                    }, $result['contracts']);
+                    
+                    Log::info('[ContractorReport] Template applied to detail data', [
+                        'template_id' => $templateId,
+                        'columns_count' => count($allowedKeys)
+                    ]);
+                }
+            } catch (\Exception $e) {
+                Log::warning('[ContractorReport] Failed to apply template to detail data', [
+                    'template_id' => $templateId,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+        
         // Экспорт в файл, если требуется (кроме json)
         if ($exportFormat && $exportFormat !== 'json') {
             if ($exportFormat === 'csv') {
