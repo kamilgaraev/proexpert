@@ -365,7 +365,7 @@ class ContractorReportService
                     'completion_date' => $work->completion_date?->format('Y-m-d'),
                     'notes' => $work->notes,
                 ];
-            }),
+            })->toArray(),
             'payments' => $payments->map(function ($payment) {
                 return [
                     'id' => $payment->id,
@@ -374,7 +374,7 @@ class ContractorReportService
                     'payment_type' => $payment->payment_type,
                     'notes' => $payment->notes,
                 ];
-            }),
+            })->toArray(),
         ];
     }
 
