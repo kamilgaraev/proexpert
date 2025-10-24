@@ -142,11 +142,13 @@ class ContractorReportService
 
         // Экспорт в файл, если требуется
         if ($exportFormat === 'csv') {
-            return $this->exportToCsv($result, 'contractor_summary_report');
+            $filename = 'contractor_summary_report_' . now()->format('d.m.Y_H-i');
+            return $this->exportToCsv($result, $filename);
         }
 
         if ($exportFormat === 'excel' || $exportFormat === 'xlsx') {
-            return $this->exportToExcel($result, 'contractor_summary_report');
+            $filename = 'contractor_summary_report_' . now()->format('d.m.Y_H-i');
+            return $this->exportToExcel($result, $filename);
         }
 
         return $result;
@@ -224,11 +226,13 @@ class ContractorReportService
 
         // Экспорт в файл, если требуется
         if ($exportFormat === 'csv') {
-            return $this->exportToCsv($result, 'contractor_detail_report');
+            $filename = 'contractor_detail_report_' . now()->format('d.m.Y_H-i');
+            return $this->exportToCsv($result, $filename);
         }
 
         if ($exportFormat === 'excel' || $exportFormat === 'xlsx') {
-            return $this->exportToExcel($result, 'contractor_detail_report');
+            $filename = 'contractor_detail_report_' . now()->format('d.m.Y_H-i');
+            return $this->exportToExcel($result, $filename);
         }
 
         return $result;
@@ -544,18 +548,18 @@ class ContractorReportService
         $rows = [];
         foreach ($data['contractors'] as $contractor) {
             $rows[] = [
-                $contractor['contractor_name'],
-                $contractor['contact_person'],
-                $contractor['phone'],
-                $contractor['email'],
-                $contractor['contractor_type'],
-                $contractor['contracts_count'],
-                $contractor['total_contract_amount'],
-                $contractor['total_completed_amount'],
-                $contractor['total_payment_amount'],
-                $contractor['remaining_amount'],
-                $contractor['completion_percentage'],
-                $contractor['payment_percentage'],
+                (string)($contractor['contractor_name'] ?? ''),
+                (string)($contractor['contact_person'] ?? ''),
+                (string)($contractor['phone'] ?? ''),
+                (string)($contractor['email'] ?? ''),
+                (string)($contractor['contractor_type'] ?? ''),
+                (float)($contractor['contracts_count'] ?? 0),
+                (float)($contractor['total_contract_amount'] ?? 0),
+                (float)($contractor['total_completed_amount'] ?? 0),
+                (float)($contractor['total_payment_amount'] ?? 0),
+                (float)($contractor['remaining_amount'] ?? 0),
+                (float)($contractor['completion_percentage'] ?? 0),
+                (float)($contractor['payment_percentage'] ?? 0),
             ];
         }
 
@@ -582,15 +586,15 @@ class ContractorReportService
         $rows = [];
         foreach ($data['contracts'] as $contract) {
             $rows[] = [
-                $contract['contract_number'],
-                $contract['contract_date'],
-                $contract['status'],
-                $contract['total_amount'],
-                $contract['completed_amount'],
-                $contract['payment_amount'],
-                $contract['remaining_amount'],
-                $contract['completion_percentage'],
-                $contract['payment_percentage'],
+                (string)($contract['contract_number'] ?? ''),
+                (string)($contract['contract_date'] ?? ''),
+                (string)($contract['status'] ?? ''),
+                (float)($contract['total_amount'] ?? 0),
+                (float)($contract['completed_amount'] ?? 0),
+                (float)($contract['payment_amount'] ?? 0),
+                (float)($contract['remaining_amount'] ?? 0),
+                (float)($contract['completion_percentage'] ?? 0),
+                (float)($contract['payment_percentage'] ?? 0),
             ];
         }
 

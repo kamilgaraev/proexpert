@@ -768,7 +768,7 @@ class ExcelExporterService
         try {
             // Используем существующую логику генерации через StreamedResponse,
             // но направляем вывод в переменную
-            $filename = 'official_material_report_' . date('YmdHis') . '.xlsx';
+            $filename = 'official_material_report_' . now()->format('d.m.Y_H-i') . '.xlsx';
             $response = $this->generateOfficialMaterialReport($reportData, $filename);
 
             if (!$response instanceof StreamedResponse) {
