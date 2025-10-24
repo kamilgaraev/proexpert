@@ -98,10 +98,14 @@ class ContractorReportRequest extends FormRequest
             'include_payments' => $this->boolean('include_payments', true),
             'include_materials' => $this->boolean('include_materials', false),
             'group_by' => $this->input('group_by', 'contractor'),
-            'export_format' => $this->input('export_format', 'json'),
             'sort_by' => $this->input('sort_by', 'total_amount'),
             'sort_direction' => $this->input('sort_direction', 'desc'),
         ];
+        
+        // export_format без дефолта - если не указан, вернется JSON из контроллера
+        if ($this->has('export_format')) {
+            $mergeData['export_format'] = $this->input('export_format');
+        }
 
         // Если модуль шаблонов не активен, игнорируем template_id
         if (!$this->isTemplateModuleActive() && $this->has('template_id')) {

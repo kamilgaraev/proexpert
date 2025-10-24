@@ -145,8 +145,8 @@ class ContractorReportService
             'generated_at' => now()->toISOString(),
         ];
 
-        // Экспорт в файл, если требуется
-        if ($exportFormat) {
+        // Экспорт в файл, если требуется (кроме json)
+        if ($exportFormat && $exportFormat !== 'json') {
             $templateId = $request->validated('template_id');
             
             Log::info('[ContractorReport] Export requested', [
@@ -267,15 +267,17 @@ class ContractorReportService
             'generated_at' => now()->toISOString(),
         ];
 
-        // Экспорт в файл, если требуется
-        if ($exportFormat === 'csv') {
-            $filename = 'contractor_detail_report_' . now()->format('d-m-Y_H-i');
-            return $this->exportToCsv($result, $filename);
-        }
+        // Экспорт в файл, если требуется (кроме json)
+        if ($exportFormat && $exportFormat !== 'json') {
+            if ($exportFormat === 'csv') {
+                $filename = 'contractor_detail_report_' . now()->format('d-m-Y_H-i');
+                return $this->exportToCsv($result, $filename);
+            }
 
-        if ($exportFormat === 'excel' || $exportFormat === 'xlsx') {
-            $filename = 'contractor_detail_report_' . now()->format('d-m-Y_H-i');
-            return $this->exportToExcel($result, $filename);
+            if ($exportFormat === 'excel' || $exportFormat === 'xlsx') {
+                $filename = 'contractor_detail_report_' . now()->format('d-m-Y_H-i');
+                return $this->exportToExcel($result, $filename);
+            }
         }
 
         return $result;
