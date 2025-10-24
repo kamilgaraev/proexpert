@@ -276,10 +276,12 @@ class ContractorReportService
             
             $completedWorksQuery = CompletedWork::whereIn('contract_id', $contractIds);
 
+            // Если указана дата начала, фильтруем по ней. Иначе получаем за все время
             if ($dateFrom) {
                 $completedWorksQuery->where('completion_date', '>=', Carbon::parse($dateFrom)->toDateString());
             }
 
+            // Если указана дата окончания, фильтруем по ней. Иначе получаем за все время
             if ($dateTo) {
                 $completedWorksQuery->where('completion_date', '<=', Carbon::parse($dateTo)->toDateString());
             }
@@ -292,10 +294,12 @@ class ContractorReportService
             $contractIds = $contracts->pluck('id');
             $paymentsQuery = ContractPayment::whereIn('contract_id', $contractIds);
 
+            // Если указана дата начала, фильтруем по ней. Иначе получаем за все время
             if ($dateFrom) {
                 $paymentsQuery->where('payment_date', '>=', Carbon::parse($dateFrom)->toDateString());
             }
 
+            // Если указана дата окончания, фильтруем по ней. Иначе получаем за все время
             if ($dateTo) {
                 $paymentsQuery->where('payment_date', '<=', Carbon::parse($dateTo)->toDateString());
             }
@@ -330,11 +334,13 @@ class ContractorReportService
         $completedWorksQuery = $contract->completedWorks();
         $paymentsQuery = $contract->payments();
 
+        // Если указана дата начала, фильтруем по ней. Иначе получаем за все время
         if ($dateFrom) {
             $completedWorksQuery->where('completion_date', '>=', Carbon::parse($dateFrom)->toDateString());
             $paymentsQuery->where('payment_date', '>=', Carbon::parse($dateFrom)->toDateString());
         }
 
+        // Если указана дата окончания, фильтруем по ней. Иначе получаем за все время
         if ($dateTo) {
             $completedWorksQuery->where('completion_date', '<=', Carbon::parse($dateTo)->toDateString());
             $paymentsQuery->where('payment_date', '<=', Carbon::parse($dateTo)->toDateString());

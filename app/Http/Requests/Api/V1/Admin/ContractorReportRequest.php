@@ -57,8 +57,14 @@ class ContractorReportRequest extends FormRequest
      */
     protected function prepareForValidation(): void
     {
+        // Преобразуем пустые строки в null для дат
+        $dateFrom = $this->input('date_from');
+        $dateTo = $this->input('date_to');
+        
         // Устанавливаем значения по умолчанию
         $this->merge([
+            'date_from' => $dateFrom === '' ? null : $dateFrom,
+            'date_to' => $dateTo === '' ? null : $dateTo,
             'include_completed_works' => $this->boolean('include_completed_works', true),
             'include_payments' => $this->boolean('include_payments', true),
             'include_materials' => $this->boolean('include_materials', false),
