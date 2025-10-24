@@ -149,17 +149,30 @@ class ContractorReportService
         if ($exportFormat) {
             $templateId = $request->validated('template_id');
             
+            Log::info('[ContractorReport] Export requested', [
+                'template_id' => $templateId,
+                'format' => $exportFormat,
+                'has_template_service' => $this->templateService !== null,
+                'module_active' => $this->isTemplateModuleActive()
+            ]);
+            
             // Пытаемся использовать шаблон если модуль активен
             if ($templateId && $this->templateService && $this->isTemplateModuleActive()) {
                 try {
+                    Log::info('[ContractorReport] Using template export', ['template_id' => $templateId]);
                     return $this->exportWithTemplate($result, $templateId, $exportFormat, $request);
                 } catch (\Exception $e) {
                     // Fallback на дефолт при ошибке
-                    Log::warning('Failed to use template, using default export', [
+                    Log::warning('[ContractorReport] Failed to use template, using default export', [
                         'template_id' => $templateId,
-                        'error' => $e->getMessage()
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
                     ]);
                 }
+            } else {
+                Log::info('[ContractorReport] Using default export (no template)', [
+                    'reason' => !$templateId ? 'no_template_id' : (!$this->templateService ? 'no_service' : 'module_inactive')
+                ]);
             }
             
             // Дефолтный экспорт (текущая логика)
