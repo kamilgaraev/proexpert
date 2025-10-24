@@ -262,11 +262,11 @@ class HoldingReportService
         }
 
         if ($filters['date_from']) {
-            $query->where('start_date', '>=', Carbon::parse($filters['date_from']));
+            $query->where('start_date', '>=', Carbon::parse($filters['date_from'])->toDateString());
         }
 
         if ($filters['date_to']) {
-            $query->where('start_date', '<=', Carbon::parse($filters['date_to']));
+            $query->where('start_date', '<=', Carbon::parse($filters['date_to'])->toDateString());
         }
 
         if ($filters['min_budget']) {
@@ -297,11 +297,11 @@ class HoldingReportService
         }
 
         if ($filters['date_from']) {
-            $query->where('date', '>=', Carbon::parse($filters['date_from']));
+            $query->where('date', '>=', Carbon::parse($filters['date_from'])->toDateString());
         }
 
         if ($filters['date_to']) {
-            $query->where('date', '<=', Carbon::parse($filters['date_to']));
+            $query->where('date', '<=', Carbon::parse($filters['date_to'])->toDateString());
         }
 
         if ($filters['min_amount']) {
@@ -557,11 +557,11 @@ class HoldingReportService
         }
 
         if ($filters['date_from']) {
-            $query->where('contracts.date', '>=', Carbon::parse($filters['date_from']));
+            $query->where('contracts.date', '>=', Carbon::parse($filters['date_from'])->toDateString());
         }
 
         if ($filters['date_to']) {
-            $query->where('contracts.date', '<=', Carbon::parse($filters['date_to']));
+            $query->where('contracts.date', '<=', Carbon::parse($filters['date_to'])->toDateString());
         }
 
         $total = DB::table(DB::raw("({$query->toSql()}) as sub"))

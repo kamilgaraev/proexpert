@@ -47,7 +47,7 @@ class MaterialReportService
 
         // Получаем все операции с материалами за период с применением фильтров
         $materialLogsQuery = MaterialUsageLog::where('project_id', $projectId)
-            ->whereBetween('usage_date', [$periodFrom, $periodTo])
+            ->whereBetween('usage_date', [$periodFrom->toDateString(), $periodTo->toDateString()])
             ->with(['material.measurementUnit', 'user', 'supplier', 'workType']);
 
         $this->applyFiltersToMaterialLogs($materialLogsQuery, $filters);
@@ -66,7 +66,7 @@ class MaterialReportService
 
         // Получаем приходы за период и предыдущие с применением фильтров
         $receiptsQuery = MaterialReceipt::where('project_id', $projectId)
-            ->where('receipt_date', '<=', $periodTo)
+            ->where('receipt_date', '<=', $periodTo->toDateString())
             ->with(['material.measurementUnit', 'supplier']);
 
         $this->applyFiltersToReceipts($receiptsQuery, $filters);

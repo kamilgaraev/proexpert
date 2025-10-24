@@ -273,11 +273,11 @@ class ContractorReportService
             $completedWorksQuery = CompletedWork::whereIn('contract_id', $contractIds);
 
             if ($dateFrom) {
-                $completedWorksQuery->where('completion_date', '>=', Carbon::parse($dateFrom));
+                $completedWorksQuery->where('completion_date', '>=', Carbon::parse($dateFrom)->toDateString());
             }
 
             if ($dateTo) {
-                $completedWorksQuery->where('completion_date', '<=', Carbon::parse($dateTo));
+                $completedWorksQuery->where('completion_date', '<=', Carbon::parse($dateTo)->toDateString());
             }
 
             $totalCompletedAmount = $completedWorksQuery->sum('total_amount');
@@ -289,11 +289,11 @@ class ContractorReportService
             $paymentsQuery = ContractPayment::whereIn('contract_id', $contractIds);
 
             if ($dateFrom) {
-                $paymentsQuery->where('payment_date', '>=', Carbon::parse($dateFrom));
+                $paymentsQuery->where('payment_date', '>=', Carbon::parse($dateFrom)->toDateString());
             }
 
             if ($dateTo) {
-                $paymentsQuery->where('payment_date', '<=', Carbon::parse($dateTo));
+                $paymentsQuery->where('payment_date', '<=', Carbon::parse($dateTo)->toDateString());
             }
 
             $totalPaymentAmount = $paymentsQuery->sum('amount');
@@ -327,13 +327,13 @@ class ContractorReportService
         $paymentsQuery = $contract->payments();
 
         if ($dateFrom) {
-            $completedWorksQuery->where('completion_date', '>=', Carbon::parse($dateFrom));
-            $paymentsQuery->where('payment_date', '>=', Carbon::parse($dateFrom));
+            $completedWorksQuery->where('completion_date', '>=', Carbon::parse($dateFrom)->toDateString());
+            $paymentsQuery->where('payment_date', '>=', Carbon::parse($dateFrom)->toDateString());
         }
 
         if ($dateTo) {
-            $completedWorksQuery->where('completion_date', '<=', Carbon::parse($dateTo));
-            $paymentsQuery->where('payment_date', '<=', Carbon::parse($dateTo));
+            $completedWorksQuery->where('completion_date', '<=', Carbon::parse($dateTo)->toDateString());
+            $paymentsQuery->where('payment_date', '<=', Carbon::parse($dateTo)->toDateString());
         }
 
         $completedWorks = $completedWorksQuery->with('workType')->get();

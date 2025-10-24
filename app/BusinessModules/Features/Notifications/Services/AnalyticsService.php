@@ -123,11 +123,11 @@ class AnalyticsService
         }
 
         if (isset($filters['from_date'])) {
-            $query->where('created_at', '>=', Carbon::parse($filters['from_date']));
+            $query->where('created_at', '>=', Carbon::parse($filters['from_date'])->toDateTimeString());
         }
 
         if (isset($filters['to_date'])) {
-            $query->where('created_at', '<=', Carbon::parse($filters['to_date']));
+            $query->where('created_at', '<=', Carbon::parse($filters['to_date'])->toDateTimeString());
         }
 
         $total = $query->count();

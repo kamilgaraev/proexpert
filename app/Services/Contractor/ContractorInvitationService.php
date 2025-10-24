@@ -186,11 +186,11 @@ class ContractorInvitationService
             }
 
             if (isset($filters['date_from'])) {
-                $query->where('created_at', '>=', Carbon::parse($filters['date_from']));
+                $query->where('created_at', '>=', Carbon::parse($filters['date_from'])->toDateTimeString());
             }
 
             if (isset($filters['date_to'])) {
-                $query->where('created_at', '<=', Carbon::parse($filters['date_to']));
+                $query->where('created_at', '<=', Carbon::parse($filters['date_to'])->toDateTimeString());
             }
 
             $relations = $type === 'sent' 

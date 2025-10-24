@@ -41,7 +41,7 @@ class AdvanceAccountReportService
 
             // Получаем сводные данные по транзакциям
             $transactionSummary = AdvanceAccountTransaction::byOrganization($organizationId)
-                ->whereBetween('created_at', [$dateFrom, $dateTo])
+                ->whereBetween('created_at', [$dateFrom->toDateTimeString(), $dateTo->toDateTimeString()])
                 ->select([
                     'type',
                     DB::raw('COUNT(*) as count'),
@@ -124,7 +124,7 @@ class AdvanceAccountReportService
             // Получаем все транзакции пользователя
             $transactions = AdvanceAccountTransaction::byUser($userId)
                 ->byOrganization($organizationId)
-                ->whereBetween('created_at', [$dateFrom, $dateTo])
+                ->whereBetween('created_at', [$dateFrom->toDateTimeString(), $dateTo->toDateTimeString()])
                 ->with(['project'])
                 ->orderBy('created_at', 'desc')
                 ->get();
@@ -204,7 +204,7 @@ class AdvanceAccountReportService
             // Получаем все транзакции по проекту
             $transactions = AdvanceAccountTransaction::byProject($projectId)
                 ->byOrganization($organizationId)
-                ->whereBetween('created_at', [$dateFrom, $dateTo])
+                ->whereBetween('created_at', [$dateFrom->toDateTimeString(), $dateTo->toDateTimeString()])
                 ->with(['user'])
                 ->orderBy('created_at', 'desc')
                 ->get();

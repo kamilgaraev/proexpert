@@ -131,7 +131,18 @@ class ReportFilterBuilder
         if (count($range) !== 2) {
             return $query;
         }
-        return $query->whereBetween($field, [$range[0], $range[1]]);
+        
+        $from = $range[0];
+        $to = $range[1];
+        
+        if ($from instanceof \Carbon\Carbon) {
+            $from = $from->toDateTimeString();
+        }
+        if ($to instanceof \Carbon\Carbon) {
+            $to = $to->toDateTimeString();
+        }
+        
+        return $query->whereBetween($field, [$from, $to]);
     }
 
     protected function applyNullFilter(Builder $query, string $field, bool $isNull): Builder

@@ -275,7 +275,7 @@ class DashboardController extends Controller
         $days = $request->query('days', 30);
 
         $activity = CompletedWork::where('organization_id', $organizationId)
-            ->where('created_at', '>=', Carbon::now()->subDays($days))
+            ->where('created_at', '>=', Carbon::now()->subDays($days)->toDateTimeString())
             ->with(['project:id,name', 'workType:id,name', 'user:id,name', 'contract:id,number'])
             ->orderBy('created_at', 'desc')
             ->limit(20)

@@ -19,8 +19,8 @@ class ContractsUpcomingWidgetProvider extends AbstractWidgetProvider
     {
         $upcoming = DB::table('contracts')
             ->where('organization_id', $request->organizationId)
-            ->where('end_date', '>=', Carbon::now())
-            ->where('end_date', '<=', Carbon::now()->addDays(30))
+            ->where('end_date', '>=', Carbon::now()->toDateString())
+            ->where('end_date', '<=', Carbon::now()->addDays(30)->toDateString())
             ->select('id', 'number', 'end_date', 'total_amount', 'status')
             ->orderBy('end_date')
             ->get();

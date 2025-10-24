@@ -1164,7 +1164,7 @@ class ReportService
             ->leftJoin('users', 'warehouse_movements.user_id', '=', 'users.id')
             ->leftJoin('measurement_units', 'materials.measurement_unit_id', '=', 'measurement_units.id')
             ->where('warehouse_movements.organization_id', $organizationId)
-            ->whereBetween('warehouse_movements.movement_date', [$dateFrom, $dateTo])
+            ->whereBetween('warehouse_movements.movement_date', [$dateFrom->toDateTimeString(), $dateTo->toDateTimeString()])
             ->select(
                 'warehouse_movements.id',
                 'warehouse_movements.movement_date',
@@ -1276,7 +1276,7 @@ class ReportService
             ->leftJoin('projects', 'time_entries.project_id', '=', 'projects.id')
             ->leftJoin('work_types', 'time_entries.work_type_id', '=', 'work_types.id')
             ->where('time_entries.organization_id', $organizationId)
-            ->whereBetween('time_entries.work_date', [$dateFrom, $dateTo])
+            ->whereBetween('time_entries.work_date', [$dateFrom->toDateTimeString(), $dateTo->toDateTimeString()])
             ->select(
                 'time_entries.id',
                 'time_entries.work_date',

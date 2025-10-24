@@ -31,15 +31,15 @@ class ApiPerformanceWidgetProvider extends AbstractWidgetProvider
             'works_created' => DB::table('completed_works')
                 ->join('projects', 'completed_works.project_id', '=', 'projects.id')
                 ->where('projects.organization_id', $organizationId)
-                ->where('completed_works.created_at', '>=', Carbon::now()->subDay())
+                ->where('completed_works.created_at', '>=', Carbon::now()->subDay()->toDateTimeString())
                 ->count(),
             'projects_updated' => DB::table('projects')
                 ->where('organization_id', $organizationId)
-                ->where('updated_at', '>=', Carbon::now()->subDay())
+                ->where('updated_at', '>=', Carbon::now()->subDay()->toDateTimeString())
                 ->count(),
             'contracts_activity' => DB::table('contracts')
                 ->where('organization_id', $organizationId)
-                ->where('updated_at', '>=', Carbon::now()->subDay())
+                ->where('updated_at', '>=', Carbon::now()->subDay()->toDateTimeString())
                 ->count(),
         ];
 

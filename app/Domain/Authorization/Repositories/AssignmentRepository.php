@@ -191,7 +191,7 @@ class AssignmentRepository
     {
         return UserRoleAssignment::active()
             ->whereNotNull('expires_at')
-            ->where('expires_at', '<=', Carbon::now()->addDays($daysAhead))
+            ->where('expires_at', '<=', Carbon::now()->addDays($daysAhead)->toDateTimeString())
             ->with(['user', 'context'])
             ->get();
     }
@@ -203,7 +203,7 @@ class AssignmentRepository
     {
         $expiredAssignments = UserRoleAssignment::active()
             ->whereNotNull('expires_at')
-            ->where('expires_at', '<=', Carbon::now())
+            ->where('expires_at', '<=', Carbon::now()->toDateTimeString())
             ->get();
 
         $count = 0;

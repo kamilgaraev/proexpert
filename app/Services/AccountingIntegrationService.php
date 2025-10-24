@@ -283,7 +283,7 @@ class AccountingIntegrationService
 
             // Получаем транзакции для экспорта
             $transactions = AdvanceAccountTransaction::byOrganization($organizationId)
-                ->whereBetween('created_at', [$startDate, $endDate])
+                ->whereBetween('created_at', [$startDate->toDateTimeString(), $endDate->toDateTimeString()])
                 ->whereNull('external_code') // Только транзакции без внешнего кода (еще не экспортированные)
                 ->where('reporting_status', AdvanceAccountTransaction::STATUS_APPROVED) // Только утвержденные
                 ->with(['user', 'project', 'createdBy', 'approvedBy'])
