@@ -14,6 +14,7 @@ use App\Services\Export\CsvExporterService;
 use App\Services\Export\ExcelExporterService;
 use App\Services\Storage\FileService;
 use App\Services\Organization\OrganizationContext;
+use App\Services\Report\ReportTemplateService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -26,12 +27,16 @@ class ContractorReportService
 
     protected ExcelExporterService $excelExporter;
 
+    protected ?ReportTemplateService $templateService;
+
     public function __construct(
         CsvExporterService $csvExporter,
-        ExcelExporterService $excelExporter
+        ExcelExporterService $excelExporter,
+        ?ReportTemplateService $templateService = null
     ) {
         $this->csvExporter = $csvExporter;
         $this->excelExporter = $excelExporter;
+        $this->templateService = $templateService;
     }
 
     /**
@@ -141,14 +146,32 @@ class ContractorReportService
         ];
 
         // Экспорт в файл, если требуется
-        if ($exportFormat === 'csv') {
-            $filename = 'contractor_summary_report_' . now()->format('d-m-Y_H-i');
-            return $this->exportToCsv($result, $filename);
-        }
+        if ($exportFormat) {
+            $templateId = $request->validated('template_id');
+            
+            // Пытаемся использовать шаблон если модуль активен
+            if ($templateId && $this->templateService && $this->isTemplateModuleActive()) {
+                try {
+                    return $this->exportWithTemplate($result, $templateId, $exportFormat, $request);
+                } catch (\Exception $e) {
+                    // Fallback на дефолт при ошибке
+                    Log::warning('Failed to use template, using default export', [
+                        'template_id' => $templateId,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+            
+            // Дефолтный экспорт (текущая логика)
+            if ($exportFormat === 'csv') {
+                $filename = 'contractor_summary_report_' . now()->format('d-m-Y_H-i');
+                return $this->exportToCsv($result, $filename);
+            }
 
-        if ($exportFormat === 'excel' || $exportFormat === 'xlsx') {
-            $filename = 'contractor_summary_report_' . now()->format('d-m-Y_H-i');
-            return $this->exportToExcel($result, $filename);
+            if ($exportFormat === 'excel' || $exportFormat === 'xlsx') {
+                $filename = 'contractor_summary_report_' . now()->format('d-m-Y_H-i');
+                return $this->exportToExcel($result, $filename);
+            }
         }
 
         return $result;
@@ -424,6 +447,137 @@ class ContractorReportService
     }
 
     /**
+     * Проверить, активен ли модуль шаблонов отчетов.
+     */
+    protected function isTemplateModuleActive(): bool
+    {
+        try {
+            $accessController = app(\App\Modules\Core\AccessController::class);
+            $user = Auth::user();
+            
+            if (!$user || !$user->current_organization_id) {
+                return false;
+            }
+            
+            return $accessController->hasModuleAccess(
+                $user->current_organization_id,
+                'report-templates'
+            );
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Получить дефолтный маппинг колонок для сводного отчета.
+     */
+    protected function getDefaultColumnMapping(): array
+    {
+        return [
+            'Подрядчик' => 'contractor_name',
+            'Контактное лицо' => 'contact_person',
+            'Телефон' => 'phone',
+            'Email' => 'email',
+            'Количество контрактов' => 'contracts_count',
+            'Сумма контрактов' => 'total_contract_amount',
+            'Выполнено работ' => 'total_completed_amount',
+            'Оплачено' => 'total_payment_amount',
+            'Остаток к доплате' => 'remaining_amount',
+            'Процент выполнения' => 'completion_percentage',
+            'Процент оплаты' => 'payment_percentage',
+        ];
+    }
+
+    /**
+     * Получить маппинг колонок из шаблона или вернуть дефолтный.
+     */
+    protected function getColumnMappingFromTemplate($template, array $defaultMapping): array
+    {
+        if ($template && !empty($template->columns_config)) {
+            $mappedColumns = [];
+            // Сортируем колонки по полю order
+            $sortedColumns = collect($template->columns_config)->sortBy('order')->values();
+            foreach ($sortedColumns as $column) {
+                if (isset($column['header']) && isset($column['data_key'])) {
+                    $mappedColumns[$column['header']] = $column['data_key'];
+                }
+            }
+            return $mappedColumns;
+        }
+        return $defaultMapping;
+    }
+
+    /**
+     * Экспорт с использованием шаблона.
+     */
+    protected function exportWithTemplate(array $data, int $templateId, string $format, $request): StreamedResponse
+    {
+        $reportTemplate = $this->templateService->getTemplateForReport('contractor_summary', $request, $templateId);
+        
+        if (!$reportTemplate) {
+            throw new \Exception('Шаблон отчета не найден');
+        }
+
+        $defaultMapping = $this->getDefaultColumnMapping();
+        $columnMapping = $this->getColumnMappingFromTemplate($reportTemplate, $defaultMapping);
+
+        if (empty($columnMapping)) {
+            throw new \Exception('Не удалось определить колонки для отчета');
+        }
+
+        // Фильтруем данные по выбранным колонкам
+        $filteredData = $this->filterDataByColumns($data['contractors'], $columnMapping);
+
+        // Формируем headers и rows
+        $headers = array_keys($columnMapping);
+        $rows = [];
+        
+        foreach ($filteredData as $row) {
+            $rowData = [];
+            foreach ($columnMapping as $header => $dataKey) {
+                $value = $row[$dataKey] ?? '';
+                
+                // Форматируем процентные значения
+                if (str_contains($dataKey, 'percentage')) {
+                    $value = $format === 'csv' ? $value . '%' : (float)$value;
+                } elseif ($format === 'xlsx' && is_numeric($value)) {
+                    $value = (float)$value;
+                } elseif ($format === 'xlsx') {
+                    $value = (string)$value;
+                }
+                
+                $rowData[] = $value;
+            }
+            $rows[] = $rowData;
+        }
+
+        $filename = $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'contractor_summary_report';
+        $filename .= '_' . now()->format('d-m-Y_H-i');
+
+        if ($format === 'csv') {
+            return $this->csvExporter->streamDownload($filename . '.csv', $headers, $rows);
+        } else {
+            return $this->excelExporter->streamDownload($filename . '.xlsx', $headers, $rows);
+        }
+    }
+
+    /**
+     * Фильтрация данных по выбранным колонкам.
+     */
+    protected function filterDataByColumns(array $data, array $columnMapping): array
+    {
+        $dataKeys = array_values($columnMapping);
+        
+        return array_map(function ($item) use ($dataKeys) {
+            $filtered = [];
+            foreach ($dataKeys as $key) {
+                $filtered[$key] = $item[$key] ?? null;
+            }
+            return $filtered;
+        }, $data);
+    }
+
+    /**
      * Экспорт в CSV.
      */
     private function exportToCsv(array $data, string $filename): StreamedResponse
@@ -457,7 +611,6 @@ class ContractorReportService
             'Контактное лицо',
             'Телефон',
             'Email',
-            'Тип',
             'Количество контрактов',
             'Сумма контрактов',
             'Выполнено работ',
@@ -474,7 +627,6 @@ class ContractorReportService
                 $contractor['contact_person'],
                 $contractor['phone'],
                 $contractor['email'],
-                $contractor['contractor_type'],
                 $contractor['contracts_count'],
                 $contractor['total_contract_amount'],
                 $contractor['total_completed_amount'],
@@ -557,7 +709,6 @@ class ContractorReportService
             'Контактное лицо',
             'Телефон',
             'Email',
-            'Тип',
             'Количество контрактов',
             'Сумма контрактов',
             'Выполнено работ',
@@ -574,7 +725,6 @@ class ContractorReportService
                 (string)($contractor['contact_person'] ?? ''),
                 (string)($contractor['phone'] ?? ''),
                 (string)($contractor['email'] ?? ''),
-                (string)($contractor['contractor_type'] ?? ''),
                 (float)($contractor['contracts_count'] ?? 0),
                 (float)($contractor['total_contract_amount'] ?? 0),
                 (float)($contractor['total_completed_amount'] ?? 0),

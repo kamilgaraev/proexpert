@@ -1,0 +1,64 @@
+[
+  {
+    "name": "Контракты подрядчика - Стандартный",
+    "report_type": "contractor_detail",
+    "is_default": true,
+    "columns_config": [
+      {
+        "header": "Номер контракта",
+        "data_key": "contract_number",
+        "order": 1,
+        "format_options": null
+      },
+      {
+        "header": "Дата контракта",
+        "data_key": "contract_date",
+        "order": 2,
+        "format_options": {"type": "date"}
+      },
+      {
+        "header": "Статус",
+        "data_key": "status",
+        "order": 3,
+        "format_options": null
+      },
+      {
+        "header": "Сумма контракта",
+        "data_key": "total_amount",
+        "order": 4,
+        "format_options": {"type": "money"}
+      },
+      {
+        "header": "Выполнено работ",
+        "data_key": "completed_amount",
+        "order": 5,
+        "format_options": {"type": "money"}
+      },
+      {
+        "header": "Оплачено",
+        "data_key": "payment_amount",
+        "order": 6,
+        "format_options": {"type": "money"}
+      },
+      {
+        "header": "Остаток к доплате",
+        "data_key": "remaining_amount",
+        "order": 7,
+        "format_options": {"type": "money"}
+      },
+      {
+        "header": "Процент выполнения",
+        "data_key": "completion_percentage",
+        "order": 8,
+        "format_options": {"type": "percentage"}
+      },
+      {
+        "header": "Процент оплаты",
+        "data_key": "payment_percentage",
+        "order": 9,
+        "format_options": {"type": "percentage"}
+      }
+    ]
+  }
+]
+

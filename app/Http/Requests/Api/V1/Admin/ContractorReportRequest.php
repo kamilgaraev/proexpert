@@ -4,6 +4,7 @@ namespace App\Http\Requests\Api\V1\Admin;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Auth;
 
 class ContractorReportRequest extends FormRequest
 {
@@ -22,7 +23,7 @@ class ContractorReportRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
+        $rules = [
             'project_id' => ['required', 'integer', 'exists:projects,id'],
             'date_from' => ['nullable', 'date'],
             'date_to' => ['nullable', 'date', 'after_or_equal:date_from'],
@@ -37,6 +38,35 @@ class ContractorReportRequest extends FormRequest
             'sort_by' => ['nullable', 'string', Rule::in(['contractor_name', 'total_amount', 'completed_amount', 'payment_amount'])],
             'sort_direction' => ['nullable', 'string', Rule::in(['asc', 'desc'])],
         ];
+
+        // Добавляем валидацию template_id только если модуль активен
+        if ($this->isTemplateModuleActive()) {
+            $rules['template_id'] = ['nullable', 'integer', 'exists:report_templates,id'];
+        }
+
+        return $rules;
+    }
+
+    /**
+     * Проверить, активен ли модуль шаблонов отчетов.
+     */
+    protected function isTemplateModuleActive(): bool
+    {
+        try {
+            $accessController = app(\App\Modules\Core\AccessController::class);
+            $user = Auth::user();
+            
+            if (!$user || !$user->current_organization_id) {
+                return false;
+            }
+            
+            return $accessController->hasModuleAccess(
+                $user->current_organization_id,
+                'report-templates'
+            );
+        } catch (\Exception $e) {
+            return false;
+        }
     }
 
     /**
@@ -61,8 +91,7 @@ class ContractorReportRequest extends FormRequest
         $dateFrom = $this->input('date_from');
         $dateTo = $this->input('date_to');
         
-        // Устанавливаем значения по умолчанию
-        $this->merge([
+        $mergeData = [
             'date_from' => $dateFrom === '' ? null : $dateFrom,
             'date_to' => $dateTo === '' ? null : $dateTo,
             'include_completed_works' => $this->boolean('include_completed_works', true),
@@ -72,6 +101,13 @@ class ContractorReportRequest extends FormRequest
             'export_format' => $this->input('export_format', 'json'),
             'sort_by' => $this->input('sort_by', 'total_amount'),
             'sort_direction' => $this->input('sort_direction', 'desc'),
-        ]);
+        ];
+
+        // Если модуль шаблонов не активен, игнорируем template_id
+        if (!$this->isTemplateModuleActive() && $this->has('template_id')) {
+            $mergeData['template_id'] = null;
+        }
+        
+        $this->merge($mergeData);
     }
 }

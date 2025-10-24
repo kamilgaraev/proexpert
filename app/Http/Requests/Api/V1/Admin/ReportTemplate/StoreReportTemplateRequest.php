@@ -17,7 +17,14 @@ class StoreReportTemplateRequest extends FormRequest
     public function rules(): array
     {
         // TODO: Вынести report_type в enum или константы модели ReportTemplate
-        $validReportTypes = ['material_usage', 'work_completion', 'foreman_activity', 'project_status_summary']; 
+        $validReportTypes = [
+            'material_usage',
+            'work_completion',
+            'foreman_activity',
+            'project_status_summary',
+            'contractor_summary',
+            'contractor_detail',
+        ]; 
 
         return [
             'name' => ['required', 'string', 'max:255'],

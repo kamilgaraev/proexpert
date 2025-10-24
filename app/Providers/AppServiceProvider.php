@@ -81,7 +81,8 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(\App\Services\Landing\OrganizationSubscriptionService::class, function ($app) {
             return new \App\Services\Landing\OrganizationSubscriptionService(
                 $app->make(\App\Services\Logging\LoggingService::class),
-                $app->make(\App\Services\SubscriptionModuleSyncService::class)
+                $app->make(\App\Services\SubscriptionModuleSyncService::class),
+                $app->make(\App\Services\Billing\SubscriptionLimitsService::class)
             );
         });
 
@@ -121,6 +122,27 @@ class AppServiceProvider extends ServiceProvider
         // Регистрируем складские модули
         $this->app->register(\App\BusinessModules\Features\BasicWarehouse\BasicWarehouseServiceProvider::class);
         $this->app->register(\App\BusinessModules\Features\AdvancedWarehouse\AdvancedWarehouseServiceProvider::class);
+        
+        // Условная инжекция ReportTemplateService для ContractorReportService
+        $this->app->when(\App\Services\Report\ContractorReportService::class)
+            ->needs(\App\Services\Report\ReportTemplateService::class)
+            ->give(function ($app) {
+                try {
+                    $accessController = $app->make(\App\Modules\Core\AccessController::class);
+                    $user = \Illuminate\Support\Facades\Auth::user();
+                    
+                    if ($user && $user->current_organization_id) {
+                        if ($accessController->hasModuleAccess($user->current_organization_id, 'report-templates')) {
+                            return $app->make(\App\Services\Report\ReportTemplateService::class);
+                        }
+                    }
+                } catch (\Exception $e) {
+                    // Если ошибка - не инжектим
+                    Log::debug('Failed to inject ReportTemplateService', ['error' => $e->getMessage()]);
+                }
+                
+                return null;
+            });
     }
 
     /**
@@ -128,6 +150,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Автоматическая синхронизация системных шаблонов отчетов при первом запуске
+        $this->syncReportTemplatesOnBoot();
+        
         // ОТКЛЮЧЕНЫ: переключились на warehouse_balances вместо material_balances
         // MaterialUsageLog::observe(MaterialUsageLogObserver::class);
         CompletedWork::observe(CompletedWorkObserver::class);
@@ -151,5 +176,79 @@ class AppServiceProvider extends ServiceProvider
         Event::listen(OrganizationProfileUpdated::class, [SuggestModulesBasedOnCapabilities::class, 'handleProfileUpdated']);
         
         Event::listen(OrganizationOnboardingCompleted::class, [SuggestModulesBasedOnCapabilities::class, 'handleOnboardingCompleted']);
+    }
+
+    /**
+     * Синхронизация системных шаблонов отчетов при первом запуске.
+     */
+    protected function syncReportTemplatesOnBoot(): void
+    {
+        // Проверяем, нужна ли синхронизация (только в production/local, не в тестах)
+        if (app()->runningInConsole() && !app()->runningUnitTests()) {
+            return; // Пропускаем в консольных командах (запустят вручную если нужно)
+        }
+
+        try {
+            // Проверяем наличие хотя бы одного системного шаблона
+            $hasSystemTemplates = \App\Models\ReportTemplate::whereNull('organization_id')
+                ->whereNull('user_id')
+                ->whereIn('report_type', ['contractor_summary', 'contractor_detail'])
+                ->exists();
+
+            // Если системных шаблонов нет - синхронизируем автоматически при первом веб-запросе
+            if (!$hasSystemTemplates) {
+                $this->syncReportTemplatesFromJson();
+            }
+        } catch (\Exception $e) {
+            // Если таблицы еще нет (миграции не запущены) - просто пропускаем
+            Log::debug('Skip report templates sync: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Синхронизация шаблонов из JSON файлов.
+     */
+    protected function syncReportTemplatesFromJson(): void
+    {
+        $templatesPath = config_path('report-templates');
+        
+        if (!is_dir($templatesPath)) {
+            return;
+        }
+
+        $jsonFiles = glob($templatesPath . '/*.json');
+
+        foreach ($jsonFiles as $jsonFile) {
+            try {
+                $templates = json_decode(file_get_contents($jsonFile), true);
+                
+                if (json_last_error() !== JSON_ERROR_NONE) {
+                    continue;
+                }
+
+                foreach ($templates as $templateData) {
+                    // Создаем только если не существует
+                    \App\Models\ReportTemplate::firstOrCreate(
+                        [
+                            'report_type' => $templateData['report_type'],
+                            'name' => $templateData['name'],
+                            'organization_id' => null,
+                            'user_id' => null,
+                        ],
+                        [
+                            'is_default' => $templateData['is_default'] ?? false,
+                            'columns_config' => $templateData['columns_config'],
+                        ]
+                    );
+                }
+            } catch (\Exception $e) {
+                Log::warning('Failed to sync report template from JSON', [
+                    'file' => basename($jsonFile),
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+        
+        Log::info('Report templates synced from JSON files');
     }
 } 
