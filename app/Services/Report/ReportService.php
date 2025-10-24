@@ -191,10 +191,10 @@ class ReportService
             if ($logEntriesModels->isEmpty()) {
                 Log::warning('[ReportService] No log entries found for file export with current filters.');
                 if ($format === 'csv') {
-                    return $this->csvExporter->streamDownload('empty_report_' . now()->format('d.m.Y_H-i') . '.csv', ['Сообщение'], [['Данные по указанным фильтрам отсутствуют.']]);
+                    return $this->csvExporter->streamDownload('empty_report_' . now()->format('d-m-Y_H-i') . '.csv', ['Сообщение'], [['Данные по указанным фильтрам отсутствуют.']]);
                 }
                 if ($format === 'xlsx') {
-                    return $this->excelExporter->streamDownload('empty_report_' . now()->format('d.m.Y_H-i') . '.xlsx', ['Сообщение'], [['Данные по указанным фильтрам отсутствуют.']]);
+                    return $this->excelExporter->streamDownload('empty_report_' . now()->format('d-m-Y_H-i') . '.xlsx', ['Сообщение'], [['Данные по указанным фильтрам отсутствуют.']]);
                 }
                 throw new BusinessLogicException('Нет данных для экспорта по указанным фильтрам.', 404);
             }
@@ -237,12 +237,12 @@ class ReportService
             if ($format === 'csv') {
                 $exportable = $this->csvExporter->prepareDataForExport($dataForExport, $columnMapping);
                 $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'material_usage_report';
-                return $this->csvExporter->streamDownload($filename . '_' . now()->format('d.m.Y_H-i') . '.csv', $exportable['headers'], $exportable['data']);
+                return $this->csvExporter->streamDownload($filename . '_' . now()->format('d-m-Y_H-i') . '.csv', $exportable['headers'], $exportable['data']);
             }
             if ($format === 'xlsx') {
                 $exportable = $this->excelExporter->prepareDataForExport($dataForExport, $columnMapping);
                 $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'material_usage_report';
-                return $this->excelExporter->streamDownload($filename . '_' . now()->format('d.m.Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
+                return $this->excelExporter->streamDownload($filename . '_' . now()->format('d-m-Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
             }
         }
 
@@ -325,7 +325,7 @@ class ReportService
 
             $exportable = $this->csvExporter->prepareDataForExport($logEntries, $columnMapping);
             $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'work_completion_report';
-            return $this->csvExporter->streamDownload($filename . '_' . now()->format('d.m.Y_H-i') . '.csv', $exportable['headers'], $exportable['data']);
+            return $this->csvExporter->streamDownload($filename . '_' . now()->format('d-m-Y_H-i') . '.csv', $exportable['headers'], $exportable['data']);
         }
         if ($request->query('format') === 'xlsx') {
             $reportTemplate = $this->reportTemplateService->getTemplateForReport('work_completion', $request, $templateId);
@@ -349,7 +349,7 @@ class ReportService
 
             $exportable = $this->excelExporter->prepareDataForExport($logEntries, $columnMapping);
             $filename = $reportTemplate && $reportTemplate->name ? str_replace(' ', '_', $reportTemplate->name) : 'work_completion_report';
-            return $this->excelExporter->streamDownload($filename . '_' . now()->format('d.m.Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
+            return $this->excelExporter->streamDownload($filename . '_' . now()->format('d-m-Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
         }
         
         $aggregatedData = $this->workLogRepo->getAggregatedUsage($organizationId, $filters);
@@ -388,7 +388,7 @@ class ReportService
         if ($format === 'xlsx') {
             if ($activityData->isEmpty()) {
                 return $this->excelExporter->streamDownload(
-                    'empty_foreman_report_' . now()->format('d.m.Y_H-i') . '.xlsx',
+                    'empty_foreman_report_' . now()->format('d-m-Y_H-i') . '.xlsx',
                     ['Сообщение'],
                     [['Нет данных по прорабам для указанных фильтров']]
                 );
@@ -398,7 +398,7 @@ class ReportService
             $materialLogs = $this->userRepo->getForemanMaterialLogs($organizationId, $filters);
             $completedWorks = $this->userRepo->getForemanCompletedWorks($organizationId, $filters);
 
-            $filename = 'foreman_activity_report_' . now()->format('d.m.Y_H-i') . '.xlsx';
+            $filename = 'foreman_activity_report_' . now()->format('d-m-Y_H-i') . '.xlsx';
             
             return $this->excelExporter->streamForemanActivityReport(
                 $filename,
@@ -887,7 +887,7 @@ class ReportService
                 '% выполнения' => 'completion_percentage',
             ];
             $exportable = $this->excelExporter->prepareDataForExport($contracts->toArray(), $columns);
-            return $this->excelExporter->streamDownload('contract_payments_report_' . now()->format('d.m.Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
+            return $this->excelExporter->streamDownload('contract_payments_report_' . now()->format('d-m-Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
         }
 
         if ($format === 'pdf') {
@@ -1005,7 +1005,7 @@ class ReportService
                 'Статус расчетов' => 'settlement_status',
             ];
             $exportable = $this->excelExporter->prepareDataForExport($contractors->toArray(), $columns);
-            return $this->excelExporter->streamDownload('contractor_settlements_report_' . now()->format('d.m.Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
+            return $this->excelExporter->streamDownload('contractor_settlements_report_' . now()->format('d-m-Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
         }
 
         if ($format === 'pdf') {
@@ -1127,7 +1127,7 @@ class ReportService
                 'Критично' => 'is_critical',
             ];
             $exportable = $this->excelExporter->prepareDataForExport($stocks->toArray(), $columns);
-            return $this->excelExporter->streamDownload('warehouse_stock_report_' . now()->format('d.m.Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
+            return $this->excelExporter->streamDownload('warehouse_stock_report_' . now()->format('d-m-Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
         }
 
         if ($format === 'pdf') {
@@ -1241,7 +1241,7 @@ class ReportService
                 'Пользователь' => 'user',
             ];
             $exportable = $this->excelExporter->prepareDataForExport($movements->toArray(), $columns);
-            return $this->excelExporter->streamDownload('material_movements_report_' . now()->format('d.m.Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
+            return $this->excelExporter->streamDownload('material_movements_report_' . now()->format('d-m-Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
         }
 
         if ($format === 'pdf') {
@@ -1370,7 +1370,7 @@ class ReportService
                 'Оплачиваемо' => 'is_billable',
             ];
             $exportable = $this->excelExporter->prepareDataForExport($data->toArray(), $columns);
-            return $this->excelExporter->streamDownload('time_tracking_report_' . now()->format('d.m.Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
+            return $this->excelExporter->streamDownload('time_tracking_report_' . now()->format('d-m-Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
         }
 
         if ($format === 'pdf') {
@@ -1496,7 +1496,7 @@ class ReportService
                 'Рентабельность %' => 'profitability_percent',
             ];
             $exportable = $this->excelExporter->prepareDataForExport($projects->toArray(), $columns);
-            return $this->excelExporter->streamDownload('project_profitability_report_' . now()->format('d.m.Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
+            return $this->excelExporter->streamDownload('project_profitability_report_' . now()->format('d-m-Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
         }
 
         if ($format === 'pdf') {
@@ -1633,7 +1633,7 @@ class ReportService
                 'В зоне риска' => 'is_at_risk',
             ];
             $exportable = $this->excelExporter->prepareDataForExport($projects->toArray(), $columns);
-            return $this->excelExporter->streamDownload('project_timelines_report_' . now()->format('d.m.Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
+            return $this->excelExporter->streamDownload('project_timelines_report_' . now()->format('d-m-Y_H-i') . '.xlsx', $exportable['headers'], $exportable['data']);
         }
 
         if ($format === 'pdf') {

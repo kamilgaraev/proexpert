@@ -142,12 +142,12 @@ class ContractorReportService
 
         // Экспорт в файл, если требуется
         if ($exportFormat === 'csv') {
-            $filename = 'contractor_summary_report_' . now()->format('d.m.Y_H-i');
+            $filename = 'contractor_summary_report_' . now()->format('d-m-Y_H-i');
             return $this->exportToCsv($result, $filename);
         }
 
         if ($exportFormat === 'excel' || $exportFormat === 'xlsx') {
-            $filename = 'contractor_summary_report_' . now()->format('d.m.Y_H-i');
+            $filename = 'contractor_summary_report_' . now()->format('d-m-Y_H-i');
             return $this->exportToExcel($result, $filename);
         }
 
@@ -234,12 +234,12 @@ class ContractorReportService
 
         // Экспорт в файл, если требуется
         if ($exportFormat === 'csv') {
-            $filename = 'contractor_detail_report_' . now()->format('d.m.Y_H-i');
+            $filename = 'contractor_detail_report_' . now()->format('d-m-Y_H-i');
             return $this->exportToCsv($result, $filename);
         }
 
         if ($exportFormat === 'excel' || $exportFormat === 'xlsx') {
-            $filename = 'contractor_detail_report_' . now()->format('d.m.Y_H-i');
+            $filename = 'contractor_detail_report_' . now()->format('d-m-Y_H-i');
             return $this->exportToExcel($result, $filename);
         }
 

@@ -189,7 +189,7 @@ class ExcelExporterService
             });
 
             $response->headers->set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            $response->headers->set('Content-Disposition', 'attachment; filename="' . $filename . '"');
+            $response->headers->set('Content-Disposition', 'attachment; filename="' . rawurlencode($filename) . '"; filename*=UTF-8\'\'' . rawurlencode($filename));
 
             return $response;
         } catch (Exception $e) {
@@ -478,7 +478,7 @@ class ExcelExporterService
             });
 
             $response->headers->set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            $response->headers->set('Content-Disposition', 'attachment; filename="' . $filename . '"');
+            $response->headers->set('Content-Disposition', 'attachment; filename="' . rawurlencode($filename) . '"; filename*=UTF-8\'\'' . rawurlencode($filename));
 
             return $response;
         } catch (Exception $e) {
@@ -735,7 +735,7 @@ class ExcelExporterService
             });
 
             $response->headers->set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            $response->headers->set('Content-Disposition', 'attachment; filename="' . $filename . '"');
+            $response->headers->set('Content-Disposition', 'attachment; filename="' . rawurlencode($filename) . '"; filename*=UTF-8\'\'' . rawurlencode($filename));
 
             return $response;
         } catch (Exception $e) {
@@ -768,7 +768,7 @@ class ExcelExporterService
         try {
             // Используем существующую логику генерации через StreamedResponse,
             // но направляем вывод в переменную
-            $filename = 'official_material_report_' . now()->format('d.m.Y_H-i') . '.xlsx';
+            $filename = 'official_material_report_' . now()->format('d-m-Y_H-i') . '.xlsx';
             $response = $this->generateOfficialMaterialReport($reportData, $filename);
 
             if (!$response instanceof StreamedResponse) {
