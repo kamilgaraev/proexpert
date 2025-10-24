@@ -38,17 +38,32 @@ class ReportTemplateRepository extends BaseRepository implements ReportTemplateR
     {
         return $this->model
             ->where('id', $templateId)
-            ->where('organization_id', $organizationId)
+            ->where(function ($query) use ($organizationId) {
+                $query->where('organization_id', $organizationId)
+                      ->orWhereNull('organization_id'); // Системные шаблоны доступны всем
+            })
             ->first();
     }
     
     public function findDefaultTemplate(string $reportType, int $organizationId): ?ReportTemplate
     {
-        return $this->model
+        // Сначала ищем дефолтный шаблон организации
+        $template = $this->model
             ->where('report_type', $reportType)
             ->where('organization_id', $organizationId)
             ->where('is_default', true)
             ->first();
+        
+        // Если не найден - берем системный дефолтный шаблон
+        if (!$template) {
+            $template = $this->model
+                ->where('report_type', $reportType)
+                ->whereNull('organization_id')
+                ->where('is_default', true)
+                ->first();
+        }
+        
+        return $template;
     }
 
     public function setDefault(ReportTemplate $template): ReportTemplate
