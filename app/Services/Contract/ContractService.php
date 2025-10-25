@@ -785,25 +785,26 @@ class ContractService
         $totalPlannedAdvance = $financialData->total_planned_advance ?? 0;
         $totalActualAdvance = $financialData->total_actual_advance ?? 0;
 
-        $totalPerformedAmount = DB::table('contract_performance_acts')
+        $totalPerformedAmount = (float) DB::table('contract_performance_acts')
             ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
             ->where('contracts.organization_id', $organizationId)
-            ->where('contract_performance_acts.status', 'approved')
+            ->whereNull('contracts.deleted_at')
+            ->where('contract_performance_acts.is_approved', true)
             ->when(!empty($filters['project_id']), fn($q) => $q->where('contracts.project_id', $filters['project_id']))
             ->when(!empty($filters['contractor_id']), fn($q) => $q->where('contracts.contractor_id', $filters['contractor_id']))
             ->when(!empty($filters['status']), fn($q) => $q->where('contracts.status', $filters['status']))
             ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']))
-            ->sum('contract_performance_acts.amount') ?? 0;
+            ->sum('contract_performance_acts.amount') ?: 0;
 
-        $totalPaidAmount = DB::table('contract_payments')
+        $totalPaidAmount = (float) DB::table('contract_payments')
             ->join('contracts', 'contract_payments.contract_id', '=', 'contracts.id')
             ->where('contracts.organization_id', $organizationId)
-            ->where('contract_payments.status', 'completed')
+            ->whereNull('contracts.deleted_at')
             ->when(!empty($filters['project_id']), fn($q) => $q->where('contracts.project_id', $filters['project_id']))
             ->when(!empty($filters['contractor_id']), fn($q) => $q->where('contracts.contractor_id', $filters['contractor_id']))
             ->when(!empty($filters['status']), fn($q) => $q->where('contracts.status', $filters['status']))
             ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']))
-            ->sum('contract_payments.amount') ?? 0;
+            ->sum('contract_payments.amount') ?: 0;
 
         $overdueContracts = (clone $query)
             ->where('status', 'active')
