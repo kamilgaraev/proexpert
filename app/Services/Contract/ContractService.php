@@ -812,9 +812,24 @@ class ContractService
             ->where('end_date', '<', now())
             ->count();
 
-        $nearingLimitContracts = (clone $query)
-            ->whereRaw('(total_amount - COALESCE(completed_works_amount, 0)) <= (total_amount * 0.1)')
-            ->whereRaw('(total_amount - COALESCE(completed_works_amount, 0)) > 0')
+        $nearingLimitSubquery = DB::table('contracts as c')
+            ->leftJoin('completed_works as cw', function($join) {
+                $join->on('cw.contract_id', '=', 'c.id')
+                     ->where('cw.status', '=', 'confirmed');
+            })
+            ->select('c.id', 'c.total_amount', DB::raw('COALESCE(SUM(cw.total_amount), 0) as completed_amount'))
+            ->where('c.organization_id', $organizationId)
+            ->whereNull('c.deleted_at')
+            ->when(!empty($filters['project_id']), fn($q) => $q->where('c.project_id', $filters['project_id']))
+            ->when(!empty($filters['contractor_id']), fn($q) => $q->where('c.contractor_id', $filters['contractor_id']))
+            ->when(!empty($filters['status']), fn($q) => $q->where('c.status', $filters['status']))
+            ->when(!empty($filters['work_type_category']), fn($q) => $q->where('c.work_type_category', $filters['work_type_category']))
+            ->groupBy('c.id', 'c.total_amount')
+            ->havingRaw('(c.total_amount - COALESCE(SUM(cw.total_amount), 0)) <= (c.total_amount * 0.1)')
+            ->havingRaw('(c.total_amount - COALESCE(SUM(cw.total_amount), 0)) > 0');
+        
+        $nearingLimitContracts = DB::table(DB::raw("({$nearingLimitSubquery->toSql()}) as subquery"))
+            ->mergeBindings($nearingLimitSubquery)
             ->count();
 
         return [
