@@ -760,18 +760,19 @@ class ContractService
             $query->where('work_type_category', $filters['work_type_category']);
         }
 
-        $baseQuery = clone $query;
-
         $statusCounts = (clone $query)->select('status', DB::raw('count(*) as count'))
             ->groupBy('status')
             ->pluck('count', 'status')
             ->toArray();
 
         $financialData = (clone $query)->select(
-            DB::raw('SUM(total_amount) as total_amount'),
-            DB::raw('SUM(total_amount_with_gp) as total_amount_with_gp'),
-            DB::raw('SUM(planned_advance_amount) as total_planned_advance'),
-            DB::raw('SUM(actual_advance_amount) as total_actual_advance')
+            DB::raw('SUM(COALESCE(total_amount, 0)) as total_amount'),
+            DB::raw('SUM(CASE 
+                WHEN gp_calculation_type = \'coefficient\' THEN COALESCE(total_amount, 0) + (COALESCE(total_amount, 0) * COALESCE(gp_coefficient, 0))
+                ELSE COALESCE(total_amount, 0) + (COALESCE(total_amount, 0) * COALESCE(gp_percentage, 0) / 100)
+            END) as total_amount_with_gp'),
+            DB::raw('SUM(COALESCE(planned_advance_amount, 0)) as total_planned_advance'),
+            DB::raw('SUM(COALESCE(actual_advance_amount, 0)) as total_actual_advance')
         )->first();
 
         $totalContracts = (clone $query)->count();
