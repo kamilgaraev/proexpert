@@ -740,4 +740,108 @@ class ContractService
         }
     }
 
+    public function getContractsSummary(int $organizationId, array $filters = []): array
+    {
+        $query = Contract::where('organization_id', $organizationId);
+
+        if (!empty($filters['project_id'])) {
+            $query->where('project_id', $filters['project_id']);
+        }
+
+        if (!empty($filters['contractor_id'])) {
+            $query->where('contractor_id', $filters['contractor_id']);
+        }
+
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        if (!empty($filters['work_type_category'])) {
+            $query->where('work_type_category', $filters['work_type_category']);
+        }
+
+        $baseQuery = clone $query;
+
+        $statusCounts = (clone $query)->select('status', DB::raw('count(*) as count'))
+            ->groupBy('status')
+            ->pluck('count', 'status')
+            ->toArray();
+
+        $financialData = (clone $query)->select(
+            DB::raw('SUM(total_amount) as total_amount'),
+            DB::raw('SUM(total_amount_with_gp) as total_amount_with_gp'),
+            DB::raw('SUM(planned_advance_amount) as total_planned_advance'),
+            DB::raw('SUM(actual_advance_amount) as total_actual_advance')
+        )->first();
+
+        $totalContracts = (clone $query)->count();
+        $activeContracts = $statusCounts['active'] ?? 0;
+        $completedContracts = $statusCounts['completed'] ?? 0;
+        $cancelledContracts = $statusCounts['cancelled'] ?? 0;
+
+        $totalAmount = $financialData->total_amount ?? 0;
+        $totalAmountWithGp = $financialData->total_amount_with_gp ?? 0;
+        $totalPlannedAdvance = $financialData->total_planned_advance ?? 0;
+        $totalActualAdvance = $financialData->total_actual_advance ?? 0;
+
+        $totalPerformedAmount = DB::table('contract_performance_acts')
+            ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+            ->where('contracts.organization_id', $organizationId)
+            ->where('contract_performance_acts.status', 'approved')
+            ->when(!empty($filters['project_id']), fn($q) => $q->where('contracts.project_id', $filters['project_id']))
+            ->when(!empty($filters['contractor_id']), fn($q) => $q->where('contracts.contractor_id', $filters['contractor_id']))
+            ->when(!empty($filters['status']), fn($q) => $q->where('contracts.status', $filters['status']))
+            ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']))
+            ->sum('contract_performance_acts.amount') ?? 0;
+
+        $totalPaidAmount = DB::table('contract_payments')
+            ->join('contracts', 'contract_payments.contract_id', '=', 'contracts.id')
+            ->where('contracts.organization_id', $organizationId)
+            ->where('contract_payments.status', 'completed')
+            ->when(!empty($filters['project_id']), fn($q) => $q->where('contracts.project_id', $filters['project_id']))
+            ->when(!empty($filters['contractor_id']), fn($q) => $q->where('contracts.contractor_id', $filters['contractor_id']))
+            ->when(!empty($filters['status']), fn($q) => $q->where('contracts.status', $filters['status']))
+            ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']))
+            ->sum('contract_payments.amount') ?? 0;
+
+        $overdueContracts = (clone $query)
+            ->where('status', 'active')
+            ->whereNotNull('end_date')
+            ->where('end_date', '<', now())
+            ->count();
+
+        $nearingLimitContracts = (clone $query)
+            ->whereRaw('(total_amount - COALESCE(completed_works_amount, 0)) <= (total_amount * 0.1)')
+            ->whereRaw('(total_amount - COALESCE(completed_works_amount, 0)) > 0')
+            ->count();
+
+        return [
+            'total_contracts' => $totalContracts,
+            'by_status' => [
+                'active' => $activeContracts,
+                'completed' => $completedContracts,
+                'cancelled' => $cancelledContracts,
+            ],
+            'financial' => [
+                'total_amount' => round($totalAmount, 2),
+                'total_amount_with_gp' => round($totalAmountWithGp, 2),
+                'total_performed_amount' => round($totalPerformedAmount, 2),
+                'total_paid_amount' => round($totalPaidAmount, 2),
+                'remaining_to_perform' => round($totalAmount - $totalPerformedAmount, 2),
+                'remaining_to_pay' => round($totalPerformedAmount - $totalPaidAmount, 2),
+                'performance_percentage' => $totalAmount > 0 ? round(($totalPerformedAmount / $totalAmount) * 100, 2) : 0,
+                'payment_percentage' => $totalPerformedAmount > 0 ? round(($totalPaidAmount / $totalPerformedAmount) * 100, 2) : 0,
+            ],
+            'advances' => [
+                'total_planned' => round($totalPlannedAdvance, 2),
+                'total_actual' => round($totalActualAdvance, 2),
+                'remaining' => round($totalPlannedAdvance - $totalActualAdvance, 2),
+            ],
+            'alerts' => [
+                'overdue_contracts' => $overdueContracts,
+                'nearing_limit_contracts' => $nearingLimitContracts,
+            ],
+        ];
+    }
+
 }

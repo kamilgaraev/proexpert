@@ -114,7 +114,9 @@ class ContractController extends Controller
         $perPage = $request->input('per_page', 15);
 
         $contracts = $this->contractService->getAllContracts($organizationId, $perPage, $filters, $sortBy, $sortDirection);
-        return new ContractCollection($contracts);
+        $summary = $this->contractService->getContractsSummary($organizationId, $filters);
+        
+        return (new ContractCollection($contracts))->additional(['summary' => $summary]);
     }
 
     /**
