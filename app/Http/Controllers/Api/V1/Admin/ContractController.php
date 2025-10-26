@@ -224,22 +224,24 @@ class ContractController extends Controller
     public function update(UpdateContractRequest $request, int $contract)
     {
         $projectId = $request->route('project');
+        $contractId = $request->route('contract');
         
         Log::info('ContractController::update - START', [
             'contract_param' => $contract,
+            'contract_route' => $contractId,
             'project_param' => $projectId,
             'url' => $request->url()
         ]);
         
         try {
-            $existingContract = \App\Models\Contract::find($contract);
+            $existingContract = \App\Models\Contract::find($contractId);
             
             if (!$existingContract) {
                 return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
             }
             
             Log::info('ContractController::update - EXISTING CONTRACT FOUND', [
-                'contract_id_from_param' => $contract,
+                'contract_id_from_param' => $contractId,
                 'contract_id_from_model' => $existingContract->id,
                 'project_id' => $existingContract->project_id,
                 'organization_id' => $existingContract->organization_id
@@ -255,12 +257,12 @@ class ContractController extends Controller
             $contractDTO = $request->toDto();
             
             Log::info('ContractController::update - CALLING SERVICE', [
-                'contract_id_param' => $contract,
+                'contract_id_param' => $contractId,
                 'organization_id' => $organizationId,
                 'dto_project_id' => $contractDTO->project_id
             ]);
             
-            $updatedContract = $this->contractService->updateContract($contract, $organizationId, $contractDTO);
+            $updatedContract = $this->contractService->updateContract($contractId, $organizationId, $contractDTO);
             return new ContractResource($updatedContract);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json(['message' => 'Контракт не найден (ModelNotFoundException)'], Response::HTTP_NOT_FOUND);
@@ -268,7 +270,7 @@ class ContractController extends Controller
             return response()->json(['message' => 'Некорректные данные', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
         } catch (Exception $e) {
             Log::error('Ошибка обновления контракта', [
-                'contract_id' => $contract,
+                'contract_id' => $contractId,
                 'organization_id' => $existingContract->organization_id ?? null,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
