@@ -177,12 +177,7 @@ class HoldingReportService
         ]);
 
         $query = Contract::query()
-            ->where(function ($q) use ($selectedOrgIds) {
-                $q->whereIn('organization_id', $selectedOrgIds)
-                  ->orWhereHas('contractor', function ($contractorQuery) use ($selectedOrgIds) {
-                      $contractorQuery->whereIn('source_organization_id', $selectedOrgIds);
-                  });
-            })
+            ->whereIn('organization_id', $selectedOrgIds)
             ->with(['organization:id,name', 'contractor:id,name,contact_person,organization_id,source_organization_id', 'contractor.sourceOrganization:id,name', 'project:id,name']);
 
         $this->applyContractFilters($query, $filters);
@@ -459,10 +454,10 @@ class HoldingReportService
 
             $ownerAmount = $this->calculateTotalContractAmount($ownerContracts);
 
-            $contractorQuery = Contract::where('organization_id', '!=', $org->id)
-                ->whereHas('contractor', function ($q) use ($org, $orgIds) {
-                    $q->where('source_organization_id', $org->id)
-                      ->whereIn('source_organization_id', $orgIds);
+            $contractorQuery = Contract::whereIn('organization_id', $orgIds)
+                ->where('organization_id', '!=', $org->id)
+                ->whereHas('contractor', function ($q) use ($org) {
+                    $q->where('source_organization_id', $org->id);
                 });
             $this->applyContractFilters($contractorQuery, $filters);
             $contractorContracts = $contractorQuery->with('agreements')->get();
@@ -535,10 +530,7 @@ class HoldingReportService
             ])
             ->join('contracts', 'contractors.id', '=', 'contracts.contractor_id')
             ->join('organizations as orgs', 'contracts.organization_id', '=', 'orgs.id')
-            ->where(function ($q) use ($orgIds) {
-                $q->whereIn('contracts.organization_id', $orgIds)
-                  ->orWhereIn('contractors.source_organization_id', $orgIds);
-            })
+            ->whereIn('contracts.organization_id', $orgIds)
             ->groupBy([
                 'contractors.id',
                 'contractors.name',
@@ -582,6 +574,10 @@ class HoldingReportService
                 ->toArray();
 
             $totalAmount = $this->calculateContractAmountFromDb($contractIds);
+
+            if ($totalAmount == 0) {
+                continue;
+            }
 
             $totalPaid = DB::table('contract_payments')
                 ->whereIn('contract_id', $contractIds)

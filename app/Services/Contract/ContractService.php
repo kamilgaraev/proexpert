@@ -278,6 +278,13 @@ class ContractService
             'end_date' => $contract->end_date
         ];
         
+        Log::info('ContractService::updateContract - DTO RECEIVED', [
+            'contract_id' => $contractId,
+            'organization_id' => $organizationId,
+            'dto_total_amount' => $contractDTO->total_amount,
+            'current_db_total_amount' => $contract->total_amount
+        ]);
+        
         // BUSINESS: Начало обновления договора
         $this->logging->business('contract.update.started', [
             'organization_id' => $organizationId,
@@ -292,6 +299,13 @@ class ContractService
 
         $updateData = $contractDTO->toArray();
         
+        Log::info('ContractService::updateContract - UPDATE DATA', [
+            'contract_id' => $contractId,
+            'update_data_keys' => array_keys($updateData),
+            'update_data_total_amount' => $updateData['total_amount'] ?? 'NOT SET',
+            'update_data' => $updateData
+        ]);
+        
         try {
             $updated = $this->contractRepository->update($contract->id, $updateData);
 
@@ -301,6 +315,13 @@ class ContractService
             }
 
             $updatedContract = $this->getContractById($contractId, $organizationId);
+            
+            Log::info('ContractService::updateContract - AFTER UPDATE', [
+                'contract_id' => $contractId,
+                'updated_total_amount' => $updatedContract->total_amount,
+                'old_total_amount' => $oldValues['total_amount'],
+                'change_detected' => $updatedContract->total_amount != $oldValues['total_amount']
+            ]);
 
             // BUSINESS: Договор успешно обновлён
             $this->logging->business('contract.updated', [

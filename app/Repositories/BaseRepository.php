@@ -6,6 +6,7 @@ use App\Repositories\Interfaces\BaseRepositoryInterface;
 use App\Services\Logging\LoggingService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Pagination\LengthAwarePaginator;
 
 class BaseRepository implements BaseRepositoryInterface
@@ -170,6 +171,13 @@ class BaseRepository implements BaseRepositoryInterface
         $startTime = microtime(true);
         $modelClass = get_class($this->model);
         
+        Log::info('BaseRepository::update - START', [
+            'model' => $modelClass,
+            'record_id' => $modelId,
+            'payload_keys' => array_keys($payload),
+            'payload_total_amount' => $payload['total_amount'] ?? 'NOT SET'
+        ]);
+        
         $this->logging->business('repository.update.started', [
             'model' => $modelClass,
             'record_id' => $modelId,
@@ -186,7 +194,22 @@ class BaseRepository implements BaseRepositoryInterface
                 return false;
             }
             
+            Log::info('BaseRepository::update - BEFORE UPDATE', [
+                'model' => $modelClass,
+                'record_id' => $modelId,
+                'current_total_amount' => $model->total_amount ?? 'NOT SET',
+                'payload_total_amount' => $payload['total_amount'] ?? 'NOT SET'
+            ]);
+            
             $result = $model->update($payload);
+            
+            Log::info('BaseRepository::update - AFTER UPDATE', [
+                'model' => $modelClass,
+                'record_id' => $modelId,
+                'result' => $result,
+                'new_total_amount' => $model->fresh()->total_amount ?? 'NOT SET'
+            ]);
+            
             $duration = (microtime(true) - $startTime) * 1000;
             
             $this->logging->business('repository.update.completed', [

@@ -7,6 +7,7 @@ namespace App\Http\Requests\Api\V1\Admin\Contract;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
@@ -48,6 +49,42 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'notes' => ['sometimes', 'nullable', 'string'],
         ];
     }
+    
+    protected function prepareForValidation()
+    {
+        $input = $this->all();
+        
+        Log::info('UpdateContractRequest::prepareForValidation - RAW INPUT', [
+            'contract_id' => $this->route('contract'),
+            'input_keys' => array_keys($input),
+            'base_amount' => $input['base_amount'] ?? 'NOT SET',
+            'total_amount' => $input['total_amount'] ?? 'NOT SET',
+            'has_agreements' => isset($input['agreements']),
+            'has_specifications' => isset($input['specifications']),
+            'has_payments' => isset($input['payments']),
+            'input_count' => count($input)
+        ]);
+        
+        $allowedFields = [
+            'project_id', 'contractor_id', 'parent_contract_id', 'number', 'date',
+            'subject', 'work_type_category', 'payment_terms', 'base_amount', 'total_amount',
+            'gp_percentage', 'gp_calculation_type', 'gp_coefficient', 'subcontract_amount',
+            'planned_advance_amount', 'actual_advance_amount', 'status', 'start_date',
+            'end_date', 'notes'
+        ];
+        
+        $filtered = array_intersect_key($input, array_flip($allowedFields));
+        
+        Log::info('UpdateContractRequest::prepareForValidation - FILTERED', [
+            'contract_id' => $this->route('contract'),
+            'filtered_keys' => array_keys($filtered),
+            'base_amount' => $filtered['base_amount'] ?? 'NOT SET',
+            'total_amount' => $filtered['total_amount'] ?? 'NOT SET',
+            'filtered_count' => count($filtered)
+        ]);
+        
+        $this->replace($filtered);
+    }
 
     public function toDto(): ContractDTO
     {
@@ -55,7 +92,20 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
         
         $contract = \App\Models\Contract::findOrFail($contractId);
         
+        Log::info('UpdateContractRequest::toDto - EXISTING CONTRACT', [
+            'contract_id' => $contractId,
+            'current_total_amount' => $contract->total_amount,
+            'current_base_amount' => $contract->total_amount
+        ]);
+        
         $validatedData = $this->validated();
+        
+        Log::info('UpdateContractRequest::toDto - VALIDATED DATA', [
+            'contract_id' => $contractId,
+            'validated_keys' => array_keys($validatedData),
+            'base_amount' => $validatedData['base_amount'] ?? 'NOT SET',
+            'total_amount' => $validatedData['total_amount'] ?? 'NOT SET'
+        ]);
 
         return new ContractDTO(
             project_id: $validatedData['project_id'] ?? $contract->project_id,
@@ -76,11 +126,25 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             payment_terms: array_key_exists('payment_terms', $validatedData) 
                 ? $validatedData['payment_terms'] 
                 : $contract->payment_terms,
-            total_amount: isset($validatedData['base_amount']) 
-                ? (float) $validatedData['base_amount'] 
-                : (isset($validatedData['total_amount']) 
-                    ? (float) $validatedData['total_amount'] 
-                    : (float) $contract->total_amount),
+            total_amount: (function() use ($validatedData, $contract, $contractId) {
+                $result = isset($validatedData['base_amount']) 
+                    ? (float) $validatedData['base_amount'] 
+                    : (isset($validatedData['total_amount']) 
+                        ? (float) $validatedData['total_amount'] 
+                        : (float) $contract->total_amount);
+                
+                Log::info('UpdateContractRequest::toDto - TOTAL_AMOUNT CALCULATION', [
+                    'contract_id' => $contractId,
+                    'has_base_amount' => isset($validatedData['base_amount']),
+                    'base_amount_value' => $validatedData['base_amount'] ?? 'NOT SET',
+                    'has_total_amount' => isset($validatedData['total_amount']),
+                    'total_amount_value' => $validatedData['total_amount'] ?? 'NOT SET',
+                    'current_contract_total_amount' => $contract->total_amount,
+                    'result_total_amount' => $result
+                ]);
+                
+                return $result;
+            })(),
             gp_percentage: array_key_exists('gp_percentage', $validatedData)
                 ? ($validatedData['gp_percentage'] !== null ? (float) $validatedData['gp_percentage'] : null)
                 : $contract->gp_percentage,
