@@ -44,7 +44,7 @@ return new class extends Migration
             ->whereNotNull('tax_number')
             ->where('tax_number', '!=', '')
             ->groupBy('tax_number')
-            ->having('count', '>', 1)
+            ->havingRaw('COUNT(*) > 1')
             ->get();
 
         if ($duplicates->isEmpty()) {

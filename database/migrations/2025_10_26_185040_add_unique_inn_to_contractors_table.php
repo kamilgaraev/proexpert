@@ -49,7 +49,7 @@ return new class extends Migration
             ->whereNotNull('inn')
             ->where('inn', '!=', '')
             ->groupBy('inn', 'organization_id')
-            ->having('count', '>', 1)
+            ->havingRaw('COUNT(*) > 1')
             ->get();
 
         if ($duplicates->isEmpty()) {
