@@ -16,10 +16,12 @@ return new class extends Migration
      */
     public function up(): void
     {
+        echo "\n🔍 [Migration] Starting organizations tax_number unique constraint migration\n";
         Log::info('[Migration] Starting organizations tax_number unique constraint migration');
         
         // Шаг 1: Обработка дубликатов tax_number
         $processedCount = $this->handleDuplicateTaxNumbers();
+        echo "✅ [Migration] Processed {$processedCount} duplicate organizations\n";
         Log::info('[Migration] Processed duplicates', ['count' => $processedCount]);
 
         // Шаг 2: Проверка что дубликатов больше нет
@@ -33,15 +35,19 @@ return new class extends Migration
             ->count();
 
         if ($remainingDuplicates > 0) {
+            echo "❌ [Migration] ERROR: Still have {$remainingDuplicates} duplicates after processing!\n";
             Log::error('[Migration] Still have duplicates after processing', ['count' => $remainingDuplicates]);
             throw new \Exception("Cannot add unique constraint: {$remainingDuplicates} duplicate tax_numbers still exist");
         }
 
+        echo "✅ [Migration] No duplicates remaining, adding unique index...\n";
+        
         // Шаг 3: Добавление уникального индекса
         Schema::table('organizations', function (Blueprint $table) {
             $table->unique('tax_number', 'organizations_tax_number_unique');
         });
 
+        echo "🎉 [Migration] Unique index on organizations.tax_number added successfully!\n";
         Log::info('[Migration] Unique index on organizations.tax_number added successfully');
     }
 
@@ -55,7 +61,16 @@ return new class extends Migration
      */
     private function handleDuplicateTaxNumbers(): int
     {
-        Log::info('[Migration] Checking for duplicate tax_numbers...');
+        Log::info('[Migration] Starting to check for duplicate tax_numbers...');
+        
+        // Сначала посмотрим сколько вообще записей с tax_number
+        $totalWithTaxNumber = DB::table('organizations')
+            ->whereNull('deleted_at')
+            ->whereNotNull('tax_number')
+            ->where('tax_number', '!=', '')
+            ->count();
+            
+        Log::info('[Migration] Total organizations with tax_number: ' . $totalWithTaxNumber);
         
         // Находим дубликаты
         $duplicates = DB::table('organizations')
@@ -67,16 +82,23 @@ return new class extends Migration
             ->havingRaw('COUNT(*) > 1')
             ->get();
 
+        Log::info('[Migration] Duplicate query returned ' . $duplicates->count() . ' results');
+        echo "📊 [Migration] Found {$duplicates->count()} duplicate tax_numbers\n";
+
         if ($duplicates->isEmpty()) {
+            echo "✅ [Migration] No duplicate tax_numbers found\n";
             Log::info('[Migration] No duplicate tax_numbers found in organizations');
             return 0;
         }
 
+        echo "⚠️  [Migration] Processing {$duplicates->count()} duplicate tax_numbers...\n";
         Log::warning('[Migration] Found ' . $duplicates->count() . ' duplicate tax_numbers in organizations', [
-            'duplicates' => $duplicates->map(fn($d) => [
-                'tax_number' => $d->tax_number,
-                'count' => $d->dup_count
-            ])->toArray()
+            'duplicates' => $duplicates->map(function($d) {
+                return [
+                    'tax_number' => $d->tax_number,
+                    'count' => $d->dup_count
+                ];
+            })->toArray()
         ]);
 
         $processedCount = 0;
@@ -112,9 +134,18 @@ return new class extends Migration
             ]);
 
             // Остальные помечаем суффиксом
-            $duplicateOrgs = $organizations->slice(1);
-            foreach ($duplicateOrgs as $org) {
-                $newTaxNumber = $org->tax_number . '-DUP-' . $org->id;
+            $organizationsToUpdate = $organizations->skip(1);
+            Log::info('[Migration] Will update ' . $organizationsToUpdate->count() . ' duplicate organizations');
+            
+            foreach ($organizationsToUpdate as $org) {
+                $oldTaxNumber = $duplicate->tax_number; // Используем оригинальный ИНН из запроса
+                $newTaxNumber = $oldTaxNumber . '-DUP-' . $org->id;
+                
+                Log::info('[Migration] About to update organization', [
+                    'id' => $org->id,
+                    'old_tax_number' => $org->tax_number,
+                    'new_tax_number' => $newTaxNumber
+                ]);
                 
                 $updated = DB::table('organizations')
                     ->where('id', $org->id)
@@ -132,7 +163,14 @@ return new class extends Migration
                     'reason' => 'Duplicate - original kept in org #' . $keepOrg->id
                 ]);
 
-                $processedCount++;
+                if ($updated > 0) {
+                    $processedCount++;
+                } else {
+                    Log::error('[Migration] Failed to update organization', [
+                        'id' => $org->id,
+                        'updated_rows' => $updated
+                    ]);
+                }
             }
         }
 
