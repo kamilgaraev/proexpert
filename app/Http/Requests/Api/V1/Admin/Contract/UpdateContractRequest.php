@@ -34,6 +34,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'subject' => ['sometimes', 'nullable', 'string'],
             'work_type_category' => ['sometimes', 'nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'payment_terms' => ['sometimes', 'nullable', 'string'],
+            'base_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'total_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'gp_percentage' => ['sometimes', 'nullable', 'numeric', 'min:-100', 'max:100'],
             'gp_calculation_type' => ['sometimes', 'nullable', new Enum(GpCalculationTypeEnum::class)],
@@ -75,9 +76,11 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             payment_terms: array_key_exists('payment_terms', $validatedData) 
                 ? $validatedData['payment_terms'] 
                 : $contract->payment_terms,
-            total_amount: isset($validatedData['total_amount']) 
-                ? (float) $validatedData['total_amount'] 
-                : (float) $contract->total_amount,
+            total_amount: isset($validatedData['base_amount']) 
+                ? (float) $validatedData['base_amount'] 
+                : (isset($validatedData['total_amount']) 
+                    ? (float) $validatedData['total_amount'] 
+                    : (float) $contract->total_amount),
             gp_percentage: array_key_exists('gp_percentage', $validatedData)
                 ? ($validatedData['gp_percentage'] !== null ? (float) $validatedData['gp_percentage'] : null)
                 : $contract->gp_percentage,
