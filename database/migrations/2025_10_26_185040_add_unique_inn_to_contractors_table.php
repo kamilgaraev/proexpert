@@ -17,17 +17,32 @@ return new class extends Migration
      */
     public function up(): void
     {
+        Log::info('[Migration] Starting contractors INN unique constraint migration');
+        
         // Шаг 1: Обработка дубликатов INN в рамках одной организации
-        $this->handleDuplicateInnInSameOrganization();
+        $duplicatesProcessed = $this->handleDuplicateInnInSameOrganization();
+        Log::info('[Migration] Processed duplicates', ['count' => $duplicatesProcessed]);
 
         // Шаг 2: Автоматическая синхронизация с существующими организациями
         $this->syncContractorsWithExistingOrganizations();
 
-        // Шаг 3: Добавление составного уникального индекса
+        // Шаг 3: Проверка что дубликатов больше нет
+        $remainingDuplicates = DB::table('contractors')
+            ->select('inn', 'organization_id')
+            ->whereNull('deleted_at')
+            ->whereNotNull('inn')
+            ->where('inn', '!=', '')
+            ->groupBy('inn', 'organization_id')
+            ->havingRaw('COUNT(*) > 1')
+            ->count();
+
+        if ($remainingDuplicates > 0) {
+            Log::error('[Migration] Still have duplicates after processing', ['count' => $remainingDuplicates]);
+            throw new \Exception("Cannot add unique constraint: {$remainingDuplicates} duplicate INN-organization pairs still exist");
+        }
+
+        // Шаг 4: Добавление составного уникального индекса
         Schema::table('contractors', function (Blueprint $table) {
-            // Составной уникальный индекс: INN уникален в рамках organization_id
-            // Это означает что один и тот же ИНН может быть у разных организаций,
-            // но не может дублироваться внутри одной организации
             $table->unique(['inn', 'organization_id'], 'contractors_inn_org_unique');
         });
 
@@ -39,12 +54,16 @@ return new class extends Migration
      * 
      * Стратегия: Для каждой пары (inn, organization_id) где есть дубликаты,
      * оставляем самого старого подрядчика, а у остальных добавляем суффикс к INN.
+     * 
+     * @return int Количество обработанных дубликатов
      */
-    private function handleDuplicateInnInSameOrganization(): void
+    private function handleDuplicateInnInSameOrganization(): int
     {
+        Log::info('[Migration] Checking for duplicate INNs in contractors...');
+        
         // Находим дубликаты INN в рамках одной организации
         $duplicates = DB::table('contractors')
-            ->select('inn', 'organization_id', DB::raw('COUNT(*) as count'))
+            ->select('inn', 'organization_id', DB::raw('COUNT(*) as dup_count'))
             ->whereNull('deleted_at')
             ->whereNotNull('inn')
             ->where('inn', '!=', '')
@@ -54,10 +73,16 @@ return new class extends Migration
 
         if ($duplicates->isEmpty()) {
             Log::info('[Migration] No duplicate INNs found in contractors within same organization');
-            return;
+            return 0;
         }
 
-        Log::warning('[Migration] Found ' . $duplicates->count() . ' duplicate INN-organization pairs in contractors');
+        Log::warning('[Migration] Found ' . $duplicates->count() . ' duplicate INN-organization pairs in contractors', [
+            'duplicates' => $duplicates->map(fn($d) => [
+                'inn' => $d->inn,
+                'organization_id' => $d->organization_id,
+                'count' => $d->dup_count
+            ])->toArray()
+        ]);
 
         $processedCount = 0;
 
@@ -105,7 +130,11 @@ return new class extends Migration
             }
         }
 
-        Log::info('[Migration] Processed ' . $processedCount . ' duplicate contractors');
+        Log::info('[Migration] Finished processing duplicate contractors', [
+            'processed_count' => $processedCount
+        ]);
+
+        return $processedCount;
     }
 
     /**
