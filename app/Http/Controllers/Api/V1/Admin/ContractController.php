@@ -225,12 +225,25 @@ class ContractController extends Controller
     {
         $projectId = $request->route('project');
         
+        Log::info('ContractController::update - START', [
+            'contract_param' => $contract,
+            'project_param' => $projectId,
+            'url' => $request->url()
+        ]);
+        
         try {
             $existingContract = \App\Models\Contract::find($contract);
             
             if (!$existingContract) {
                 return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
             }
+            
+            Log::info('ContractController::update - EXISTING CONTRACT FOUND', [
+                'contract_id_from_param' => $contract,
+                'contract_id_from_model' => $existingContract->id,
+                'project_id' => $existingContract->project_id,
+                'organization_id' => $existingContract->organization_id
+            ]);
             
             // Строгая проверка: контракт должен принадлежать проекту из URL
             if ($projectId && (int)$existingContract->project_id !== (int)$projectId) {
@@ -240,6 +253,13 @@ class ContractController extends Controller
             $organizationId = $existingContract->organization_id;
             
             $contractDTO = $request->toDto();
+            
+            Log::info('ContractController::update - CALLING SERVICE', [
+                'contract_id_param' => $contract,
+                'organization_id' => $organizationId,
+                'dto_project_id' => $contractDTO->project_id
+            ]);
+            
             $updatedContract = $this->contractService->updateContract($contract, $organizationId, $contractDTO);
             return new ContractResource($updatedContract);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
