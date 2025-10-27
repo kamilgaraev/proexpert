@@ -763,7 +763,12 @@ class ContractService
 
     public function getContractsSummary(int $organizationId, array $filters = []): array
     {
-        $query = Contract::where('organization_id', $organizationId);
+        $query = Contract::query();
+        
+        // Если указан contractor_context - не фильтруем по organization_id
+        if (empty($filters['contractor_context'])) {
+            $query->where('organization_id', $organizationId);
+        }
 
         if (!empty($filters['project_id'])) {
             $query->where('project_id', $filters['project_id']);
@@ -808,7 +813,7 @@ class ContractService
 
         $totalPerformedAmount = (float) DB::table('contract_performance_acts')
             ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
-            ->where('contracts.organization_id', $organizationId)
+            ->when(empty($filters['contractor_context']), fn($q) => $q->where('contracts.organization_id', $organizationId))
             ->whereNull('contracts.deleted_at')
             ->where('contract_performance_acts.is_approved', true)
             ->when(!empty($filters['project_id']), fn($q) => $q->where('contracts.project_id', $filters['project_id']))
@@ -819,7 +824,7 @@ class ContractService
 
         $totalPaidAmount = (float) DB::table('contract_payments')
             ->join('contracts', 'contract_payments.contract_id', '=', 'contracts.id')
-            ->where('contracts.organization_id', $organizationId)
+            ->when(empty($filters['contractor_context']), fn($q) => $q->where('contracts.organization_id', $organizationId))
             ->whereNull('contracts.deleted_at')
             ->when(!empty($filters['project_id']), fn($q) => $q->where('contracts.project_id', $filters['project_id']))
             ->when(!empty($filters['contractor_id']), fn($q) => $q->where('contracts.contractor_id', $filters['contractor_id']))
@@ -839,7 +844,7 @@ class ContractService
                      ->where('cw.status', '=', 'confirmed');
             })
             ->select('c.id', 'c.total_amount', DB::raw('COALESCE(SUM(cw.total_amount), 0) as completed_amount'))
-            ->where('c.organization_id', $organizationId)
+            ->when(empty($filters['contractor_context']), fn($q) => $q->where('c.organization_id', $organizationId))
             ->whereNull('c.deleted_at')
             ->when(!empty($filters['project_id']), fn($q) => $q->where('c.project_id', $filters['project_id']))
             ->when(!empty($filters['contractor_id']), fn($q) => $q->where('c.contractor_id', $filters['contractor_id']))

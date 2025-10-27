@@ -24,7 +24,13 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         string $sortDirection = 'desc'
     ): LengthAwarePaginator
     {
-        $query = $this->model->query()->where('organization_id', $organizationId);
+        $query = $this->model->query();
+        
+        // Если указан contractor_context - фильтруем только по contractor_id, без organization_id
+        // Это нужно для подрядчиков, которые зарегистрировались и видят свои контракты
+        if (empty($filters['contractor_context'])) {
+            $query->where('organization_id', $organizationId);
+        }
 
         // Основные фильтры
         if (!empty($filters['contractor_id'])) {

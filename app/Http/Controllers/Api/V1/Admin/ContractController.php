@@ -111,11 +111,15 @@ class ContractController extends Controller
             
             if ($contractor) {
                 $filters['contractor_id'] = $contractor->id;
+                // Устанавливаем флаг contractor_context чтобы репозиторий НЕ фильтровал по organization_id
+                // Контракты принадлежат заказчику (organization_id), но подрядчик должен их видеть
+                $filters['contractor_context'] = true;
                 
                 Log::info('Contractor context applied', [
                     'organization_id' => $organizationId,
                     'contractor_id' => $contractor->id,
-                    'contractor_name' => $contractor->name
+                    'contractor_name' => $contractor->name,
+                    'contractor_context_enabled' => true
                 ]);
             }
         }
