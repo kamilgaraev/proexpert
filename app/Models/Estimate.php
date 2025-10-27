@@ -133,25 +133,38 @@ class Estimate extends Model
     {
         $user = request()->user();
         $orgId = $user?->current_organization_id;
+        $projectId = request()->route('project');
         
         \Log::info('[Estimate::resolveRouteBinding] Resolving', [
             'value' => $value,
             'field' => $field,
             'user_id' => $user?->id,
             'organization_id' => $orgId,
+            'project_id' => $projectId,
         ]);
         
-        $estimate = static::where($this->getRouteKeyName(), $value)->first();
+        $query = static::where($this->getRouteKeyName(), $value);
+        
+        if ($projectId) {
+            $query->where('project_id', $projectId);
+        }
+        
+        $estimate = $query->first();
         
         if (!$estimate) {
-            \Log::warning('[Estimate::resolveRouteBinding] Not found', ['value' => $value]);
+            \Log::warning('[Estimate::resolveRouteBinding] Not found', [
+                'value' => $value,
+                'project_id' => $projectId,
+            ]);
             return null;
         }
         
         \Log::info('[Estimate::resolveRouteBinding] Found estimate', [
             'estimate_id' => $estimate->id,
             'estimate_org_id' => $estimate->organization_id,
+            'estimate_project_id' => $estimate->project_id,
             'user_org_id' => $orgId,
+            'route_project_id' => $projectId,
         ]);
         
         if ($orgId && $estimate->organization_id !== $orgId) {

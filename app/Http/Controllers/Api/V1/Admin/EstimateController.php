@@ -77,17 +77,28 @@ class EstimateController extends Controller
         if (is_string($estimate) || is_numeric($estimate)) {
             $user = request()->user();
             $orgId = $user->current_organization_id ?? null;
+            $projectId = request()->route('project');
             
             \Log::info('[EstimateController@show] Resolving estimate', [
                 'estimate_param' => $estimate,
                 'user_id' => $user?->id,
                 'organization_id' => $orgId,
+                'project_id' => $projectId,
             ]);
             
-            $estimateModel = Estimate::where('id', $estimate)->first();
+            $query = Estimate::where('id', $estimate);
+            
+            if ($projectId) {
+                $query->where('project_id', $projectId);
+            }
+            
+            $estimateModel = $query->first();
             
             if (!$estimateModel) {
-                \Log::warning('[EstimateController@show] Estimate not found', ['estimate_id' => $estimate]);
+                \Log::warning('[EstimateController@show] Estimate not found', [
+                    'estimate_id' => $estimate,
+                    'project_id' => $projectId,
+                ]);
                 abort(404, 'Смета не найдена');
             }
             
@@ -113,9 +124,15 @@ class EstimateController extends Controller
     public function update(UpdateEstimateRequest $request, $estimate): JsonResponse
     {
         if (is_string($estimate) || is_numeric($estimate)) {
-            $estimate = Estimate::where('id', $estimate)
-                ->where('organization_id', request()->user()->current_organization_id)
-                ->firstOrFail();
+            $query = Estimate::where('id', $estimate)
+                ->where('organization_id', request()->user()->current_organization_id);
+            
+            $projectId = request()->route('project');
+            if ($projectId) {
+                $query->where('project_id', $projectId);
+            }
+            
+            $estimate = $query->firstOrFail();
         }
         
         $this->authorize('update', $estimate);
@@ -131,9 +148,15 @@ class EstimateController extends Controller
     public function destroy($estimate): JsonResponse
     {
         if (is_string($estimate) || is_numeric($estimate)) {
-            $estimate = Estimate::where('id', $estimate)
-                ->where('organization_id', request()->user()->current_organization_id)
-                ->firstOrFail();
+            $query = Estimate::where('id', $estimate)
+                ->where('organization_id', request()->user()->current_organization_id);
+            
+            $projectId = request()->route('project');
+            if ($projectId) {
+                $query->where('project_id', $projectId);
+            }
+            
+            $estimate = $query->firstOrFail();
         }
         
         $this->authorize('delete', $estimate);
@@ -154,9 +177,15 @@ class EstimateController extends Controller
     public function duplicate($estimate, Request $request): JsonResponse
     {
         if (is_string($estimate) || is_numeric($estimate)) {
-            $estimate = Estimate::where('id', $estimate)
-                ->where('organization_id', request()->user()->current_organization_id)
-                ->firstOrFail();
+            $query = Estimate::where('id', $estimate)
+                ->where('organization_id', request()->user()->current_organization_id);
+            
+            $projectId = request()->route('project');
+            if ($projectId) {
+                $query->where('project_id', $projectId);
+            }
+            
+            $estimate = $query->firstOrFail();
         }
         
         $this->authorize('create', Estimate::class);
@@ -176,9 +205,15 @@ class EstimateController extends Controller
     public function recalculate($estimate): JsonResponse
     {
         if (is_string($estimate) || is_numeric($estimate)) {
-            $estimate = Estimate::where('id', $estimate)
-                ->where('organization_id', request()->user()->current_organization_id)
-                ->firstOrFail();
+            $query = Estimate::where('id', $estimate)
+                ->where('organization_id', request()->user()->current_organization_id);
+            
+            $projectId = request()->route('project');
+            if ($projectId) {
+                $query->where('project_id', $projectId);
+            }
+            
+            $estimate = $query->firstOrFail();
         }
         
         $this->authorize('update', $estimate);
@@ -194,9 +229,15 @@ class EstimateController extends Controller
     public function dashboard($estimate): JsonResponse
     {
         if (is_string($estimate) || is_numeric($estimate)) {
-            $estimate = Estimate::where('id', $estimate)
-                ->where('organization_id', request()->user()->current_organization_id)
-                ->firstOrFail();
+            $query = Estimate::where('id', $estimate)
+                ->where('organization_id', request()->user()->current_organization_id);
+            
+            $projectId = request()->route('project');
+            if ($projectId) {
+                $query->where('project_id', $projectId);
+            }
+            
+            $estimate = $query->firstOrFail();
         }
         
         $this->authorize('view', $estimate);
@@ -236,17 +277,28 @@ class EstimateController extends Controller
         if (is_string($estimate) || is_numeric($estimate)) {
             $user = request()->user();
             $orgId = $user->current_organization_id ?? null;
+            $projectId = request()->route('project');
             
             \Log::info('[EstimateController@structure] Resolving estimate', [
                 'estimate_param' => $estimate,
                 'user_id' => $user?->id,
                 'organization_id' => $orgId,
+                'project_id' => $projectId,
             ]);
             
-            $estimateModel = Estimate::where('id', $estimate)->first();
+            $query = Estimate::where('id', $estimate);
+            
+            if ($projectId) {
+                $query->where('project_id', $projectId);
+            }
+            
+            $estimateModel = $query->first();
             
             if (!$estimateModel) {
-                \Log::warning('[EstimateController@structure] Estimate not found', ['estimate_id' => $estimate]);
+                \Log::warning('[EstimateController@structure] Estimate not found', [
+                    'estimate_id' => $estimate,
+                    'project_id' => $projectId,
+                ]);
                 abort(404, 'Смета не найдена');
             }
             
