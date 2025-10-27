@@ -45,6 +45,12 @@ class AuthServiceProvider extends ServiceProvider
                 return null;
             }
             
+            // Пропускаем model policy abilities (view, create, update, delete, etc)
+            // чтобы они обрабатывались через зарегистрированные Policy классы
+            if (!empty($arguments) && is_object($arguments[0])) {
+                return null;
+            }
+            
             $authorizationService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
             
             if (strpos($ability, ':') !== false) {
