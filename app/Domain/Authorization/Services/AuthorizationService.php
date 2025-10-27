@@ -374,7 +374,6 @@ class AuthorizationService
                             'user_id' => $user->id,
                             'permission' => $permission,
                             'role' => $assignment->role_slug,
-                            'conditions_count' => $assignment->conditions()->active()->count()
                         ], 'warning');
                     }
                 }
@@ -382,12 +381,20 @@ class AuthorizationService
         }
 
         if ($authContext && $authContext->type === AuthorizationContext::TYPE_ORGANIZATION) {
-            $org = \App\Models\Organization::find($authContext->resource_id);
+            $cacheKey = "org_parent_{$authContext->resource_id}";
+            $orgData = Cache::driver('array')->remember($cacheKey, 300, function () use ($authContext) {
+                return \App\Models\Organization::where('id', $authContext->resource_id)
+                    ->select('id', 'parent_organization_id')
+                    ->first();
+            });
 
-            if ($org && $org->parent_organization_id) {
-                $parentContext = AuthorizationContext::getOrganizationContext($org->parent_organization_id);
+            if ($orgData && $orgData->parent_organization_id) {
+                $parentContextCacheKey = "org_context_{$orgData->parent_organization_id}";
+                $parentContext = Cache::driver('array')->remember($parentContextCacheKey, 300, function () use ($orgData) {
+                    return AuthorizationContext::getOrganizationContext($orgData->parent_organization_id);
+                });
 
-                if ($this->checkPermissionInContext($user, $permission, $parentContext)) {
+                if ($parentContext && $this->checkPermissionInContext($user, $permission, $parentContext)) {
                     return true;
                 }
             }

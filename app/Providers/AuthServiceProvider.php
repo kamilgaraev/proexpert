@@ -15,7 +15,7 @@ class AuthServiceProvider extends ServiceProvider
      * @var array<class-string, class-string>
      */
     protected $policies = [
-        // Политики для новой системы авторизации определяются через AuthorizationService
+        \App\Models\Estimate::class => \App\Policies\EstimatePolicy::class,
     ];
 
     /**
