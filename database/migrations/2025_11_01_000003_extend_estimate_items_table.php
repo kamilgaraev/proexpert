@@ -9,11 +9,25 @@ return new class extends Migration
 {
     private function indexExists(string $table, string $index): bool
     {
+<<<<<<< HEAD
         $connection = Schema::connection($this->getConnection());
         $schemaManager = $connection->getDoctrineSchemaManager();
         $indexes = $schemaManager->listTableIndexes($table);
         
         return isset($indexes[$index]);
+=======
+        $result = DB::selectOne(
+            "SELECT EXISTS (
+                SELECT 1 
+                FROM pg_indexes 
+                WHERE tablename = ? 
+                AND indexname = ?
+            ) as exists",
+            [$table, $index]
+        );
+        
+        return $result->exists;
+>>>>>>> 3433127612f9b7a54e80472033b4ccea4adc37ae
     }
 
     public function up(): void
