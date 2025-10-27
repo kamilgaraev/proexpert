@@ -122,7 +122,7 @@ class OfficialFormsExportService
         $row = 10;
         $sheet->setCellValue("A{$row}", '№ п/п');
         $sheet->setCellValue("B{$row}", 'Наименование работ');
-        $sheet->setCellValue("C{$row}", 'Номер расценки');
+        $sheet->setCellValue("C{$row}", 'Номер расценки ');
         $sheet->setCellValue("D{$row}", 'Ед. изм.');
         $sheet->setCellValue("E{$row}", 'Количество');
         $sheet->setCellValue("F{$row}", 'Цена за ед., руб.');
