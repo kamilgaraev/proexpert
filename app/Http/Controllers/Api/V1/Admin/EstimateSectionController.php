@@ -21,8 +21,15 @@ class EstimateSectionController extends Controller
         $this->authorize('view', $estimate);
         
         $sections = $estimate->sections()
-            ->with(['children', 'items'])
+            ->with([
+                'children.children.children.children',
+                'items',
+                'children.items',
+                'children.children.items',
+                'children.children.children.items',
+            ])
             ->whereNull('parent_section_id')
+            ->orderBy('sort_order')
             ->get();
         
         return response()->json([
@@ -57,8 +64,16 @@ class EstimateSectionController extends Controller
     {
         $this->authorize('view', $section->estimate);
         
+        $section->load([
+            'children.children.children.children',
+            'items',
+            'children.items',
+            'children.children.items',
+            'children.children.children.items',
+        ]);
+        
         return response()->json([
-            'data' => new EstimateSectionResource($section->load(['children', 'items']))
+            'data' => new EstimateSectionResource($section)
         ]);
     }
 

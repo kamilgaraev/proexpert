@@ -9,12 +9,28 @@ class EstimateSectionRepository
 {
     public function find(int $id): ?EstimateSection
     {
-        return EstimateSection::with(['estimate', 'parent', 'children', 'items'])->find($id);
+        return EstimateSection::with([
+            'estimate',
+            'parent',
+            'children.children.children.children',
+            'children.items',
+            'children.children.items',
+            'children.children.children.items',
+            'items'
+        ])->find($id);
     }
 
     public function findOrFail(int $id): EstimateSection
     {
-        return EstimateSection::with(['estimate', 'parent', 'children', 'items'])->findOrFail($id);
+        return EstimateSection::with([
+            'estimate',
+            'parent',
+            'children.children.children.children',
+            'children.items',
+            'children.children.items',
+            'children.children.children.items',
+            'items'
+        ])->findOrFail($id);
     }
 
     public function create(array $data): EstimateSection
@@ -34,7 +50,13 @@ class EstimateSectionRepository
 
     public function getByEstimate(int $estimateId): Collection
     {
-        return EstimateSection::with(['children', 'items'])
+        return EstimateSection::with([
+            'children.children.children.children',
+            'items',
+            'children.items',
+            'children.children.items',
+            'children.children.children.items',
+        ])
             ->where('estimate_id', $estimateId)
             ->orderBy('sort_order')
             ->get();
@@ -42,7 +64,13 @@ class EstimateSectionRepository
 
     public function getRootSections(int $estimateId): Collection
     {
-        return EstimateSection::with(['children', 'items'])
+        return EstimateSection::with([
+            'children.children.children.children',
+            'items',
+            'children.items',
+            'children.children.items',
+            'children.children.children.items',
+        ])
             ->where('estimate_id', $estimateId)
             ->whereNull('parent_section_id')
             ->orderBy('sort_order')

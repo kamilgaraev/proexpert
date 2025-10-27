@@ -76,8 +76,34 @@ class EstimateController extends Controller
     {
         $this->authorize('view', $estimate);
         
+        $estimate->load([
+            'sections' => function ($query) {
+                $query->with(['items' => function ($q) {
+                    $q->orderBy('position_number');
+                }]);
+            },
+            'sections.children' => function ($query) {
+                $query->with(['items' => function ($q) {
+                    $q->orderBy('position_number');
+                }]);
+            },
+            'sections.children.children' => function ($query) {
+                $query->with(['items' => function ($q) {
+                    $q->orderBy('position_number');
+                }]);
+            },
+            'sections.children.children.children' => function ($query) {
+                $query->with(['items' => function ($q) {
+                    $q->orderBy('position_number');
+                }]);
+            },
+            'items.resources',
+            'items.workType',
+            'items.measurementUnit',
+        ]);
+        
         return response()->json([
-            'data' => new EstimateResource($estimate->load(['sections.items', 'items.resources']))
+            'data' => new EstimateResource($estimate)
         ]);
     }
 
@@ -177,8 +203,42 @@ class EstimateController extends Controller
         $this->authorize('view', $estimate);
         
         $sections = $estimate->sections()
-            ->with(['children', 'items.workType', 'items.measurementUnit'])
+            ->with([
+                'children' => function ($query) {
+                    $query->orderBy('sort_order');
+                },
+                'children.children' => function ($query) {
+                    $query->orderBy('sort_order');
+                },
+                'children.children.children' => function ($query) {
+                    $query->orderBy('sort_order');
+                },
+                'children.children.children.children' => function ($query) {
+                    $query->orderBy('sort_order');
+                },
+                'items' => function ($query) {
+                    $query->orderBy('position_number');
+                },
+                'children.items' => function ($query) {
+                    $query->orderBy('position_number');
+                },
+                'children.children.items' => function ($query) {
+                    $query->orderBy('position_number');
+                },
+                'children.children.children.items' => function ($query) {
+                    $query->orderBy('position_number');
+                },
+                'items.workType',
+                'items.measurementUnit',
+                'children.items.workType',
+                'children.items.measurementUnit',
+                'children.children.items.workType',
+                'children.children.items.measurementUnit',
+                'children.children.children.items.workType',
+                'children.children.children.items.measurementUnit',
+            ])
             ->whereNull('parent_section_id')
+            ->orderBy('sort_order')
             ->get();
         
         return response()->json([

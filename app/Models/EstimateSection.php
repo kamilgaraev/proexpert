@@ -58,6 +58,22 @@ class EstimateSection extends Model
         return $query->where('estimate_id', $estimateId);
     }
 
+    public function scopeWithRecursiveChildren($query, int $maxDepth = 4)
+    {
+        $relations = [];
+        $childPath = 'children';
+        
+        for ($i = 0; $i < $maxDepth; $i++) {
+            $relations[] = $childPath;
+            $relations[] = $childPath . '.items';
+            $relations[] = $childPath . '.items.workType';
+            $relations[] = $childPath . '.items.measurementUnit';
+            $childPath .= '.children';
+        }
+        
+        return $query->with($relations);
+    }
+
     public function isRootSection(): bool
     {
         return $this->parent_section_id === null;
