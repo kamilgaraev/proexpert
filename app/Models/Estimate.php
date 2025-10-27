@@ -86,7 +86,7 @@ class Estimate extends Model
 
     public function items(): HasMany
     {
-        return $this->hasMany(EstimateItem::class);
+        return $this->hasMany(EstimateItem::class)->orderBy('position_number');
     }
 
     public function approvedBy(): BelongsTo
@@ -135,78 +135,21 @@ class Estimate extends Model
         $orgId = $user?->current_organization_id;
         $projectId = request()->route('project');
         
-        \Log::info('[Estimate::resolveRouteBinding] START', [
-            'value' => $value,
-            'field' => $field,
-            'user_id' => $user?->id,
-            'organization_id' => $orgId,
-            'project_id' => $projectId,
-            'route_name' => request()->route()?->getName(),
-            'route_uri' => request()->route()?->uri(),
-        ]);
-        
         $query = static::where($this->getRouteKeyName(), $value);
         
         if ($projectId) {
-            \Log::info('[Estimate::resolveRouteBinding] Adding project_id filter', [
-                'project_id' => $projectId,
-                'project_id_type' => gettype($projectId),
-            ]);
             $query->where('project_id', (int)$projectId);
         }
-        
-        $checkWithoutProject = static::where($this->getRouteKeyName(), $value)->first();
-        if ($checkWithoutProject) {
-            \Log::info('[Estimate::resolveRouteBinding] Estimate exists without project filter', [
-                'estimate_id' => $checkWithoutProject->id,
-                'estimate_project_id' => $checkWithoutProject->project_id,
-                'estimate_project_id_type' => gettype($checkWithoutProject->project_id),
-                'route_project_id' => $projectId,
-                'route_project_id_type' => gettype($projectId),
-                'are_equal' => $checkWithoutProject->project_id == $projectId,
-                'are_identical' => $checkWithoutProject->project_id === (int)$projectId,
-            ]);
-        }
-        
-        $sql = $query->toSql();
-        $bindings = $query->getBindings();
-        \Log::info('[Estimate::resolveRouteBinding] Query', [
-            'sql' => $sql,
-            'bindings' => $bindings,
-        ]);
         
         $estimate = $query->first();
         
         if (!$estimate) {
-            \Log::error('[Estimate::resolveRouteBinding] ESTIMATE NOT FOUND', [
-                'value' => $value,
-                'project_id' => $projectId,
-                'sql' => $sql,
-                'bindings' => $bindings,
-            ]);
             return null;
         }
-        
-        \Log::info('[Estimate::resolveRouteBinding] Found estimate', [
-            'estimate_id' => $estimate->id,
-            'estimate_org_id' => $estimate->organization_id,
-            'estimate_project_id' => $estimate->project_id,
-            'user_org_id' => $orgId,
-            'route_project_id' => $projectId,
-        ]);
         
         if ($orgId && $estimate->organization_id !== $orgId) {
-            \Log::error('[Estimate::resolveRouteBinding] ORGANIZATION MISMATCH', [
-                'estimate_id' => $estimate->id,
-                'estimate_org_id' => $estimate->organization_id,
-                'user_org_id' => $orgId,
-            ]);
             return null;
         }
-        
-        \Log::info('[Estimate::resolveRouteBinding] SUCCESS - Returning estimate', [
-            'estimate_id' => $estimate->id,
-        ]);
         
         return $estimate;
     }

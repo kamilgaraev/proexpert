@@ -77,26 +77,19 @@ class EstimateController extends Controller
         $this->authorize('view', $estimate);
         
         $estimate->load([
-            'sections' => function ($query) {
-                $query->with(['items' => function ($q) {
-                    $q->orderBy('position_number');
-                }]);
-            },
-            'sections.children' => function ($query) {
-                $query->with(['items' => function ($q) {
-                    $q->orderBy('position_number');
-                }]);
-            },
-            'sections.children.children' => function ($query) {
-                $query->with(['items' => function ($q) {
-                    $q->orderBy('position_number');
-                }]);
-            },
-            'sections.children.children.children' => function ($query) {
-                $query->with(['items' => function ($q) {
-                    $q->orderBy('position_number');
-                }]);
-            },
+            'sections.children.children.children',
+            'sections.items.workType',
+            'sections.items.measurementUnit',
+            'sections.items.resources',
+            'sections.children.items.workType',
+            'sections.children.items.measurementUnit',
+            'sections.children.items.resources',
+            'sections.children.children.items.workType',
+            'sections.children.children.items.measurementUnit',
+            'sections.children.children.items.resources',
+            'sections.children.children.children.items.workType',
+            'sections.children.children.children.items.measurementUnit',
+            'sections.children.children.children.items.resources',
             'items.resources',
             'items.workType',
             'items.measurementUnit',
@@ -204,30 +197,7 @@ class EstimateController extends Controller
         
         $sections = $estimate->sections()
             ->with([
-                'children' => function ($query) {
-                    $query->orderBy('sort_order');
-                },
-                'children.children' => function ($query) {
-                    $query->orderBy('sort_order');
-                },
-                'children.children.children' => function ($query) {
-                    $query->orderBy('sort_order');
-                },
-                'children.children.children.children' => function ($query) {
-                    $query->orderBy('sort_order');
-                },
-                'items' => function ($query) {
-                    $query->orderBy('position_number');
-                },
-                'children.items' => function ($query) {
-                    $query->orderBy('position_number');
-                },
-                'children.children.items' => function ($query) {
-                    $query->orderBy('position_number');
-                },
-                'children.children.children.items' => function ($query) {
-                    $query->orderBy('position_number');
-                },
+                'children.children.children',
                 'items.workType',
                 'items.measurementUnit',
                 'children.items.workType',

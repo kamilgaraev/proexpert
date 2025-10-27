@@ -45,7 +45,7 @@ class EstimateSection extends Model
 
     public function items(): HasMany
     {
-        return $this->hasMany(EstimateItem::class);
+        return $this->hasMany(EstimateItem::class)->orderBy('position_number');
     }
 
     public function scopeRootSections($query)
@@ -86,12 +86,13 @@ class EstimateSection extends Model
 
     public function resolveRouteBinding($value, $field = null)
     {
-        $section = static::where($this->getRouteKeyName(), $value)->firstOrFail();
+        $section = static::with('estimate')
+            ->where($this->getRouteKeyName(), $value)
+            ->firstOrFail();
         
         $user = request()->user();
         if ($user && $user->current_organization_id) {
-            $estimate = $section->estimate;
-            if ($estimate && $estimate->organization_id !== $user->current_organization_id) {
+            if ($section->estimate && $section->estimate->organization_id !== $user->current_organization_id) {
                 abort(403, 'У вас нет доступа к этому разделу сметы');
             }
         }
@@ -101,9 +102,14 @@ class EstimateSection extends Model
 
     public function getFullSectionNumberAttribute(): string
     {
-        if ($this->parent) {
+        if (!$this->parent_section_id) {
+            return $this->section_number;
+        }
+        
+        if ($this->relationLoaded('parent') && $this->parent) {
             return $this->parent->full_section_number . '.' . $this->section_number;
         }
+        
         return $this->section_number;
     }
 }
