@@ -99,13 +99,24 @@ class ContractController extends Controller
         // Если пользователь - подрядчик, показываем только его контракты
         $projectContext = ProjectContextMiddleware::getProjectContext($request);
         if ($projectContext && in_array($projectContext->role->value, ['contractor', 'subcontractor'])) {
-            // Находим Contractor для текущей организации
-            $contractor = \App\Models\Contractor::where('organization_id', $organizationId)
-                ->where('source_organization_id', $projectContext->organizationId)
+            // Находим Contractor для текущей организации через source_organization_id
+            // (организация зарегистрировалась и синхронизировалась с подрядчиком по ИНН)
+            $contractor = \App\Models\Contractor::where('source_organization_id', $organizationId)
+                ->whereHas('contracts', function($q) use ($projectId) {
+                    if ($projectId) {
+                        $q->where('project_id', $projectId);
+                    }
+                })
                 ->first();
             
             if ($contractor) {
                 $filters['contractor_id'] = $contractor->id;
+                
+                Log::info('Contractor context applied', [
+                    'organization_id' => $organizationId,
+                    'contractor_id' => $contractor->id,
+                    'contractor_name' => $contractor->name
+                ]);
             }
         }
         
