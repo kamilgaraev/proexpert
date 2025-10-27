@@ -75,9 +75,32 @@ class EstimateController extends Controller
     public function show($estimate): JsonResponse
     {
         if (is_string($estimate) || is_numeric($estimate)) {
-            $estimate = Estimate::where('id', $estimate)
-                ->where('organization_id', request()->user()->current_organization_id)
-                ->firstOrFail();
+            $user = request()->user();
+            $orgId = $user->current_organization_id ?? null;
+            
+            \Log::info('[EstimateController@show] Resolving estimate', [
+                'estimate_param' => $estimate,
+                'user_id' => $user?->id,
+                'organization_id' => $orgId,
+            ]);
+            
+            $estimateModel = Estimate::where('id', $estimate)->first();
+            
+            if (!$estimateModel) {
+                \Log::warning('[EstimateController@show] Estimate not found', ['estimate_id' => $estimate]);
+                abort(404, 'Смета не найдена');
+            }
+            
+            if ($orgId && $estimateModel->organization_id !== $orgId) {
+                \Log::warning('[EstimateController@show] Organization mismatch', [
+                    'estimate_id' => $estimate,
+                    'estimate_org_id' => $estimateModel->organization_id,
+                    'user_org_id' => $orgId,
+                ]);
+                abort(403, 'У вас нет доступа к этой смете');
+            }
+            
+            $estimate = $estimateModel;
         }
         
         $this->authorize('view', $estimate);
@@ -211,9 +234,32 @@ class EstimateController extends Controller
     public function structure($estimate): JsonResponse
     {
         if (is_string($estimate) || is_numeric($estimate)) {
-            $estimate = Estimate::where('id', $estimate)
-                ->where('organization_id', request()->user()->current_organization_id)
-                ->firstOrFail();
+            $user = request()->user();
+            $orgId = $user->current_organization_id ?? null;
+            
+            \Log::info('[EstimateController@structure] Resolving estimate', [
+                'estimate_param' => $estimate,
+                'user_id' => $user?->id,
+                'organization_id' => $orgId,
+            ]);
+            
+            $estimateModel = Estimate::where('id', $estimate)->first();
+            
+            if (!$estimateModel) {
+                \Log::warning('[EstimateController@structure] Estimate not found', ['estimate_id' => $estimate]);
+                abort(404, 'Смета не найдена');
+            }
+            
+            if ($orgId && $estimateModel->organization_id !== $orgId) {
+                \Log::warning('[EstimateController@structure] Organization mismatch', [
+                    'estimate_id' => $estimate,
+                    'estimate_org_id' => $estimateModel->organization_id,
+                    'user_org_id' => $orgId,
+                ]);
+                abort(403, 'У вас нет доступа к этой смете');
+            }
+            
+            $estimate = $estimateModel;
         }
         
         $this->authorize('view', $estimate);

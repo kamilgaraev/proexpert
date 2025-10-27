@@ -131,10 +131,38 @@ class Estimate extends Model
 
     public function resolveRouteBinding($value, $field = null)
     {
-        $estimate = static::where($this->getRouteKeyName(), $value)
-            ->where('organization_id', request()->user()?->current_organization_id)
-            ->firstOrFail();
-            
+        $user = request()->user();
+        $orgId = $user?->current_organization_id;
+        
+        \Log::info('[Estimate::resolveRouteBinding] Resolving', [
+            'value' => $value,
+            'field' => $field,
+            'user_id' => $user?->id,
+            'organization_id' => $orgId,
+        ]);
+        
+        $estimate = static::where($this->getRouteKeyName(), $value)->first();
+        
+        if (!$estimate) {
+            \Log::warning('[Estimate::resolveRouteBinding] Not found', ['value' => $value]);
+            return null;
+        }
+        
+        \Log::info('[Estimate::resolveRouteBinding] Found estimate', [
+            'estimate_id' => $estimate->id,
+            'estimate_org_id' => $estimate->organization_id,
+            'user_org_id' => $orgId,
+        ]);
+        
+        if ($orgId && $estimate->organization_id !== $orgId) {
+            \Log::warning('[Estimate::resolveRouteBinding] Organization mismatch', [
+                'estimate_id' => $estimate->id,
+                'estimate_org_id' => $estimate->organization_id,
+                'user_org_id' => $orgId,
+            ]);
+            return null;
+        }
+        
         return $estimate;
     }
 
