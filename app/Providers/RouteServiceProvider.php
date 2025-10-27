@@ -28,6 +28,100 @@ class RouteServiceProvider extends ServiceProvider
         Route::bind('act', function ($value) {
             return \App\Models\ContractPerformanceAct::findOrFail($value);
         });
+        
+        Route::bind('estimate', function ($value) {
+            $estimate = \App\Models\Estimate::findOrFail($value);
+            
+            $user = request()->user();
+            if ($user && $user->current_organization_id) {
+                if ($estimate->organization_id !== $user->current_organization_id) {
+                    abort(403, 'У вас нет доступа к этой смете');
+                }
+            }
+            
+            return $estimate;
+        });
+        
+        Route::bind('section', function ($value) {
+            $section = \App\Models\EstimateSection::findOrFail($value);
+            
+            $user = request()->user();
+            if ($user && $user->current_organization_id) {
+                $estimate = $section->estimate;
+                if ($estimate && $estimate->organization_id !== $user->current_organization_id) {
+                    abort(403, 'У вас нет доступа к этому разделу сметы');
+                }
+            }
+            
+            return $section;
+        });
+        
+        Route::bind('item', function ($value) {
+            $item = \App\Models\EstimateItem::findOrFail($value);
+            
+            $user = request()->user();
+            if ($user && $user->current_organization_id) {
+                $estimate = $item->estimate;
+                if ($estimate && $estimate->organization_id !== $user->current_organization_id) {
+                    abort(403, 'У вас нет доступа к этой позиции сметы');
+                }
+            }
+            
+            return $item;
+        });
+        
+        Route::bind('template', function ($value) {
+            $template = \App\Models\EstimateTemplate::findOrFail($value);
+            
+            $user = request()->user();
+            if ($user && $user->current_organization_id) {
+                if (!$template->is_public && $template->organization_id !== $user->current_organization_id) {
+                    abort(403, 'У вас нет доступа к этому шаблону сметы');
+                }
+            }
+            
+            return $template;
+        });
+        
+        Route::bind('version', function ($value) {
+            $version = \App\Models\Estimate::findOrFail($value);
+            
+            $user = request()->user();
+            if ($user && $user->current_organization_id) {
+                if ($version->organization_id !== $user->current_organization_id) {
+                    abort(403, 'У вас нет доступа к этой версии сметы');
+                }
+            }
+            
+            return $version;
+        });
+        
+        Route::bind('completed_work', function ($value) {
+            $completedWork = \App\Models\CompletedWork::findOrFail($value);
+            
+            $user = request()->user();
+            if ($user && $user->current_organization_id) {
+                if ($completedWork->organization_id !== $user->current_organization_id) {
+                    abort(403, 'У вас нет доступа к этой выполненной работе');
+                }
+            }
+            
+            return $completedWork;
+        });
+        
+        Route::bind('payment', function ($value) {
+            $payment = \App\Models\ContractPayment::findOrFail($value);
+            
+            $user = request()->user();
+            if ($user && $user->current_organization_id) {
+                $contract = $payment->contract;
+                if ($contract && $contract->organization_id !== $user->current_organization_id) {
+                    abort(403, 'У вас нет доступа к этому платежу');
+                }
+            }
+            
+            return $payment;
+        });
 
         $this->routes(function () {
             // Public API Routes (no authentication required)
