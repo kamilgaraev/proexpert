@@ -516,8 +516,32 @@ class JwtAuthService
                     $organization = $this->organizationRepository->create($orgData);
                     Log::info('[JwtAuthService] Organization created', [
                         'org_id' => $organization->id ?? 'Failed to get ID',
-                        'name' => $organization->name
+                        'name' => $organization->name,
+                        'tax_number' => $organization->tax_number
                     ]);
+                    
+                    // АВТОМАТИЧЕСКАЯ СИНХРОНИЗАЦИЯ: Связываем подрядчиков с организацией по ИНН
+                    if (!empty($organization->tax_number)) {
+                        try {
+                            $syncService = app(\App\Services\Contractor\ContractorSyncService::class);
+                            $syncResult = $syncService->syncContractorWithOrganization($organization);
+                            
+                            Log::info('[JwtAuthService] Contractor synchronization completed', [
+                                'organization_id' => $organization->id,
+                                'tax_number' => $organization->tax_number,
+                                'contractors_synced' => $syncResult['contractors'],
+                                'projects_synced' => $syncResult['projects']
+                            ]);
+                        } catch (\Exception $syncException) {
+                            // Не прерываем регистрацию если синхронизация не удалась
+                            Log::warning('[JwtAuthService] Contractor synchronization failed', [
+                                'organization_id' => $organization->id,
+                                'tax_number' => $organization->tax_number,
+                                'error' => $syncException->getMessage()
+                            ]);
+                        }
+                    }
+                    
                     // Привязываем пользователя к организации
                     if (!$user->organizations()->where('organization_id', $organization->id)->exists()) {
                         $user->organizations()->attach($organization->id, [
