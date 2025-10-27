@@ -102,3 +102,4 @@ class NormativeSection extends Model
         $this->save();
     }
 }
+

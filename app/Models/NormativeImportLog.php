@@ -80,3 +80,4 @@ class NormativeImportLog extends Model
         return $this->completed_at->diffInSeconds($this->started_at);
     }
 }
+

@@ -87,3 +87,4 @@ class EstimateComparisonCache extends Model
         return self::expired()->delete();
     }
 }
+

@@ -157,3 +157,4 @@ class PriceIndexRepository
         Cache::tags([self::CACHE_TAG])->flush();
     }
 }
+

@@ -53,3 +53,4 @@ class NormativeBaseType extends Model
         return $this->is_active;
     }
 }
+

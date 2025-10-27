@@ -297,3 +297,4 @@ class EstimateConstructorController extends Controller
         return implode('.', $parts);
     }
 }
+

@@ -90,3 +90,4 @@ class EstimateSnapshot extends Model
         return round($this->data_size / 1024 / 1024, 2);
     }
 }
+

@@ -125,3 +125,4 @@ class ExcelNormativeParser
         return $value !== null ? (float)$value : 0.0;
     }
 }
+

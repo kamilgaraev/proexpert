@@ -102,3 +102,4 @@ class EstimateChangeLog extends Model
         return $changed;
     }
 }
+

@@ -122,3 +122,4 @@ class NormativeRate extends Model
         return $this->estimateItems()->distinct('estimate_id')->count('estimate_id');
     }
 }
+

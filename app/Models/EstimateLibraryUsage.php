@@ -63,3 +63,4 @@ class EstimateLibraryUsage extends Model
         return $query->where('used_at', '>=', now()->subDays($days));
     }
 }
+

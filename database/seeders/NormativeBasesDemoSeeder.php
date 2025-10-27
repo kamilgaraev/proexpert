@@ -247,3 +247,4 @@ class NormativeBasesDemoSeeder extends Seeder
         ]);
     }
 }
+

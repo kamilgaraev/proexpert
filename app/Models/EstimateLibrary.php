@@ -107,3 +107,4 @@ class EstimateLibrary extends Model
         return $this->items()->count();
     }
 }
+

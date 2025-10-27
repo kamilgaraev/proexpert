@@ -117,3 +117,4 @@ class NormativeRateController extends Controller
         return response()->json($rates);
     }
 }
+

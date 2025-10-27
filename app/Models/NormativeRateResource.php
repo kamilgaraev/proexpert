@@ -85,3 +85,4 @@ class NormativeRateResource extends Model
         return (float) ($this->consumption * $this->unit_price * $quantity);
     }
 }
+

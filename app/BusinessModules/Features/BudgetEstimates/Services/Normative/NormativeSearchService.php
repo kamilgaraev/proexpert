@@ -186,3 +186,4 @@ class NormativeSearchService
         return new LengthAwarePaginator([], 0, 20);
     }
 }
+

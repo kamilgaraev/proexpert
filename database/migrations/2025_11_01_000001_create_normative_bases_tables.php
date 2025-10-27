@@ -148,3 +148,4 @@ return new class extends Migration
         Schema::dropIfExists('normative_base_types');
     }
 };
+

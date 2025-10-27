@@ -96,3 +96,4 @@ class RateCoefficientApplication extends Model
         }
     }
 }
+

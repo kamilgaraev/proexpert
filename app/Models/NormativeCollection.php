@@ -74,3 +74,4 @@ class NormativeCollection extends Model
         return $this->rates()->count();
     }
 }
+

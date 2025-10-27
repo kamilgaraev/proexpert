@@ -322,3 +322,4 @@ class EstimateAuditService
                !empty($diff['items']['modified']);
     }
 }
+

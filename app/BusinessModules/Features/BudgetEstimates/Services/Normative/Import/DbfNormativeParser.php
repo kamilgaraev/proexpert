@@ -96,3 +96,4 @@ class DbfNormativeParser
         return $data;
     }
 }
+

@@ -83,3 +83,4 @@ class EstimateLibraryItem extends Model
         return true;
     }
 }
+

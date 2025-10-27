@@ -124,3 +124,4 @@ return new class extends Migration
         DB::statement('DROP INDEX IF EXISTS estimates_org_status_created_idx');
     }
 };
+

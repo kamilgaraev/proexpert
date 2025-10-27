@@ -97,3 +97,4 @@ class RegionalCoefficient extends Model
         return $name;
     }
 }
+

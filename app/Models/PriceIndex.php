@@ -118,3 +118,4 @@ class PriceIndex extends Model
         return number_format($this->index_value, 4, '.', '');
     }
 }
+

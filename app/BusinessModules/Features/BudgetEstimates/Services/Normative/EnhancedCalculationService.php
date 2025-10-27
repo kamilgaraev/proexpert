@@ -250,3 +250,4 @@ class EnhancedCalculationService
         return $updated;
     }
 }
+

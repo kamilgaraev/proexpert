@@ -82,3 +82,4 @@ class EstimateLibraryItemPosition extends Model
         return !empty($this->quantity_formula);
     }
 }
+
