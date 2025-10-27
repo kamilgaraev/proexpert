@@ -15,6 +15,8 @@ class EstimateItem extends Model
     protected $fillable = [
         'estimate_id',
         'estimate_section_id',
+        'normative_rate_id',
+        'normative_rate_code',
         'item_type',
         'position_number',
         'name',
@@ -30,11 +32,28 @@ class EstimateItem extends Model
         'current_unit_price',
         'price_coefficient',
         'direct_costs',
+        'materials_cost',
+        'machinery_cost',
+        'labor_cost',
+        'equipment_cost',
+        'labor_hours',
+        'machinery_hours',
+        'base_materials_cost',
+        'base_machinery_cost',
+        'base_labor_cost',
+        'materials_index',
+        'machinery_index',
+        'labor_index',
+        'applied_coefficients',
+        'coefficient_total',
+        'resource_calculation',
+        'custom_resources',
         'overhead_amount',
         'profit_amount',
         'total_amount',
         'current_total_amount',
         'justification',
+        'notes',
         'is_manual',
         'metadata',
     ];
@@ -49,6 +68,22 @@ class EstimateItem extends Model
         'current_unit_price' => 'decimal:2',
         'price_coefficient' => 'decimal:4',
         'direct_costs' => 'decimal:2',
+        'materials_cost' => 'decimal:2',
+        'machinery_cost' => 'decimal:2',
+        'labor_cost' => 'decimal:2',
+        'equipment_cost' => 'decimal:2',
+        'labor_hours' => 'decimal:4',
+        'machinery_hours' => 'decimal:4',
+        'base_materials_cost' => 'decimal:2',
+        'base_machinery_cost' => 'decimal:2',
+        'base_labor_cost' => 'decimal:2',
+        'materials_index' => 'decimal:4',
+        'machinery_index' => 'decimal:4',
+        'labor_index' => 'decimal:4',
+        'applied_coefficients' => 'array',
+        'coefficient_total' => 'decimal:4',
+        'resource_calculation' => 'array',
+        'custom_resources' => 'array',
         'overhead_amount' => 'decimal:2',
         'profit_amount' => 'decimal:2',
         'total_amount' => 'decimal:2',
@@ -75,6 +110,11 @@ class EstimateItem extends Model
     public function measurementUnit(): BelongsTo
     {
         return $this->belongsTo(MeasurementUnit::class);
+    }
+
+    public function normativeRate(): BelongsTo
+    {
+        return $this->belongsTo(NormativeRate::class, 'normative_rate_id');
     }
 
     public function resources(): HasMany
@@ -132,6 +172,16 @@ class EstimateItem extends Model
         return $query->where('item_type', $type);
     }
 
+    public function scopeFromNormative($query)
+    {
+        return $query->whereNotNull('normative_rate_id');
+    }
+
+    public function scopeWithNormativeRate($query)
+    {
+        return $query->with('normativeRate');
+    }
+
     public function isWork(): bool
     {
         return $this->item_type === 'work';
@@ -166,5 +216,34 @@ class EstimateItem extends Model
     {
         return $this->resources()->exists();
     }
+
+    public function isFromNormative(): bool
+    {
+        return !is_null($this->normative_rate_id);
+    }
+
+    public function hasAppliedCoefficients(): bool
+    {
+        return !empty($this->applied_coefficients);
+    }
+
+    public function getTotalCostBreakdown(): array
+    {
+        return [
+            'materials' => (float) $this->materials_cost,
+            'machinery' => (float) $this->machinery_cost,
+            'labor' => (float) $this->labor_cost,
+            'equipment' => (float) $this->equipment_cost,
+            'overhead' => (float) $this->overhead_amount,
+            'profit' => (float) $this->profit_amount,
+            'total' => (float) $this->total_amount,
+        ];
+    }
+
+    public function getEffectiveCoefficient(): float
+    {
+        return (float) ($this->coefficient_total ?? 1.0);
+    }
 }
+
 
