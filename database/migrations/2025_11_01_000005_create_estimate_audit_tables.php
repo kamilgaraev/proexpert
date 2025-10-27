@@ -9,49 +9,34 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('estimate_change_log', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('estimate_id')->constrained()->onDelete('cascade');
-            $table->foreignId('user_id')->nullable()->constrained()->onDelete('set null');
-            $table->enum('change_type', [
-                'created',
-                'updated',
-                'deleted',
-                'recalculated',
-                'approved',
-                'rejected',
-                'item_added',
-                'item_updated',
-                'item_deleted',
-                'section_added',
-                'section_updated',
-                'section_deleted',
-                'other'
-            ]);
-            $table->string('entity_type', 100)->nullable();
-            $table->bigInteger('entity_id')->nullable();
-            $table->jsonb('old_values')->nullable();
-            $table->jsonb('new_values')->nullable();
-            $table->text('comment')->nullable();
-            $table->string('ip_address', 45)->nullable();
-            $table->string('user_agent')->nullable();
-            $table->timestamp('changed_at');
-            $table->jsonb('metadata')->nullable();
-            
-            $table->index(['estimate_id', 'changed_at']);
-            $table->index(['user_id', 'changed_at']);
-            $table->index('change_type');
-            $table->index(['entity_type', 'entity_id']);
-        });
-
-        DB::statement('CREATE INDEX estimate_change_log_old_values_gin_idx ON estimate_change_log USING GIN(old_values)');
-        DB::statement('CREATE INDEX estimate_change_log_new_values_gin_idx ON estimate_change_log USING GIN(new_values)');
-
         DB::statement("
-            CREATE TABLE estimate_change_log_partitioned (
-                LIKE estimate_change_log INCLUDING ALL
+            CREATE TABLE estimate_change_log (
+                id BIGSERIAL,
+                estimate_id BIGINT NOT NULL,
+                user_id BIGINT,
+                change_type VARCHAR(50) NOT NULL,
+                entity_type VARCHAR(100),
+                entity_id BIGINT,
+                old_values JSONB,
+                new_values JSONB,
+                comment TEXT,
+                ip_address VARCHAR(45),
+                user_agent VARCHAR(255),
+                changed_at TIMESTAMP NOT NULL,
+                metadata JSONB,
+                PRIMARY KEY (id, changed_at)
             ) PARTITION BY RANGE (changed_at);
         ");
+
+        DB::statement('ALTER TABLE estimate_change_log ADD CONSTRAINT estimate_change_log_estimate_id_foreign FOREIGN KEY (estimate_id) REFERENCES estimates(id) ON DELETE CASCADE');
+        DB::statement('ALTER TABLE estimate_change_log ADD CONSTRAINT estimate_change_log_user_id_foreign FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL');
+
+        DB::statement('CREATE INDEX estimate_change_log_estimate_id_changed_at_idx ON estimate_change_log(estimate_id, changed_at)');
+        DB::statement('CREATE INDEX estimate_change_log_user_id_changed_at_idx ON estimate_change_log(user_id, changed_at)');
+        DB::statement('CREATE INDEX estimate_change_log_change_type_idx ON estimate_change_log(change_type)');
+        DB::statement('CREATE INDEX estimate_change_log_entity_type_entity_id_idx ON estimate_change_log(entity_type, entity_id)');
+        DB::statement('CREATE INDEX estimate_change_log_old_values_gin_idx ON estimate_change_log USING GIN(old_values)');
+        DB::statement('CREATE INDEX estimate_change_log_new_values_gin_idx ON estimate_change_log USING GIN(new_values)');
 
         $currentYear = date('Y');
         $currentMonth = date('m');
@@ -63,7 +48,7 @@ return new class extends Migration
             
             DB::statement("
                 CREATE TABLE IF NOT EXISTS estimate_change_log_y{$currentYear}m{$month}
-                PARTITION OF estimate_change_log_partitioned
+                PARTITION OF estimate_change_log
                 FOR VALUES FROM ('{$currentYear}-{$month}-01') TO ('{$nextYear}-{$nextMonth}-01');
             ");
             
@@ -124,8 +109,7 @@ return new class extends Migration
         Schema::dropIfExists('estimate_comparison_cache');
         Schema::dropIfExists('estimate_snapshots');
         
-        DB::statement('DROP TABLE IF EXISTS estimate_change_log_partitioned CASCADE');
-        
-        Schema::dropIfExists('estimate_change_log');
+        DB::statement('DROP TABLE IF EXISTS estimate_change_log CASCADE');
     }
 };
+
