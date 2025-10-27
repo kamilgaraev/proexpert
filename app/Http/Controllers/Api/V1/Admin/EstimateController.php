@@ -72,8 +72,14 @@ class EstimateController extends Controller
         ], 201);
     }
 
-    public function show(Estimate $estimate): JsonResponse
+    public function show($estimate): JsonResponse
     {
+        if (is_string($estimate) || is_numeric($estimate)) {
+            $estimate = Estimate::where('id', $estimate)
+                ->where('organization_id', request()->user()->current_organization_id)
+                ->firstOrFail();
+        }
+        
         $this->authorize('view', $estimate);
         
         return response()->json([
@@ -81,8 +87,14 @@ class EstimateController extends Controller
         ]);
     }
 
-    public function update(UpdateEstimateRequest $request, Estimate $estimate): JsonResponse
+    public function update(UpdateEstimateRequest $request, $estimate): JsonResponse
     {
+        if (is_string($estimate) || is_numeric($estimate)) {
+            $estimate = Estimate::where('id', $estimate)
+                ->where('organization_id', request()->user()->current_organization_id)
+                ->firstOrFail();
+        }
+        
         $this->authorize('update', $estimate);
         
         $estimate = $this->estimateService->update($estimate, $request->validated());
@@ -93,8 +105,14 @@ class EstimateController extends Controller
         ]);
     }
 
-    public function destroy(Estimate $estimate): JsonResponse
+    public function destroy($estimate): JsonResponse
     {
+        if (is_string($estimate) || is_numeric($estimate)) {
+            $estimate = Estimate::where('id', $estimate)
+                ->where('organization_id', request()->user()->current_organization_id)
+                ->firstOrFail();
+        }
+        
         $this->authorize('delete', $estimate);
         
         try {
@@ -110,8 +128,14 @@ class EstimateController extends Controller
         }
     }
 
-    public function duplicate(Estimate $estimate, Request $request): JsonResponse
+    public function duplicate($estimate, Request $request): JsonResponse
     {
+        if (is_string($estimate) || is_numeric($estimate)) {
+            $estimate = Estimate::where('id', $estimate)
+                ->where('organization_id', request()->user()->current_organization_id)
+                ->firstOrFail();
+        }
+        
         $this->authorize('create', Estimate::class);
         
         $newEstimate = $this->estimateService->duplicate(
@@ -126,8 +150,14 @@ class EstimateController extends Controller
         ], 201);
     }
 
-    public function recalculate(Estimate $estimate): JsonResponse
+    public function recalculate($estimate): JsonResponse
     {
+        if (is_string($estimate) || is_numeric($estimate)) {
+            $estimate = Estimate::where('id', $estimate)
+                ->where('organization_id', request()->user()->current_organization_id)
+                ->firstOrFail();
+        }
+        
         $this->authorize('update', $estimate);
         
         $totals = $this->calculationService->recalculateAll($estimate);
@@ -138,8 +168,14 @@ class EstimateController extends Controller
         ]);
     }
 
-    public function dashboard(Estimate $estimate): JsonResponse
+    public function dashboard($estimate): JsonResponse
     {
+        if (is_string($estimate) || is_numeric($estimate)) {
+            $estimate = Estimate::where('id', $estimate)
+                ->where('organization_id', request()->user()->current_organization_id)
+                ->firstOrFail();
+        }
+        
         $this->authorize('view', $estimate);
         
         $itemsCount = $estimate->items()->count();
@@ -172,8 +208,14 @@ class EstimateController extends Controller
         ]);
     }
 
-    public function structure(Estimate $estimate): JsonResponse
+    public function structure($estimate): JsonResponse
     {
+        if (is_string($estimate) || is_numeric($estimate)) {
+            $estimate = Estimate::where('id', $estimate)
+                ->where('organization_id', request()->user()->current_organization_id)
+                ->firstOrFail();
+        }
+        
         $this->authorize('view', $estimate);
         
         $sections = $estimate->sections()
