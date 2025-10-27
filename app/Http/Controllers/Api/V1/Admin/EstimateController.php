@@ -72,7 +72,7 @@ class EstimateController extends Controller
         ], 201);
     }
 
-    public function show(Estimate $estimate): JsonResponse
+    public function show($project, Estimate $estimate): JsonResponse
     {
         $this->authorize('view', $estimate);
         
@@ -81,7 +81,7 @@ class EstimateController extends Controller
         ]);
     }
 
-    public function update(UpdateEstimateRequest $request, Estimate $estimate): JsonResponse
+    public function update(UpdateEstimateRequest $request, $project, Estimate $estimate): JsonResponse
     {
         $this->authorize('update', $estimate);
         
@@ -93,7 +93,7 @@ class EstimateController extends Controller
         ]);
     }
 
-    public function destroy(Estimate $estimate): JsonResponse
+    public function destroy($project, Estimate $estimate): JsonResponse
     {
         $this->authorize('delete', $estimate);
         
@@ -110,7 +110,7 @@ class EstimateController extends Controller
         }
     }
 
-    public function duplicate(Estimate $estimate, Request $request): JsonResponse
+    public function duplicate($project, Estimate $estimate, Request $request): JsonResponse
     {
         $this->authorize('create', Estimate::class);
         
@@ -126,7 +126,7 @@ class EstimateController extends Controller
         ], 201);
     }
 
-    public function recalculate(Estimate $estimate): JsonResponse
+    public function recalculate($project, Estimate $estimate): JsonResponse
     {
         $this->authorize('update', $estimate);
         
@@ -138,7 +138,7 @@ class EstimateController extends Controller
         ]);
     }
 
-    public function dashboard(Estimate $estimate): JsonResponse
+    public function dashboard($project, Estimate $estimate): JsonResponse
     {
         $this->authorize('view', $estimate);
         
@@ -172,7 +172,7 @@ class EstimateController extends Controller
         ]);
     }
 
-    public function structure(Estimate $estimate): JsonResponse
+    public function structure($project, Estimate $estimate): JsonResponse
     {
         $this->authorize('view', $estimate);
         
