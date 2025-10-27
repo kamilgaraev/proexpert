@@ -122,4 +122,18 @@ class CompletedWork extends Model
             ->withPivot(['included_quantity', 'included_amount', 'notes'])
             ->withTimestamps();
     }
+
+    public function resolveRouteBinding($value, $field = null)
+    {
+        $completedWork = static::where($this->getRouteKeyName(), $value)->firstOrFail();
+        
+        $user = request()->user();
+        if ($user && $user->current_organization_id) {
+            if ($completedWork->organization_id !== $user->current_organization_id) {
+                abort(403, 'У вас нет доступа к этой выполненной работе');
+            }
+        }
+        
+        return $completedWork;
+    }
 }

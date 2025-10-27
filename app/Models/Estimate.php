@@ -129,6 +129,15 @@ class Estimate extends Model
         return $query->where('contract_id', $contractId);
     }
 
+    public function resolveRouteBinding($value, $field = null)
+    {
+        $estimate = static::where($this->getRouteKeyName(), $value)
+            ->where('organization_id', request()->user()?->current_organization_id)
+            ->firstOrFail();
+            
+        return $estimate;
+    }
+
     public function isApproved(): bool
     {
         return $this->status === 'approved';

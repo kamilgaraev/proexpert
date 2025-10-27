@@ -62,6 +62,20 @@ class EstimateTemplate extends Model
         $this->increment('usage_count');
     }
 
+    public function resolveRouteBinding($value, $field = null)
+    {
+        $template = static::where($this->getRouteKeyName(), $value)->firstOrFail();
+        
+        $user = request()->user();
+        if ($user && $user->current_organization_id) {
+            if (!$template->is_public && $template->organization_id !== $user->current_organization_id) {
+                abort(403, 'У вас нет доступа к этому шаблону сметы');
+            }
+        }
+        
+        return $template;
+    }
+
     public function isPublic(): bool
     {
         return $this->is_public;

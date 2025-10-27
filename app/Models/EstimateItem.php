@@ -240,6 +240,21 @@ class EstimateItem extends Model
         ];
     }
 
+    public function resolveRouteBinding($value, $field = null)
+    {
+        $item = static::where($this->getRouteKeyName(), $value)->firstOrFail();
+        
+        $user = request()->user();
+        if ($user && $user->current_organization_id) {
+            $estimate = $item->estimate;
+            if ($estimate && $estimate->organization_id !== $user->current_organization_id) {
+                abort(403, 'У вас нет доступа к этой позиции сметы');
+            }
+        }
+        
+        return $item;
+    }
+
     public function getEffectiveCoefficient(): float
     {
         return (float) ($this->coefficient_total ?? 1.0);

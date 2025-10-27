@@ -68,6 +68,21 @@ class EstimateSection extends Model
         return $this->children()->exists();
     }
 
+    public function resolveRouteBinding($value, $field = null)
+    {
+        $section = static::where($this->getRouteKeyName(), $value)->firstOrFail();
+        
+        $user = request()->user();
+        if ($user && $user->current_organization_id) {
+            $estimate = $section->estimate;
+            if ($estimate && $estimate->organization_id !== $user->current_organization_id) {
+                abort(403, 'У вас нет доступа к этому разделу сметы');
+            }
+        }
+        
+        return $section;
+    }
+
     public function getFullSectionNumberAttribute(): string
     {
         if ($this->parent) {

@@ -30,4 +30,19 @@ class ContractPayment extends Model
     {
         return $this->belongsTo(Contract::class);
     }
+
+    public function resolveRouteBinding($value, $field = null)
+    {
+        $payment = static::where($this->getRouteKeyName(), $value)->firstOrFail();
+        
+        $user = request()->user();
+        if ($user && $user->current_organization_id) {
+            $contract = $payment->contract;
+            if ($contract && $contract->organization_id !== $user->current_organization_id) {
+                abort(403, 'У вас нет доступа к этому платежу');
+            }
+        }
+        
+        return $payment;
+    }
 } 
