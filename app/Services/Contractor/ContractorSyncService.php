@@ -173,35 +173,22 @@ class ContractorSyncService
 
         $contractorInfo = null;
         if ($contractors->isNotEmpty()) {
-            // Подсчитываем количество контрактов
+            // Подсчитываем количество контрактов и проектов
             $totalContracts = 0;
-            $totalProjects = 0;
             $projectIds = [];
 
             foreach ($contractors as $contractor) {
                 $totalContracts += $contractor->contracts()->count();
 
-                // Подсчитываем проекты где участвует организация подрядчика
-                if ($contractor->organization_id) {
-                    $projectCount = DB::table('project_organization')
-                        ->where('organization_id', $contractor->organization_id)
-                        ->whereIn('role_new', ['contractor', 'child_contractor'])
-                        ->where('is_active', true)
-                        ->distinct('project_id')
-                        ->count('project_id');
-                    
-                    $totalProjects += $projectCount;
-
-                    // Собираем ID проектов для детальной информации
-                    $orgProjectIds = DB::table('project_organization')
-                        ->where('organization_id', $contractor->organization_id)
-                        ->whereIn('role_new', ['contractor', 'child_contractor'])
-                        ->where('is_active', true)
-                        ->pluck('project_id')
-                        ->toArray();
-                    
-                    $projectIds = array_merge($projectIds, $orgProjectIds);
-                }
+                // Подсчитываем проекты где у подрядчика есть контракты
+                $contractorProjectIds = DB::table('contracts')
+                    ->where('contractor_id', $contractor->id)
+                    ->whereNull('deleted_at')
+                    ->distinct()
+                    ->pluck('project_id')
+                    ->toArray();
+                
+                $projectIds = array_merge($projectIds, $contractorProjectIds);
             }
 
             $projectIds = array_unique($projectIds);
@@ -326,8 +313,8 @@ class ContractorSyncService
     /**
      * Синхронизировать организацию с проектами подрядчика
      * 
-     * Находит все проекты где участвует подрядчик (через contractor.organization_id)
-     * и добавляет зарегистрированную организацию в эти проекты с той же ролью.
+     * Находит все проекты где у подрядчика есть контракты
+     * и добавляет зарегистрированную организацию в эти проекты как подрядчика.
      * 
      * @param Contractor $contractor Подрядчик чьи проекты синхронизируются
      * @param Organization $registeredOrganization Зарегистрированная организация
@@ -335,78 +322,81 @@ class ContractorSyncService
      */
     private function syncOrganizationToContractorProjects(Contractor $contractor, Organization $registeredOrganization): int
     {
-        // Находим организацию подрядчика (владелец подрядчика)
-        $contractorOwnerOrg = $contractor->organization;
-        
-        if (!$contractorOwnerOrg) {
-            Log::warning('[ContractorSyncService] Contractor has no organization, skipping project sync', [
+        // Находим все уникальные проекты где у подрядчика есть контракты
+        $projectIds = DB::table('contracts')
+            ->where('contractor_id', $contractor->id)
+            ->whereNull('deleted_at')
+            ->distinct()
+            ->pluck('project_id')
+            ->toArray();
+
+        if (empty($projectIds)) {
+            Log::info('[ContractorSyncService] No contracts/projects found for contractor', [
                 'contractor_id' => $contractor->id
             ]);
             return 0;
         }
 
-        // Находим все проекты где участвует организация-владелец подрядчика
-        // через таблицу project_organization
-        $projectParticipations = DB::table('project_organization')
-            ->where('organization_id', $contractorOwnerOrg->id)
-            ->whereIn('role_new', ['contractor', 'child_contractor']) // Только подрядчики
-            ->where('is_active', true)
-            ->get();
-
-        if ($projectParticipations->isEmpty()) {
-            Log::info('[ContractorSyncService] No projects found for contractor organization', [
-                'contractor_id' => $contractor->id,
-                'organization_id' => $contractorOwnerOrg->id
-            ]);
-            return 0;
-        }
+        Log::info('[ContractorSyncService] Found projects with contractor contracts', [
+            'contractor_id' => $contractor->id,
+            'project_ids' => $projectIds
+        ]);
 
         $syncedCount = 0;
 
-        foreach ($projectParticipations as $participation) {
+        foreach ($projectIds as $projectId) {
             // Проверяем не участвует ли уже зарегистрированная организация в этом проекте
             $alreadyExists = DB::table('project_organization')
-                ->where('project_id', $participation->project_id)
+                ->where('project_id', $projectId)
                 ->where('organization_id', $registeredOrganization->id)
                 ->exists();
 
             if ($alreadyExists) {
                 Log::info('[ContractorSyncService] Organization already participates in project, skipping', [
-                    'project_id' => $participation->project_id,
+                    'project_id' => $projectId,
                     'organization_id' => $registeredOrganization->id
                 ]);
                 continue;
             }
 
-            // Добавляем организацию в проект с той же ролью
+            // Получаем конфигурацию роли contractor
+            $roleConfig = config('role-definitions.contractor', []);
+            $permissions = json_encode($roleConfig['permissions'] ?? [
+                'view_project',
+                'manage_own_contracts',
+                'manage_works',
+                'manage_warehouse',
+                'view_own_finances',
+                'create_reports'
+            ]);
+
+            // Добавляем организацию в проект как подрядчика
             DB::table('project_organization')->insert([
-                'project_id' => $participation->project_id,
+                'project_id' => $projectId,
                 'organization_id' => $registeredOrganization->id,
-                'role' => $participation->role ?? 'contractor', // Старое поле для совместимости
-                'role_new' => $participation->role_new ?? 'contractor',
-                'permissions' => $participation->permissions,
+                'role' => 'contractor',
+                'role_new' => 'contractor',
+                'permissions' => $permissions,
                 'is_active' => true,
-                'added_by_user_id' => null, // Добавлено автоматически
+                'added_by_user_id' => null,
                 'invited_at' => now(),
-                'accepted_at' => now(), // Автоматически принято
+                'accepted_at' => now(),
                 'metadata' => json_encode([
                     'auto_synced' => true,
                     'synced_from_contractor_id' => $contractor->id,
-                    'synced_from_organization_id' => $contractorOwnerOrg->id,
                     'synced_at' => now()->toDateTimeString(),
-                    'reason' => 'Organization registered with contractor INN'
+                    'reason' => 'Organization registered with contractor INN - has contracts in this project'
                 ]),
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
 
-            Log::info('[ContractorSyncService] Added organization to project', [
-                'project_id' => $participation->project_id,
+            Log::info('[ContractorSyncService] Added organization to project as contractor', [
+                'project_id' => $projectId,
                 'organization_id' => $registeredOrganization->id,
                 'organization_name' => $registeredOrganization->name,
-                'role' => $participation->role_new ?? $participation->role,
-                'contractor_id' => $contractor->id,
-                'source_organization_id' => $contractorOwnerOrg->id
+                'role' => 'contractor',
+                'contractor_id' => $contractor->id
             ]);
 
             $syncedCount++;

@@ -257,7 +257,7 @@ return new class extends Migration
             $syncedContractorsCount++;
 
             // Синхронизируем проекты (Project-Based RBAC)
-            $projectsSynced = $this->syncOrganizationToProjects($item->contractor_org_id, $item->match_org_id, $item->contractor_id);
+            $projectsSynced = $this->syncOrganizationToProjects($item->contractor_id, $item->match_org_id);
             $syncedProjectsCount += $projectsSynced;
         }
 
@@ -270,30 +270,33 @@ return new class extends Migration
     /**
      * Синхронизировать организацию с проектами подрядчика
      * 
-     * @param int $contractorOwnerOrgId ID организации-владельца подрядчика
+     * Находит все проекты где у подрядчика есть контракты
+     * и добавляет зарегистрированную организацию в эти проекты как подрядчика.
+     * 
+     * @param int $contractorId ID подрядчика
      * @param int $registeredOrgId ID зарегистрированной организации
-     * @param int $contractorId ID подрядчика для логирования
      * @return int Количество синхронизированных проектов
      */
-    private function syncOrganizationToProjects(int $contractorOwnerOrgId, int $registeredOrgId, int $contractorId): int
+    private function syncOrganizationToProjects(int $contractorId, int $registeredOrgId): int
     {
-        // Находим все проекты где участвует организация-владелец подрядчика
-        $projectParticipations = DB::table('project_organization')
-            ->where('organization_id', $contractorOwnerOrgId)
-            ->whereIn('role_new', ['contractor', 'child_contractor'])
-            ->where('is_active', true)
-            ->get();
+        // Находим все уникальные проекты где у подрядчика есть контракты
+        $projectIds = DB::table('contracts')
+            ->where('contractor_id', $contractorId)
+            ->whereNull('deleted_at')
+            ->distinct()
+            ->pluck('project_id')
+            ->toArray();
 
-        if ($projectParticipations->isEmpty()) {
+        if (empty($projectIds)) {
             return 0;
         }
 
         $syncedCount = 0;
 
-        foreach ($projectParticipations as $participation) {
+        foreach ($projectIds as $projectId) {
             // Проверяем не участвует ли уже зарегистрированная организация в этом проекте
             $alreadyExists = DB::table('project_organization')
-                ->where('project_id', $participation->project_id)
+                ->where('project_id', $projectId)
                 ->where('organization_id', $registeredOrgId)
                 ->exists();
 
@@ -301,13 +304,23 @@ return new class extends Migration
                 continue;
             }
 
-            // Добавляем организацию в проект с той же ролью
+            // Получаем permissions для роли contractor
+            $permissions = json_encode([
+                'view_project',
+                'manage_own_contracts',
+                'manage_works',
+                'manage_warehouse',
+                'view_own_finances',
+                'create_reports'
+            ]);
+
+            // Добавляем организацию в проект как подрядчика
             DB::table('project_organization')->insert([
-                'project_id' => $participation->project_id,
+                'project_id' => $projectId,
                 'organization_id' => $registeredOrgId,
-                'role' => $participation->role ?? 'contractor',
-                'role_new' => $participation->role_new ?? 'contractor',
-                'permissions' => $participation->permissions,
+                'role' => 'contractor',
+                'role_new' => 'contractor',
+                'permissions' => $permissions,
                 'is_active' => true,
                 'added_by_user_id' => null,
                 'invited_at' => now(),
@@ -315,20 +328,18 @@ return new class extends Migration
                 'metadata' => json_encode([
                     'auto_synced' => true,
                     'synced_from_contractor_id' => $contractorId,
-                    'synced_from_organization_id' => $contractorOwnerOrgId,
                     'synced_at' => now()->toDateTimeString(),
-                    'reason' => 'Migration: Organization registered with contractor INN'
+                    'reason' => 'Migration: Organization registered with contractor INN - has contracts in this project'
                 ]),
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
 
-            Log::info('[Migration] Added organization to project', [
-                'project_id' => $participation->project_id,
+            Log::info('[Migration] Added organization to project as contractor', [
+                'project_id' => $projectId,
                 'organization_id' => $registeredOrgId,
-                'role' => $participation->role_new ?? $participation->role,
-                'contractor_id' => $contractorId,
-                'source_organization_id' => $contractorOwnerOrgId
+                'role' => 'contractor',
+                'contractor_id' => $contractorId
             ]);
 
             $syncedCount++;
