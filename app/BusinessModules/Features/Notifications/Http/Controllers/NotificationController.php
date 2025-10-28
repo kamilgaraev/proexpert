@@ -137,7 +137,7 @@ class NotificationController extends Controller
         
         $byType = Notification::forUser($user)
             ->unread()
-            ->selectRaw('JSON_UNQUOTE(JSON_EXTRACT(data, "$.category")) as category, COUNT(*) as count')
+            ->selectRaw("data->>'category' as category, COUNT(*) as count")
             ->groupBy('category')
             ->pluck('count', 'category')
             ->toArray();
@@ -145,7 +145,7 @@ class NotificationController extends Controller
         return response()->json([
             'success' => true,
             'count' => $count,
-            'by_type' => $byType,
+            'by_type' => $byType ?: [],
         ]);
     }
 }
