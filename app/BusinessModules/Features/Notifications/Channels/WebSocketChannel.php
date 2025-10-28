@@ -23,15 +23,14 @@ class WebSocketChannel
                 'status' => 'pending',
             ]);
 
-            Log::info('[WebSocket] Before event()', [
+            Log::info('[WebSocket] Sending HTTP to Reverb', [
                 'notification_id' => $notification->id,
                 'notifiable_id' => $notifiable->id,
-                'broadcast_driver' => config('broadcasting.default'),
             ]);
 
-            event(new NotificationBroadcast($notification, $notifiable));
+            $this->sendToReverbViaHttp($notification, $notifiable);
 
-            Log::info('[WebSocket] After event()', [
+            Log::info('[WebSocket] Sent to Reverb', [
                 'notification_id' => $notification->id,
             ]);
 
@@ -56,6 +55,69 @@ class WebSocketChannel
             }
 
             return false;
+        }
+    }
+
+    protected function sendToReverbViaHttp(Notification $notification, $notifiable): void
+    {
+        $appId = config('broadcasting.connections.reverb.app_id');
+        $key = config('broadcasting.connections.reverb.key');
+        $secret = config('broadcasting.connections.reverb.secret');
+        $host = config('broadcasting.connections.reverb.options.host');
+        $port = config('broadcasting.connections.reverb.options.port');
+        $scheme = config('broadcasting.connections.reverb.options.scheme');
+
+        $channel = 'private-App.Models.User.' . $notifiable->id;
+        $event = 'notification.new';
+        $data = json_encode([
+            'id' => $notification->id,
+            'type' => $notification->type,
+            'notification_type' => $notification->notification_type,
+            'priority' => $notification->priority,
+            'data' => $notification->data,
+            'created_at' => $notification->created_at->toIso8601String(),
+            'read_at' => $notification->read_at?->toIso8601String(),
+        ]);
+
+        $body = json_encode([
+            'name' => $event,
+            'channels' => [$channel],
+            'data' => $data,
+        ]);
+
+        $path = "/apps/{$appId}/events";
+        $timestamp = time();
+        $bodyMd5 = md5($body);
+
+        $stringToSign = "POST\n{$path}\nauth_key={$key}&auth_timestamp={$timestamp}&auth_version=1.0&body_md5={$bodyMd5}";
+        $authSignature = hash_hmac('sha256', $stringToSign, $secret);
+
+        $url = "{$scheme}://{$host}:{$port}{$path}";
+
+        $response = \Illuminate\Support\Facades\Http::timeout(5)
+            ->withHeaders([
+                'X-Auth-Key' => $key,
+                'X-Auth-Timestamp' => $timestamp,
+                'X-Auth-Version' => '1.0',
+                'X-Body-MD5' => $bodyMd5,
+                'X-Auth-Signature' => $authSignature,
+            ])
+            ->post($url, [
+                'name' => $event,
+                'channels' => [$channel],
+                'data' => $data,
+            ]);
+
+        Log::info('[WebSocket] HTTP response', [
+            'status' => $response->status(),
+            'body' => $response->body(),
+        ]);
+
+        if (!$response->successful()) {
+            Log::error('[WebSocket] Reverb HTTP failed', [
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
         }
     }
 }
