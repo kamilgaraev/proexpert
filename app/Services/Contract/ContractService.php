@@ -259,36 +259,60 @@ class ContractService
         $isContractor = $contract->contractor && $contract->contractor->source_organization_id === $organizationId;
         $hasAccess = $isCustomer || $isContractor;
         
-        if ($hasAccess) {
-            Log::info('[ContractService] Contract access granted', [
+        if (!$hasAccess) {
+            Log::warning('[ContractService] Contract access denied - not customer or contractor', [
                 'contract_id' => $contractId,
                 'organization_id' => $organizationId,
-                'access_type' => $isCustomer ? 'customer' : 'contractor',
+                'contract_organization_id' => $contract->organization_id,
                 'contractor_id' => $contract->contractor_id ?? null,
-                'source_organization_id' => $contract->contractor->source_organization_id ?? null
+                'contractor_source_org_id' => $contract->contractor->source_organization_id ?? null
             ]);
-            
-            return $contract->load([
-                'contractor', 
-                'project', 
-                'project.organization',           // Для customer (заказчик)
-                'agreements',                     // Дополнительные соглашения
-                'specifications',                 // Спецификации
-                'performanceActs',
-                'performanceActs.completedWorks',
-                'payments'
-            ]);
+            return null;
         }
         
-        Log::warning('[ContractService] Contract access denied', [
+        // 🔐 ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: если это подрядчик, проверяем ограничения
+        if ($isContractor) {
+            $organization = \App\Models\Organization::find($organizationId);
+            $activeRestriction = \App\Models\OrganizationAccessRestriction::where('organization_id', $organizationId)
+                ->where('restriction_type', 'new_contractor_verification')
+                ->where(function($q) {
+                    $q->whereNull('expires_at')
+                      ->orWhere('expires_at', '>', now());
+                })
+                ->first();
+            
+            if ($activeRestriction) {
+                Log::warning('[ContractService] Contract access denied - contractor pending verification', [
+                    'contract_id' => $contractId,
+                    'organization_id' => $organizationId,
+                    'restriction_id' => $activeRestriction->id,
+                    'restriction_reason' => $activeRestriction->reason,
+                    'access_level' => $activeRestriction->access_level
+                ]);
+                
+                // Возвращаем null или можно выбросить исключение
+                return null;
+            }
+        }
+        
+        Log::info('[ContractService] Contract access granted', [
             'contract_id' => $contractId,
             'organization_id' => $organizationId,
-            'contract_organization_id' => $contract->organization_id,
+            'access_type' => $isCustomer ? 'customer' : 'contractor',
             'contractor_id' => $contract->contractor_id ?? null,
-            'contractor_source_org_id' => $contract->contractor->source_organization_id ?? null
+            'source_organization_id' => $contract->contractor->source_organization_id ?? null
         ]);
         
-        return null;
+        return $contract->load([
+            'contractor', 
+            'project', 
+            'project.organization',           // Для customer (заказчик)
+            'agreements',                     // Дополнительные соглашения
+            'specifications',                 // Спецификации
+            'performanceActs',
+            'performanceActs.completedWorks',
+            'payments'
+        ]);
     }
 
     public function updateContract(int $contractId, int $organizationId, ContractDTO $contractDTO): Contract
