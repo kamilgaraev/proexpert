@@ -520,58 +520,6 @@ class JwtAuthService
                         'tax_number' => $organization->tax_number
                     ]);
                     
-                    // АВТОМАТИЧЕСКАЯ ВЕРИФИКАЦИЯ И СИНХРОНИЗАЦИЯ
-                    if (!empty($organization->tax_number)) {
-                        try {
-                            $autoVerificationService = app(\App\Services\Security\ContractorAutoVerificationService::class);
-                            $verificationResult = $autoVerificationService->verifyAndSetAccess($organization);
-                            
-                            Log::info('[JwtAuthService] Auto-verification completed', [
-                                'organization_id' => $organization->id,
-                                'verification_score' => $verificationResult['verification_score'],
-                                'access_level' => $verificationResult['access_level']
-                            ]);
-                            
-                            $syncService = app(\App\Services\Contractor\ContractorSyncService::class);
-                            $contractorsByInn = $syncService->findContractorsByInn($organization->tax_number);
-                            
-                            if ($contractorsByInn->isNotEmpty()) {
-                                $syncResult = $syncService->syncContractorWithOrganization($organization);
-                                
-                                Log::info('[JwtAuthService] Contractor synchronization completed', [
-                                    'organization_id' => $organization->id,
-                                    'tax_number' => $organization->tax_number,
-                                    'contractors_synced' => $syncResult['contractors'],
-                                    'projects_synced' => $syncResult['projects']
-                                ]);
-                                
-                                $notificationService = app(\App\Services\Security\ContractorRegistrationNotificationService::class);
-                                $notificationService->notifyCustomersAboutRegistration(
-                                    $organization,
-                                    $contractorsByInn,
-                                    $verificationResult
-                                );
-                                
-                                Log::info('[JwtAuthService] Customer notifications sent', [
-                                    'organization_id' => $organization->id,
-                                    'customers_notified' => $contractorsByInn->count()
-                                ]);
-                            } else {
-                                Log::info('[JwtAuthService] No existing contractors found for INN', [
-                                    'organization_id' => $organization->id,
-                                    'tax_number' => $organization->tax_number
-                                ]);
-                            }
-                        } catch (\Exception $syncException) {
-                            Log::warning('[JwtAuthService] Verification/sync process failed', [
-                                'organization_id' => $organization->id,
-                                'tax_number' => $organization->tax_number,
-                                'error' => $syncException->getMessage(),
-                                'trace' => $syncException->getTraceAsString()
-                            ]);
-                        }
-                    }
-                    
                     // Привязываем пользователя к организации
                     if (!$user->organizations()->where('organization_id', $organization->id)->exists()) {
                         $user->organizations()->attach($organization->id, [
@@ -583,25 +531,16 @@ class JwtAuthService
                     $user->save();
                     Log::info('[JwtAuthService] Set current organization for user', [
                         'user_id' => $user->id,
-                        'current_org_id' => $organization->current_organization_id ?? $organization->id
+                        'current_org_id' => $organization->id
                     ]);
 
                     // Назначаем роль владельца организации через новую систему авторизации
-                    try {
-                        $this->userRepository->assignRoleToUser($user->id, 'organization_owner', $organization->id);
-                        Log::info('[JwtAuthService] Owner role assigned to user after registration (new auth system)', [
-                            'user_id' => $user->id,
-                            'organization_id' => $organization->id,
-                            'role_slug' => 'organization_owner'
-                        ]);
-                    } catch (\Exception $roleException) {
-                        Log::warning('[JwtAuthService] Cannot assign owner role - new auth system tables not ready', [
-                            'user_id' => $user->id,
-                            'organization_id' => $organization->id,
-                            'error' => $roleException->getMessage()
-                        ]);
-                        // Не прерываем регистрацию из-за ошибки роли - таблицы будут созданы позже
-                    }
+                    $this->userRepository->assignRoleToUser($user->id, 'organization_owner', $organization->id);
+                    Log::info('[JwtAuthService] Owner role assigned to user after registration (new auth system)', [
+                        'user_id' => $user->id,
+                        'organization_id' => $organization->id,
+                        'role_slug' => 'organization_owner'
+                    ]);
 
                 } catch (\Exception $e) {
                     Log::error('[JwtAuthService] Failed to create organization', [
@@ -632,6 +571,59 @@ class JwtAuthService
 
             // Фиксируем транзакцию
             DB::commit();
+
+            // АВТОМАТИЧЕСКАЯ ВЕРИФИКАЦИЯ И СИНХРОНИЗАЦИЯ (вне транзакции)
+            if ($organization && !empty($organization->tax_number)) {
+                try {
+                    $autoVerificationService = app(\App\Services\Security\ContractorAutoVerificationService::class);
+                    $verificationResult = $autoVerificationService->verifyAndSetAccess($organization);
+                    
+                    Log::info('[JwtAuthService] Auto-verification completed', [
+                        'organization_id' => $organization->id,
+                        'verification_score' => $verificationResult['verification_score'],
+                        'access_level' => $verificationResult['access_level']
+                    ]);
+                    
+                    $syncService = app(\App\Services\Contractor\ContractorSyncService::class);
+                    $contractorsByInn = $syncService->findContractorsByInn($organization->tax_number);
+                    
+                    if ($contractorsByInn->isNotEmpty()) {
+                        $syncResult = $syncService->syncContractorWithOrganization($organization);
+                        
+                        Log::info('[JwtAuthService] Contractor synchronization completed', [
+                            'organization_id' => $organization->id,
+                            'tax_number' => $organization->tax_number,
+                            'contractors_synced' => $syncResult['contractors'],
+                            'projects_synced' => $syncResult['projects']
+                        ]);
+                        
+                        $notificationService = app(\App\Services\Security\ContractorRegistrationNotificationService::class);
+                        $notificationService->notifyCustomersAboutRegistration(
+                            $organization,
+                            $contractorsByInn,
+                            $verificationResult
+                        );
+                        
+                        Log::info('[JwtAuthService] Customer notifications sent', [
+                            'organization_id' => $organization->id,
+                            'customers_notified' => $contractorsByInn->count()
+                        ]);
+                    } else {
+                        Log::info('[JwtAuthService] No existing contractors found for INN', [
+                            'organization_id' => $organization->id,
+                            'tax_number' => $organization->tax_number
+                        ]);
+                    }
+                } catch (\Exception $syncException) {
+                    Log::warning('[JwtAuthService] Verification/sync process failed (non-critical)', [
+                        'organization_id' => $organization->id,
+                        'tax_number' => $organization->tax_number,
+                        'error' => $syncException->getMessage(),
+                        'trace' => $syncException->getTraceAsString()
+                    ]);
+                    // Не прерываем регистрацию - верификация не критична
+                }
+            }
 
             // Отправляем приветственное письмо. Пытаемся через queue; если очередь недоступна — шлём синхронно.
             try {
