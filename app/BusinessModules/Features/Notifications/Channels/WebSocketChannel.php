@@ -23,7 +23,7 @@ class WebSocketChannel
                 'status' => 'pending',
             ]);
 
-            broadcast(new NotificationBroadcast($notification, $notifiable))->toOthers();
+            broadcast(new NotificationBroadcast($notification, $notifiable));
 
             $analytics->updateStatus('sent');
 
