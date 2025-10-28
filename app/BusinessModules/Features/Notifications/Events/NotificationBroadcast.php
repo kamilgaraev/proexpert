@@ -47,5 +47,10 @@ class NotificationBroadcast implements ShouldBroadcast
             'read_at' => $this->notification->read_at?->toIso8601String(),
         ];
     }
+
+    public function broadcastQueue(): string
+    {
+        return 'broadcast';
+    }
 }
 
