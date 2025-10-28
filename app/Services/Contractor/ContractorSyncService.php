@@ -87,23 +87,28 @@ class ContractorSyncService
      * 
      * Возвращает всех подрядчиков у которых:
      * - INN совпадает с переданным значением
-     * - Еще не синхронизированы (source_organization_id is null)
+     * - Еще не синхронизированы (source_organization_id is null) - если $onlyUnsynced = true
      * - Не удалены
      * 
      * @param string $inn ИНН для поиска
+     * @param bool $onlyUnsynced Искать только не синхронизированных подрядчиков
      * @return Collection<Contractor>
      */
-    public function findContractorsByInn(string $inn): Collection
+    public function findContractorsByInn(string $inn, bool $onlyUnsynced = true): Collection
     {
         if (empty($inn)) {
             return collect();
         }
 
-        return Contractor::where('inn', $inn)
-            ->whereNull('source_organization_id') // Еще не синхронизированы
+        $query = Contractor::where('inn', $inn)
             ->whereNull('deleted_at')
-            ->with(['organization', 'contracts']) // Подгружаем связи для логирования
-            ->get();
+            ->with(['organization', 'contracts']); // Подгружаем связи для логирования
+        
+        if ($onlyUnsynced) {
+            $query->whereNull('source_organization_id'); // Еще не синхронизированы
+        }
+
+        return $query->get();
     }
 
     /**

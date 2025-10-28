@@ -585,9 +585,11 @@ class JwtAuthService
                     ]);
                     
                     $syncService = app(\App\Services\Contractor\ContractorSyncService::class);
-                    $contractorsByInn = $syncService->findContractorsByInn($organization->tax_number);
                     
-                    if ($contractorsByInn->isNotEmpty()) {
+                    // Синхронизируем только не синхронизированных подрядчиков
+                    $unsyncedContractors = $syncService->findContractorsByInn($organization->tax_number, true);
+                    
+                    if ($unsyncedContractors->isNotEmpty()) {
                         $syncResult = $syncService->syncContractorWithOrganization($organization);
                         
                         Log::info('[JwtAuthService] Contractor synchronization completed', [
@@ -596,20 +598,60 @@ class JwtAuthService
                             'contractors_synced' => $syncResult['contractors'],
                             'projects_synced' => $syncResult['projects']
                         ]);
-                        
-                        $notificationService = app(\App\Services\Security\ContractorRegistrationNotificationService::class);
-                        $notificationService->notifyCustomersAboutRegistration(
-                            $organization,
-                            $contractorsByInn,
-                            $verificationResult
-                        );
-                        
-                        Log::info('[JwtAuthService] Customer notifications sent', [
+                    }
+                    
+                    // Для уведомлений ищем ВСЕХ подрядчиков с таким ИНН (включая уже синхронизированных)
+                    $allContractorsByInn = $syncService->findContractorsByInn($organization->tax_number, false);
+                    
+                    Log::info('[JwtAuthService] All contractors search by INN for notifications', [
+                        'organization_id' => $organization->id,
+                        'tax_number' => $organization->tax_number,
+                        'contractors_found' => $allContractorsByInn->count(),
+                        'contractors' => $allContractorsByInn->pluck('id', 'name')->toArray()
+                    ]);
+                    
+                    if ($allContractorsByInn->isNotEmpty()) {
+                        Log::info('[JwtAuthService] Starting critical customer notifications', [
                             'organization_id' => $organization->id,
-                            'customers_notified' => $contractorsByInn->count()
+                            'organization_name' => $organization->name,
+                            'tax_number' => $organization->tax_number,
+                            'contractors_count' => $allContractorsByInn->count(),
+                            'contractors_details' => $allContractorsByInn->map(function($c) {
+                                return [
+                                    'id' => $c->id,
+                                    'name' => $c->name,
+                                    'customer_org_id' => $c->organization_id
+                                ];
+                            })->toArray()
                         ]);
+                        
+                        try {
+                            $notificationService = app(\App\Services\Security\ContractorRegistrationNotificationService::class);
+                            $notificationService->notifyCustomersAboutRegistration(
+                                $organization,
+                                $allContractorsByInn,
+                                $verificationResult
+                            );
+                            
+                            Log::channel('security')->info('[JwtAuthService] ✅ Customer notifications SUCCESSFULLY sent', [
+                                'organization_id' => $organization->id,
+                                'organization_name' => $organization->name,
+                                'customers_notified' => $allContractorsByInn->count(),
+                                'verification_score' => $verificationResult['verification_score']
+                            ]);
+                        } catch (\Exception $notifEx) {
+                            Log::channel('security')->critical('[JwtAuthService] ❌ CRITICAL: Failed to send customer notifications', [
+                                'organization_id' => $organization->id,
+                                'organization_name' => $organization->name,
+                                'tax_number' => $organization->tax_number,
+                                'contractors_count' => $allContractorsByInn->count(),
+                                'error' => $notifEx->getMessage(),
+                                'trace' => $notifEx->getTraceAsString()
+                            ]);
+                            // НЕ прерываем регистрацию, но записываем критическую ошибку
+                        }
                     } else {
-                        Log::info('[JwtAuthService] No existing contractors found for INN', [
+                        Log::info('[JwtAuthService] No existing contractors found for INN (no notifications to send)', [
                             'organization_id' => $organization->id,
                             'tax_number' => $organization->tax_number
                         ]);

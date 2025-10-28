@@ -30,7 +30,10 @@ class NotificationService
         ?array $channels = null,
         ?int $organizationId = null
     ): Notification {
-        if (!$this->preferenceManager->canSend($user, $notificationType, $organizationId)) {
+        // 🔥 Критические уведомления с флагом force_send игнорируют настройки пользователя
+        $forceSend = $data['force_send'] ?? false;
+        
+        if (!$forceSend && !$this->preferenceManager->canSend($user, $notificationType, $organizationId)) {
             Log::info('Notification skipped due to preferences', [
                 'user_id' => $user->id,
                 'notification_type' => $notificationType,
@@ -47,11 +50,22 @@ class NotificationService
             );
         }
 
-        $effectiveChannels = $channels ?? $this->preferenceManager->getChannels(
-            $user,
-            $notificationType,
-            $organizationId
-        );
+        // Для force_send используем принудительные каналы или указанные в параметрах
+        if ($forceSend) {
+            $effectiveChannels = $channels ?? ['in_app', 'websocket', 'email'];
+            Log::info('Force sending critical notification', [
+                'user_id' => $user->id,
+                'notification_type' => $notificationType,
+                'channels' => $effectiveChannels,
+                'priority' => $priority
+            ]);
+        } else {
+            $effectiveChannels = $channels ?? $this->preferenceManager->getChannels(
+                $user,
+                $notificationType,
+                $organizationId
+            );
+        }
 
         $notification = $this->createNotification(
             $user,
