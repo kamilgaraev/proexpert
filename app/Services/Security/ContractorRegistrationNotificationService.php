@@ -27,46 +27,69 @@ class ContractorRegistrationNotificationService
 
         foreach ($contractors as $contractor) {
             try {
-                $customer = $contractor->organization;
+                // Находим проекты, где этот подрядчик участвует через контракты
+                $projectsWithContractor = \App\Models\Contract::where('contractor_id', $contractor->id)
+                    ->with('project.organization') // Загружаем проект и его владельца
+                    ->get()
+                    ->pluck('project')
+                    ->filter()
+                    ->unique('id');
                 
-                if (!$customer) {
-                    Log::warning('[ContractorNotification] Contractor has no organization', [
-                        'contractor_id' => $contractor->id
-                    ]);
-                    continue;
-                }
-                
-                $admins = $this->getOrganizationAdmins($customer);
-                
-                if ($admins->isEmpty()) {
-                    Log::warning('[ContractorNotification] No admins found for organization', [
+                if ($projectsWithContractor->isEmpty()) {
+                    Log::warning('[ContractorNotification] No projects found for contractor', [
                         'contractor_id' => $contractor->id,
-                        'customer_org_id' => $customer->id
+                        'contractor_name' => $contractor->name
                     ]);
                     continue;
                 }
                 
-                $verification = $this->createOrUpdateVerificationRequest($contractor, $registeredOrg, $score);
-                
-                foreach ($admins as $admin) {
-                    try {
-                        $this->sendNotificationToLK($admin, $contractor, $registeredOrg, $score, $verification);
-                        $this->sendNotificationToAdmin($admin, $contractor, $registeredOrg, $score, $verification);
-                    } catch (\Exception $notifEx) {
-                        Log::error('[ContractorNotification] Failed to send notification to admin', [
-                            'admin_id' => $admin->id,
-                            'contractor_id' => $contractor->id,
-                            'error' => $notifEx->getMessage()
+                // Отправляем уведомления владельцам проектов (а не заказчикам по контракту!)
+                foreach ($projectsWithContractor as $project) {
+                    $projectOwner = $project->organization;
+                    
+                    if (!$projectOwner) {
+                        Log::warning('[ContractorNotification] Project has no owner organization', [
+                            'project_id' => $project->id,
+                            'contractor_id' => $contractor->id
                         ]);
-                        // Продолжаем для других админов
+                        continue;
                     }
-                }
+                    
+                    $admins = $this->getOrganizationAdmins($projectOwner);
+                    
+                    if ($admins->isEmpty()) {
+                        Log::warning('[ContractorNotification] No admins found for project owner', [
+                            'contractor_id' => $contractor->id,
+                            'project_id' => $project->id,
+                            'project_owner_id' => $projectOwner->id
+                        ]);
+                        continue;
+                    }
+                    
+                    $verification = $this->createOrUpdateVerificationRequest($contractor, $registeredOrg, $score);
+                    
+                    foreach ($admins as $admin) {
+                        try {
+                            $this->sendNotificationToLK($admin, $contractor, $registeredOrg, $score, $verification, $project);
+                            $this->sendNotificationToAdmin($admin, $contractor, $registeredOrg, $score, $verification, $project);
+                        } catch (\Exception $notifEx) {
+                            Log::error('[ContractorNotification] Failed to send notification to admin', [
+                                'admin_id' => $admin->id,
+                                'contractor_id' => $contractor->id,
+                                'project_id' => $project->id,
+                                'error' => $notifEx->getMessage()
+                            ]);
+                            // Продолжаем для других админов
+                        }
+                    }
 
-                Log::info('[ContractorNotification] Notifications sent', [
-                    'contractor_id' => $contractor->id,
-                    'customer_org_id' => $customer->id,
-                    'admins_notified' => $admins->count()
-                ]);
+                    Log::info('[ContractorNotification] Notifications sent to project owner', [
+                        'contractor_id' => $contractor->id,
+                        'project_id' => $project->id,
+                        'project_owner_id' => $projectOwner->id,
+                        'admins_notified' => $admins->count()
+                    ]);
+                }
             } catch (\Exception $e) {
                 Log::error('[ContractorNotification] Failed to process contractor notification', [
                     'contractor_id' => $contractor->id,
@@ -126,14 +149,15 @@ class ContractorRegistrationNotificationService
         Contractor $contractor,
         Organization $registeredOrg,
         int $score,
-        ContractorVerification $verification
+        ContractorVerification $verification,
+        ?\App\Models\Project $project = null
     ): void {
         $priority = $this->getPriority($score);
         $channels = $this->getChannels($score);
-        $message = $this->buildMessage($contractor, $registeredOrg, $score);
+        $message = $this->buildMessage($contractor, $registeredOrg, $score, $project);
 
         $notificationData = [
-            'title' => 'Подрядчик зарегистрировался в системе',
+            'title' => $project ? "Подрядчик зарегистрировался в проекте «{$project->name}»" : 'Подрядчик зарегистрировался в системе',
             'message' => $message,
             'icon' => $this->getIcon($score),
             'color' => $this->getColor($score),
@@ -150,10 +174,14 @@ class ContractorRegistrationNotificationService
                 'verification_score' => $score,
                 'verification_status' => $registeredOrg->verification_status,
             ],
+            'project' => $project ? [
+                'id' => $project->id,
+                'name' => $project->name,
+            ] : null,
             'verification' => [
                 'id' => $verification->id,
                 'token' => $verification->verification_token,
-                'requires_action' => $score < 70,
+                'requires_action' => true, // 🔒 ВСЕГДА требуется подтверждение от владельца проекта
             ],
             'actions' => $this->buildActionsLK($contractor, $registeredOrg, $score, $verification),
             'force_send' => true, // 🔥 КРИТИЧЕСКОЕ УВЕДОМЛЕНИЕ - игнорируем настройки пользователя
@@ -195,14 +223,15 @@ class ContractorRegistrationNotificationService
         Contractor $contractor,
         Organization $registeredOrg,
         int $score,
-        ContractorVerification $verification
+        ContractorVerification $verification,
+        ?\App\Models\Project $project = null
     ): void {
         $priority = $this->getPriority($score);
         $channels = $this->getChannels($score);
-        $message = $this->buildMessage($contractor, $registeredOrg, $score);
+        $message = $this->buildMessage($contractor, $registeredOrg, $score, $project);
 
         $notificationData = [
-            'title' => 'Подрядчик зарегистрировался в системе',
+            'title' => $project ? "Подрядчик зарегистрировался в проекте «{$project->name}»" : 'Подрядчик зарегистрировался в системе',
             'message' => $message,
             'icon' => $this->getIcon($score),
             'color' => $this->getColor($score),
@@ -219,10 +248,14 @@ class ContractorRegistrationNotificationService
                 'verification_score' => $score,
                 'verification_status' => $registeredOrg->verification_status,
             ],
+            'project' => $project ? [
+                'id' => $project->id,
+                'name' => $project->name,
+            ] : null,
             'verification' => [
                 'id' => $verification->id,
                 'token' => $verification->verification_token,
-                'requires_action' => $score < 70,
+                'requires_action' => true, // 🔒 ВСЕГДА требуется подтверждение от владельца проекта
             ],
             'actions' => $this->buildActionsAdmin($contractor, $registeredOrg, $score, $verification),
             'force_send' => true, // 🔥 КРИТИЧЕСКОЕ УВЕДОМЛЕНИЕ - игнорируем настройки пользователя
@@ -259,17 +292,24 @@ class ContractorRegistrationNotificationService
         }
     }
 
-    private function buildMessage(Contractor $contractor, Organization $org, int $score): string
+    private function buildMessage(Contractor $contractor, Organization $org, int $score, ?\App\Models\Project $project = null): string
     {
+        // 🔒 СТРОГИЙ РЕЖИМ: всегда требуется подтверждение от ВЛАДЕЛЬЦА ПРОЕКТА, независимо от рейтинга
+        
+        $projectInfo = $project ? " в проекте «{$project->name}»" : '';
+        
         if ($score >= 90) {
-            return "Подрядчик «{$contractor->name}» успешно верифицирован через ЕГРЮЛ (рейтинг: {$score}/100). Доступ предоставлен автоматически.";
+            return "🔒 Подрядчик «{$contractor->name}» зарегистрировался{$projectInfo} и верифицирован через ЕГРЮЛ (рейтинг: {$score}/100). " .
+                   "Как владелец проекта, подтвердите, что это ваш подрядчик, чтобы предоставить ему полный доступ к контрактам.";
         }
 
         if ($score >= 70) {
-            return "Подрядчик «{$contractor->name}» зарегистрировался и частично верифицирован (рейтинг: {$score}/100). Ограниченный доступ снимется автоматически через 3 дня.";
+            return "🔒 Подрядчик «{$contractor->name}» зарегистрировался{$projectInfo} и частично верифицирован (рейтинг: {$score}/100). " .
+                   "Как владелец проекта, подтвердите, что это ваш подрядчик, чтобы предоставить ему доступ.";
         }
 
-        return "⚠️ Подрядчик «{$contractor->name}» зарегистрировался с низким рейтингом верификации ({$score}/100). Требуется ваше подтверждение для предоставления доступа.";
+        return "⚠️ Подрядчик «{$contractor->name}» зарегистрировался{$projectInfo} с низким рейтингом верификации ({$score}/100). " .
+               "Как владелец проекта, пожалуйста, подтвердите, что это действительно ваш подрядчик, прежде чем он получит доступ к данным проекта.";
     }
 
     private function buildActionsLK(
@@ -280,7 +320,8 @@ class ContractorRegistrationNotificationService
     ): array {
         $actions = [];
 
-        if ($score < 70) {
+        // 🔒 ВСЕГДА показываем кнопки подтверждения, независимо от рейтинга
+        if (true) { // Изменено с: if ($score < 70)
             $actions[] = [
                 'label' => '✅ Да, это мой подрядчик',
                 'url' => "/api/v1/contractor-verifications/{$verification->verification_token}/confirm",
@@ -297,14 +338,6 @@ class ContractorRegistrationNotificationService
                 'icon' => 'x-circle',
                 'method' => 'POST',
                 'confirm' => 'Вы уверены? Доступ будет заблокирован, и мы начнем расследование.',
-            ];
-        } else {
-            $actions[] = [
-                'label' => '⚠️ Сообщить о проблеме',
-                'url' => "/api/v1/contractor-verifications/{$verification->verification_token}/dispute",
-                'style' => 'warning',
-                'icon' => 'alert-triangle',
-                'method' => 'POST',
             ];
         }
 
@@ -327,7 +360,8 @@ class ContractorRegistrationNotificationService
             ]
         ];
 
-        if ($score < 70) {
+        // 🔒 ВСЕГДА показываем кнопки подтверждения, независимо от рейтинга
+        if (true) { // Изменено с: if ($score < 70)
             $actions[] = [
                 'label' => '✅ Да, это мой подрядчик',
                 'url' => "/api/v1/contractor-verifications/{$verification->verification_token}/confirm",
@@ -344,14 +378,6 @@ class ContractorRegistrationNotificationService
                 'icon' => 'x-circle',
                 'method' => 'POST',
                 'confirm' => 'Вы уверены? Доступ будет заблокирован, и мы начнем расследование.',
-            ];
-        } else {
-            $actions[] = [
-                'label' => '⚠️ Сообщить о проблеме',
-                'url' => "/api/v1/contractor-verifications/{$verification->verification_token}/dispute",
-                'style' => 'warning',
-                'icon' => 'alert-triangle',
-                'method' => 'POST',
             ];
         }
 

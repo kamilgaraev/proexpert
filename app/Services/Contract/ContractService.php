@@ -246,7 +246,28 @@ class ContractService
     public function getContractById(int $contractId, int $organizationId): ?Contract
     {
         $contract = $this->contractRepository->find($contractId);
-        if ($contract && $contract->organization_id === $organizationId) {
+        if (!$contract) {
+            Log::warning('[ContractService] Contract not found', [
+                'contract_id' => $contractId,
+                'organization_id' => $organizationId
+            ]);
+            return null;
+        }
+        
+        // Проверяем доступ: либо это организация-заказчик, либо организация-подрядчик (через source_organization_id)
+        $isCustomer = $contract->organization_id === $organizationId;
+        $isContractor = $contract->contractor && $contract->contractor->source_organization_id === $organizationId;
+        $hasAccess = $isCustomer || $isContractor;
+        
+        if ($hasAccess) {
+            Log::info('[ContractService] Contract access granted', [
+                'contract_id' => $contractId,
+                'organization_id' => $organizationId,
+                'access_type' => $isCustomer ? 'customer' : 'contractor',
+                'contractor_id' => $contract->contractor_id ?? null,
+                'source_organization_id' => $contract->contractor->source_organization_id ?? null
+            ]);
+            
             return $contract->load([
                 'contractor', 
                 'project', 
@@ -258,6 +279,15 @@ class ContractService
                 'payments'
             ]);
         }
+        
+        Log::warning('[ContractService] Contract access denied', [
+            'contract_id' => $contractId,
+            'organization_id' => $organizationId,
+            'contract_organization_id' => $contract->organization_id,
+            'contractor_id' => $contract->contractor_id ?? null,
+            'contractor_source_org_id' => $contract->contractor->source_organization_id ?? null
+        ]);
+        
         return null;
     }
 

@@ -46,6 +46,9 @@ class ContractorAutoVerificationService
 
     private function determineAccessLevel(int $score): array
     {
+        // 🔒 СТРОГИЙ РЕЖИМ: независимо от рейтинга всегда требуется подтверждение от заказчика
+        // Ограничения НЕ снимаются автоматически по времени
+        
         if ($score >= 90) {
             return [
                 'level' => 'trusted',
@@ -58,9 +61,9 @@ class ContractorAutoVerificationService
                     'edit_works',
                     'view_reports',
                 ],
-                'blocked_actions' => ['request_payments'],
-                'expires_in_hours' => 24,
-                'reason' => 'Новая организация с высоким рейтингом верификации. Полный доступ через 24 часа.',
+                'blocked_actions' => ['request_payments', 'bulk_export'],
+                'expires_in_hours' => null, // НЕ снимается автоматически
+                'reason' => '🔒 Новая организация-подрядчик зарегистрировалась (рейтинг верификации: ' . $score . '/100). Требуется ваше подтверждение.',
             ];
         }
 
@@ -75,9 +78,9 @@ class ContractorAutoVerificationService
                     'upload_documents',
                     'edit_works',
                 ],
-                'blocked_actions' => ['request_payments', 'bulk_export'],
-                'expires_in_hours' => 72,
-                'reason' => 'Новая организация со средним рейтингом верификации. Полный доступ через 3 дня.',
+                'blocked_actions' => ['request_payments', 'bulk_export', 'view_reports'],
+                'expires_in_hours' => null, // НЕ снимается автоматически
+                'reason' => '🔒 Новая организация-подрядчик зарегистрировалась (рейтинг верификации: ' . $score . '/100). Требуется ваше подтверждение.',
             ];
         }
 
@@ -90,10 +93,11 @@ class ContractorAutoVerificationService
                 'upload_documents',
                 'request_payments',
                 'edit_works',
-                'bulk_export'
+                'bulk_export',
+                'view_reports'
             ],
-            'expires_in_hours' => null,
-            'reason' => 'Новая организация с низким рейтингом верификации. Требуется подтверждение от заказчика.',
+            'expires_in_hours' => null, // НЕ снимается автоматически
+            'reason' => '⚠️ Новая организация-подрядчик зарегистрировалась (рейтинг верификации: ' . $score . '/100). Требуется ваше подтверждение.',
         ];
     }
 
@@ -113,13 +117,14 @@ class ContractorAutoVerificationService
             'expires_at' => $expiresAt,
             'can_be_lifted_early' => true,
             'lift_conditions' => [
-                'customer_confirmation_required' => $score < 70,
-                'time_based' => $score >= 70,
-                'reputation_threshold' => 80,
+                'customer_confirmation_required' => true, // 🔒 ВСЕГДА требуется подтверждение
+                'time_based' => false, // НЕ снимается автоматически по времени
+                'reputation_threshold' => null, // Игнорируем порог репутации
             ],
             'metadata' => [
                 'verification_score' => $score,
                 'applied_at' => now()->toDateTimeString(),
+                'strict_mode' => true, // Флаг строгого режима
             ],
         ]);
 

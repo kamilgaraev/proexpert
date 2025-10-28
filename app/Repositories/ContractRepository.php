@@ -273,7 +273,9 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         return $this->model
             ->where('contracts.id', $contractId)
             ->where(function($q) use ($organizationId) {
+                // 1. Доступ как заказчик (organization_id)
                 $q->where('contracts.organization_id', $organizationId)
+                  // 2. Доступ через участие в проекте
                   ->orWhereExists(function($sub) use ($organizationId) {
                       $sub->select(DB::raw(1))
                           ->from('projects as p')
@@ -282,8 +284,13 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
                                    ->where('po.organization_id', $organizationId);
                           })
                           ->whereColumn('p.id', 'contracts.project_id');
+                  })
+                  // 3. Доступ как подрядчик (через source_organization_id)
+                  ->orWhereHas('contractor', function($contractorQuery) use ($organizationId) {
+                      $contractorQuery->where('source_organization_id', $organizationId);
                   });
             })
+            ->with('contractor') // Нужно для проверки source_organization_id
             ->first();
     }
 
