@@ -138,8 +138,8 @@ class NotificationController extends Controller
         
         $byTypeResults = Notification::forUser($user)
             ->unread()
-            ->selectRaw("COALESCE(data->>'category', 'general') as category, COUNT(*) as count")
-            ->groupBy(DB::raw("COALESCE(data->>'category', 'general')"))
+            ->selectRaw("COALESCE(CAST(data AS jsonb)->>'category', 'general') as category, COUNT(*) as count")
+            ->groupBy(DB::raw("COALESCE(CAST(data AS jsonb)->>'category', 'general')"))
             ->get();
         
         $byType = $byTypeResults->pluck('count', 'category')->toArray();
