@@ -89,24 +89,15 @@ class WebSocketChannel
         $timestamp = time();
         $bodyMd5 = md5($body);
 
-        $stringToSign = "POST\n{$path}\nauth_key={$key}&auth_timestamp={$timestamp}&auth_version=1.0&body_md5={$bodyMd5}";
+        $queryString = "auth_key={$key}&auth_timestamp={$timestamp}&auth_version=1.0&body_md5={$bodyMd5}";
+        $stringToSign = "POST\n{$path}\n{$queryString}";
         $authSignature = hash_hmac('sha256', $stringToSign, $secret);
 
-        $url = "{$scheme}://{$host}:{$port}{$path}";
+        $url = "{$scheme}://{$host}:{$port}{$path}?{$queryString}&auth_signature={$authSignature}";
 
         $response = \Illuminate\Support\Facades\Http::timeout(5)
-            ->withHeaders([
-                'X-Auth-Key' => $key,
-                'X-Auth-Timestamp' => $timestamp,
-                'X-Auth-Version' => '1.0',
-                'X-Body-MD5' => $bodyMd5,
-                'X-Auth-Signature' => $authSignature,
-            ])
-            ->post($url, [
-                'name' => $event,
-                'channels' => [$channel],
-                'data' => $data,
-            ]);
+            ->withBody($body, 'application/json')
+            ->post($url);
 
         Log::info('[WebSocket] HTTP response', [
             'status' => $response->status(),
