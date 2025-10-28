@@ -67,7 +67,8 @@ class WebSocketChannel
         $port = config('broadcasting.connections.reverb.options.port');
         $scheme = config('broadcasting.connections.reverb.options.scheme');
 
-        $channel = 'private-App.Models.User.' . $notifiable->id;
+        $interface = $notification->data['interface'] ?? 'lk';
+        $channel = 'private-App.Models.User.' . $notifiable->id . '.' . $interface;
         $event = 'notification.new';
         $data = json_encode([
             'id' => $notification->id,
