@@ -46,6 +46,19 @@ class OrganizationVerificationController extends Controller
                 ], 404);
             }
 
+            // Автоматическая верификация, если все данные заполнены и верификация не проводилась
+            if ($organization->canBeVerified() && !$organization->is_verified) {
+                $verificationResult = $this->verificationService->requestVerification($organization);
+                
+                Log::info('Auto-verification triggered on organization data fetch', [
+                    'organization_id' => $organization->id,
+                    'verification_result' => $verificationResult
+                ]);
+                
+                // Перезагружаем организацию с обновленными данными верификации
+                $organization = $organization->fresh();
+            }
+
             $recommendations = $this->verificationService->getVerificationRecommendations($organization);
             $userMessage = $this->verificationService->getUserFriendlyMessage($organization);
 
@@ -199,6 +212,19 @@ class OrganizationVerificationController extends Controller
                     'success' => false,
                     'message' => 'Организация не найдена',
                 ], 404);
+            }
+
+            // Автоматическая верификация, если все данные заполнены и верификация не проводилась
+            if ($organization->canBeVerified() && !$organization->is_verified) {
+                $verificationResult = $this->verificationService->requestVerification($organization);
+                
+                Log::info('Auto-verification triggered on recommendations fetch', [
+                    'organization_id' => $organization->id,
+                    'verification_result' => $verificationResult
+                ]);
+                
+                // Перезагружаем организацию с обновленными данными верификации
+                $organization = $organization->fresh();
             }
 
             $recommendations = $this->verificationService->getVerificationRecommendations($organization);
