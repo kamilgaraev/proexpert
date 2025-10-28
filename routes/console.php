@@ -155,6 +155,15 @@ Schedule::command('subscriptions:renew --days-ahead=1')
     })
     ->appendOutputTo(storage_path('logs/schedule-subscriptions-renew.log'));
 
+// Автоматическое снятие истекших ограничений доступа
+Schedule::command('restrictions:lift-expired')
+    ->hourly()
+    ->withoutOverlapping(30)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled restrictions:lift-expired command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-restrictions-lift.log'));
+
 Artisan::command('projects:geocode-help', function () {
     $this->info('Available geocoding command:');
     $this->info('  php artisan projects:geocode [options]');

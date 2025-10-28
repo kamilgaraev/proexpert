@@ -160,6 +160,11 @@ Route::prefix('lk')->name('lk.')->group(function () {
         });
 });
 
+// --- Contractor Verification API (Public by token) ---
+Route::prefix('v1')->group(function () {
+    require __DIR__ . '/api/v1/contractor-verification.php';
+});
+
 // --- Admin Panel API ---
 Route::prefix('v1/admin')->name('admin.')->group(function () {
     // Публичные маршруты аутентификации админки

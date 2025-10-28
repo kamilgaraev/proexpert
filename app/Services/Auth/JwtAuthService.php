@@ -520,24 +520,54 @@ class JwtAuthService
                         'tax_number' => $organization->tax_number
                     ]);
                     
-                    // АВТОМАТИЧЕСКАЯ СИНХРОНИЗАЦИЯ: Связываем подрядчиков с организацией по ИНН
+                    // АВТОМАТИЧЕСКАЯ ВЕРИФИКАЦИЯ И СИНХРОНИЗАЦИЯ
                     if (!empty($organization->tax_number)) {
                         try {
-                            $syncService = app(\App\Services\Contractor\ContractorSyncService::class);
-                            $syncResult = $syncService->syncContractorWithOrganization($organization);
+                            $autoVerificationService = app(\App\Services\Security\ContractorAutoVerificationService::class);
+                            $verificationResult = $autoVerificationService->verifyAndSetAccess($organization);
                             
-                            Log::info('[JwtAuthService] Contractor synchronization completed', [
+                            Log::info('[JwtAuthService] Auto-verification completed', [
                                 'organization_id' => $organization->id,
-                                'tax_number' => $organization->tax_number,
-                                'contractors_synced' => $syncResult['contractors'],
-                                'projects_synced' => $syncResult['projects']
+                                'verification_score' => $verificationResult['verification_score'],
+                                'access_level' => $verificationResult['access_level']
                             ]);
+                            
+                            $syncService = app(\App\Services\Contractor\ContractorSyncService::class);
+                            $contractorsByInn = $syncService->findContractorsByInn($organization->tax_number);
+                            
+                            if ($contractorsByInn->isNotEmpty()) {
+                                $syncResult = $syncService->syncContractorWithOrganization($organization);
+                                
+                                Log::info('[JwtAuthService] Contractor synchronization completed', [
+                                    'organization_id' => $organization->id,
+                                    'tax_number' => $organization->tax_number,
+                                    'contractors_synced' => $syncResult['contractors'],
+                                    'projects_synced' => $syncResult['projects']
+                                ]);
+                                
+                                $notificationService = app(\App\Services\Security\ContractorRegistrationNotificationService::class);
+                                $notificationService->notifyCustomersAboutRegistration(
+                                    $organization,
+                                    $contractorsByInn,
+                                    $verificationResult
+                                );
+                                
+                                Log::info('[JwtAuthService] Customer notifications sent', [
+                                    'organization_id' => $organization->id,
+                                    'customers_notified' => $contractorsByInn->count()
+                                ]);
+                            } else {
+                                Log::info('[JwtAuthService] No existing contractors found for INN', [
+                                    'organization_id' => $organization->id,
+                                    'tax_number' => $organization->tax_number
+                                ]);
+                            }
                         } catch (\Exception $syncException) {
-                            // Не прерываем регистрацию если синхронизация не удалась
-                            Log::warning('[JwtAuthService] Contractor synchronization failed', [
+                            Log::warning('[JwtAuthService] Verification/sync process failed', [
                                 'organization_id' => $organization->id,
                                 'tax_number' => $organization->tax_number,
-                                'error' => $syncException->getMessage()
+                                'error' => $syncException->getMessage(),
+                                'trace' => $syncException->getTraceAsString()
                             ]);
                         }
                     }
