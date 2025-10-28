@@ -23,7 +23,18 @@ class WebSocketChannel
                 'status' => 'pending',
             ]);
 
-            broadcast(new NotificationBroadcast($notification, $notifiable));
+            Log::info('[WebSocket] Before broadcast()', [
+                'notification_id' => $notification->id,
+                'notifiable_id' => $notifiable->id,
+                'broadcast_driver' => config('broadcasting.default'),
+            ]);
+
+            $result = broadcast(new NotificationBroadcast($notification, $notifiable));
+
+            Log::info('[WebSocket] After broadcast()', [
+                'notification_id' => $notification->id,
+                'result' => get_class($result),
+            ]);
 
             $analytics->updateStatus('sent');
 
