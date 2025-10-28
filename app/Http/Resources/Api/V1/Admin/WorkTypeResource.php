@@ -12,7 +12,10 @@ class WorkTypeResource extends JsonResource
         return [
             'id' => $this->id,
             'name' => $this->name,
+            'code' => $this->code,
             'category' => $this->category,
+            'description' => $this->description,
+            'defaultPrice' => $this->default_price ? (float) $this->default_price : null,
             'isActive' => $this->is_active,
             'measurementUnit' => new MeasurementUnitResource($this->whenLoaded('measurementUnit')),
             'organizationId' => $this->organization_id,

@@ -24,36 +24,27 @@ properties:
     nullable: true
     description: Описание вида работ
     example: "Кладка несущих стен из керамического кирпича"
-  default_price:
+  defaultPrice:
     type: number
-    format: decimal
+    format: float
     nullable: true
     description: Цена за единицу по умолчанию
     example: 1250.00
-  additional_properties:
-    type: object
-    nullable: true
-    description: Дополнительные свойства (JSON)
-    example:
-      complexity: "средняя"
-      tools_required: ["мастерок", "уровень", "отвес"]
-  is_active:
+  isActive:
     type: boolean
     description: Активен ли вид работ
     example: true
-  organization_id:
+  organizationId:
     type: integer
     description: ID организации
     example: 10
-  measurement_unit:
+  measurementUnit:
     $ref: './MeasurementUnit.yaml'
-  created_at:
+  createdAt:
     type: string
-    format: date-time
-    description: Дата создания
-    example: "2024-12-20T10:00:00Z"
-  updated_at:
+    description: Дата создания (формат Y-m-d H:i:s)
+    example: "2024-12-20 10:00:00"
+  updatedAt:
     type: string
-    format: date-time
-    description: Дата последнего обновления
-    example: "2024-12-20T15:30:00Z"
+    description: Дата последнего обновления (формат Y-m-d H:i:s)
+    example: "2024-12-20 15:30:00"

@@ -45,13 +45,10 @@ class StoreWorkTypeRequest extends FormRequest
             'measurement_unit_id' => 'required|integer|exists:measurement_units,id',
             'category' => 'nullable|string|max:100',
             'is_active' => 'sometimes|boolean',
-            // Добавляем неявные поля, которые могут приходить от фронтенда, но не должны сохраняться напрямую
-            // или должны быть обработаны отдельно в контроллере/сервисе, если они нужны.
             'code' => 'nullable|string|max:100',
             'description' => 'nullable|string',
             'default_price' => 'nullable|numeric|min:0',
-            'additional_properties' => 'nullable|array', // Если это JSON, Laravel автоматически обработает в массив
-            'external_code' => 'nullable|string|max:255',
+            'additional_properties' => 'nullable|array',
         ];
     }
 
@@ -67,7 +64,6 @@ class StoreWorkTypeRequest extends FormRequest
             'name.unique' => 'Вид работ с таким названием уже существует в вашей организации.',
             'measurement_unit_id.required' => 'Необходимо указать единицу измерения.',
             'measurement_unit_id.exists' => 'Выбранная единица измерения не существует.',
-            'critical_organization_id_missing.required' => 'Критическая ошибка: ID организации не определен в StoreWorkTypeRequest.',
             'default_price.numeric' => 'Цена по умолчанию должна быть числом.',
             'default_price.min' => 'Цена по умолчанию не может быть отрицательной.',
         ];

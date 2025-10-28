@@ -21,13 +21,11 @@ class MobileWorkTypeResource extends JsonResource
         return [
             'id' => $this->resource->id,
             'name' => $this->resource->name,
-            // Предполагаем, что у модели WorkType есть отношение measurementUnit,
-            // а у MeasurementUnit есть поля name и symbol.
             'measurement_unit_id' => $this->whenLoaded('measurementUnit', fn() => $this->resource->measurementUnit?->id),
             'measurement_unit_name' => $this->whenLoaded('measurementUnit', fn() => $this->resource->measurementUnit?->name),
             'measurement_unit_symbol' => $this->whenLoaded('measurementUnit', fn() => $this->resource->measurementUnit?->symbol),
-            // Можно добавить и другие поля, если они нужны, например, категория
-            // 'category' => $this->resource->category,
+            'default_price' => $this->resource->default_price ? (float) $this->resource->default_price : null,
+            'category' => $this->resource->category,
         ];
     }
 } 

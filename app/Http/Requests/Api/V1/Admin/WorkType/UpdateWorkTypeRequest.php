@@ -43,8 +43,24 @@ class UpdateWorkTypeRequest extends FormRequest
                     ->ignore($workTypeId), // Игнорируем текущий ID
             ],
             'measurement_unit_id' => 'sometimes|required|integer|exists:measurement_units,id',
+            'code' => 'nullable|string|max:100',
             'category' => 'nullable|string|max:100',
+            'description' => 'nullable|string',
+            'default_price' => 'nullable|numeric|min:0',
+            'additional_properties' => 'nullable|array',
             'is_active' => 'sometimes|boolean',
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'name.required' => 'Название вида работ обязательно для заполнения.',
+            'name.unique' => 'Вид работ с таким названием уже существует в вашей организации.',
+            'measurement_unit_id.required' => 'Необходимо указать единицу измерения.',
+            'measurement_unit_id.exists' => 'Выбранная единица измерения не существует.',
+            'default_price.numeric' => 'Цена по умолчанию должна быть числом.',
+            'default_price.min' => 'Цена по умолчанию не может быть отрицательной.',
         ];
     }
 }

@@ -48,9 +48,3 @@ properties:
     nullable: true
     description: Дополнительные свойства в формате JSON
     example: {"сложность": "средняя", "требования": "опыт кладки от 2 лет"}
-  external_code:
-    type: string
-    nullable: true
-    description: Внешний код для интеграции с бухгалтерскими системами
-    example: "EXT-WT-001"
-    maxLength: 255
