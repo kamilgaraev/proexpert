@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\Notifications\Models\Notification;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 
 class NotificationController extends Controller
 {
@@ -135,17 +136,18 @@ class NotificationController extends Controller
 
         $count = Notification::forUser($user)->unread()->count();
         
-        $byType = Notification::forUser($user)
+        $byTypeResults = Notification::forUser($user)
             ->unread()
-            ->selectRaw("data->>'category' as category, COUNT(*) as count")
-            ->groupBy('category')
-            ->pluck('count', 'category')
-            ->toArray();
+            ->selectRaw("COALESCE(data->>'category', 'general') as category, COUNT(*) as count")
+            ->groupBy(DB::raw("COALESCE(data->>'category', 'general')"))
+            ->get();
+        
+        $byType = $byTypeResults->pluck('count', 'category')->toArray();
 
         return response()->json([
             'success' => true,
             'count' => $count,
-            'by_type' => $byType ?: [],
+            'by_type' => $byType,
         ]);
     }
 }
