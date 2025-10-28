@@ -17,7 +17,13 @@ class NotificationController extends Controller
             ->with('analytics')
             ->orderBy('created_at', 'desc');
 
-        if ($request->has('unread')) {
+        if ($request->has('filter')) {
+            if ($request->filter === 'unread') {
+                $query->unread();
+            } elseif ($request->filter === 'read') {
+                $query->whereNotNull('read_at');
+            }
+        } elseif ($request->has('unread')) {
             $query->unread();
         }
 
@@ -33,7 +39,13 @@ class NotificationController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $notifications,
+            'data' => $notifications->items(),
+            'meta' => [
+                'current_page' => $notifications->currentPage(),
+                'last_page' => $notifications->lastPage(),
+                'per_page' => $notifications->perPage(),
+                'total' => $notifications->total(),
+            ],
         ]);
     }
 
@@ -122,10 +134,18 @@ class NotificationController extends Controller
         $user = $request->user();
 
         $count = Notification::forUser($user)->unread()->count();
+        
+        $byType = Notification::forUser($user)
+            ->unread()
+            ->selectRaw('JSON_UNQUOTE(JSON_EXTRACT(data, "$.category")) as category, COUNT(*) as count')
+            ->groupBy('category')
+            ->pluck('count', 'category')
+            ->toArray();
 
         return response()->json([
             'success' => true,
             'count' => $count,
+            'by_type' => $byType,
         ]);
     }
 }

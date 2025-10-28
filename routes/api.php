@@ -136,6 +136,12 @@ Route::prefix('landing')->name('landing.')->group(function () {
                     require __DIR__ . '/api/v1/landing/authorization.php';
                 });
 
+            // Подключение маршрутов уведомлений для ЛК
+            Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
+                ->group(function () {
+                    require __DIR__ . '/api/v1/landing/notifications.php';
+                });
+
             // Подключение маршрутов для проверки прав пользователя (ЛК)
             Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
                 ->prefix('v1')
@@ -182,6 +188,8 @@ Route::prefix('v1/admin')->name('admin.')->group(function () {
         if (file_exists(__DIR__ . '/api/v1/permissions.php')) {
             require __DIR__ . '/api/v1/permissions.php';
         }
+        // Подключаем маршруты для уведомлений
+        require __DIR__ . '/api/v1/admin/notifications.php';
         // Подключаем существующие файлы маршрутов для админки
         require __DIR__ . '/api/v1/admin/projects.php';
         require __DIR__ . '/api/v1/admin/catalogs.php';
