@@ -41,27 +41,39 @@ class ContractSpecificationController extends Controller
     public function index(Request $request, int $contractId): JsonResponse
     {
         $organizationId = $request->user()?->current_organization_id;
+        $projectId = $request->route('project');
         
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
 
         try {
+            // Проверяем существование контракта
+            $contractExists = \App\Models\Contract::find($contractId);
+            
+            if (!$contractExists) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не найден в системе'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем принадлежность проекту
+            if ($projectId && (int)$contractExists->project_id !== (int)$projectId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт принадлежит другому проекту'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем доступ к контракту
             $contract = $this->contractService->getContractById($contractId, $organizationId);
             
             if (!$contract) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Контракт не найден'
-                ], Response::HTTP_NOT_FOUND);
-            }
-            
-            // Проверяем, что контракт принадлежит указанному проекту
-            if (!$this->validateProjectContext($request, $contract)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не принадлежит указанному проекту'
-                ], Response::HTTP_NOT_FOUND);
+                    'message' => 'Нет доступа к контракту'
+                ], Response::HTTP_FORBIDDEN);
             }
 
             $specifications = $contract->specifications()->get();
@@ -82,27 +94,49 @@ class ContractSpecificationController extends Controller
     public function store(StoreContractSpecificationRequest $request, int $contractId): JsonResponse
     {
         $organizationId = $request->user()?->current_organization_id;
+        $projectId = $request->route('project');
         
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
 
         try {
+            // Сначала проверим существование контракта без проверки доступа
+            $contractExists = \App\Models\Contract::find($contractId);
+            
+            if (!$contractExists) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не найден в системе'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем принадлежность проекту ДО проверки организации
+            if ($projectId && (int)$contractExists->project_id !== (int)$projectId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт принадлежит другому проекту',
+                    'debug' => [
+                        'contract_id' => $contractId,
+                        'contract_project_id' => $contractExists->project_id,
+                        'requested_project_id' => $projectId
+                    ]
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Теперь проверяем доступ через сервис
             $contract = $this->contractService->getContractById($contractId, $organizationId);
             
             if (!$contract) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Контракт не найден'
-                ], Response::HTTP_NOT_FOUND);
-            }
-            
-            // Проверяем, что контракт принадлежит указанному проекту
-            if (!$this->validateProjectContext($request, $contract)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не принадлежит указанному проекту'
-                ], Response::HTTP_NOT_FOUND);
+                    'message' => 'Нет доступа к контракту',
+                    'debug' => [
+                        'contract_id' => $contractId,
+                        'contract_organization_id' => $contractExists->organization_id,
+                        'your_organization_id' => $organizationId
+                    ]
+                ], Response::HTTP_FORBIDDEN);
             }
 
             $specificationDTO = $request->toDto();
@@ -131,27 +165,39 @@ class ContractSpecificationController extends Controller
     public function attach(AttachSpecificationRequest $request, int $contractId): JsonResponse
     {
         $organizationId = $request->user()?->current_organization_id;
+        $projectId = $request->route('project');
         
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
 
         try {
+            // Проверяем существование контракта
+            $contractExists = \App\Models\Contract::find($contractId);
+            
+            if (!$contractExists) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не найден в системе'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем принадлежность проекту
+            if ($projectId && (int)$contractExists->project_id !== (int)$projectId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт принадлежит другому проекту'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем доступ к контракту
             $contract = $this->contractService->getContractById($contractId, $organizationId);
             
             if (!$contract) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Контракт не найден'
-                ], Response::HTTP_NOT_FOUND);
-            }
-            
-            // Проверяем, что контракт принадлежит указанному проекту
-            if (!$this->validateProjectContext($request, $contract)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не принадлежит указанному проекту'
-                ], Response::HTTP_NOT_FOUND);
+                    'message' => 'Нет доступа к контракту'
+                ], Response::HTTP_FORBIDDEN);
             }
 
             $specificationId = $request->input('specification_id');
@@ -186,27 +232,39 @@ class ContractSpecificationController extends Controller
     public function destroy(Request $request, int $contractId, int $specificationId): JsonResponse
     {
         $organizationId = $request->user()?->current_organization_id;
+        $projectId = $request->route('project');
         
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
 
         try {
+            // Проверяем существование контракта
+            $contractExists = \App\Models\Contract::find($contractId);
+            
+            if (!$contractExists) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не найден в системе'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем принадлежность проекту
+            if ($projectId && (int)$contractExists->project_id !== (int)$projectId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт принадлежит другому проекту'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем доступ к контракту
             $contract = $this->contractService->getContractById($contractId, $organizationId);
             
             if (!$contract) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Контракт не найден'
-                ], Response::HTTP_NOT_FOUND);
-            }
-            
-            // Проверяем, что контракт принадлежит указанному проекту
-            if (!$this->validateProjectContext($request, $contract)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не принадлежит указанному проекту'
-                ], Response::HTTP_NOT_FOUND);
+                    'message' => 'Нет доступа к контракту'
+                ], Response::HTTP_FORBIDDEN);
             }
 
             if (!$contract->specifications()->where('specification_id', $specificationId)->exists()) {
