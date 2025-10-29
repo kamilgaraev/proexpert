@@ -10,8 +10,11 @@ use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceA
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActCollection;
 use Illuminate\Http\Request; // Для $request->input()
 use Illuminate\Http\Response;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth; // Для Auth::user()
 use App\Services\Export\ExcelExporterService;
+use App\Services\Storage\FileService;
+use App\Models\Organization;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 use Illuminate\Support\Facades\Log;
@@ -21,11 +24,16 @@ class ContractPerformanceActController extends Controller
 {
     protected ContractPerformanceActService $actService;
     protected ExcelExporterService $excelExporter;
+    protected FileService $fileService;
 
-    public function __construct(ContractPerformanceActService $actService, ExcelExporterService $excelExporter)
-    {
+    public function __construct(
+        ContractPerformanceActService $actService, 
+        ExcelExporterService $excelExporter,
+        FileService $fileService
+    ) {
         $this->actService = $actService;
         $this->excelExporter = $excelExporter;
+        $this->fileService = $fileService;
     }
     
     private function validateProjectContext(Request $request, $act): bool
@@ -339,6 +347,93 @@ class ContractPerformanceActController extends Controller
             return response()->json([
                 'error' => 'Ошибка при экспорте в Excel',
                 'message' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить список файлов акта
+     */
+    public function getFiles(Request $request, int $act): JsonResponse
+    {
+        try {
+            $user = $request->user();
+            $organization = $request->attributes->get('current_organization');
+            $organizationId = $organization?->id ?? $user?->current_organization_id;
+
+            if (!$organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Не определена организация пользователя'
+                ], 400);
+            }
+
+            // Получаем акт с контрактом напрямую
+            $performanceAct = \App\Models\ContractPerformanceAct::with('contract')->find($act);
+            
+            if (!$performanceAct) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Акт не найден'
+                ], 404);
+            }
+
+            // Проверяем доступ к организации
+            if ($performanceAct->contract->organization_id !== $organizationId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Доступ запрещен'
+                ], 403);
+            }
+
+            // Загружаем файлы с информацией о пользователях
+            $performanceAct->load(['files.user']);
+
+            $org = Organization::find($organizationId);
+            $disk = $this->fileService->disk($org);
+
+            $files = $performanceAct->files->map(function ($file) use ($disk) {
+                $downloadUrl = null;
+                try {
+                    if ($disk->exists($file->path)) {
+                        $downloadUrl = $disk->temporaryUrl($file->path, now()->addHours(1));
+                    }
+                } catch (Exception $e) {
+                    Log::warning('Не удалось создать временный URL для файла', [
+                        'file_id' => $file->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+
+                return [
+                    'id' => $file->id,
+                    'name' => $file->original_name,
+                    'size' => $file->size,
+                    'mime_type' => $file->mime_type,
+                    'category' => $file->category,
+                    'uploaded_by' => $file->user ? $file->user->name : 'Не указан',
+                    'uploaded_at' => $file->created_at->toIso8601String(),
+                    'description' => $file->additional_info['description'] ?? null,
+                    'download_url' => $downloadUrl
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $files
+            ]);
+
+        } catch (Exception $e) {
+            Log::error('Ошибка получения файлов акта', [
+                'act_id' => $act,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка при получении файлов',
+                'error' => $e->getMessage()
             ], 500);
         }
     }

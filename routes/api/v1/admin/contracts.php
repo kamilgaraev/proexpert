@@ -30,13 +30,17 @@ Route::apiResource('contracts.performance-acts', ContractPerformanceActControlle
     ->shallow() 
     ->parameters(['performance-acts' => 'performance_act']);
 
-// Дополнительные маршруты для экспорта актов
+// Дополнительные маршруты для экспорта актов и файлов
 Route::group(['prefix' => 'contracts/{contract}/performance-acts'], function () {
     Route::get('{performance_act}/export/pdf', [ContractPerformanceActController::class, 'exportPdf'])
         ->name('contracts.performance-acts.export.pdf');
     Route::get('{performance_act}/export/excel', [ContractPerformanceActController::class, 'exportExcel'])
         ->name('contracts.performance-acts.export.excel');
 });
+
+// Маршруты для файлов актов (shallow - без привязки к контракту)
+Route::get('performance-acts/{performance_act}/files', [ContractPerformanceActController::class, 'getFiles'])
+    ->name('performance-acts.files');
 
 // Вложенные маршруты для Платежей по Контрактам
 Route::apiResource('contracts.payments', ContractPaymentController::class)
