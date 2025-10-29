@@ -44,9 +44,10 @@ class ContractPerformanceActController extends Controller
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $projectId = $request->route('project'); // Получаем project ID из URL
 
         try {
-            $acts = $this->actService->getAllActsForContract($contractId, $organizationId);
+            $acts = $this->actService->getAllActsForContract($contractId, $organizationId, [], $projectId);
             return new ContractPerformanceActCollection($acts);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to retrieve performance acts', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
@@ -60,10 +61,11 @@ class ContractPerformanceActController extends Controller
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $projectId = $request->route('project'); // Получаем project ID из URL
 
         try {
             $actDTO = $request->toDto();
-            $act = $this->actService->createActForContract($contractId, $organizationId, $actDTO);
+            $act = $this->actService->createActForContract($contractId, $organizationId, $actDTO, $projectId);
             return (new ContractPerformanceActResource($act))
                     ->response()
                     ->setStatusCode(Response::HTTP_CREATED);
@@ -79,9 +81,10 @@ class ContractPerformanceActController extends Controller
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $projectId = $request->route('project'); // Получаем project ID из URL
 
         try {
-            $act = $this->actService->getActById($actId, $contractId, $organizationId);
+            $act = $this->actService->getActById($actId, $contractId, $organizationId, $projectId);
             if (!$act) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
@@ -103,9 +106,10 @@ class ContractPerformanceActController extends Controller
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $projectId = $request->route('project'); // Получаем project ID из URL
         
         try {
-            $existingAct = $this->actService->getActById($actId, $contractId, $organizationId);
+            $existingAct = $this->actService->getActById($actId, $contractId, $organizationId, $projectId);
             if (!$existingAct) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
@@ -115,7 +119,7 @@ class ContractPerformanceActController extends Controller
             }
             
             $actDTO = $request->toDto();
-            $act = $this->actService->updateAct($actId, $contractId, $organizationId, $actDTO);
+            $act = $this->actService->updateAct($actId, $contractId, $organizationId, $actDTO, $projectId);
             return new ContractPerformanceActResource($act);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to update performance act', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
@@ -129,9 +133,10 @@ class ContractPerformanceActController extends Controller
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $projectId = $request->route('project'); // Получаем project ID из URL
 
         try {
-            $existingAct = $this->actService->getActById($actId, $contractId, $organizationId);
+            $existingAct = $this->actService->getActById($actId, $contractId, $organizationId, $projectId);
             if (!$existingAct) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
@@ -140,7 +145,7 @@ class ContractPerformanceActController extends Controller
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
             
-            $this->actService->deleteAct($actId, $contractId, $organizationId);
+            $this->actService->deleteAct($actId, $contractId, $organizationId, $projectId);
             return response()->json(null, Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to delete performance act', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
@@ -153,6 +158,7 @@ class ContractPerformanceActController extends Controller
     public function availableWorks(Request $request, int $contractId)
     {
         $projectContext = \App\Http\Middleware\ProjectContextMiddleware::getProjectContext($request);
+        $projectId = $request->route('project'); // Получаем project ID из URL
         
         $contract = \App\Models\Contract::find($contractId);
         if (!$contract) {
@@ -162,7 +168,7 @@ class ContractPerformanceActController extends Controller
         $organizationId = $contract->organization_id;
 
         try {
-            $works = $this->actService->getAvailableWorksForAct($contractId, $organizationId);
+            $works = $this->actService->getAvailableWorksForAct($contractId, $organizationId, $projectId);
             return response()->json(['data' => $works]);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to retrieve available works', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
@@ -177,12 +183,13 @@ class ContractPerformanceActController extends Controller
         try {
             $user = $request->user();
             $organizationId = $user->organization_id ?? $user->current_organization_id;
+            $projectId = $request->route('project'); // Получаем project ID из URL
 
             if (!$organizationId) {
                 return response()->json(['error' => 'Не определена организация пользователя'], 400);
             }
 
-            $act = $this->actService->getActById($actId, $contractId, $organizationId);
+            $act = $this->actService->getActById($actId, $contractId, $organizationId, $projectId);
             if (!$act) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
@@ -240,12 +247,13 @@ class ContractPerformanceActController extends Controller
         try {
             $user = $request->user();
             $organizationId = $user->organization_id ?? $user->current_organization_id;
+            $projectId = $request->route('project'); // Получаем project ID из URL
 
             if (!$organizationId) {
                 return response()->json(['error' => 'Не определена организация пользователя'], 400);
             }
 
-            $act = $this->actService->getActById($actId, $contractId, $organizationId);
+            $act = $this->actService->getActById($actId, $contractId, $organizationId, $projectId);
             if (!$act) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }

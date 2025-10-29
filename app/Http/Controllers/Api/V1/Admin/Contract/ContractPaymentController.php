@@ -37,9 +37,10 @@ class ContractPaymentController extends Controller
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $projectId = $request->route('project'); // Получаем project ID из URL
 
         try {
-            $payments = $this->paymentService->getAllPaymentsForContract($contractId, $organizationId);
+            $payments = $this->paymentService->getAllPaymentsForContract($contractId, $organizationId, [], $projectId);
             return new ContractPaymentCollection($payments);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to retrieve payments', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
@@ -50,10 +51,11 @@ class ContractPaymentController extends Controller
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $projectId = $request->route('project'); // Получаем project ID из URL
 
         try {
             $paymentDTO = $request->toDto();
-            $payment = $this->paymentService->createPaymentForContract($contractId, $organizationId, $paymentDTO);
+            $payment = $this->paymentService->createPaymentForContract($contractId, $organizationId, $paymentDTO, $projectId);
             return (new ContractPaymentResource($payment))
                     ->response()
                     ->setStatusCode(Response::HTTP_CREATED);

@@ -27,22 +27,28 @@ class ContractPerformanceActService
         $this->logging = $logging;
     }
 
-    protected function getContractOrFail(int $contractId, int $organizationId): Contract
+    protected function getContractOrFail(int $contractId, int $organizationId, ?int $projectId = null): Contract
     {
         $contract = $this->contractRepository->findAccessible($contractId, $organizationId);
         if (!$contract) {
             throw new Exception('Contract not found or does not belong to the organization.');
         }
+        
+        // Если указан projectId, проверяем, что контракт принадлежит этому проекту
+        if ($projectId !== null && $contract->project_id !== $projectId) {
+            throw new Exception('Contract does not belong to the specified project.');
+        }
+        
         return $contract;
     }
 
-    public function getAllActsForContract(int $contractId, int $organizationId, array $filters = []): Collection
+    public function getAllActsForContract(int $contractId, int $organizationId, array $filters = [], ?int $projectId = null): Collection
     {
-        $this->getContractOrFail($contractId, $organizationId); // Проверка, что контракт существует и принадлежит организации
+        $this->getContractOrFail($contractId, $organizationId, $projectId); // Проверка, что контракт существует и принадлежит организации
         return $this->actRepository->getActsForContract($contractId, $filters);
     }
 
-    public function createActForContract(int $contractId, int $organizationId, ContractPerformanceActDTO $actDTO): ContractPerformanceAct
+    public function createActForContract(int $contractId, int $organizationId, ContractPerformanceActDTO $actDTO, ?int $projectId = null): ContractPerformanceAct
     {
         // BUSINESS: Начало создания акта выполненных работ
         $this->logging->business('performance_act.creation.started', [
@@ -53,7 +59,7 @@ class ContractPerformanceActService
             'completed_works_count' => count($actDTO->completed_works ?? [])
         ]);
 
-        $contract = $this->getContractOrFail($contractId, $organizationId);
+        $contract = $this->getContractOrFail($contractId, $organizationId, $projectId);
 
         // Создаем акт со значением суммы по умолчанию (будет пересчитана на основе работ)
         $actData = $actDTO->toArray();
@@ -94,9 +100,9 @@ class ContractPerformanceActService
         return $act;
     }
 
-    public function getActById(int $actId, int $contractId, int $organizationId): ?ContractPerformanceAct
+    public function getActById(int $actId, int $contractId, int $organizationId, ?int $projectId = null): ?ContractPerformanceAct
     {
-        $this->getContractOrFail($contractId, $organizationId);
+        $this->getContractOrFail($contractId, $organizationId, $projectId);
         $act = $this->actRepository->find($actId);
         // Убедимся, что акт принадлежит указанному контракту
         if ($act && $act->contract_id === $contractId) {
@@ -105,7 +111,7 @@ class ContractPerformanceActService
         return null;
     }
 
-    public function updateAct(int $actId, int $contractId, int $organizationId, ContractPerformanceActDTO $actDTO): ContractPerformanceAct
+    public function updateAct(int $actId, int $contractId, int $organizationId, ContractPerformanceActDTO $actDTO, ?int $projectId = null): ContractPerformanceAct
     {
         // BUSINESS: Начало обновления акта
         $this->logging->business('performance_act.update.started', [
@@ -115,7 +121,7 @@ class ContractPerformanceActService
             'new_document_number' => $actDTO->act_document_number
         ]);
 
-        $this->getContractOrFail($contractId, $organizationId);
+        $this->getContractOrFail($contractId, $organizationId, $projectId);
         $act = $this->actRepository->find($actId);
 
         if (!$act || $act->contract_id !== $contractId) {
@@ -263,9 +269,9 @@ class ContractPerformanceActService
     /**
      * Получить доступные для включения в акт работы по контракту
      */
-    public function getAvailableWorksForAct(int $contractId, int $organizationId): array
+    public function getAvailableWorksForAct(int $contractId, int $organizationId, ?int $projectId = null): array
     {
-        $this->getContractOrFail($contractId, $organizationId);
+        $this->getContractOrFail($contractId, $organizationId, $projectId);
         
         // Получаем подтвержденные работы которые еще не включены в утвержденные акты
         $works = \App\Models\CompletedWork::where('contract_id', $contractId)
@@ -297,9 +303,9 @@ class ContractPerformanceActService
         })->where('completed_work_id', $workId)->exists();
     }
 
-    public function deleteAct(int $actId, int $contractId, int $organizationId): bool
+    public function deleteAct(int $actId, int $contractId, int $organizationId, ?int $projectId = null): bool
     {
-        $this->getContractOrFail($contractId, $organizationId);
+        $this->getContractOrFail($contractId, $organizationId, $projectId);
         $act = $this->actRepository->find($actId);
 
         if (!$act || $act->contract_id !== $contractId) {
@@ -369,9 +375,9 @@ class ContractPerformanceActService
         return $result;
     }
     
-    public function getTotalPerformedAmountForContract(int $contractId, int $organizationId): float
+    public function getTotalPerformedAmountForContract(int $contractId, int $organizationId, ?int $projectId = null): float
     {
-        $this->getContractOrFail($contractId, $organizationId);
+        $this->getContractOrFail($contractId, $organizationId, $projectId);
         return $this->actRepository->getTotalAmountForContract($contractId);
     }
 } 

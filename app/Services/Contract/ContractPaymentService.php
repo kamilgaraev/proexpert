@@ -24,12 +24,18 @@ class ContractPaymentService
         $this->contractRepository = $contractRepository;
     }
 
-    protected function getContractOrFail(int $contractId, int $organizationId): Contract
+    protected function getContractOrFail(int $contractId, int $organizationId, ?int $projectId = null): Contract
     {
         $contract = $this->contractRepository->find($contractId);
         if (!$contract || $contract->organization_id !== $organizationId) {
             throw new Exception('Contract not found or does not belong to the organization.');
         }
+        
+        // Если указан projectId, проверяем, что контракт принадлежит этому проекту
+        if ($projectId !== null && $contract->project_id !== $projectId) {
+            throw new Exception('Contract does not belong to the specified project.');
+        }
+        
         return $contract;
     }
 
@@ -52,15 +58,15 @@ class ContractPaymentService
         ]);
     }
 
-    public function getAllPaymentsForContract(int $contractId, int $organizationId, array $filters = []): Collection
+    public function getAllPaymentsForContract(int $contractId, int $organizationId, array $filters = [], ?int $projectId = null): Collection
     {
-        $this->getContractOrFail($contractId, $organizationId); 
+        $this->getContractOrFail($contractId, $organizationId, $projectId); 
         return $this->paymentRepository->getPaymentsForContract($contractId, $filters);
     }
 
-    public function createPaymentForContract(int $contractId, int $organizationId, ContractPaymentDTO $paymentDTO): ContractPayment
+    public function createPaymentForContract(int $contractId, int $organizationId, ContractPaymentDTO $paymentDTO, ?int $projectId = null): ContractPayment
     {
-        $contract = $this->getContractOrFail($contractId, $organizationId);
+        $contract = $this->getContractOrFail($contractId, $organizationId, $projectId);
         
         $paymentData = $paymentDTO->toArray();
         $paymentData['contract_id'] = $contract->id;
@@ -152,9 +158,9 @@ class ContractPaymentService
         return $result;
     }
     
-    public function getTotalPaidAmountForContract(int $contractId, int $organizationId): float
+    public function getTotalPaidAmountForContract(int $contractId, int $organizationId, ?int $projectId = null): float
     {
-        $this->getContractOrFail($contractId, $organizationId);
+        $this->getContractOrFail($contractId, $organizationId, $projectId);
         return $this->paymentRepository->getTotalPaidAmountForContract($contractId);
     }
 } 
