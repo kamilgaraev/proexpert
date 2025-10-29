@@ -38,7 +38,7 @@ class ContractSpecificationController extends Controller
         return true;
     }
 
-    public function index(Request $request, int $contractId): JsonResponse
+    public function index(Request $request, int $contract): JsonResponse
     {
         $organizationId = $request->user()?->current_organization_id;
         $projectId = $request->route('project');
@@ -49,7 +49,7 @@ class ContractSpecificationController extends Controller
 
         try {
             // Проверяем существование контракта (включая soft-deleted)
-            $contractExists = \App\Models\Contract::withTrashed()->find($contractId);
+            $contractExists = \App\Models\Contract::withTrashed()->find($contract);
             
             if (!$contractExists) {
                 return response()->json([
@@ -75,16 +75,16 @@ class ContractSpecificationController extends Controller
             }
             
             // Проверяем доступ к контракту
-            $contract = $this->contractService->getContractById($contractId, $organizationId);
+            $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
-            if (!$contract) {
+            if (!$contractModel) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Нет доступа к контракту'
                 ], Response::HTTP_FORBIDDEN);
             }
 
-            $specifications = $contract->specifications()->get();
+            $specifications = $contractModel->specifications()->get();
 
             return response()->json([
                 'success' => true,
@@ -99,7 +99,7 @@ class ContractSpecificationController extends Controller
         }
     }
 
-    public function store(StoreContractSpecificationRequest $request, int $contractId): JsonResponse
+    public function store(StoreContractSpecificationRequest $request, int $contract): JsonResponse
     {
         $organizationId = $request->user()?->current_organization_id;
         $projectId = $request->route('project');
@@ -110,15 +110,15 @@ class ContractSpecificationController extends Controller
 
         try {
             // Проверяем существование контракта (включая soft-deleted)
-            $contractExists = \App\Models\Contract::withTrashed()->find($contractId);
+            $contractExists = \App\Models\Contract::withTrashed()->find($contract);
             
             if (!$contractExists) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Контракт не найден в системе',
                     'debug' => [
-                        'contract_id' => $contractId,
-                        'contract_id_type' => gettype($contractId)
+                        'contract_id' => $contract,
+                        'contract_id_type' => gettype($contract)
                     ]
                 ], Response::HTTP_NOT_FOUND);
             }
@@ -129,7 +129,7 @@ class ContractSpecificationController extends Controller
                     'success' => false,
                     'message' => 'Контракт был удален',
                     'debug' => [
-                        'contract_id' => $contractId,
+                        'contract_id' => $contract,
                         'deleted_at' => $contractExists->deleted_at
                     ]
                 ], Response::HTTP_GONE);
@@ -141,7 +141,7 @@ class ContractSpecificationController extends Controller
                     'success' => false,
                     'message' => 'Контракт принадлежит другому проекту',
                     'debug' => [
-                        'contract_id' => $contractId,
+                        'contract_id' => $contract,
                         'contract_project_id' => $contractExists->project_id,
                         'requested_project_id' => $projectId
                     ]
@@ -149,15 +149,15 @@ class ContractSpecificationController extends Controller
             }
             
             // Теперь проверяем доступ через сервис
-            $contract = $this->contractService->getContractById($contractId, $organizationId);
+            $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
-            if (!$contract) {
+            if (!$contractModel) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Нет доступа к контракту',
                     'debug' => [
-                        'contract_id' => $contractId,
-                        'contract_organization_id' => $contractExists->organization_id,
+                        'contract_id' => $contract,
+                        'contract_organization_id' => $contractExists->organization_id ?? null,
                         'your_organization_id' => $organizationId
                     ]
                 ], Response::HTTP_FORBIDDEN);
@@ -166,7 +166,7 @@ class ContractSpecificationController extends Controller
             $specificationDTO = $request->toDto();
             $specification = $this->specificationService->create($specificationDTO);
 
-            $contract->specifications()->attach($specification->id, [
+            $contractModel->specifications()->attach($specification->id, [
                 'attached_at' => now()
             ]);
 
@@ -186,7 +186,7 @@ class ContractSpecificationController extends Controller
         }
     }
 
-    public function attach(AttachSpecificationRequest $request, int $contractId): JsonResponse
+    public function attach(AttachSpecificationRequest $request, int $contract): JsonResponse
     {
         $organizationId = $request->user()?->current_organization_id;
         $projectId = $request->route('project');
@@ -197,7 +197,7 @@ class ContractSpecificationController extends Controller
 
         try {
             // Проверяем существование контракта (включая soft-deleted)
-            $contractExists = \App\Models\Contract::withTrashed()->find($contractId);
+            $contractExists = \App\Models\Contract::withTrashed()->find($contract);
             
             if (!$contractExists) {
                 return response()->json([
@@ -223,7 +223,7 @@ class ContractSpecificationController extends Controller
             }
             
             // Проверяем доступ к контракту
-            $contract = $this->contractService->getContractById($contractId, $organizationId);
+            $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contract) {
                 return response()->json([
@@ -234,18 +234,18 @@ class ContractSpecificationController extends Controller
 
             $specificationId = $request->input('specification_id');
 
-            if ($contract->specifications()->where('specification_id', $specificationId)->exists()) {
+            if ($contractModel->specifications()->where('specification_id', $specificationId)->exists()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Спецификация уже привязана к контракту'
                 ], Response::HTTP_CONFLICT);
             }
 
-            $contract->specifications()->attach($specificationId, [
+            $contractModel->specifications()->attach($specificationId, [
                 'attached_at' => now()
             ]);
 
-            $specification = $contract->specifications()->find($specificationId);
+            $specification = $contractModel->specifications()->find($specificationId);
 
             return response()->json([
                 'success' => true,
@@ -261,7 +261,7 @@ class ContractSpecificationController extends Controller
         }
     }
 
-    public function destroy(Request $request, int $contractId, int $specificationId): JsonResponse
+    public function destroy(Request $request, int $contract, int $specification): JsonResponse
     {
         $organizationId = $request->user()?->current_organization_id;
         $projectId = $request->route('project');
@@ -272,7 +272,7 @@ class ContractSpecificationController extends Controller
 
         try {
             // Проверяем существование контракта (включая soft-deleted)
-            $contractExists = \App\Models\Contract::withTrashed()->find($contractId);
+            $contractExists = \App\Models\Contract::withTrashed()->find($contract);
             
             if (!$contractExists) {
                 return response()->json([
@@ -298,7 +298,7 @@ class ContractSpecificationController extends Controller
             }
             
             // Проверяем доступ к контракту
-            $contract = $this->contractService->getContractById($contractId, $organizationId);
+            $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contract) {
                 return response()->json([
@@ -307,14 +307,14 @@ class ContractSpecificationController extends Controller
                 ], Response::HTTP_FORBIDDEN);
             }
 
-            if (!$contract->specifications()->where('specification_id', $specificationId)->exists()) {
+            if (!$contractModel->specifications()->where('specification_id', $specification)->exists()) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Спецификация не привязана к контракту'
                 ], Response::HTTP_NOT_FOUND);
             }
 
-            $contract->specifications()->detach($specificationId);
+            $contractModel->specifications()->detach($specification);
 
             return response()->json([
                 'success' => true,
