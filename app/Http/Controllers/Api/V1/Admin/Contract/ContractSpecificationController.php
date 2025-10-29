@@ -38,10 +38,10 @@ class ContractSpecificationController extends Controller
         return true;
     }
 
-    public function index(Request $request, int $contract): JsonResponse
+    public function index(Request $request, int $project, int $contract): JsonResponse
     {
         $organizationId = $request->user()?->current_organization_id;
-        $projectId = $request->route('project');
+        $projectId = $project;
         
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
@@ -99,10 +99,10 @@ class ContractSpecificationController extends Controller
         }
     }
 
-    public function store(StoreContractSpecificationRequest $request, int $contract): JsonResponse
+    public function store(StoreContractSpecificationRequest $request, int $project, int $contract): JsonResponse
     {
         $organizationId = $request->user()?->current_organization_id;
-        $projectId = $request->route('project');
+        $projectId = $project;
         
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
@@ -186,10 +186,10 @@ class ContractSpecificationController extends Controller
         }
     }
 
-    public function attach(AttachSpecificationRequest $request, int $contract): JsonResponse
+    public function attach(AttachSpecificationRequest $request, int $project, int $contract): JsonResponse
     {
         $organizationId = $request->user()?->current_organization_id;
-        $projectId = $request->route('project');
+        $projectId = $project;
         
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
@@ -261,10 +261,10 @@ class ContractSpecificationController extends Controller
         }
     }
 
-    public function destroy(Request $request, int $contract, int $specification): JsonResponse
+    public function destroy(Request $request, int $project, int $contract, int $specification): JsonResponse
     {
         $organizationId = $request->user()?->current_organization_id;
-        $projectId = $request->route('project');
+        $projectId = $project;
         
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
