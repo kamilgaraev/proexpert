@@ -51,7 +51,12 @@ class ContractPerformanceActService
     public function getAllActsForContract(int $contractId, int $organizationId, array $filters = [], ?int $projectId = null): Collection
     {
         $this->getContractOrFail($contractId, $organizationId, $projectId); // Проверка, что контракт существует и принадлежит организации
-        return $this->actRepository->getActsForContract($contractId, $filters);
+        $acts = $this->actRepository->getActsForContract($contractId, $filters);
+        
+        // Загружаем связи для каждого акта
+        $acts->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
+        
+        return $acts;
     }
 
     public function createActForContract(int $contractId, int $organizationId, ContractPerformanceActDTO $actDTO, ?int $projectId = null): ContractPerformanceAct
@@ -86,6 +91,9 @@ class ContractPerformanceActService
             $this->saveActPdfFile($act, $actDTO->pdf_file, $organizationId);
         }
 
+        // Загружаем связи для возврата полных данных
+        $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
+
         // BUSINESS: Акт выполненных работ создан
         $this->logging->business('performance_act.created', [
             'act_id' => $act->id,
@@ -119,6 +127,8 @@ class ContractPerformanceActService
         $act = $this->actRepository->find($actId);
         // Убедимся, что акт принадлежит указанному контракту
         if ($act && $act->contract_id === $contractId) {
+            // Загружаем связи для возврата полных данных
+            $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
             return $act;
         }
         return null;
@@ -179,6 +189,9 @@ class ContractPerformanceActService
 
         // Всегда пересчитываем сумму акта на основе включенных работ
         $act->recalculateAmount();
+
+        // Загружаем связи для возврата полных данных
+        $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
 
         // BUSINESS: Акт успешно обновлен
         $this->logging->business('performance_act.updated', [
