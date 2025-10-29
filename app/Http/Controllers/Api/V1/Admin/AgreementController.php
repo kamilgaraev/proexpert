@@ -49,70 +49,67 @@ class AgreementController extends Controller
         return ['valid' => true];
     }
 
-    public function index(Request $request, int $contractId = null)
+    public function index(Request $request, int $project = null)
     {
         // Получаем project_id из URL (обязательный параметр для project-based маршрутов)
-        $projectId = $request->route('project');
+        $projectId = $project;
         $perPage = $request->query('per_page', 15);
         
         // TODO: Добавить фильтрацию по project_id в SupplementaryAgreementService
-        // Пока фильтруем по contractId если есть
-        if ($contractId) {
-            return $this->service->paginateByContract($contractId, $perPage);
-        }
+        // Пока возвращаем все для проекта
         return $this->service->paginate($perPage);
     }
 
-    public function store(StoreSupplementaryAgreementRequest $request)
+    public function store(StoreSupplementaryAgreementRequest $request, int $project)
     {
         $agreement = $this->service->create($request->toDto());
         return response()->json($agreement, Response::HTTP_CREATED);
     }
 
-    public function show(Request $request, int $id)
+    public function show(Request $request, int $project, int $agreement)
     {
-        $agreement = $this->service->getById($id);
+        $agreementModel = $this->service->getById($agreement);
         
-        $validation = $this->validateAgreementAccess($request, $agreement);
+        $validation = $this->validateAgreementAccess($request, $agreementModel);
         if (!$validation['valid']) {
             return response()->json(['message' => $validation['message']], Response::HTTP_NOT_FOUND);
         }
         
-        return $agreement;
+        return $agreementModel;
     }
 
-    public function update(UpdateSupplementaryAgreementRequest $request, int $id)
+    public function update(UpdateSupplementaryAgreementRequest $request, int $project, int $agreement)
     {
-        $agreement = $this->service->getById($id);
+        $agreementModel = $this->service->getById($agreement);
         
-        $validation = $this->validateAgreementAccess($request, $agreement);
+        $validation = $this->validateAgreementAccess($request, $agreementModel);
         if (!$validation['valid']) {
             return response()->json(['message' => $validation['message']], Response::HTTP_NOT_FOUND);
         }
         
-        $dto = $request->toDto($agreement->contract_id);
-        $this->service->update($id, $dto);
-        return response()->json($this->service->getById($id));
+        $dto = $request->toDto($agreementModel->contract_id);
+        $this->service->update($agreement, $dto);
+        return response()->json($this->service->getById($agreement));
     }
 
-    public function destroy(Request $request, int $id)
+    public function destroy(Request $request, int $project, int $agreement)
     {
-        $agreement = $this->service->getById($id);
+        $agreementModel = $this->service->getById($agreement);
         
-        $validation = $this->validateAgreementAccess($request, $agreement);
+        $validation = $this->validateAgreementAccess($request, $agreementModel);
         if (!$validation['valid']) {
             return response()->json(['message' => $validation['message']], Response::HTTP_NOT_FOUND);
         }
         
-        $this->service->delete($id);
+        $this->service->delete($agreement);
         return response()->json(null, Response::HTTP_NO_CONTENT);
     }
 
-    public function applyChanges(Request $request, int $id)
+    public function applyChanges(Request $request, int $project, int $agreement)
     {
-        $agreement = $this->service->getById($id);
+        $agreementModel = $this->service->getById($agreement);
         
-        $validation = $this->validateAgreementAccess($request, $agreement);
+        $validation = $this->validateAgreementAccess($request, $agreementModel);
         if (!$validation['valid']) {
             return response()->json([
                 'success' => false,
@@ -121,7 +118,7 @@ class AgreementController extends Controller
         }
         
         try {
-            $this->service->applyChangesToContract($id);
+            $this->service->applyChangesToContract($agreement);
             return response()->json([
                 'success' => true,
                 'message' => 'Изменения дополнительного соглашения успешно применены к контракту'
