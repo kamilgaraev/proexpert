@@ -25,6 +25,18 @@ class ContractSpecificationController extends Controller
         $this->contractService = $contractService;
         $this->specificationService = $specificationService;
     }
+    
+    /**
+     * Проверить, принадлежит ли контракт указанному проекту из URL
+     */
+    private function validateProjectContext(Request $request, $contract): bool
+    {
+        $projectId = $request->route('project');
+        if ($projectId && (int)$contract->project_id !== (int)$projectId) {
+            return false;
+        }
+        return true;
+    }
 
     public function index(Request $request, int $contractId): JsonResponse
     {
@@ -41,6 +53,14 @@ class ContractSpecificationController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Контракт не найден'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем, что контракт принадлежит указанному проекту
+            if (!$this->validateProjectContext($request, $contract)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не принадлежит указанному проекту'
                 ], Response::HTTP_NOT_FOUND);
             }
 
@@ -74,6 +94,14 @@ class ContractSpecificationController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Контракт не найден'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем, что контракт принадлежит указанному проекту
+            if (!$this->validateProjectContext($request, $contract)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не принадлежит указанному проекту'
                 ], Response::HTTP_NOT_FOUND);
             }
 
@@ -115,6 +143,14 @@ class ContractSpecificationController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Контракт не найден'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем, что контракт принадлежит указанному проекту
+            if (!$this->validateProjectContext($request, $contract)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не принадлежит указанному проекту'
                 ], Response::HTTP_NOT_FOUND);
             }
 
@@ -162,6 +198,14 @@ class ContractSpecificationController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Контракт не найден'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем, что контракт принадлежит указанному проекту
+            if (!$this->validateProjectContext($request, $contract)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не принадлежит указанному проекту'
                 ], Response::HTTP_NOT_FOUND);
             }
 

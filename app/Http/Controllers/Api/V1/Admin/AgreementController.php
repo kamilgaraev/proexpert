@@ -13,6 +13,41 @@ use Exception;
 class AgreementController extends Controller
 {
     public function __construct(private SupplementaryAgreementService $service) {}
+    
+    /**
+     * Проверить, принадлежит ли agreement контракту, который принадлежит указанному проекту и организации
+     */
+    private function validateAgreementAccess(Request $request, $agreement): array
+    {
+        $projectId = $request->route('project');
+        $organizationId = $request->user()?->current_organization_id;
+        
+        if (!$agreement) {
+            return ['valid' => false, 'message' => 'Дополнительное соглашение не найдено'];
+        }
+        
+        // Загружаем контракт, если еще не загружен
+        if (!$agreement->relationLoaded('contract')) {
+            $agreement->load('contract');
+        }
+        
+        $contract = $agreement->contract;
+        if (!$contract) {
+            return ['valid' => false, 'message' => 'Контракт не найден'];
+        }
+        
+        // Проверяем доступ к организации
+        if ($contract->organization_id !== $organizationId) {
+            return ['valid' => false, 'message' => 'Нет доступа к этому соглашению'];
+        }
+        
+        // Проверяем project context
+        if ($projectId && (int)$contract->project_id !== (int)$projectId) {
+            return ['valid' => false, 'message' => 'Соглашение не принадлежит указанному проекту'];
+        }
+        
+        return ['valid' => true];
+    }
 
     public function index(Request $request, int $contractId = null)
     {
@@ -34,34 +69,57 @@ class AgreementController extends Controller
         return response()->json($agreement, Response::HTTP_CREATED);
     }
 
-    public function show(int $id)
+    public function show(Request $request, int $id)
     {
         $agreement = $this->service->getById($id);
-        if (!$agreement) {
-            return response()->json(['message' => 'Not found'], Response::HTTP_NOT_FOUND);
+        
+        $validation = $this->validateAgreementAccess($request, $agreement);
+        if (!$validation['valid']) {
+            return response()->json(['message' => $validation['message']], Response::HTTP_NOT_FOUND);
         }
+        
         return $agreement;
     }
 
     public function update(UpdateSupplementaryAgreementRequest $request, int $id)
     {
         $agreement = $this->service->getById($id);
-        if (!$agreement) {
-            return response()->json(['message' => 'Not found'], Response::HTTP_NOT_FOUND);
+        
+        $validation = $this->validateAgreementAccess($request, $agreement);
+        if (!$validation['valid']) {
+            return response()->json(['message' => $validation['message']], Response::HTTP_NOT_FOUND);
         }
+        
         $dto = $request->toDto($agreement->contract_id);
         $this->service->update($id, $dto);
         return response()->json($this->service->getById($id));
     }
 
-    public function destroy(int $id)
+    public function destroy(Request $request, int $id)
     {
+        $agreement = $this->service->getById($id);
+        
+        $validation = $this->validateAgreementAccess($request, $agreement);
+        if (!$validation['valid']) {
+            return response()->json(['message' => $validation['message']], Response::HTTP_NOT_FOUND);
+        }
+        
         $this->service->delete($id);
         return response()->json(null, Response::HTTP_NO_CONTENT);
     }
 
-    public function applyChanges(int $id)
+    public function applyChanges(Request $request, int $id)
     {
+        $agreement = $this->service->getById($id);
+        
+        $validation = $this->validateAgreementAccess($request, $agreement);
+        if (!$validation['valid']) {
+            return response()->json([
+                'success' => false,
+                'message' => $validation['message']
+            ], Response::HTTP_NOT_FOUND);
+        }
+        
         try {
             $this->service->applyChangesToContract($id);
             return response()->json([

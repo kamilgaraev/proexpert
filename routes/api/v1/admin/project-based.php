@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\Admin\AgreementController;
 use App\Http\Controllers\Api\V1\Admin\ProjectContextController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPaymentController;
+use App\Http\Controllers\Api\V1\Admin\Contract\ContractSpecificationController;
 use App\Http\Controllers\Api\V1\Admin\EstimateController;
 use App\Http\Controllers\Api\V1\Admin\EstimateImportController;
 use App\Http\Controllers\Api\V1\Admin\EstimateSectionController;
@@ -73,6 +74,14 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
             Route::get('/{payment}', [ContractPaymentController::class, 'show']);
             Route::put('/{payment}', [ContractPaymentController::class, 'update']);
             Route::delete('/{payment}', [ContractPaymentController::class, 'destroy']);
+        });
+        
+        // Contract Specifications
+        Route::prefix('{contract}/specifications')->group(function () {
+            Route::get('/', [ContractSpecificationController::class, 'index']);
+            Route::post('/', [ContractSpecificationController::class, 'store']);
+            Route::post('/attach', [ContractSpecificationController::class, 'attach']);
+            Route::delete('/{specification}', [ContractSpecificationController::class, 'destroy']);
         });
     });
     
