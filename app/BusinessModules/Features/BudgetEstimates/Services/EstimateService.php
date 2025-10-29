@@ -19,19 +19,42 @@ class EstimateService
 
     public function create(array $data): Estimate
     {
-        return DB::transaction(function () use ($data) {
-            if (!isset($data['number'])) {
-                $data['number'] = $this->generateNumber($data['organization_id']);
+        // Retry mechanism for race condition protection
+        $maxAttempts = 3;
+        $attempt = 0;
+        
+        while ($attempt < $maxAttempts) {
+            try {
+                return DB::transaction(function () use ($data) {
+                    if (!isset($data['number'])) {
+                        $data['number'] = $this->generateNumber($data['organization_id']);
+                    }
+                    
+                    if (!isset($data['estimate_date'])) {
+                        $data['estimate_date'] = now();
+                    }
+                    
+                    $estimate = $this->repository->create($data);
+                    
+                    return $estimate;
+                });
+            } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+                $attempt++;
+                
+                // If this was the last attempt, rethrow the exception
+                if ($attempt >= $maxAttempts) {
+                    throw $e;
+                }
+                
+                // Small random delay to avoid thundering herd
+                usleep(rand(10000, 50000)); // 10-50ms
+                
+                // Clear the number to force regeneration on next attempt
+                unset($data['number']);
             }
-            
-            if (!isset($data['estimate_date'])) {
-                $data['estimate_date'] = now();
-            }
-            
-            $estimate = $this->repository->create($data);
-            
-            return $estimate;
-        });
+        }
+        
+        throw new \RuntimeException('Failed to create estimate after ' . $maxAttempts . ' attempts');
     }
 
     public function update(Estimate $estimate, array $data): Estimate
@@ -58,18 +81,24 @@ class EstimateService
 
     public function duplicate(Estimate $estimate, ?string $newNumber = null, ?string $newName = null): Estimate
     {
-        return DB::transaction(function () use ($estimate, $newNumber, $newName) {
-            $overrides = [
-                'number' => $newNumber ?? $this->generateNumber($estimate->organization_id),
-                'name' => $newName ?? $estimate->name . ' (копия)',
-                'status' => 'draft',
-                'version' => 1,
-                'parent_estimate_id' => null,
-                'approved_at' => null,
-                'approved_by_user_id' => null,
-            ];
-            
-            $newEstimate = $this->repository->duplicate($estimate, $overrides);
+        // Retry mechanism for race condition protection
+        $maxAttempts = 3;
+        $attempt = 0;
+        
+        while ($attempt < $maxAttempts) {
+            try {
+                return DB::transaction(function () use ($estimate, $newNumber, $newName) {
+                    $overrides = [
+                        'number' => $newNumber ?? $this->generateNumber($estimate->organization_id),
+                        'name' => $newName ?? $estimate->name . ' (копия)',
+                        'status' => 'draft',
+                        'version' => 1,
+                        'parent_estimate_id' => null,
+                        'approved_at' => null,
+                        'approved_by_user_id' => null,
+                    ];
+                    
+                    $newEstimate = $this->repository->duplicate($estimate, $overrides);
             
             $sections = $this->sectionRepository->getByEstimate($estimate->id);
             $sectionMapping = [];
@@ -115,7 +144,24 @@ class EstimateService
             }
             
             return $newEstimate;
-        });
+                });
+            } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+                $attempt++;
+                
+                // If this was the last attempt, rethrow the exception
+                if ($attempt >= $maxAttempts) {
+                    throw $e;
+                }
+                
+                // Small random delay to avoid thundering herd
+                usleep(rand(10000, 50000)); // 10-50ms
+                
+                // Clear newNumber to force regeneration on next attempt
+                $newNumber = null;
+            }
+        }
+        
+        throw new \RuntimeException('Failed to duplicate estimate after ' . $maxAttempts . ' attempts');
     }
 
     public function getById(int $id): ?Estimate
@@ -147,9 +193,12 @@ class EstimateService
             $orderBy = 'CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS UNSIGNED) DESC';
         }
         
+        // Use pessimistic locking to prevent race conditions
+        // lockForUpdate() will lock the row until the transaction commits
         $lastEstimate = Estimate::where('organization_id', $organizationId)
             ->where('number', 'like', $prefix . '%')
             ->orderByRaw($orderBy)
+            ->lockForUpdate()
             ->first();
         
         if ($lastEstimate) {

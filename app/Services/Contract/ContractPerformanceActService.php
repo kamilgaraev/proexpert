@@ -7,8 +7,11 @@ use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\DTOs\Contract\ContractPerformanceActDTO;
 use App\Models\ContractPerformanceAct;
 use App\Models\Contract;
+use App\Models\File;
 use App\Services\Logging\LoggingService;
+use App\Services\Storage\FileService;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Auth;
 use Exception;
 
 class ContractPerformanceActService
@@ -16,15 +19,18 @@ class ContractPerformanceActService
     protected ContractPerformanceActRepositoryInterface $actRepository;
     protected ContractRepositoryInterface $contractRepository;
     protected LoggingService $logging;
+    protected FileService $fileService;
 
     public function __construct(
         ContractPerformanceActRepositoryInterface $actRepository,
         ContractRepositoryInterface $contractRepository,
-        LoggingService $logging
+        LoggingService $logging,
+        FileService $fileService
     ) {
         $this->actRepository = $actRepository;
         $this->contractRepository = $contractRepository;
         $this->logging = $logging;
+        $this->fileService = $fileService;
     }
 
     protected function getContractOrFail(int $contractId, int $organizationId, ?int $projectId = null): Contract
@@ -68,11 +74,16 @@ class ContractPerformanceActService
 
         $act = $this->actRepository->create($actData);
 
-        // Синхронизируем выполненные работы (обязательно для создания акта)
+        // Синхронизируем выполненные работы (если есть)
         if (!empty($actDTO->completed_works)) {
             $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
             // Пересчитываем сумму акта на основе включенных работ
             $act->recalculateAmount();
+        }
+
+        // Сохраняем PDF файл (если загружен)
+        if ($actDTO->pdf_file) {
+            $this->saveActPdfFile($act, $actDTO->pdf_file, $organizationId);
         }
 
         // BUSINESS: Акт выполненных работ создан
@@ -82,7 +93,8 @@ class ContractPerformanceActService
             'organization_id' => $organizationId,
             'act_document_number' => $act->act_document_number,
             'final_amount' => $act->amount,
-            'included_works_count' => $act->completedWorks()->count()
+            'included_works_count' => $act->completedWorks()->count(),
+            'has_pdf_file' => $actDTO->pdf_file !== null
         ]);
 
         // AUDIT: Критичное финансовое событие - создание акта
@@ -94,6 +106,7 @@ class ContractPerformanceActService
             'amount' => $act->amount,
             'act_date' => $act->act_date,
             'is_approved' => $act->is_approved,
+            'has_pdf_file' => $actDTO->pdf_file !== null,
             'performed_by' => request()->user()?->id
         ]);
 
@@ -379,5 +392,67 @@ class ContractPerformanceActService
     {
         $this->getContractOrFail($contractId, $organizationId, $projectId);
         return $this->actRepository->getTotalAmountForContract($contractId);
+    }
+
+    /**
+     * Сохранить PDF файл акта
+     */
+    protected function saveActPdfFile(ContractPerformanceAct $act, $pdfFile, int $organizationId): ?File
+    {
+        try {
+            // Загружаем файл в S3
+            $organization = \App\Models\Organization::find($organizationId);
+            $directory = "acts/{$act->id}/documents";
+            $path = $this->fileService->upload($pdfFile, $directory, null, 'private', $organization);
+
+            if (!$path) {
+                $this->logging->technical('performance_act.pdf_upload.failed', [
+                    'act_id' => $act->id,
+                    'organization_id' => $organizationId,
+                    'reason' => 'FileService returned false'
+                ], 'error');
+                return null;
+            }
+
+            // Создаем запись в таблице files
+            $file = File::create([
+                'organization_id' => $organizationId,
+                'fileable_id' => $act->id,
+                'fileable_type' => ContractPerformanceAct::class,
+                'user_id' => Auth::id(),
+                'name' => basename($path),
+                'original_name' => $pdfFile->getClientOriginalName(),
+                'path' => $path,
+                'mime_type' => $pdfFile->getClientMimeType(),
+                'size' => $pdfFile->getSize(),
+                'disk' => 's3',
+                'type' => 'document',
+                'category' => 'act_scan',
+                'additional_info' => [
+                    'description' => 'Скан акта выполненных работ'
+                ]
+            ]);
+
+            // TECHNICAL: PDF файл успешно сохранен
+            $this->logging->technical('performance_act.pdf_uploaded', [
+                'act_id' => $act->id,
+                'file_id' => $file->id,
+                'file_size_mb' => round($file->size / 1024 / 1024, 2),
+                's3_path' => $path
+            ]);
+
+            return $file;
+
+        } catch (\Exception $e) {
+            // TECHNICAL: Ошибка при сохранении PDF
+            $this->logging->technical('performance_act.pdf_upload.exception', [
+                'act_id' => $act->id,
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+                'exception_class' => get_class($e)
+            ], 'error');
+
+            return null;
+        }
     }
 } 

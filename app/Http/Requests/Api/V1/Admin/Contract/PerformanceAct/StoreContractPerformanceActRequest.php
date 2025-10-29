@@ -24,12 +24,25 @@ class StoreContractPerformanceActRequest extends FormRequest
             'is_approved' => ['sometimes', 'boolean'],
             'approval_date' => ['nullable', 'date', 'after_or_equal:act_date'],
 
-            // Выполненные работы - ОБЯЗАТЕЛЬНЫ для создания акта
-            'completed_works' => ['required', 'array', 'min:1'],
+            // PDF файл акта (скан) - можно вместо ручного ввода работ
+            'pdf_file' => ['required_without:completed_works', 'file', 'mimes:pdf', 'max:10240'], // max 10MB
+
+            // Выполненные работы - можно вместо PDF файла
+            'completed_works' => ['required_without:pdf_file', 'array', 'min:1'],
             'completed_works.*.completed_work_id' => ['required', 'integer', 'exists:completed_works,id'],
             'completed_works.*.included_quantity' => ['required', 'numeric', 'min:0'],
             'completed_works.*.included_amount' => ['required', 'numeric', 'min:0'],
             'completed_works.*.notes' => ['nullable', 'string', 'max:500'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'pdf_file.required_without' => 'Необходимо либо загрузить PDF файл акта, либо добавить выполненные работы вручную',
+            'completed_works.required_without' => 'Необходимо либо добавить выполненные работы вручную, либо загрузить PDF файл акта',
+            'pdf_file.mimes' => 'Файл должен быть в формате PDF',
+            'pdf_file.max' => 'Размер файла не должен превышать 10 МБ',
         ];
     }
 
@@ -42,7 +55,8 @@ class StoreContractPerformanceActRequest extends FormRequest
             is_approved: $this->validated('is_approved', true),
             approval_date: $this->validated('approval_date'),
             completed_works: $this->validated('completed_works', []),
-            amount: 0 // Сумма будет рассчитана автоматически на основе работ
+            amount: 0, // Сумма будет рассчитана автоматически на основе работ
+            pdf_file: $this->file('pdf_file') // PDF файл акта (если загружен)
         );
     }
 } 

@@ -12,7 +12,8 @@ class ContractPerformanceActDTO
         public readonly bool $is_approved = true, // По умолчанию одобрен при создании, если не указано иное
         public readonly ?string $approval_date, // Y-m-d format, если is_approved = true
         public readonly array $completed_works = [], // Массив выполненных работ с количествами
-        public readonly float $amount = 0 // Сумма акта (рассчитывается автоматически)
+        public readonly float $amount = 0, // Сумма акта (рассчитывается автоматически)
+        public readonly mixed $pdf_file = null // PDF файл акта (UploadedFile или null)
     ) {}
 
     public function toArray(): array
