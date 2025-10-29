@@ -48,14 +48,22 @@ class ContractSpecificationController extends Controller
         }
 
         try {
-            // Проверяем существование контракта
-            $contractExists = \App\Models\Contract::find($contractId);
+            // Проверяем существование контракта (включая soft-deleted)
+            $contractExists = \App\Models\Contract::withTrashed()->find($contractId);
             
             if (!$contractExists) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Контракт не найден в системе'
                 ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем, не удален ли контракт
+            if ($contractExists->trashed()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт был удален'
+                ], Response::HTTP_GONE);
             }
             
             // Проверяем принадлежность проекту
@@ -101,14 +109,30 @@ class ContractSpecificationController extends Controller
         }
 
         try {
-            // Сначала проверим существование контракта без проверки доступа
-            $contractExists = \App\Models\Contract::find($contractId);
+            // Проверяем существование контракта (включая soft-deleted)
+            $contractExists = \App\Models\Contract::withTrashed()->find($contractId);
             
             if (!$contractExists) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Контракт не найден в системе'
+                    'message' => 'Контракт не найден в системе',
+                    'debug' => [
+                        'contract_id' => $contractId,
+                        'contract_id_type' => gettype($contractId)
+                    ]
                 ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем, не удален ли контракт
+            if ($contractExists->trashed()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт был удален',
+                    'debug' => [
+                        'contract_id' => $contractId,
+                        'deleted_at' => $contractExists->deleted_at
+                    ]
+                ], Response::HTTP_GONE);
             }
             
             // Проверяем принадлежность проекту ДО проверки организации
@@ -172,14 +196,22 @@ class ContractSpecificationController extends Controller
         }
 
         try {
-            // Проверяем существование контракта
-            $contractExists = \App\Models\Contract::find($contractId);
+            // Проверяем существование контракта (включая soft-deleted)
+            $contractExists = \App\Models\Contract::withTrashed()->find($contractId);
             
             if (!$contractExists) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Контракт не найден в системе'
                 ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем, не удален ли контракт
+            if ($contractExists->trashed()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт был удален'
+                ], Response::HTTP_GONE);
             }
             
             // Проверяем принадлежность проекту
@@ -239,14 +271,22 @@ class ContractSpecificationController extends Controller
         }
 
         try {
-            // Проверяем существование контракта
-            $contractExists = \App\Models\Contract::find($contractId);
+            // Проверяем существование контракта (включая soft-deleted)
+            $contractExists = \App\Models\Contract::withTrashed()->find($contractId);
             
             if (!$contractExists) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Контракт не найден в системе'
                 ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем, не удален ли контракт
+            if ($contractExists->trashed()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт был удален'
+                ], Response::HTTP_GONE);
             }
             
             // Проверяем принадлежность проекту
