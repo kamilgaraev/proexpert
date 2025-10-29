@@ -57,12 +57,12 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::delete('/{contract}', [ContractController::class, 'destroy']);
         
         // Contract Performance Acts
-        Route::prefix('{contract}/acts')->group(function () {
+        Route::prefix('{contract}/performance-acts')->group(function () {
             Route::get('/', [ContractPerformanceActController::class, 'index']);
             Route::post('/', [ContractPerformanceActController::class, 'store']);
-            Route::get('/{act}', [ContractPerformanceActController::class, 'show']);
-            Route::put('/{act}', [ContractPerformanceActController::class, 'update']);
-            Route::delete('/{act}', [ContractPerformanceActController::class, 'destroy']);
+            Route::get('/{performance_act}', [ContractPerformanceActController::class, 'show']);
+            Route::put('/{performance_act}', [ContractPerformanceActController::class, 'update']);
+            Route::delete('/{performance_act}', [ContractPerformanceActController::class, 'destroy']);
         });
         
         Route::get('/{contract}/available-works-for-acts', [ContractPerformanceActController::class, 'availableWorks']);
