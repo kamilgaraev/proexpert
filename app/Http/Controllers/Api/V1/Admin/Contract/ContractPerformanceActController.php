@@ -40,14 +40,14 @@ class ContractPerformanceActController extends Controller
     /**
      * Display a listing of the resource for a specific contract.
      */
-    public function index(Request $request, int $contractId)
+    public function index(Request $request, int $project, int $contract)
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
-        $projectId = $request->route('project'); // Получаем project ID из URL
+        $projectId = $project;
 
         try {
-            $acts = $this->actService->getAllActsForContract($contractId, $organizationId, [], $projectId);
+            $acts = $this->actService->getAllActsForContract($contract, $organizationId, [], $projectId);
             return new ContractPerformanceActCollection($acts);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to retrieve performance acts', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
@@ -57,15 +57,15 @@ class ContractPerformanceActController extends Controller
     /**
      * Store a newly created resource in storage for a specific contract.
      */
-    public function store(StoreContractPerformanceActRequest $request, int $contractId)
+    public function store(StoreContractPerformanceActRequest $request, int $project, int $contract)
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
-        $projectId = $request->route('project'); // Получаем project ID из URL
+        $projectId = $project;
 
         try {
             $actDTO = $request->toDto();
-            $act = $this->actService->createActForContract($contractId, $organizationId, $actDTO, $projectId);
+            $act = $this->actService->createActForContract($contract, $organizationId, $actDTO, $projectId);
             return (new ContractPerformanceActResource($act))
                     ->response()
                     ->setStatusCode(Response::HTTP_CREATED);
@@ -77,14 +77,14 @@ class ContractPerformanceActController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(Request $request, int $contractId, int $actId)
+    public function show(Request $request, int $project, int $contract, int $act)
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
-        $projectId = $request->route('project'); // Получаем project ID из URL
+        $projectId = $project;
 
         try {
-            $act = $this->actService->getActById($actId, $contractId, $organizationId, $projectId);
+            $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$act) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
@@ -102,14 +102,14 @@ class ContractPerformanceActController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(UpdateContractPerformanceActRequest $request, int $contractId, int $actId)
+    public function update(UpdateContractPerformanceActRequest $request, int $project, int $contract, int $act)
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
-        $projectId = $request->route('project'); // Получаем project ID из URL
+        $projectId = $project;
         
         try {
-            $existingAct = $this->actService->getActById($actId, $contractId, $organizationId, $projectId);
+            $existingAct = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$existingAct) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
@@ -119,8 +119,8 @@ class ContractPerformanceActController extends Controller
             }
             
             $actDTO = $request->toDto();
-            $act = $this->actService->updateAct($actId, $contractId, $organizationId, $actDTO, $projectId);
-            return new ContractPerformanceActResource($act);
+            $updatedAct = $this->actService->updateAct($act, $contract, $organizationId, $actDTO, $projectId);
+            return new ContractPerformanceActResource($updatedAct);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to update performance act', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
         }
@@ -129,14 +129,14 @@ class ContractPerformanceActController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(Request $request, int $contractId, int $actId)
+    public function destroy(Request $request, int $project, int $contract, int $act)
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
-        $projectId = $request->route('project'); // Получаем project ID из URL
+        $projectId = $project;
 
         try {
-            $existingAct = $this->actService->getActById($actId, $contractId, $organizationId, $projectId);
+            $existingAct = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$existingAct) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
@@ -145,7 +145,7 @@ class ContractPerformanceActController extends Controller
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
             
-            $this->actService->deleteAct($actId, $contractId, $organizationId, $projectId);
+            $this->actService->deleteAct($act, $contract, $organizationId, $projectId);
             return response()->json(null, Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to delete performance act', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
@@ -155,20 +155,20 @@ class ContractPerformanceActController extends Controller
     /**
      * Получить доступные работы для включения в акт
      */
-    public function availableWorks(Request $request, int $contractId)
+    public function availableWorks(Request $request, int $project, int $contract)
     {
         $projectContext = \App\Http\Middleware\ProjectContextMiddleware::getProjectContext($request);
-        $projectId = $request->route('project'); // Получаем project ID из URL
+        $projectId = $project;
         
-        $contract = \App\Models\Contract::find($contractId);
-        if (!$contract) {
+        $contractModel = \App\Models\Contract::find($contract);
+        if (!$contractModel) {
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
         
-        $organizationId = $contract->organization_id;
+        $organizationId = $contractModel->organization_id;
 
         try {
-            $works = $this->actService->getAvailableWorksForAct($contractId, $organizationId, $projectId);
+            $works = $this->actService->getAvailableWorksForAct($contract, $organizationId, $projectId);
             return response()->json(['data' => $works]);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to retrieve available works', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
@@ -178,18 +178,18 @@ class ContractPerformanceActController extends Controller
     /**
      * Экспорт акта в PDF
      */
-    public function exportPdf(Request $request, int $contractId, int $actId)
+    public function exportPdf(Request $request, int $project, int $contract, int $act)
     {
         try {
             $user = $request->user();
             $organizationId = $user->organization_id ?? $user->current_organization_id;
-            $projectId = $request->route('project'); // Получаем project ID из URL
+            $projectId = $project;
 
             if (!$organizationId) {
                 return response()->json(['error' => 'Не определена организация пользователя'], 400);
             }
 
-            $act = $this->actService->getActById($actId, $contractId, $organizationId, $projectId);
+            $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$act) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
@@ -220,14 +220,14 @@ class ContractPerformanceActController extends Controller
             $pdf = Pdf::loadView('reports.act-report-pdf', $data);
             $pdf->setPaper('A4', 'portrait');
 
-            $filename = "act_" . preg_replace('/[^A-Za-z0-9\-_]/', '_', $act->act_document_number) . "_" . now()->format('Y-m-d') . ".pdf";
+            $filename = "act_" . preg_replace('/[^A-Za-z0-9\-_]/', '_', $actModel->act_document_number) . "_" . now()->format('Y-m-d') . ".pdf";
 
             return $pdf->download($filename);
 
         } catch (Exception $e) {
             Log::error('Ошибка экспорта PDF акта', [
-                'contract_id' => $contractId,
-                'act_id' => $actId,
+                'contract_id' => $contract,
+                'act_id' => $act,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
@@ -242,27 +242,27 @@ class ContractPerformanceActController extends Controller
     /**
      * Экспорт акта в Excel
      */
-    public function exportExcel(Request $request, int $contractId, int $actId)
+    public function exportExcel(Request $request, int $project, int $contract, int $act)
     {
         try {
             $user = $request->user();
             $organizationId = $user->organization_id ?? $user->current_organization_id;
-            $projectId = $request->route('project'); // Получаем project ID из URL
+            $projectId = $project;
 
             if (!$organizationId) {
                 return response()->json(['error' => 'Не определена организация пользователя'], 400);
             }
 
-            $act = $this->actService->getActById($actId, $contractId, $organizationId, $projectId);
-            if (!$act) {
+            $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
+            if (!$actModel) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
             
-            if (!$this->validateProjectContext($request, $act)) {
+            if (!$this->validateProjectContext($request, $actModel)) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
 
-            $act->load([
+            $actModel->load([
                 'contract.project', 
                 'contract.contractor',
                 'completedWorks.workType',
@@ -282,7 +282,7 @@ class ContractPerformanceActController extends Controller
             ];
 
             $exportData = [];
-            $completedWorks = $act->completedWorks ?? collect();
+            $completedWorks = $actModel->completedWorks ?? collect();
             
             foreach ($completedWorks as $work) {
                 $materials = '';
@@ -324,14 +324,14 @@ class ContractPerformanceActController extends Controller
                 ];
             }
 
-            $filename = "act_" . preg_replace('/[^A-Za-z0-9\-_]/', '_', $act->act_document_number) . "_" . now()->format('Y-m-d') . ".xlsx";
+            $filename = "act_" . preg_replace('/[^A-Za-z0-9\-_]/', '_', $actModel->act_document_number) . "_" . now()->format('Y-m-d') . ".xlsx";
 
             return $this->excelExporter->streamDownload($filename, $headers, $exportData);
 
         } catch (Exception $e) {
             Log::error('Ошибка экспорта Excel акта', [
-                'contract_id' => $contractId,
-                'act_id' => $actId,
+                'contract_id' => $contract,
+                'act_id' => $act,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);

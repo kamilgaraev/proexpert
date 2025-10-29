@@ -33,29 +33,29 @@ class ContractPaymentController extends Controller
         return true;
     }
 
-    public function index(Request $request, int $contractId)
+    public function index(Request $request, int $project, int $contract)
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
-        $projectId = $request->route('project'); // Получаем project ID из URL
+        $projectId = $project;
 
         try {
-            $payments = $this->paymentService->getAllPaymentsForContract($contractId, $organizationId, [], $projectId);
+            $payments = $this->paymentService->getAllPaymentsForContract($contract, $organizationId, [], $projectId);
             return new ContractPaymentCollection($payments);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to retrieve payments', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
         }
     }
 
-    public function store(StoreContractPaymentRequest $request, int $contractId)
+    public function store(StoreContractPaymentRequest $request, int $project, int $contract)
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
-        $projectId = $request->route('project'); // Получаем project ID из URL
+        $projectId = $project;
 
         try {
             $paymentDTO = $request->toDto();
-            $payment = $this->paymentService->createPaymentForContract($contractId, $organizationId, $paymentDTO, $projectId);
+            $payment = $this->paymentService->createPaymentForContract($contract, $organizationId, $paymentDTO, $projectId);
             return (new ContractPaymentResource($payment))
                     ->response()
                     ->setStatusCode(Response::HTTP_CREATED);
