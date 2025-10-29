@@ -64,14 +64,14 @@ class ContractPaymentController extends Controller
         }
     }
 
-    public function show(Request $request, ContractPayment $payment)
+    public function show(Request $request, int $project, int $contract, ContractPayment $payment)
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
 
         try {
-            $contract = $payment->contract;
-            if (!$contract || $contract->organization_id !== $organizationId) {
+            $contractModel = $payment->contract;
+            if (!$contractModel || $contractModel->organization_id !== $organizationId) {
                 return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
             }
             
@@ -85,14 +85,14 @@ class ContractPaymentController extends Controller
         }
     }
 
-    public function update(UpdateContractPaymentRequest $request, ContractPayment $payment)
+    public function update(UpdateContractPaymentRequest $request, int $project, int $contract, ContractPayment $payment)
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
         
         try {
-            $contract = $payment->contract;
-            if (!$contract || $contract->organization_id !== $organizationId) {
+            $contractModel = $payment->contract;
+            if (!$contractModel || $contractModel->organization_id !== $organizationId) {
                 return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
             }
             
@@ -108,14 +108,14 @@ class ContractPaymentController extends Controller
         }
     }
 
-    public function destroy(Request $request, ContractPayment $payment)
+    public function destroy(Request $request, int $project, int $contract, ContractPayment $payment)
     {
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
 
         try {
-            $contract = $payment->contract;
-            if (!$contract || $contract->organization_id !== $organizationId) {
+            $contractModel = $payment->contract;
+            if (!$contractModel || $contractModel->organization_id !== $organizationId) {
                 return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
             }
             
