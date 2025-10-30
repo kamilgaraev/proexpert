@@ -47,7 +47,7 @@ class ContractResource extends JsonResource
             'date' => $this->date,
             'subject' => $this->subject,
             'work_type_category' => $this->work_type_category?->value,
-            'work_type_category_label' => $this->work_type_category?->name,
+            'work_type_category_label' => $this->work_type_category?->label(),
             'payment_terms' => $this->payment_terms,
             'base_amount' => $baseTotalAmount,
             'total_amount' => $effectiveTotalAmount,

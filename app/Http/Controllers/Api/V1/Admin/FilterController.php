@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Models\Contractor;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractTypeEnum;
+use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -37,6 +38,10 @@ class FilterController extends Controller
                 ['value' => ContractTypeEnum::AGREEMENT->value, 'label' => 'Соглашение'],
                 ['value' => ContractTypeEnum::SPECIFICATION->value, 'label' => 'Спецификация'],
             ],
+            'work_type_categories' => array_map(
+                fn($case) => ['value' => $case->value, 'label' => $case->label()],
+                ContractWorkTypeCategoryEnum::cases()
+            ),
             'projects' => Project::where('organization_id', $organizationId)
                 ->select('id', 'name')
                 ->orderBy('name')

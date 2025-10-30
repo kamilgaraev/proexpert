@@ -14,4 +14,9 @@ enum ContractWorkTypeCategoryEnum: string
     case SERVICES = 'services'; // Услуги
     case RENT = 'rent'; // Аренда
     case OTHER = 'other'; // Прочие
+
+    public function label(): string
+    {
+        return __('contract.work_type_category.' . $this->value);
+    }
 } 
