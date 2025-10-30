@@ -30,7 +30,26 @@ class SupplementaryAgreementService
 
     public function create(SupplementaryAgreementDTO $dto): SupplementaryAgreement
     {
-        return $this->repository->create($dto->toArray());
+        $agreement = $this->repository->create($dto->toArray());
+        
+        // Загружаем контракт для создания события
+        $contract = $agreement->fresh('contract')->contract;
+        
+        // Создаем событие истории, если контракт использует Event Sourcing
+        if ($contract && $contract->usesEventSourcing()) {
+            try {
+                $this->getStateEventService()->createSupplementaryAgreementEvent($contract, $agreement);
+            } catch (Exception $e) {
+                // Не критично, если событие не создалось - логируем и продолжаем
+                \Illuminate\Support\Facades\Log::warning('Failed to create supplementary agreement event', [
+                    'agreement_id' => $agreement->id,
+                    'contract_id' => $contract->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+        
+        return $agreement;
     }
 
     public function update(int $id, SupplementaryAgreementDTO $dto): bool

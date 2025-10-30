@@ -294,11 +294,25 @@ class ContractStateEventController extends Controller
             case 'created':
                 return "Создание договора на сумму {$delta} руб.";
             case 'amended':
+                $agreementNumber = $event->metadata['agreement_number'] ?? null;
+                if ($agreementNumber) {
+                    return "Создание дополнительного соглашения №{$agreementNumber} на сумму {$delta} руб.";
+                }
                 return "Изменение договора: +{$delta} руб.";
             case 'superseded':
                 return "Аннулирование предыдущего изменения: {$delta} руб.";
             case 'cancelled':
                 return "Отмена: {$delta} руб.";
+            case 'supplementary_agreement_created':
+                $agreementNumber = $event->metadata['agreement_number'] ?? null;
+                if ($agreementNumber) {
+                    return "Создание дополнительного соглашения №{$agreementNumber} на сумму {$delta} руб.";
+                }
+                return "Создание дополнительного соглашения на сумму {$delta} руб.";
+            case 'payment_created':
+                $paymentType = $event->metadata['payment_type'] ?? null;
+                $paymentTypeLabel = $paymentType === 'advance' ? 'Авансовый' : 'Обычный';
+                return "Создание {$paymentTypeLabel} платежа на сумму {$delta} руб.";
             default:
                 return "Событие типа {$type}";
         }

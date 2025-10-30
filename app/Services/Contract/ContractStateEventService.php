@@ -6,6 +6,7 @@ use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
 use App\Models\Contract;
 use App\Models\ContractStateEvent;
 use App\Models\SupplementaryAgreement;
+use App\Models\ContractPayment;
 use App\Enums\Contract\ContractStateEventTypeEnum;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
@@ -186,6 +187,66 @@ class ContractStateEventService
             }
 
             return $events;
+        });
+    }
+
+    /**
+     * Создать событие для дополнительного соглашения
+     */
+    public function createSupplementaryAgreementEvent(
+        Contract $contract,
+        SupplementaryAgreement $agreement
+    ): ContractStateEvent {
+        return DB::transaction(function () use ($contract, $agreement) {
+            $data = [
+                'contract_id' => $contract->id,
+                'event_type' => ContractStateEventTypeEnum::SUPPLEMENTARY_AGREEMENT_CREATED,
+                'triggered_by_type' => SupplementaryAgreement::class,
+                'triggered_by_id' => $agreement->id,
+                'specification_id' => null,
+                'amount_delta' => $agreement->change_amount ?? 0,
+                'effective_from' => $agreement->agreement_date ?? now(),
+                'metadata' => [
+                    'agreement_id' => $agreement->id,
+                    'agreement_number' => $agreement->number,
+                    'change_amount' => $agreement->change_amount,
+                    'subject_changes' => $agreement->subject_changes ?? [],
+                ],
+                'created_by_user_id' => Auth::id(),
+            ];
+
+            return $this->eventRepository->createEvent($data);
+        });
+    }
+
+    /**
+     * Создать событие для платежа
+     */
+    public function createPaymentEvent(
+        Contract $contract,
+        $payment
+    ): ContractStateEvent {
+        return DB::transaction(function () use ($contract, $payment) {
+            $paymentType = get_class($payment);
+            
+            $data = [
+                'contract_id' => $contract->id,
+                'event_type' => ContractStateEventTypeEnum::PAYMENT_CREATED,
+                'triggered_by_type' => $paymentType,
+                'triggered_by_id' => $payment->id,
+                'specification_id' => null,
+                'amount_delta' => $payment->amount ?? 0,
+                'effective_from' => $payment->payment_date ?? now(),
+                'metadata' => [
+                    'payment_id' => $payment->id,
+                    'payment_type' => $payment->payment_type ?? null,
+                    'amount' => $payment->amount,
+                    'description' => $payment->description ?? null,
+                ],
+                'created_by_user_id' => Auth::id(),
+            ];
+
+            return $this->eventRepository->createEvent($data);
         });
     }
 

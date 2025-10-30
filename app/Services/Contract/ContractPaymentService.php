@@ -8,6 +8,7 @@ use App\DTOs\Contract\ContractPaymentDTO;
 use App\Models\ContractPayment;
 use App\Models\Contract;
 use App\Enums\Contract\ContractPaymentTypeEnum;
+use App\Services\Contract\ContractStateEventService;
 use Illuminate\Support\Collection;
 use Exception;
 
@@ -15,6 +16,7 @@ class ContractPaymentService
 {
     protected ContractPaymentRepositoryInterface $paymentRepository;
     protected ContractRepositoryInterface $contractRepository;
+    protected ?ContractStateEventService $stateEventService = null;
 
     public function __construct(
         ContractPaymentRepositoryInterface $paymentRepository,
@@ -22,6 +24,17 @@ class ContractPaymentService
     ) {
         $this->paymentRepository = $paymentRepository;
         $this->contractRepository = $contractRepository;
+    }
+
+    /**
+     * Получить сервис для работы с событиями состояния договора (lazy loading)
+     */
+    protected function getStateEventService(): ContractStateEventService
+    {
+        if ($this->stateEventService === null) {
+            $this->stateEventService = app(ContractStateEventService::class);
+        }
+        return $this->stateEventService;
     }
 
     protected function getContractOrFail(int $contractId, int $organizationId, ?int $projectId = null): Contract
@@ -76,6 +89,20 @@ class ContractPaymentService
         // Если это авансовый платеж - обновляем actual_advance_amount
         if ($paymentDTO->payment_type === ContractPaymentTypeEnum::ADVANCE) {
             $this->updateActualAdvanceAmount($contractId);
+        }
+
+        // Создаем событие истории, если контракт использует Event Sourcing
+        if ($contract->usesEventSourcing()) {
+            try {
+                $this->getStateEventService()->createPaymentEvent($contract, $payment);
+            } catch (Exception $e) {
+                // Не критично, если событие не создалось - логируем и продолжаем
+                \Illuminate\Support\Facades\Log::warning('Failed to create payment event', [
+                    'payment_id' => $payment->id,
+                    'contract_id' => $contract->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
         }
 
         return $payment;
