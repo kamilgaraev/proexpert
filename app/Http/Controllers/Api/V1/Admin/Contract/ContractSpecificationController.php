@@ -208,39 +208,48 @@ class ContractSpecificationController extends Controller
                     // Получаем текущую сумму контракта ДО привязки спецификации
                     $oldContractAmount = $contractModel->total_amount ?? 0;
                     
-                    // Обновляем сумму контракта на сумму спецификации (если нужно)
-                    // НО! Мы не должны менять сумму контракта автоматически!
-                    // amount_delta должен быть разницей между новой суммой контракта и старой
-                    // Если спецификация меняет сумму контракта, то это должно быть сделано вручную через обновление контракта
+                    // ВАЖНО: Привязка спецификации НЕ меняет сумму контракта автоматически!
+                    // Спецификация - это просто документ, привязанный к контракту.
+                    // Если сумма контракта не изменилась, то amount_delta должен быть 0.
+                    // Событие AMENDED создается только если сумма контракта реально изменилась.
                     
-                    // ВАЖНО: amount_delta должен быть разницей между новой и старой суммой контракта
-                    // Если контракт не обновляется автоматически при привязке спецификации,
-                    // то amount_delta должен быть 0, или сумма контракта должна быть обновлена перед созданием события
-                    
-                    // Получаем свежую модель контракта после всех изменений
+                    // Обновляем модель контракта (после привязки спецификации сумма не должна измениться)
                     $contractModel->refresh();
                     $newContractAmount = $contractModel->total_amount ?? 0;
                     
                     // Рассчитываем дельту изменения суммы контракта
                     $amountDelta = $newContractAmount - $oldContractAmount;
                     
-                    $this->getStateEventService()->createAmendedEvent(
-                        $contractModel,
-                        $specification->id,
-                        $amountDelta, // Используем разницу, а не абсолютное значение
-                        $contractModel,
-                        now(),
-                        [
-                            'specification_number' => $specification->number,
-                            'specification_amount' => $specification->total_amount ?? 0,
-                            'reason' => 'Прикреплена новая спецификация',
-                            'old_contract_amount' => $oldContractAmount,
-                            'new_contract_amount' => $newContractAmount,
-                        ]
-                    );
+                    // Создаем событие ТОЛЬКО если сумма контракта реально изменилась
+                    // Если сумма не изменилась (что нормально для привязки спецификации),
+                    // то событие не создаем или создаем с amount_delta = 0
+                    if (abs($amountDelta) > 0.01) {
+                        $this->getStateEventService()->createAmendedEvent(
+                            $contractModel,
+                            $specification->id,
+                            $amountDelta, // Используем разницу, а не абсолютное значение
+                            $contractModel,
+                            now(),
+                            [
+                                'specification_number' => $specification->number,
+                                'specification_amount' => $specification->total_amount ?? 0,
+                                'reason' => 'Прикреплена новая спецификация',
+                                'old_contract_amount' => $oldContractAmount,
+                                'new_contract_amount' => $newContractAmount,
+                            ]
+                        );
 
-                    // Обновляем материализованное представление
-                    $this->getStateCalculatorService()->recalculateContractState($contractModel);
+                        // Обновляем материализованное представление
+                        $this->getStateCalculatorService()->recalculateContractState($contractModel);
+                    } else {
+                        // Если сумма контракта не изменилась, логируем это для отладки
+                        \Illuminate\Support\Facades\Log::info('Specification attached but contract amount unchanged', [
+                            'contract_id' => $contractModel->id,
+                            'specification_id' => $specification->id,
+                            'contract_amount' => $newContractAmount,
+                            'specification_amount' => $specification->total_amount ?? 0,
+                        ]);
+                    }
                 } catch (Exception $e) {
                     Log::warning('Failed to create state event for specification', [
                         'contract_id' => $contractModel->id,
@@ -341,31 +350,45 @@ class ContractSpecificationController extends Controller
                     // Получаем текущую сумму контракта ДО привязки спецификации
                     $oldContractAmount = $contractModel->total_amount ?? 0;
                     
-                    // Обновляем модель контракта после привязки спецификации
+                    // ВАЖНО: Привязка спецификации НЕ меняет сумму контракта автоматически!
+                    // Спецификация - это просто документ, привязанный к контракту.
+                    // Если сумма контракта не изменилась, то amount_delta должен быть 0.
+                    
+                    // Обновляем модель контракта (после привязки спецификации сумма не должна измениться)
                     $contractModel->refresh();
                     $newContractAmount = $contractModel->total_amount ?? 0;
                     
                     // Рассчитываем дельту изменения суммы контракта
-                    // amount_delta = новая_сумма_контракта - старая_сумма_контракта
                     $amountDelta = $newContractAmount - $oldContractAmount;
                     
-                    $this->getStateEventService()->createAmendedEvent(
-                        $contractModel,
-                        $specificationId,
-                        $amountDelta,
-                        $contractModel,
-                        now(),
-                        [
-                            'specification_number' => $specification->number,
-                            'specification_amount' => $specification->total_amount ?? 0,
-                            'reason' => 'Прикреплена существующая спецификация',
-                            'old_contract_amount' => $oldContractAmount,
-                            'new_contract_amount' => $newContractAmount,
-                        ]
-                    );
+                    // Создаем событие ТОЛЬКО если сумма контракта реально изменилась
+                    if (abs($amountDelta) > 0.01) {
+                        $this->getStateEventService()->createAmendedEvent(
+                            $contractModel,
+                            $specificationId,
+                            $amountDelta,
+                            $contractModel,
+                            now(),
+                            [
+                                'specification_number' => $specification->number,
+                                'specification_amount' => $specification->total_amount ?? 0,
+                                'reason' => 'Прикреплена существующая спецификация',
+                                'old_contract_amount' => $oldContractAmount,
+                                'new_contract_amount' => $newContractAmount,
+                            ]
+                        );
 
-                    // Обновляем материализованное представление
-                    $this->getStateCalculatorService()->recalculateContractState($contractModel);
+                        // Обновляем материализованное представление
+                        $this->getStateCalculatorService()->recalculateContractState($contractModel);
+                    } else {
+                        // Если сумма контракта не изменилась, логируем это для отладки
+                        \Illuminate\Support\Facades\Log::info('Specification attached but contract amount unchanged', [
+                            'contract_id' => $contractModel->id,
+                            'specification_id' => $specificationId,
+                            'contract_amount' => $newContractAmount,
+                            'specification_amount' => $specification->total_amount ?? 0,
+                        ]);
+                    }
                 } catch (Exception $e) {
                     Log::warning('Failed to create state event for attached specification', [
                         'contract_id' => $contractModel->id,
