@@ -216,7 +216,9 @@ class ContractController extends Controller
         // Проверка для подрядчика: может видеть только свои контракты
         $projectContext = ProjectContextMiddleware::getProjectContext($request);
         if ($projectContext && in_array($projectContext->role->value, ['contractor', 'subcontractor'])) {
-            $contractor = \App\Models\Contractor::where('organization_id', $organizationId)
+            // Для подрядчика: Contractor находится в базе организации ЗАКАЗЧИКА (contract_organization_id)
+            // с source_organization_id = организация подрядчика (projectContext->organizationId)
+            $contractor = \App\Models\Contractor::where('organization_id', $contractData->organization_id)
                 ->where('source_organization_id', $projectContext->organizationId)
                 ->first();
             
@@ -225,6 +227,16 @@ class ContractController extends Controller
                     'contract_id' => $contract,
                     'contract_contractor_id' => $contractData->contractor_id,
                     'user_contractor_id' => $contractor->id,
+                ]);
+                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Если подрядчик не найден - значит контракт не его
+            if (!$contractor) {
+                Log::warning('Contractor not found for contract', [
+                    'contract_id' => $contract,
+                    'contract_organization_id' => $contractData->organization_id,
+                    'contractor_source_org_id' => $projectContext->organizationId,
                 ]);
                 return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
             }
