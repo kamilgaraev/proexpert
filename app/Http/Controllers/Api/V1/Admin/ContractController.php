@@ -95,6 +95,15 @@ class ContractController extends Controller
         $projectContext = ProjectContextMiddleware::getProjectContext($request);
         $project = ProjectContextMiddleware::getProject($request);
         
+        // Fallback: если проект не загружен из middleware, загружаем напрямую
+        if ($projectId && !$project) {
+            $project = \App\Models\Project::find($projectId);
+            Log::warning('Project not found in request attributes, loaded directly', [
+                'project_id' => $projectId,
+                'found' => $project !== null
+            ]);
+        }
+        
         if ($projectId && $project) {
             // Получаем список всех организаций-участников проекта (owner + активные participants)
             $projectOrgIds = [$project->organization_id]; // owner
@@ -111,7 +120,16 @@ class ContractController extends Controller
                 'project_id' => $projectId,
                 'current_organization_id' => $organizationId,
                 'project_organization_ids' => $projectOrgIds,
-                'is_current_org_in_project' => in_array($organizationId, $projectOrgIds)
+                'is_current_org_in_project' => in_array($organizationId, $projectOrgIds),
+                'contracts_in_project_orgs' => \App\Models\Contract::whereIn('organization_id', $projectOrgIds)
+                    ->where('project_id', $projectId)
+                    ->count()
+            ]);
+        } else {
+            Log::warning('Project-based filter NOT applied', [
+                'project_id' => $projectId,
+                'project_from_middleware' => $project !== null,
+                'project_context_exists' => $projectContext !== null
             ]);
         }
         
