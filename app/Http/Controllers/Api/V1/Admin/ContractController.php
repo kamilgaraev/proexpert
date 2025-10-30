@@ -56,7 +56,6 @@ class ContractController extends Controller
         
         // Расширенная фильтрация
         $filters = $request->only([
-            'contractor_id', 
             'status', 
             'type', 
             'number', 
@@ -131,6 +130,25 @@ class ContractController extends Controller
                 'project_from_middleware' => $project !== null,
                 'project_context_exists' => $projectContext !== null
             ]);
+        }
+        
+        // Для project-based маршрутов: contractor_id из request применяем только если он явно передан
+        // (для обычных маршрутов или когда нужно отфильтровать по конкретному подрядчику)
+        // Но для project-based маршрутов без явного указания показываем контракты всех подрядчиков
+        if ($projectId) {
+            // Если contractor_id передан в request явно - используем его
+            if ($request->has('contractor_id')) {
+                $filters['contractor_id'] = $request->input('contractor_id');
+                Log::info('Explicit contractor_id filter from request', [
+                    'contractor_id' => $filters['contractor_id']
+                ]);
+            }
+            // Если не передан - не устанавливаем, показываем все контракты проекта
+        } else {
+            // Для не project-based маршрутов берем contractor_id из request как обычно
+            if ($request->has('contractor_id')) {
+                $filters['contractor_id'] = $request->input('contractor_id');
+            }
         }
         
         Log::info('Contracts index called', [
