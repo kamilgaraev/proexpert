@@ -79,11 +79,22 @@ class ContractService
             $contractorId = $contractDTO->contractor_id;
             
             if (in_array($projectContext->roleConfig->role->value, ['contractor', 'subcontractor'])) {
-                // Находим или создаём Contractor для текущей организации
+                // Для подрядчика: organization_id контракта должен быть организация ЗАКАЗЧИКА (владелец проекта)
+                // Contractor должен быть в базе организации заказчика, а не подрядчика
+                $project = Project::find($contractDTO->project_id);
+                if (!$project) {
+                    throw new Exception('Проект не найден');
+                }
+                
+                // Организация заказчика = владелец проекта
+                $customerOrganizationId = $project->organization_id;
+                
+                // Находим или создаём Contractor в базе организации ЗАКАЗЧИКА
+                // source_organization_id = организация подрядчика (текущий пользователь)
                 $contractor = \App\Models\Contractor::firstOrCreate(
                     [
-                        'organization_id' => $organizationId,
-                        'source_organization_id' => $projectContext->organizationId,
+                        'organization_id' => $customerOrganizationId,  // Организация заказчика
+                        'source_organization_id' => $projectContext->organizationId,  // Организация подрядчика
                     ],
                     [
                         'name' => $projectContext->organizationName ?? 'Подрядчик',
@@ -99,6 +110,9 @@ class ContractService
                 
                 // Auto-fill правильным contractor_id
                 $contractorId = $contractor->id;
+                
+                // Для подрядчика: organization_id контракта = организация заказчика
+                $organizationId = $customerOrganizationId;
                 
                 // Создаем новый DTO с исправленным contractor_id
                 $contractDTO = new ContractDTO(
