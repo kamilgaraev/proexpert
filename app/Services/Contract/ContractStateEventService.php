@@ -257,7 +257,15 @@ class ContractStateEventService
     {
         $activeEvents = $this->eventRepository->findActiveEvents($contract->id, ['specification', 'createdBy']);
 
-        $totalAmount = $activeEvents->sum('amount_delta');
+        // Рассчитываем сумму только из событий, влияющих на сумму контракта
+        // PAYMENT_CREATED не влияет на total_amount контракта (это платежи, не изменения суммы договора)
+        $totalAmount = $activeEvents
+            ->filter(function ($event) {
+                return !in_array($event->event_type, [
+                    ContractStateEventTypeEnum::PAYMENT_CREATED
+                ]);
+            })
+            ->sum('amount_delta');
         $activeSpecification = null;
         
         // Последняя спецификация из активных событий
@@ -294,7 +302,15 @@ class ContractStateEventService
             ['specification', 'createdBy']
         );
 
-        $totalAmount = $activeEvents->sum('amount_delta');
+        // Рассчитываем сумму только из событий, влияющих на сумму контракта
+        // PAYMENT_CREATED не влияет на total_amount контракта
+        $totalAmount = $activeEvents
+            ->filter(function ($event) {
+                return !in_array($event->event_type, [
+                    ContractStateEventTypeEnum::PAYMENT_CREATED
+                ]);
+            })
+            ->sum('amount_delta');
         $activeSpecification = null;
         
         $lastAmendedEvent = $activeEvents
