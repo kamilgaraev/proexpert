@@ -26,24 +26,10 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
     {
         $query = $this->model->query();
         
-        // Для project-based маршрутов: если указан список организаций проекта,
-        // показываем контракты всех организаций-участников проекта
-        // Это должно применяться ПЕРЕД проверкой contractor_context
-        if (!empty($filters['project_organization_ids']) && is_array($filters['project_organization_ids'])) {
-            $query->whereIn('organization_id', $filters['project_organization_ids']);
-            \Illuminate\Support\Facades\Log::debug('ContractRepository: Applied project_organization_ids filter', [
-                'project_organization_ids' => $filters['project_organization_ids']
-            ]);
-        } elseif (empty($filters['contractor_context'])) {
-            // Если указан contractor_context - фильтруем только по contractor_id, без organization_id
-            // Это нужно для подрядчиков, которые зарегистрировались и видят свои контракты
-            // Обычная фильтрация по организации пользователя
+        // Если указан contractor_context - фильтруем только по contractor_id, без organization_id
+        // Это нужно для подрядчиков, которые зарегистрировались и видят свои контракты
+        if (empty($filters['contractor_context'])) {
             $query->where('organization_id', $organizationId);
-            \Illuminate\Support\Facades\Log::debug('ContractRepository: Applied organization_id filter', [
-                'organization_id' => $organizationId
-            ]);
-        } else {
-            \Illuminate\Support\Facades\Log::debug('ContractRepository: No organization filter (contractor_context mode)');
         }
 
         // Основные фильтры
@@ -279,28 +265,7 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
 
         $query->orderBy('contracts.' . $sortBy, $sortDirection);
 
-        // Логируем финальный запрос перед пагинацией
-        \Illuminate\Support\Facades\Log::debug('ContractRepository: Before pagination', [
-            'total_before_pagination' => $query->count(),
-            'filters_applied' => [
-                'project_organization_ids' => $filters['project_organization_ids'] ?? null,
-                'project_id' => $filters['project_id'] ?? null,
-                'contractor_id' => $filters['contractor_id'] ?? null,
-                'status' => $filters['status'] ?? null,
-            ],
-            'per_page' => $perPage
-        ]);
-
-        $result = $query->paginate($perPage);
-        
-        \Illuminate\Support\Facades\Log::debug('ContractRepository: After pagination', [
-            'total' => $result->total(),
-            'count' => $result->count(),
-            'current_page' => $result->currentPage(),
-            'contract_ids' => $result->pluck('id')->toArray(),
-        ]);
-
-        return $result;
+        return $query->paginate($perPage);
     }
 
     public function findAccessible(int $contractId, int $organizationId): ?Contract

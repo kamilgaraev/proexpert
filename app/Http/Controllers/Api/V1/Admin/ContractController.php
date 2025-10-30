@@ -56,6 +56,7 @@ class ContractController extends Controller
         
         // Расширенная фильтрация
         $filters = $request->only([
+            'contractor_id', 
             'status', 
             'type', 
             'number', 
@@ -89,68 +90,6 @@ class ContractController extends Controller
             $filters['project_id'] = (int)$projectId;
         }
         
-        // Для project-based маршрутов: получаем все организации-участники проекта
-        // чтобы показывать контракты всех организаций проекта, а не только организации пользователя
-        $projectContext = ProjectContextMiddleware::getProjectContext($request);
-        $project = ProjectContextMiddleware::getProject($request);
-        
-        // Fallback: если проект не загружен из middleware, загружаем напрямую
-        if ($projectId && !$project) {
-            $project = \App\Models\Project::find($projectId);
-            Log::warning('Project not found in request attributes, loaded directly', [
-                'project_id' => $projectId,
-                'found' => $project !== null
-            ]);
-        }
-        
-        if ($projectId && $project) {
-            // Получаем список всех организаций-участников проекта (owner + активные participants)
-            $projectOrgIds = [$project->organization_id]; // owner
-            
-            // Добавляем всех активных participants
-            $participants = $project->activeParticipants()->get()->pluck('id')->toArray();
-            $projectOrgIds = array_values(array_unique(array_merge($projectOrgIds, $participants)));
-            
-            // Устанавливаем список организаций проекта в фильтры
-            // Репозиторий будет использовать его вместо фильтрации по одной organization_id
-            $filters['project_organization_ids'] = $projectOrgIds;
-            
-            Log::info('Project-based contracts filter applied', [
-                'project_id' => $projectId,
-                'current_organization_id' => $organizationId,
-                'project_organization_ids' => $projectOrgIds,
-                'is_current_org_in_project' => in_array($organizationId, $projectOrgIds),
-                'contracts_in_project_orgs' => \App\Models\Contract::whereIn('organization_id', $projectOrgIds)
-                    ->where('project_id', $projectId)
-                    ->count()
-            ]);
-        } else {
-            Log::warning('Project-based filter NOT applied', [
-                'project_id' => $projectId,
-                'project_from_middleware' => $project !== null,
-                'project_context_exists' => $projectContext !== null
-            ]);
-        }
-        
-        // Для project-based маршрутов: contractor_id из request применяем только если он явно передан
-        // (для обычных маршрутов или когда нужно отфильтровать по конкретному подрядчику)
-        // Но для project-based маршрутов без явного указания показываем контракты всех подрядчиков
-        if ($projectId) {
-            // Если contractor_id передан в request явно - используем его
-            if ($request->has('contractor_id')) {
-                $filters['contractor_id'] = $request->input('contractor_id');
-                Log::info('Explicit contractor_id filter from request', [
-                    'contractor_id' => $filters['contractor_id']
-                ]);
-            }
-            // Если не передан - не устанавливаем, показываем все контракты проекта
-        } else {
-            // Для не project-based маршрутов берем contractor_id из request как обычно
-            if ($request->has('contractor_id')) {
-                $filters['contractor_id'] = $request->input('contractor_id');
-            }
-        }
-        
         Log::info('Contracts index called', [
             'organization_id' => $organizationId,
             'project_id_from_url' => $projectId,
@@ -158,6 +97,7 @@ class ContractController extends Controller
         ]);
         
         // Если пользователь - подрядчик, показываем только его контракты
+        $projectContext = ProjectContextMiddleware::getProjectContext($request);
         if ($projectContext && in_array($projectContext->role->value, ['contractor', 'subcontractor'])) {
             // Находим Contractor для текущей организации через source_organization_id
             // (организация зарегистрировалась и синхронизировалась с подрядчиком по ИНН)

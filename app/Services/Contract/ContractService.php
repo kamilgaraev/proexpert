@@ -845,14 +845,7 @@ class ContractService
         
         // Если указан contractor_context - не фильтруем по organization_id
         if (empty($filters['contractor_context'])) {
-            // Для project-based маршрутов: если указан список организаций проекта,
-            // показываем контракты всех организаций-участников проекта
-            if (!empty($filters['project_organization_ids']) && is_array($filters['project_organization_ids'])) {
-                $query->whereIn('organization_id', $filters['project_organization_ids']);
-            } else {
-                // Обычная фильтрация по организации пользователя
-                $query->where('organization_id', $organizationId);
-            }
+            $query->where('organization_id', $organizationId);
         }
 
         if (!empty($filters['project_id'])) {
