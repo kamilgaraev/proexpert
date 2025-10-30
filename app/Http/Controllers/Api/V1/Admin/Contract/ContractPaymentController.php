@@ -128,8 +128,9 @@ class ContractPaymentController extends Controller
 
     public function destroy(Request $request, int $project, int $contract, ContractPayment $payment)
     {
+        $user = $request->user();
         $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
 
         try {
             $contractModel = $payment->contract;

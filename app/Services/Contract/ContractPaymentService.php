@@ -40,13 +40,18 @@ class ContractPaymentService
     protected function getContractOrFail(int $contractId, int $organizationId, ?int $projectId = null): Contract
     {
         $contract = $this->contractRepository->find($contractId);
-        if (!$contract || $contract->organization_id !== $organizationId) {
-            throw new Exception('Contract not found or does not belong to the organization.');
+        
+        if (!$contract) {
+            throw new Exception("Contract with ID {$contractId} not found.");
+        }
+        
+        if ($contract->organization_id !== $organizationId) {
+            throw new Exception("Contract with ID {$contractId} does not belong to organization {$organizationId}. Contract belongs to organization {$contract->organization_id}.");
         }
         
         // Если указан projectId, проверяем, что контракт принадлежит этому проекту
         if ($projectId !== null && $contract->project_id !== $projectId) {
-            throw new Exception('Contract does not belong to the specified project.');
+            throw new Exception("Contract with ID {$contractId} does not belong to project {$projectId}. Contract belongs to project {$contract->project_id}.");
         }
         
         return $contract;
