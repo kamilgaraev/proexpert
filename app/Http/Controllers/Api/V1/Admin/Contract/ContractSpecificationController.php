@@ -173,7 +173,7 @@ class ContractSpecificationController extends Controller
 
             // Деактивируем все предыдущие спецификации
             $contractModel->specifications()->updateExistingPivot(
-                $contractModel->specifications()->pluck('id')->toArray(),
+                $contractModel->specifications()->pluck('specifications.id')->toArray(),
                 ['is_active' => false]
             );
 
@@ -301,7 +301,7 @@ class ContractSpecificationController extends Controller
 
             // Деактивируем все предыдущие спецификации
             $contractModel->specifications()->updateExistingPivot(
-                $contractModel->specifications()->pluck('id')->toArray(),
+                $contractModel->specifications()->pluck('specifications.id')->toArray(),
                 ['is_active' => false]
             );
 
