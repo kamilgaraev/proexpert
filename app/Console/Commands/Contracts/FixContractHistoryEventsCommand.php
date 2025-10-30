@@ -84,48 +84,47 @@ class FixContractHistoryEventsCommand extends Command
                     $this->line("   Сумма из событий: {$calculatedAmount}");
                     $this->line("   Разница: {$difference}");
 
-                    if ($fixWrongAmounts && !$dryRun) {
-                        // Находим последнее событие AMENDED со спецификацией, которое может быть неправильным
-                        $lastAmendedEvent = $activeEvents
-                            ->where('event_type', 'amended')
-                            ->whereNotNull('specification_id')
-                            ->last();
+                    // Находим последнее событие AMENDED со спецификацией, которое может быть неправильным
+                    $lastAmendedEvent = $activeEvents
+                        ->where('event_type', 'amended')
+                        ->whereNotNull('specification_id')
+                        ->last();
 
-                        if ($lastAmendedEvent) {
-                            // Пересчитываем правильную дельту
-                            $eventsBefore = $activeEvents
-                                ->filter(function ($e) use ($lastAmendedEvent) {
-                                    return $e->id < $lastAmendedEvent->id && 
-                                           !in_array($e->event_type->value, ['payment_created']);
-                                })
-                                ->sum('amount_delta');
+                    if ($fixWrongAmounts && !$dryRun && $lastAmendedEvent) {
+                        // Пересчитываем правильную дельту
+                        $eventsBefore = $activeEvents
+                            ->filter(function ($e) use ($lastAmendedEvent) {
+                                return $e->id < $lastAmendedEvent->id && 
+                                       !in_array($e->event_type->value, ['payment_created']);
+                            })
+                            ->sum('amount_delta');
 
-                            $correctDelta = $contractAmount - $eventsBefore;
+                        $correctDelta = $contractAmount - $eventsBefore;
 
-                            if (abs($lastAmendedEvent->amount_delta - $correctDelta) > 0.01) {
-                                $this->line("   Исправляю событие id:{$lastAmendedEvent->id}");
-                                $this->line("   Старая дельта: {$lastAmendedEvent->amount_delta}");
-                                $this->line("   Новая дельта: {$correctDelta}");
+                        if (abs($lastAmendedEvent->amount_delta - $correctDelta) > 0.01) {
+                            $this->line("   Исправляю событие id:{$lastAmendedEvent->id}");
+                            $this->line("   Старая дельта: {$lastAmendedEvent->amount_delta}");
+                            $this->line("   Новая дельта: {$correctDelta}");
 
-                                DB::table('contract_state_events')
-                                    ->where('id', $lastAmendedEvent->id)
-                                    ->update([
-                                        'amount_delta' => $correctDelta,
-                                        'metadata' => json_encode(array_merge(
-                                            $lastAmendedEvent->metadata ?? [],
-                                            [
-                                                'old_amount' => $lastAmendedEvent->amount_delta,
-                                                'new_amount' => $correctDelta,
-                                                'fixed_by_command' => now()->toIso8601String(),
-                                            ]
-                                        )),
-                                    ]);
+                            DB::table('contract_state_events')
+                                ->where('id', $lastAmendedEvent->id)
+                                ->update([
+                                    'amount_delta' => $correctDelta,
+                                    'metadata' => json_encode(array_merge(
+                                        $lastAmendedEvent->metadata ?? [],
+                                        [
+                                            'old_amount' => $lastAmendedEvent->amount_delta,
+                                            'new_amount' => $correctDelta,
+                                            'fixed_by_command' => now()->toIso8601String(),
+                                        ]
+                                    )),
+                                ]);
 
-                                $stats['events_fixed']++;
-                            }
+                            $stats['events_fixed']++;
                         }
-                    } elseif ($fixWrongAmounts) {
-                        $this->line("   [DRY-RUN] Будет исправлено событие id:{$lastAmendedEvent->id ?? 'N/A'}");
+                    } elseif ($fixWrongAmounts && $lastAmendedEvent) {
+                        $eventId = $lastAmendedEvent->id ?? 'N/A';
+                        $this->line("   [DRY-RUN] Будет исправлено событие id:{$eventId}");
                         $stats['events_fixed']++;
                     }
 
