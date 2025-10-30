@@ -139,6 +139,54 @@ class SupplementaryAgreementService
             // Сохраняем контракт со всеми изменениями
             $contract->save();
 
+            // Если контракт не использует Event Sourcing, активируем его
+            if (!$contract->usesEventSourcing()) {
+                try {
+                    // Создаем начальное событие CREATED для активации Event Sourcing
+                    $this->getStateEventService()->createContractCreatedEvent($contract);
+                    \Illuminate\Support\Facades\Log::info('Event Sourcing activated for contract via agreement', [
+                        'contract_id' => $contract->id,
+                        'agreement_id' => $agreementId
+                    ]);
+                } catch (Exception $e) {
+                    \Illuminate\Support\Facades\Log::warning('Failed to activate Event Sourcing for contract', [
+                        'contract_id' => $contract->id,
+                        'agreement_id' => $agreementId,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
+            // Создаем событие AMENDED для примененного доп.соглашения, если Event Sourcing активен
+            $contract->refresh(); // Обновляем модель чтобы получить актуальный статус usesEventSourcing
+            if ($contract->usesEventSourcing()) {
+                try {
+                    // Находим активную спецификацию для события (если есть)
+                    $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
+                    
+                    $this->getStateEventService()->createAmendedEvent(
+                        $contract,
+                        $activeSpecification?->id,
+                        $agreement->change_amount ?? 0,
+                        $agreement,
+                        $agreement->agreement_date ?? now(),
+                        [
+                            'agreement_number' => $agreement->number,
+                            'reason' => 'Применено дополнительное соглашение'
+                        ]
+                    );
+
+                    // Обновляем материализованное представление
+                    $this->getStateCalculatorService()->recalculateContractState($contract);
+                } catch (Exception $e) {
+                    \Illuminate\Support\Facades\Log::warning('Failed to create state event for agreement', [
+                        'contract_id' => $contract->id,
+                        'agreement_id' => $agreementId,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
             DB::commit();
 
             // BUSINESS: Изменения успешно применены

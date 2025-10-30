@@ -183,8 +183,27 @@ class ContractSpecificationController extends Controller
                 'is_active' => true
             ]);
 
-            // Если договор использует Event Sourcing, создаем событие
-            if ($contractModel->usesEventSourcing()) {
+            // Если договор не использует Event Sourcing, активируем его
+            // создав событие CREATED (если его нет), а затем AMENDED для спецификации
+            if (!$contractModel->usesEventSourcing()) {
+                try {
+                    // Создаем начальное событие CREATED для активации Event Sourcing
+                    $this->getStateEventService()->createContractCreatedEvent($contractModel);
+                    Log::info('Event Sourcing activated for contract via specification', [
+                        'contract_id' => $contractModel->id,
+                        'specification_id' => $specification->id
+                    ]);
+                } catch (Exception $e) {
+                    Log::warning('Failed to activate Event Sourcing for contract', [
+                        'contract_id' => $contractModel->id,
+                        'specification_id' => $specification->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
+            // Создаем событие AMENDED для новой спецификации (если Event Sourcing активен или только что активирован)
+            if ($contractModel->usesEventSourcing() || $contractModel->fresh(['stateEvents'])->usesEventSourcing()) {
                 try {
                     $this->getStateEventService()->createAmendedEvent(
                         $contractModel,
