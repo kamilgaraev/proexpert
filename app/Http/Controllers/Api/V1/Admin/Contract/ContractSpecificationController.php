@@ -205,15 +205,37 @@ class ContractSpecificationController extends Controller
             // Создаем событие AMENDED для новой спецификации (если Event Sourcing активен или только что активирован)
             if ($contractModel->usesEventSourcing() || $contractModel->fresh(['stateEvents'])->usesEventSourcing()) {
                 try {
+                    // Получаем текущую сумму контракта ДО привязки спецификации
+                    $oldContractAmount = $contractModel->total_amount ?? 0;
+                    
+                    // Обновляем сумму контракта на сумму спецификации (если нужно)
+                    // НО! Мы не должны менять сумму контракта автоматически!
+                    // amount_delta должен быть разницей между новой суммой контракта и старой
+                    // Если спецификация меняет сумму контракта, то это должно быть сделано вручную через обновление контракта
+                    
+                    // ВАЖНО: amount_delta должен быть разницей между новой и старой суммой контракта
+                    // Если контракт не обновляется автоматически при привязке спецификации,
+                    // то amount_delta должен быть 0, или сумма контракта должна быть обновлена перед созданием события
+                    
+                    // Получаем свежую модель контракта после всех изменений
+                    $contractModel->refresh();
+                    $newContractAmount = $contractModel->total_amount ?? 0;
+                    
+                    // Рассчитываем дельту изменения суммы контракта
+                    $amountDelta = $newContractAmount - $oldContractAmount;
+                    
                     $this->getStateEventService()->createAmendedEvent(
                         $contractModel,
                         $specification->id,
-                        $specification->total_amount ?? 0,
+                        $amountDelta, // Используем разницу, а не абсолютное значение
                         $contractModel,
                         now(),
                         [
                             'specification_number' => $specification->number,
-                            'reason' => 'Прикреплена новая спецификация'
+                            'specification_amount' => $specification->total_amount ?? 0,
+                            'reason' => 'Прикреплена новая спецификация',
+                            'old_contract_amount' => $oldContractAmount,
+                            'new_contract_amount' => $newContractAmount,
                         ]
                     );
 
@@ -316,7 +338,16 @@ class ContractSpecificationController extends Controller
             // Если договор использует Event Sourcing, создаем событие
             if ($contractModel->usesEventSourcing() && $specification) {
                 try {
-                    $amountDelta = ($specification->total_amount ?? 0) - ($contractModel->total_amount ?? 0);
+                    // Получаем текущую сумму контракта ДО привязки спецификации
+                    $oldContractAmount = $contractModel->total_amount ?? 0;
+                    
+                    // Обновляем модель контракта после привязки спецификации
+                    $contractModel->refresh();
+                    $newContractAmount = $contractModel->total_amount ?? 0;
+                    
+                    // Рассчитываем дельту изменения суммы контракта
+                    // amount_delta = новая_сумма_контракта - старая_сумма_контракта
+                    $amountDelta = $newContractAmount - $oldContractAmount;
                     
                     $this->getStateEventService()->createAmendedEvent(
                         $contractModel,
@@ -326,7 +357,10 @@ class ContractSpecificationController extends Controller
                         now(),
                         [
                             'specification_number' => $specification->number,
-                            'reason' => 'Прикреплена существующая спецификация'
+                            'specification_amount' => $specification->total_amount ?? 0,
+                            'reason' => 'Прикреплена существующая спецификация',
+                            'old_contract_amount' => $oldContractAmount,
+                            'new_contract_amount' => $newContractAmount,
                         ]
                     );
 
