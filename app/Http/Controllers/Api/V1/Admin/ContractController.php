@@ -101,7 +101,7 @@ class ContractController extends Controller
             
             // Добавляем всех активных participants
             $participants = $project->activeParticipants()->get()->pluck('id')->toArray();
-            $projectOrgIds = array_unique(array_merge($projectOrgIds, $participants));
+            $projectOrgIds = array_values(array_unique(array_merge($projectOrgIds, $participants)));
             
             // Устанавливаем список организаций проекта в фильтры
             // Репозиторий будет использовать его вместо фильтрации по одной organization_id
