@@ -54,7 +54,7 @@ class ContractStateEventService
      */
     public function createAmendedEvent(
         Contract $contract,
-        int $specificationId,
+        ?int $specificationId,
         float $amountDelta,
         $triggeredBy = null,
         ?Carbon $effectiveFrom = null,

@@ -35,9 +35,17 @@ class ContractPaymentController extends Controller
 
     public function index(Request $request, int $project, int $contract)
     {
+        $user = $request->user();
         $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
         $projectId = $project;
+
+        if (!$organizationId) {
+            return response()->json([
+                'message' => 'Organization context is required',
+                'error' => 'MISSING_ORGANIZATION_CONTEXT'
+            ], Response::HTTP_BAD_REQUEST);
+        }
 
         try {
             $payments = $this->paymentService->getAllPaymentsForContract($contract, $organizationId, [], $projectId);
@@ -49,9 +57,17 @@ class ContractPaymentController extends Controller
 
     public function store(StoreContractPaymentRequest $request, int $project, int $contract)
     {
+        $user = $request->user();
         $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
         $projectId = $project;
+
+        if (!$organizationId) {
+            return response()->json([
+                'message' => 'Organization context is required',
+                'error' => 'MISSING_ORGANIZATION_CONTEXT'
+            ], Response::HTTP_BAD_REQUEST);
+        }
 
         try {
             $paymentDTO = $request->toDto();
@@ -66,8 +82,9 @@ class ContractPaymentController extends Controller
 
     public function show(Request $request, int $project, int $contract, ContractPayment $payment)
     {
+        $user = $request->user();
         $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
 
         try {
             $contractModel = $payment->contract;
@@ -87,8 +104,9 @@ class ContractPaymentController extends Controller
 
     public function update(UpdateContractPaymentRequest $request, int $project, int $contract, ContractPayment $payment)
     {
+        $user = $request->user();
         $organization = $request->attributes->get('current_organization');
-        $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
+        $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
         
         try {
             $contractModel = $payment->contract;

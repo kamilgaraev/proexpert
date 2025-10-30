@@ -415,6 +415,39 @@ class ContractService
                 'change_detected' => $updatedContract->total_amount != $oldValues['total_amount']
             ]);
 
+            // Создаем событие истории, если контракт использует Event Sourcing и изменилась сумма
+            if ($updatedContract->usesEventSourcing() && $updatedContract->total_amount != $oldValues['total_amount']) {
+                try {
+                    $amountDelta = $updatedContract->total_amount - $oldValues['total_amount'];
+                    
+                    // Находим активную спецификацию для события (если есть)
+                    $activeSpecification = $updatedContract->specifications()->wherePivot('is_active', true)->first();
+                    
+                    $this->getStateEventService()->createAmendedEvent(
+                        $updatedContract,
+                        $activeSpecification?->id ?? null,
+                        $amountDelta,
+                        $updatedContract, // triggeredBy - сам контракт
+                        now(),
+                        [
+                            'reason' => 'Изменение суммы контракта',
+                            'old_amount' => $oldValues['total_amount'],
+                            'new_amount' => $updatedContract->total_amount,
+                            'contract_number' => $updatedContract->number,
+                        ]
+                    );
+
+                    // Обновляем материализованное представление
+                    app(\App\Services\Contract\ContractStateCalculatorService::class)->recalculateContractState($updatedContract);
+                } catch (Exception $e) {
+                    // Не критично, если событие не создалось - логируем и продолжаем
+                    Log::warning('Failed to create contract update event', [
+                        'contract_id' => $updatedContract->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+
             // BUSINESS: Договор успешно обновлён
             $this->logging->business('contract.updated', [
                 'organization_id' => $organizationId,

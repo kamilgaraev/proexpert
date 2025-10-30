@@ -295,8 +295,21 @@ class ContractStateEventController extends Controller
                 return "Создание договора на сумму {$delta} руб.";
             case 'amended':
                 $agreementNumber = $event->metadata['agreement_number'] ?? null;
+                $reason = $event->metadata['reason'] ?? null;
                 if ($agreementNumber) {
                     return "Создание дополнительного соглашения №{$agreementNumber} на сумму {$delta} руб.";
+                }
+                if ($reason === 'Изменение суммы контракта') {
+                    $oldAmount = $event->metadata['old_amount'] ?? null;
+                    $newAmount = $event->metadata['new_amount'] ?? null;
+                    if ($oldAmount !== null && $newAmount !== null) {
+                        $formattedOldAmount = number_format($oldAmount, 2, '.', ' ');
+                        $formattedNewAmount = number_format($newAmount, 2, '.', ' ');
+                        $formattedDelta = ($event->amount_delta >= 0 ? '+' : '') . number_format($event->amount_delta, 2, '.', ' ');
+                        return "Изменение договора: {$formattedOldAmount} → {$formattedNewAmount} руб. ({$formattedDelta} руб.)";
+                    }
+                    $formattedDelta = ($event->amount_delta >= 0 ? '+' : '') . number_format($event->amount_delta, 2, '.', ' ');
+                    return "Изменение договора: {$formattedDelta} руб.";
                 }
                 return "Изменение договора: +{$delta} руб.";
             case 'superseded':
