@@ -17,6 +17,6 @@ enum ContractWorkTypeCategoryEnum: string
 
     public function label(): string
     {
-        return __('contract.work_type_category.' . $this->value);
+        return __('contract.work_type_category.' . $this->value, [], 'ru');
     }
 } 

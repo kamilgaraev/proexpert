@@ -190,8 +190,8 @@ class ContractStateEventController extends Controller
                         'uses_event_sourcing' => false,
                         'total_amount' => $contractModel->total_amount,
                         'active_specification' => $contractModel->specifications()->first(),
-                        'message' => __('contract.legacy_event_sourcing_unavailable'),
-                        'activation_hint' => __('contract.event_sourcing_activation_hint')
+                        'message' => __('contract.legacy_event_sourcing_unavailable', [], 'ru'),
+                        'activation_hint' => __('contract.event_sourcing_activation_hint', [], 'ru')
                     ]
                 ]);
             }
