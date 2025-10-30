@@ -29,7 +29,14 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         // Если указан contractor_context - фильтруем только по contractor_id, без organization_id
         // Это нужно для подрядчиков, которые зарегистрировались и видят свои контракты
         if (empty($filters['contractor_context'])) {
-            $query->where('organization_id', $organizationId);
+            // Для project-based маршрутов: если указан список организаций проекта,
+            // показываем контракты всех организаций-участников проекта
+            if (!empty($filters['project_organization_ids']) && is_array($filters['project_organization_ids'])) {
+                $query->whereIn('organization_id', $filters['project_organization_ids']);
+            } else {
+                // Обычная фильтрация по организации пользователя
+                $query->where('organization_id', $organizationId);
+            }
         }
 
         // Основные фильтры

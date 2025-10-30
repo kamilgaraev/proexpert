@@ -90,6 +90,31 @@ class ContractController extends Controller
             $filters['project_id'] = (int)$projectId;
         }
         
+        // Для project-based маршрутов: получаем все организации-участники проекта
+        // чтобы показывать контракты всех организаций проекта, а не только организации пользователя
+        $projectContext = ProjectContextMiddleware::getProjectContext($request);
+        $project = ProjectContextMiddleware::getProject($request);
+        
+        if ($projectId && $project) {
+            // Получаем список всех организаций-участников проекта (owner + активные participants)
+            $projectOrgIds = [$project->organization_id]; // owner
+            
+            // Добавляем всех активных participants
+            $participants = $project->activeParticipants()->get()->pluck('id')->toArray();
+            $projectOrgIds = array_unique(array_merge($projectOrgIds, $participants));
+            
+            // Устанавливаем список организаций проекта в фильтры
+            // Репозиторий будет использовать его вместо фильтрации по одной organization_id
+            $filters['project_organization_ids'] = $projectOrgIds;
+            
+            Log::info('Project-based contracts filter applied', [
+                'project_id' => $projectId,
+                'current_organization_id' => $organizationId,
+                'project_organization_ids' => $projectOrgIds,
+                'is_current_org_in_project' => in_array($organizationId, $projectOrgIds)
+            ]);
+        }
+        
         Log::info('Contracts index called', [
             'organization_id' => $organizationId,
             'project_id_from_url' => $projectId,
@@ -97,7 +122,6 @@ class ContractController extends Controller
         ]);
         
         // Если пользователь - подрядчик, показываем только его контракты
-        $projectContext = ProjectContextMiddleware::getProjectContext($request);
         if ($projectContext && in_array($projectContext->role->value, ['contractor', 'subcontractor'])) {
             // Находим Contractor для текущей организации через source_organization_id
             // (организация зарегистрировалась и синхронизировалась с подрядчиком по ИНН)
