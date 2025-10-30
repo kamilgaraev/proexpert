@@ -257,15 +257,31 @@ class ContractStateEventService
     {
         $activeEvents = $this->eventRepository->findActiveEvents($contract->id, ['specification', 'createdBy']);
 
-        // Рассчитываем сумму только из событий, влияющих на сумму контракта
+        // Рассчитываем сумму из событий, влияющих на сумму контракта
         // PAYMENT_CREATED не влияет на total_amount контракта (это платежи, не изменения суммы договора)
-        $totalAmount = $activeEvents
+        $calculatedAmount = $activeEvents
             ->filter(function ($event) {
                 return !in_array($event->event_type, [
                     ContractStateEventTypeEnum::PAYMENT_CREATED
                 ]);
             })
             ->sum('amount_delta');
+        
+        // ИСПОЛЬЗУЕМ ТЕКУЩУЮ СУММУ КОНТРАКТА КАК ИСТОЧНИК ИСТИНЫ
+        // Это гарантирует точность финансовых данных
+        $totalAmount = (float) ($contract->total_amount ?? 0);
+        
+        // Проверяем согласованность и логируем расхождения для аудита
+        if (abs($calculatedAmount - $totalAmount) > 0.01) {
+            \Illuminate\Support\Facades\Log::warning('Contract state amount mismatch detected', [
+                'contract_id' => $contract->id,
+                'contract_total_amount' => $totalAmount,
+                'calculated_from_events' => $calculatedAmount,
+                'difference' => $totalAmount - $calculatedAmount,
+                'active_events_count' => $activeEvents->count(),
+            ]);
+        }
+        
         $activeSpecification = null;
         
         // Последняя спецификация из активных событий
