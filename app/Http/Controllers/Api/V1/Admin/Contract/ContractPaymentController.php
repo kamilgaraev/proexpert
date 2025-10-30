@@ -32,6 +32,34 @@ class ContractPaymentController extends Controller
         }
         return true;
     }
+    
+    /**
+     * Проверяет, имеет ли организация доступ к контракту
+     * Организация может быть либо заказчиком, либо подрядчиком
+     */
+    private function canAccessContract(Contract $contract, int $organizationId): bool
+    {
+        // Проверяем, является ли организация заказчиком
+        if ($contract->organization_id === $organizationId) {
+            return true;
+        }
+        
+        // Проверяем, является ли организация подрядчиком
+        if ($contract->contractor_id) {
+            // Загружаем подрядчика, если еще не загружен
+            if (!$contract->relationLoaded('contractor')) {
+                $contract->load('contractor');
+            }
+            
+            if ($contract->contractor) {
+                // Подрядчик может принадлежать организации напрямую или через source_organization_id
+                return $contract->contractor->organization_id === $organizationId 
+                    || $contract->contractor->source_organization_id === $organizationId;
+            }
+        }
+        
+        return false;
+    }
 
     public function index(Request $request, int $project, int $contract)
     {
@@ -88,7 +116,7 @@ class ContractPaymentController extends Controller
 
         try {
             $contractModel = $payment->contract;
-            if (!$contractModel || $contractModel->organization_id !== $organizationId) {
+            if (!$contractModel || !$this->canAccessContract($contractModel, $organizationId)) {
                 return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
             }
             
@@ -110,7 +138,7 @@ class ContractPaymentController extends Controller
         
         try {
             $contractModel = $payment->contract;
-            if (!$contractModel || $contractModel->organization_id !== $organizationId) {
+            if (!$contractModel || !$this->canAccessContract($contractModel, $organizationId)) {
                 return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
             }
             
@@ -134,7 +162,7 @@ class ContractPaymentController extends Controller
 
         try {
             $contractModel = $payment->contract;
-            if (!$contractModel || $contractModel->organization_id !== $organizationId) {
+            if (!$contractModel || !$this->canAccessContract($contractModel, $organizationId)) {
                 return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
             }
             

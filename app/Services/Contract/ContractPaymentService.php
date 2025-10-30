@@ -37,6 +37,34 @@ class ContractPaymentService
         return $this->stateEventService;
     }
 
+    /**
+     * Проверяет, имеет ли организация доступ к контракту
+     * Организация может быть либо заказчиком, либо подрядчиком
+     */
+    protected function canAccessContract(Contract $contract, int $organizationId): bool
+    {
+        // Проверяем, является ли организация заказчиком
+        if ($contract->organization_id === $organizationId) {
+            return true;
+        }
+        
+        // Проверяем, является ли организация подрядчиком
+        if ($contract->contractor_id) {
+            // Загружаем подрядчика, если еще не загружен
+            if (!$contract->relationLoaded('contractor')) {
+                $contract->load('contractor');
+            }
+            
+            if ($contract->contractor) {
+                // Подрядчик может принадлежать организации напрямую или через source_organization_id
+                return $contract->contractor->organization_id === $organizationId 
+                    || $contract->contractor->source_organization_id === $organizationId;
+            }
+        }
+        
+        return false;
+    }
+
     protected function getContractOrFail(int $contractId, int $organizationId, ?int $projectId = null): Contract
     {
         $contract = $this->contractRepository->find($contractId);
@@ -45,8 +73,13 @@ class ContractPaymentService
             throw new Exception("Contract with ID {$contractId} not found.");
         }
         
-        if ($contract->organization_id !== $organizationId) {
-            throw new Exception("Contract with ID {$contractId} does not belong to organization {$organizationId}. Contract belongs to organization {$contract->organization_id}.");
+        // Проверяем доступ: организация может быть либо заказчиком, либо подрядчиком
+        if (!$this->canAccessContract($contract, $organizationId)) {
+            $contractorInfo = $contract->contractor_id ? " (contractor_id: {$contract->contractor_id})" : "";
+            throw new Exception(
+                "Contract with ID {$contractId} does not belong to organization {$organizationId}. " .
+                "Contract belongs to organization {$contract->organization_id} (customer).{$contractorInfo}"
+            );
         }
         
         // Если указан projectId, проверяем, что контракт принадлежит этому проекту
@@ -121,7 +154,7 @@ class ContractPaymentService
         }
 
         $contract = $this->contractRepository->find($payment->contract_id);
-        if (!$contract || $contract->organization_id !== $organizationId) {
+        if (!$contract || !$this->canAccessContract($contract, $organizationId)) {
             throw new Exception('Payment not found or does not belong to the organization.');
         }
 
@@ -140,7 +173,7 @@ class ContractPaymentService
         }
 
         $contract = $this->contractRepository->find($payment->contract_id);
-        if (!$contract || $contract->organization_id !== $organizationId) {
+        if (!$contract || !$this->canAccessContract($contract, $organizationId)) {
             throw new Exception('Payment not found or does not belong to the organization.');
         }
 
@@ -171,7 +204,7 @@ class ContractPaymentService
         }
 
         $contract = $this->contractRepository->find($payment->contract_id);
-        if (!$contract || $contract->organization_id !== $organizationId) {
+        if (!$contract || !$this->canAccessContract($contract, $organizationId)) {
             throw new Exception('Payment not found or does not belong to the organization.');
         }
 
