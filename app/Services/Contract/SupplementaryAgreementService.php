@@ -3,18 +3,26 @@
 namespace App\Services\Contract;
 
 use App\Repositories\Interfaces\SupplementaryAgreementRepositoryInterface;
+use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
 use App\DTOs\SupplementaryAgreementDTO;
 use App\Models\SupplementaryAgreement;
 use App\Models\Contract;
 use App\Models\ContractPayment;
+use App\Models\ContractStateEvent;
 use App\Enums\Contract\GpCalculationTypeEnum;
+use App\Enums\Contract\SupplementaryAgreementStatusEnum;
 use App\Services\Logging\LoggingService;
+use App\Services\Contract\ContractStateEventService;
+use App\Services\Contract\ContractStateCalculatorService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Exception;
 
 class SupplementaryAgreementService
 {
+    protected ?ContractStateEventService $stateEventService = null;
+    protected ?ContractStateCalculatorService $stateCalculatorService = null;
+
     public function __construct(
         protected SupplementaryAgreementRepositoryInterface $repository,
         protected LoggingService $logging
@@ -284,5 +292,132 @@ class SupplementaryAgreementService
                 ]);
             }
         }
+    }
+
+    /**
+     * Создать доп.соглашение с аннулированием предыдущего через Event Sourcing
+     */
+    public function createWithSupersede(
+        Contract $contract,
+        SupplementaryAgreementDTO $dto,
+        ?ContractStateEvent $previousActiveEvent = null,
+        ?int $newSpecificationId = null
+    ): SupplementaryAgreement {
+        return DB::transaction(function () use ($contract, $dto, $previousActiveEvent, $newSpecificationId) {
+            // Создаем доп.соглашение
+            $agreement = $this->repository->create(array_merge($dto->toArray(), [
+                'contract_id' => $contract->id,
+                'status' => SupplementaryAgreementStatusEnum::ACTIVE->value,
+            ]));
+
+            // Если договор использует Event Sourcing, создаем события
+            if ($contract->usesEventSourcing()) {
+                try {
+                    $events = $this->getStateEventService()->createAmendmentWithSupersede(
+                        $contract,
+                        $agreement,
+                        $previousActiveEvent,
+                        $newSpecificationId,
+                        $agreement->change_amount ?? null
+                    );
+
+                    // Обновляем материализованное представление
+                    $this->getStateCalculatorService()->recalculateContractState($contract);
+
+                    $this->logging->business('agreement.created_with_supersede', [
+                        'agreement_id' => $agreement->id,
+                        'contract_id' => $contract->id,
+                        'events_created' => count($events),
+                        'user_id' => Auth::id(),
+                    ]);
+                } catch (Exception $e) {
+                    $this->logging->technical('agreement.event_creation.failed', [
+                        'agreement_id' => $agreement->id,
+                        'contract_id' => $contract->id,
+                        'error' => $e->getMessage(),
+                        'user_id' => Auth::id(),
+                    ], 'error');
+                    // Не прерываем транзакцию - доп.соглашение уже создано
+                }
+            }
+
+            return $agreement;
+        });
+    }
+
+    /**
+     * Аннулировать доп.соглашение
+     */
+    public function supersedeAgreement(
+        SupplementaryAgreement $agreement,
+        SupplementaryAgreement $newAgreement
+    ): void {
+        DB::transaction(function () use ($agreement, $newAgreement) {
+            // Обновляем статус аннулированного доп.соглашения
+            $agreement->status = SupplementaryAgreementStatusEnum::SUPERSEDED;
+            $agreement->save();
+
+            $contract = $agreement->contract;
+
+            // Если договор использует Event Sourcing, создаем событие аннулирования
+            if ($contract->usesEventSourcing()) {
+                // Находим активное событие, связанное с этим доп.соглашением
+                $activeEvent = ContractStateEvent::where('contract_id', $contract->id)
+                    ->where('triggered_by_type', SupplementaryAgreement::class)
+                    ->where('triggered_by_id', $agreement->id)
+                    ->whereDoesntHave('supersededByEvents')
+                    ->first();
+
+                if ($activeEvent) {
+                    try {
+                        $this->getStateEventService()->createSupersededEvent(
+                            $contract,
+                            $activeEvent,
+                            $newAgreement,
+                            ['reason' => 'Аннулировано доп. соглашением ' . $newAgreement->number]
+                        );
+
+                        // Обновляем материализованное представление
+                        $this->getStateCalculatorService()->recalculateContractState($contract);
+                    } catch (Exception $e) {
+                        $this->logging->technical('agreement.supersede_event.failed', [
+                            'agreement_id' => $agreement->id,
+                            'contract_id' => $contract->id,
+                            'error' => $e->getMessage(),
+                            'user_id' => Auth::id(),
+                        ], 'error');
+                    }
+                }
+            }
+
+            $this->logging->business('agreement.superseded', [
+                'superseded_agreement_id' => $agreement->id,
+                'new_agreement_id' => $newAgreement->id,
+                'contract_id' => $contract->id,
+                'user_id' => Auth::id(),
+            ]);
+        });
+    }
+
+    /**
+     * Получить сервис для работы с событиями состояния договора (lazy loading)
+     */
+    protected function getStateEventService(): ContractStateEventService
+    {
+        if ($this->stateEventService === null) {
+            $this->stateEventService = app(ContractStateEventService::class);
+        }
+        return $this->stateEventService;
+    }
+
+    /**
+     * Получить сервис для расчета состояний договора (lazy loading)
+     */
+    protected function getStateCalculatorService(): ContractStateCalculatorService
+    {
+        if ($this->stateCalculatorService === null) {
+            $this->stateCalculatorService = app(ContractStateCalculatorService::class);
+        }
+        return $this->stateCalculatorService;
     }
 } 

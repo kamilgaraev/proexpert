@@ -47,16 +47,7 @@ Route::apiResource('contracts.payments', ContractPaymentController::class)
     ->shallow()
     ->parameters(['payments' => 'payment']);
 
-// Маршруты для Спецификаций контрактов
-Route::group(['prefix' => 'contracts/{contract}/specifications'], function () {
-    Route::get('/', [ContractSpecificationController::class, 'index'])
-        ->name('contracts.specifications.index');
-    Route::post('/', [ContractSpecificationController::class, 'store'])
-        ->name('contracts.specifications.store');
-    Route::post('attach', [ContractSpecificationController::class, 'attach'])
-        ->name('contracts.specifications.attach');
-    Route::delete('{specification}', [ContractSpecificationController::class, 'destroy'])
-        ->name('contracts.specifications.destroy');
-});
+// ПРИМЕЧАНИЕ: Маршруты для спецификаций и state-events перенесены в project-based.php
+// Используйте маршруты: /api/v1/admin/projects/{project}/contracts/{contract}/...
 
 ?> 

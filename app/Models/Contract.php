@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
+use Carbon\Carbon;
 
 class Contract extends Model
 {
@@ -95,8 +96,42 @@ class Contract extends Model
     public function specifications(): BelongsToMany
     {
         return $this->belongsToMany(Specification::class, 'contract_specification')
-                    ->withPivot('attached_at')
+                    ->withPivot('attached_at', 'is_active')
                     ->withTimestamps();
+    }
+
+    /**
+     * Активная спецификация (через pivot)
+     */
+    public function activeSpecification()
+    {
+        return $this->specifications()
+                    ->wherePivot('is_active', true)
+                    ->first();
+    }
+
+    /**
+     * События состояния договора (Event Sourcing)
+     */
+    public function stateEvents(): HasMany
+    {
+        return $this->hasMany(ContractStateEvent::class);
+    }
+
+    /**
+     * Текущее состояние договора (материализованное представление)
+     */
+    public function currentState(): HasOne
+    {
+        return $this->hasOne(ContractCurrentState::class);
+    }
+
+    /**
+     * Проверка, использует ли договор Event Sourcing (новый) или legacy (старый)
+     */
+    public function usesEventSourcing(): bool
+    {
+        return $this->stateEvents()->exists();
     }
 
     // Accessor for calculated GP Amount
@@ -276,5 +311,44 @@ class Contract extends Model
         }
 
         return false;
+    }
+
+    /**
+     * Получить текущее состояние через Event Sourcing
+     */
+    public function getCurrentState()
+    {
+        if (!$this->usesEventSourcing()) {
+            return null; // Legacy договор - возвращаем null
+        }
+
+        $service = app(\App\Services\Contract\ContractStateEventService::class);
+        return $service->getCurrentState($this);
+    }
+
+    /**
+     * Получить состояние договора на определенную дату
+     */
+    public function getStateAtDate(Carbon $date)
+    {
+        if (!$this->usesEventSourcing()) {
+            return null; // Legacy договор - возвращаем null
+        }
+
+        $service = app(\App\Services\Contract\ContractStateEventService::class);
+        return $service->getStateAtDate($this, $date);
+    }
+
+    /**
+     * Получить timeline событий
+     */
+    public function getTimeline(?Carbon $asOfDate = null)
+    {
+        if (!$this->usesEventSourcing()) {
+            return collect(); // Legacy договор - возвращаем пустую коллекцию
+        }
+
+        $service = app(\App\Services\Contract\ContractStateEventService::class);
+        return $service->getTimeline($this, $asOfDate);
     }
 }

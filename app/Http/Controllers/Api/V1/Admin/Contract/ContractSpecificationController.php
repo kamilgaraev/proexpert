@@ -5,18 +5,23 @@ namespace App\Http\Controllers\Api\V1\Admin\Contract;
 use App\Http\Controllers\Controller;
 use App\Services\Contract\ContractService;
 use App\Services\Contract\SpecificationService;
+use App\Services\Contract\ContractStateEventService;
+use App\Services\Contract\ContractStateCalculatorService;
 use App\Http\Requests\Api\V1\Admin\Contract\Specification\StoreContractSpecificationRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\Specification\AttachSpecificationRequest;
 use App\Http\Resources\Api\V1\Admin\Contract\Specification\SpecificationResource;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Log;
 use Exception;
 
 class ContractSpecificationController extends Controller
 {
     protected ContractService $contractService;
     protected SpecificationService $specificationService;
+    protected ?ContractStateEventService $stateEventService = null;
+    protected ?ContractStateCalculatorService $stateCalculatorService = null;
 
     public function __construct(
         ContractService $contractService,
@@ -166,9 +171,43 @@ class ContractSpecificationController extends Controller
             $specificationDTO = $request->toDto();
             $specification = $this->specificationService->create($specificationDTO);
 
+            // Деактивируем все предыдущие спецификации
+            $contractModel->specifications()->updateExistingPivot(
+                $contractModel->specifications()->pluck('id')->toArray(),
+                ['is_active' => false]
+            );
+
+            // Прикрепляем новую спецификацию как активную
             $contractModel->specifications()->attach($specification->id, [
-                'attached_at' => now()
+                'attached_at' => now(),
+                'is_active' => true
             ]);
+
+            // Если договор использует Event Sourcing, создаем событие
+            if ($contractModel->usesEventSourcing()) {
+                try {
+                    $this->getStateEventService()->createAmendedEvent(
+                        $contractModel,
+                        $specification->id,
+                        $specification->total_amount ?? 0,
+                        $contractModel,
+                        now(),
+                        [
+                            'specification_number' => $specification->number,
+                            'reason' => 'Прикреплена новая спецификация'
+                        ]
+                    );
+
+                    // Обновляем материализованное представление
+                    $this->getStateCalculatorService()->recalculateContractState($contractModel);
+                } catch (Exception $e) {
+                    Log::warning('Failed to create state event for specification', [
+                        'contract_id' => $contractModel->id,
+                        'specification_id' => $specification->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
 
             $specification->load(['contracts']);
 
@@ -241,11 +280,47 @@ class ContractSpecificationController extends Controller
                 ], Response::HTTP_CONFLICT);
             }
 
+            // Деактивируем все предыдущие спецификации
+            $contractModel->specifications()->updateExistingPivot(
+                $contractModel->specifications()->pluck('id')->toArray(),
+                ['is_active' => false]
+            );
+
+            // Прикрепляем новую спецификацию как активную
             $contractModel->specifications()->attach($specificationId, [
-                'attached_at' => now()
+                'attached_at' => now(),
+                'is_active' => true
             ]);
 
             $specification = $contractModel->specifications()->find($specificationId);
+
+            // Если договор использует Event Sourcing, создаем событие
+            if ($contractModel->usesEventSourcing() && $specification) {
+                try {
+                    $amountDelta = ($specification->total_amount ?? 0) - ($contractModel->total_amount ?? 0);
+                    
+                    $this->getStateEventService()->createAmendedEvent(
+                        $contractModel,
+                        $specificationId,
+                        $amountDelta,
+                        $contractModel,
+                        now(),
+                        [
+                            'specification_number' => $specification->number,
+                            'reason' => 'Прикреплена существующая спецификация'
+                        ]
+                    );
+
+                    // Обновляем материализованное представление
+                    $this->getStateCalculatorService()->recalculateContractState($contractModel);
+                } catch (Exception $e) {
+                    Log::warning('Failed to create state event for attached specification', [
+                        'contract_id' => $contractModel->id,
+                        'specification_id' => $specificationId,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
 
             return response()->json([
                 'success' => true,
@@ -327,5 +402,27 @@ class ContractSpecificationController extends Controller
                 'error' => $e->getMessage()
             ], Response::HTTP_BAD_REQUEST);
         }
+    }
+
+    /**
+     * Получить сервис для работы с событиями состояния договора (lazy loading)
+     */
+    protected function getStateEventService(): ContractStateEventService
+    {
+        if ($this->stateEventService === null) {
+            $this->stateEventService = app(ContractStateEventService::class);
+        }
+        return $this->stateEventService;
+    }
+
+    /**
+     * Получить сервис для расчета состояний договора (lazy loading)
+     */
+    protected function getStateCalculatorService(): ContractStateCalculatorService
+    {
+        if ($this->stateCalculatorService === null) {
+            $this->stateCalculatorService = app(ContractStateCalculatorService::class);
+        }
+        return $this->stateCalculatorService;
     }
 }

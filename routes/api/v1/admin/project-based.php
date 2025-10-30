@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\V1\Admin\ProjectContextController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPaymentController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractSpecificationController;
+use App\Http\Controllers\Api\V1\Admin\Contract\ContractStateEventController;
 use App\Http\Controllers\Api\V1\Admin\EstimateController;
 use App\Http\Controllers\Api\V1\Admin\EstimateImportController;
 use App\Http\Controllers\Api\V1\Admin\EstimateSectionController;
@@ -82,6 +83,18 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
             Route::post('/', [ContractSpecificationController::class, 'store']);
             Route::post('/attach', [ContractSpecificationController::class, 'attach']);
             Route::delete('/{specification}', [ContractSpecificationController::class, 'destroy']);
+        });
+        
+        // Contract State Events (Event Sourcing)
+        Route::prefix('{contract}/state-events')->group(function () {
+            Route::get('/', [ContractStateEventController::class, 'index']);
+            Route::get('/timeline', [ContractStateEventController::class, 'timeline']);
+        });
+        
+        // Contract State
+        Route::prefix('{contract}')->group(function () {
+            Route::get('/state', [ContractStateEventController::class, 'currentState']);
+            Route::get('/state/at-date', [ContractStateEventController::class, 'stateAtDate']);
         });
     });
     

@@ -6,6 +6,7 @@ use App\Repositories\Interfaces\ContractRepositoryInterface;
 use App\Repositories\Interfaces\ContractorRepositoryInterface;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
 use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
+use App\Services\Contract\ContractStateEventService;
 use App\DTOs\Contract\ContractDTO;
 use App\Models\Contract;
 use App\Models\Project;
@@ -31,6 +32,7 @@ class ContractService
     protected ProjectContextService $projectContextService;
     protected OrganizationScopeInterface $orgScope;
     protected ContractorSharingInterface $contractorSharing;
+    protected ?ContractStateEventService $stateEventService = null;
 
     public function __construct(
         ContractRepositoryInterface $contractRepository,
@@ -205,6 +207,17 @@ class ContractService
             
             DB::commit();
 
+            // Создание события Event Sourcing для нового договора
+            try {
+                $this->getStateEventService()->createContractCreatedEvent($contract);
+            } catch (Exception $e) {
+                // Не критично, если событие не создалось - логируем и продолжаем
+                Log::warning('Failed to create contract state event', [
+                    'contract_id' => $contract->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+
             // BUSINESS: Договор успешно создан
             $this->logging->business('contract.created', [
                 'organization_id' => $organizationId,
@@ -241,6 +254,17 @@ class ContractService
             
             throw $e;
         }
+    }
+
+    /**
+     * Получить сервис для работы с событиями состояния договора (lazy loading)
+     */
+    protected function getStateEventService(): ContractStateEventService
+    {
+        if ($this->stateEventService === null) {
+            $this->stateEventService = app(ContractStateEventService::class);
+        }
+        return $this->stateEventService;
     }
 
     public function getContractById(int $contractId, int $organizationId): ?Contract

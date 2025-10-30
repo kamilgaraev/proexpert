@@ -43,6 +43,8 @@ use App\Repositories\Interfaces\SiteRequestRepositoryInterface;
 use App\Repositories\SiteRequest\SiteRequestRepository;
 use App\Repositories\Interfaces\ProjectScheduleRepositoryInterface;
 use App\Repositories\Schedule\ProjectScheduleRepository;
+use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
+use App\Repositories\ContractStateEventRepository;
 
 class RepositoryServiceProvider extends ServiceProvider
 {
@@ -83,6 +85,9 @@ class RepositoryServiceProvider extends ServiceProvider
         
         // Привязка для графиков проектов
         $this->app->bind(ProjectScheduleRepositoryInterface::class, ProjectScheduleRepository::class);
+        
+        // Привязка для событий состояния договоров (Event Sourcing)
+        $this->app->bind(ContractStateEventRepositoryInterface::class, ContractStateEventRepository::class);
         
         // Добавить другие репозитории по мере необходимости
     }

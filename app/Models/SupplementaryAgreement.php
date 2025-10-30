@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use App\Enums\Contract\SupplementaryAgreementStatusEnum;
 
 class SupplementaryAgreement extends Model
 {
@@ -20,6 +21,7 @@ class SupplementaryAgreement extends Model
         'subcontract_changes',
         'gp_changes',
         'advance_changes',
+        'status',
     ];
 
     protected $casts = [
@@ -29,10 +31,27 @@ class SupplementaryAgreement extends Model
         'subcontract_changes' => 'array',
         'gp_changes' => 'array',
         'advance_changes' => 'array',
+        'status' => SupplementaryAgreementStatusEnum::class,
     ];
 
     public function contract(): BelongsTo
     {
         return $this->belongsTo(Contract::class);
+    }
+
+    /**
+     * Проверка, является ли доп.соглашение активным
+     */
+    public function isActive(): bool
+    {
+        return $this->status === SupplementaryAgreementStatusEnum::ACTIVE;
+    }
+
+    /**
+     * Проверка, аннулировано ли доп.соглашение
+     */
+    public function isSuperseded(): bool
+    {
+        return $this->status === SupplementaryAgreementStatusEnum::SUPERSEDED;
     }
 } 
