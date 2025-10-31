@@ -553,4 +553,3 @@ class SupplementaryAgreementService
         return $this->stateCalculatorService;
     }
 } 
-} 
