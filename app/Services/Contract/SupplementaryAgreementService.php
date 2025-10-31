@@ -120,6 +120,80 @@ class SupplementaryAgreementService
 
     public function delete(int $id): bool
     {
+        $agreement = $this->getById($id);
+        if (!$agreement) {
+            return false;
+        }
+        
+        // Загружаем контракт для создания события
+        $contract = $agreement->contract;
+        
+        // Если контракт использует Event Sourcing, создаем события аннулирования
+        if ($contract && $contract->usesEventSourcing()) {
+            try {
+                // Находим все активные события, связанные с этим ДС
+                $activeEvents = $this->getStateEventService()->getTimeline($contract);
+                $agreementEvents = $activeEvents
+                    ->filter(function($event) use ($id) {
+                        return $event->isActive() 
+                            && $event->triggered_by_type === SupplementaryAgreement::class
+                            && $event->triggered_by_id === $id;
+                    });
+                
+                if ($agreementEvents->isNotEmpty()) {
+                    // Аннулируем все события, связанные с этим ДС
+                    foreach ($agreementEvents as $eventToSupersede) {
+                        $this->getStateEventService()->createSupersededEvent(
+                            $contract,
+                            $eventToSupersede,
+                            null, // Удаление ДС - не связано с новым ДС
+                            [
+                                'reason' => 'Дополнительное соглашение удалено',
+                                'agreement_number' => $agreement->number,
+                                'agreement_id' => $id,
+                                'deleted_by' => Auth::id(),
+                            ]
+                        );
+                    }
+                    
+                    // Пересчитываем состояние и обновляем сумму контракта
+                    $this->getStateCalculatorService()->recalculateContractState($contract);
+                    $contract->refresh();
+                    $currentState = $this->getStateEventService()->getCurrentState($contract);
+                    $calculatedAmount = $currentState['total_amount'];
+                    $contract->total_amount = $calculatedAmount;
+                    $contract->save();
+                    
+                    // BUSINESS: Логирование удаления ДС
+                    $this->logging->business('agreement.deleted', [
+                        'agreement_id' => $id,
+                        'agreement_number' => $agreement->number,
+                        'contract_id' => $contract->id,
+                        'contract_number' => $contract->number,
+                        'events_superseded' => $agreementEvents->count(),
+                        'new_contract_amount' => $calculatedAmount,
+                        'user_id' => Auth::id(),
+                    ]);
+                } else {
+                    // Нет активных событий - просто логируем
+                    $this->logging->business('agreement.deleted_no_events', [
+                        'agreement_id' => $id,
+                        'agreement_number' => $agreement->number,
+                        'contract_id' => $contract->id,
+                        'user_id' => Auth::id(),
+                    ]);
+                }
+            } catch (Exception $e) {
+                // Не критично, если событие не создалось - логируем и продолжаем
+                \Illuminate\Support\Facades\Log::warning('Failed to create deletion events for agreement', [
+                    'agreement_id' => $id,
+                    'contract_id' => $contract->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+        
+        // Удаляем ДС
         return $this->repository->delete($id);
     }
 

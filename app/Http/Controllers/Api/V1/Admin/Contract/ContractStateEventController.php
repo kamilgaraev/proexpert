@@ -352,8 +352,11 @@ class ContractStateEventController extends Controller
                         $description .= "события типа '{$supersededType}' на сумму {$supersededDelta} руб.";
                     }
                     
-                    // Добавляем информацию о том, каким ДС было аннулировано
-                    if ($supersedingAgreement) {
+                    // Добавляем информацию о том, каким ДС было аннулировано или удалено
+                    $metadata = $event->metadata ?? [];
+                    if (isset($metadata['deleted_by']) || (isset($metadata['reason']) && strpos($metadata['reason'], 'удалено') !== false)) {
+                        $description .= " (дополнительное соглашение удалено)";
+                    } elseif ($supersedingAgreement) {
                         $description .= " (аннулировано ДС №{$supersedingAgreement->number})";
                     } elseif ($reason) {
                         $description .= " ({$reason})";
