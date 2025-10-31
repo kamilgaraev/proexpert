@@ -15,6 +15,7 @@ use App\Services\Contract\ContractStateEventService;
 use App\Services\Contract\ContractStateCalculatorService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
+use Carbon\Carbon;
 use Exception;
 
 class SupplementaryAgreementService
@@ -49,12 +50,13 @@ class SupplementaryAgreementService
                         
                         // Создаем событие AMENDED с change_amount
                         $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
+                        $effectiveDate = $dto->agreement_date ? \Carbon\Carbon::parse($dto->agreement_date) : now();
                         $this->getStateEventService()->createAmendedEvent(
                             $contract,
                             $activeSpecification?->id,
-                            $dto->change_amount,
+                            (float) $dto->change_amount,
                             $agreement,
-                            $dto->agreement_date ?? now(),
+                            $effectiveDate,
                             [
                                 'agreement_number' => $agreement->number,
                                 'reason' => 'Применено дополнительное соглашение после аннулирования ДС',
