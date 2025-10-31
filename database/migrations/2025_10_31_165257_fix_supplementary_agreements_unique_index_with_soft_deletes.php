@@ -15,32 +15,27 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Проверяем существование старого индекса и удаляем его
-        $oldIndexName = 'supplementary_agreements_contract_id_number_unique';
-        $indexExists = DB::select(
-            "SELECT 1 FROM pg_indexes WHERE indexname = ? AND tablename = 'supplementary_agreements'",
-            [$oldIndexName]
-        );
+        // В PostgreSQL, unique constraint создает и constraint, и индекс
+        // Нужно удалить constraint через Laravel Schema builder или напрямую через SQL
+        $constraintName = 'supplementary_agreements_contract_id_number_unique';
         
-        if (!empty($indexExists)) {
-            // Индекс существует с ожидаемым именем
-            DB::statement("DROP INDEX {$oldIndexName}");
-        } else {
-            // Пытаемся удалить по колонкам (если имя индекса отличается)
-            try {
-                Schema::table('supplementary_agreements', function (Blueprint $table) {
+        // Сначала пытаемся удалить через Laravel Schema builder (правильный способ)
+        try {
+            Schema::table('supplementary_agreements', function (Blueprint $table) use ($constraintName) {
+                // Пытаемся удалить по имени constraint
+                try {
+                    $table->dropUnique($constraintName);
+                } catch (\Exception $e) {
+                    // Если не получилось по имени, пытаемся по колонкам
                     $table->dropUnique(['contract_id', 'number']);
-                });
-            } catch (\Exception $e) {
-                // Если индекс уже не существует или имеет другое имя, игнорируем ошибку
-                // и ищем индекс вручную
-                $existingIndexes = DB::select(
-                    "SELECT indexname FROM pg_indexes WHERE tablename = 'supplementary_agreements' AND indexdef LIKE '%contract_id%number%'"
-                );
-                foreach ($existingIndexes as $idx) {
-                    DB::statement("DROP INDEX IF EXISTS {$idx->indexname}");
                 }
-            }
+            });
+        } catch (\Exception $e) {
+            // Если Laravel способ не сработал, удаляем напрямую через SQL
+            // В PostgreSQL constraint и индекс могут иметь одно имя, но удалять нужно constraint
+            DB::statement("ALTER TABLE supplementary_agreements DROP CONSTRAINT IF EXISTS {$constraintName}");
+            // Также удаляем индекс на случай, если он существует отдельно
+            DB::statement("DROP INDEX IF EXISTS {$constraintName}");
         }
         
         // Создаем частичный уникальный индекс в PostgreSQL, который учитывает только активные записи
