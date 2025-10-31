@@ -133,7 +133,8 @@ class ContractResource extends JsonResource
                     })
                     ->sum('amount_delta');
                 
-                $effectiveTotalAmount = $calculatedTotalAmount;
+                // Правильный расчет: базовая сумма + изменения от допсоглашений
+                $effectiveTotalAmount = $baseTotalAmount + $agreementsDelta;
             } catch (\Exception $e) {
                 // Fallback на старый способ если Event Sourcing не работает
                 $agreementsDelta = $this->whenLoaded('agreements', function() {
