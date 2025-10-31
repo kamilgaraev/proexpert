@@ -36,8 +36,11 @@ class AgreementController extends Controller
             return ['valid' => false, 'message' => 'Контракт не найден'];
         }
         
-        // Проверяем доступ к организации
-        if ($contract->organization_id !== $organizationId) {
+        // Проверяем доступ к контракту через ContractService (учитывает и заказчика, и подрядчика)
+        $contractService = app(\App\Services\Contract\ContractService::class);
+        $accessibleContract = $contractService->getContractById($contract->id, $organizationId);
+        
+        if (!$accessibleContract) {
             return ['valid' => false, 'message' => 'Нет доступа к этому соглашению'];
         }
         
