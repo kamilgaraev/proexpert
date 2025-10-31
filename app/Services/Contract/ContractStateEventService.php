@@ -191,6 +191,65 @@ class ContractStateEventService
     }
 
     /**
+     * Создать доп.соглашение с аннулированием ВСЕХ предыдущих активных событий
+     * и установкой новой абсолютной суммы
+     */
+    public function createAmendmentWithAllSupersede(
+        Contract $contract,
+        SupplementaryAgreement $agreement,
+        float $newAmount,
+        ?int $newSpecificationId = null
+    ): array {
+        return DB::transaction(function () use ($contract, $agreement, $newAmount, $newSpecificationId) {
+            $events = [];
+
+            // Находим все активные события (кроме PAYMENT_CREATED, они не влияют на сумму контракта)
+            $activeEvents = $this->eventRepository->findActiveEvents($contract->id);
+            
+            // Фильтруем только события, влияющие на сумму контракта
+            $amountAffectingEvents = $activeEvents->filter(function ($event) {
+                return !in_array($event->event_type, [
+                    ContractStateEventTypeEnum::PAYMENT_CREATED
+                ]);
+            });
+
+            // Аннулируем все активные события, влияющие на сумму
+            foreach ($amountAffectingEvents as $eventToSupersede) {
+                $supersededEvent = $this->createSupersededEvent(
+                    $contract,
+                    $eventToSupersede,
+                    $agreement,
+                    ['reason' => 'Аннулировано доп. соглашением ' . $agreement->number]
+                );
+                $events[] = $supersededEvent;
+            }
+
+            // Вычисляем текущую сумму из аннулированных событий
+            // После аннулирования всех событий, сумма = 0
+            // Поэтому дельта для нового события = newAmount - 0 = newAmount
+            $amountDelta = $newAmount;
+
+            // Создаем новое событие AMENDED с новой абсолютной суммой
+            $amendedEvent = $this->createAmendedEvent(
+                $contract,
+                $newSpecificationId,
+                $amountDelta,
+                $agreement,
+                $agreement->agreement_date ?? now(),
+                [
+                    'agreement_id' => $agreement->id,
+                    'agreement_number' => $agreement->number,
+                    'new_amount' => $newAmount,
+                    'superseded_events_count' => $amountAffectingEvents->count(),
+                ]
+            );
+            $events[] = $amendedEvent;
+
+            return $events;
+        });
+    }
+
+    /**
      * Создать событие для дополнительного соглашения
      */
     public function createSupplementaryAgreementEvent(

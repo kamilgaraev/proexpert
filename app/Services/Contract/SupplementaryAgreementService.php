@@ -114,8 +114,32 @@ class SupplementaryAgreementService
 
             DB::beginTransaction();
 
-            // 1. Применяем изменение суммы контракта (если указано)
-            if ($agreement->change_amount !== null && $agreement->change_amount != 0) {
+            // 1. Применяем изменение суммы контракта
+            // Приоритет у new_amount (если указан) - это абсолютная сумма с аннулированием всех предыдущих
+            if ($agreement->new_amount !== null) {
+                // Установка новой абсолютной суммы с аннулированием всех предыдущих событий
+                $newTotalAmount = $agreement->new_amount;
+                
+                // Валидация: сумма контракта не может быть отрицательной
+                if ($newTotalAmount < 0) {
+                    throw new Exception(
+                        "Невозможно применить изменения: новая сумма контракта не может быть отрицательной " .
+                        "({$newTotalAmount})"
+                    );
+                }
+                
+                $contract->total_amount = $newTotalAmount;
+                
+                // BUSINESS: Установка новой абсолютной суммы
+                $this->logging->business('agreement.contract_amount_set_absolute', [
+                    'agreement_id' => $agreementId,
+                    'contract_id' => $contract->id,
+                    'old_amount' => $oldValues['total_amount'],
+                    'new_amount' => $newTotalAmount,
+                    'user_id' => Auth::id(),
+                ]);
+            } elseif ($agreement->change_amount !== null && $agreement->change_amount != 0) {
+                // Старая логика: изменение суммы через дельту
                 $newTotalAmount = $contract->total_amount + $agreement->change_amount;
                 
                 // Валидация: сумма контракта не может быть отрицательной
@@ -176,24 +200,44 @@ class SupplementaryAgreementService
                 }
             }
 
-            // Создаем событие AMENDED для примененного доп.соглашения, если Event Sourcing активен
+            // Создаем событие для примененного доп.соглашения, если Event Sourcing активен
             $contract->refresh(); // Обновляем модель чтобы получить актуальный статус usesEventSourcing
             if ($contract->usesEventSourcing()) {
                 try {
                     // Находим активную спецификацию для события (если есть)
                     $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
                     
-                    $this->getStateEventService()->createAmendedEvent(
-                        $contract,
-                        $activeSpecification?->id,
-                        $agreement->change_amount ?? 0,
-                        $agreement,
-                        $agreement->agreement_date ?? now(),
-                        [
-                            'agreement_number' => $agreement->number,
-                            'reason' => 'Применено дополнительное соглашение'
-                        ]
-                    );
+                    if ($agreement->new_amount !== null) {
+                        // Если указана новая абсолютная сумма - аннулируем все предыдущие события
+                        $events = $this->getStateEventService()->createAmendmentWithAllSupersede(
+                            $contract,
+                            $agreement,
+                            $agreement->new_amount,
+                            $activeSpecification?->id
+                        );
+                        
+                        // BUSINESS: Логирование массового аннулирования
+                        $this->logging->business('agreement.all_events_superseded', [
+                            'agreement_id' => $agreementId,
+                            'contract_id' => $contract->id,
+                            'new_amount' => $agreement->new_amount,
+                            'events_created' => count($events),
+                            'user_id' => Auth::id(),
+                        ]);
+                    } else {
+                        // Старая логика: простое изменение суммы через дельту
+                        $this->getStateEventService()->createAmendedEvent(
+                            $contract,
+                            $activeSpecification?->id,
+                            $agreement->change_amount ?? 0,
+                            $agreement,
+                            $agreement->agreement_date ?? now(),
+                            [
+                                'agreement_number' => $agreement->number,
+                                'reason' => 'Применено дополнительное соглашение'
+                            ]
+                        );
+                    }
 
                     // Обновляем материализованное представление
                     $this->getStateCalculatorService()->recalculateContractState($contract);

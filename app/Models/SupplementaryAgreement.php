@@ -17,6 +17,7 @@ class SupplementaryAgreement extends Model
         'number',
         'agreement_date',
         'change_amount',
+        'new_amount',
         'subject_changes',
         'subcontract_changes',
         'gp_changes',
@@ -27,6 +28,7 @@ class SupplementaryAgreement extends Model
     protected $casts = [
         'agreement_date' => 'date',
         'change_amount' => 'decimal:2',
+        'new_amount' => 'decimal:2',
         'subject_changes' => 'array',
         'subcontract_changes' => 'array',
         'gp_changes' => 'array',

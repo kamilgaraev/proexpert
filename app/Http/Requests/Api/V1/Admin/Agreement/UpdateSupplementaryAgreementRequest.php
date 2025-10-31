@@ -17,7 +17,8 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
         return [
             'number' => ['sometimes', 'string', 'max:255'],
             'agreement_date' => ['sometimes', 'date_format:Y-m-d'],
-            'change_amount' => ['sometimes', 'numeric'],
+            'change_amount' => ['sometimes', 'nullable', 'numeric'],
+            'new_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'subject_changes' => ['sometimes', 'array'],
             'subject_changes.*' => ['string'],
             'subcontract_changes' => ['sometimes', 'nullable', 'array'],
@@ -34,11 +35,12 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
             contract_id: $contractId,
             number: $this->validated('number'),
             agreement_date: $this->validated('agreement_date'),
-            change_amount: $this->validated('change_amount') !== null ? (float) $this->validated('change_amount') : 0,
+            change_amount: $this->validated('change_amount') !== null ? (float) $this->validated('change_amount') : null,
             subject_changes: $this->validated('subject_changes') ?? [],
             subcontract_changes: $this->validated('subcontract_changes'),
             gp_changes: $this->validated('gp_changes'),
             advance_changes: $this->validated('advance_changes'),
+            new_amount: $this->validated('new_amount') !== null ? (float) $this->validated('new_amount') : null,
         );
     }
 } 
