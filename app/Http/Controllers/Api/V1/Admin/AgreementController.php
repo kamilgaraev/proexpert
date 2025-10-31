@@ -49,14 +49,45 @@ class AgreementController extends Controller
         return ['valid' => true];
     }
 
-    public function index(Request $request, int $project = null)
+    public function index(Request $request, int $project = null, int $contract = null)
     {
-        // Получаем project_id из URL (обязательный параметр для project-based маршрутов)
+        $organizationId = $request->user()?->current_organization_id;
         $projectId = $project;
+        $contractId = $contract ?? $request->route('contract');
         $perPage = $request->query('per_page', 15);
         
-        // TODO: Добавить фильтрацию по project_id в SupplementaryAgreementService
-        // Пока возвращаем все для проекта
+        // Если указан contract в маршруте, возвращаем ДС для этого контракта
+        if ($contractId) {
+            // Проверяем доступ к контракту
+            $contractService = app(\App\Services\Contract\ContractService::class);
+            $contractModel = $contractService->getContractById($contractId, $organizationId);
+            
+            if (!$contractModel) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не найден или нет доступа'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            // Проверяем принадлежность проекту
+            if ($projectId && (int)$contractModel->project_id !== (int)$projectId) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не принадлежит указанному проекту'
+                ], Response::HTTP_NOT_FOUND);
+            }
+            
+            $paginator = $this->service->paginateByContract($contractId, $perPage);
+            
+            // Преобразуем результаты в ресурсы
+            $paginator->getCollection()->transform(function ($agreement) {
+                return new \App\Http\Resources\Api\V1\Admin\Contract\Agreement\SupplementaryAgreementResource($agreement);
+            });
+            
+            return $paginator;
+        }
+        
+        // Если contract не указан, возвращаем все (старая логика для обратной совместимости)
         return $this->service->paginate($perPage);
     }
 
