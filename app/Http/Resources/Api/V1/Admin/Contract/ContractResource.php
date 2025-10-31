@@ -167,8 +167,12 @@ class ContractResource extends JsonResource
             'base_amount' => $baseTotalAmount,
             'total_amount' => $effectiveTotalAmount,
             'gp_percentage' => (float) ($this->gp_percentage ?? 0),
-            'gp_amount' => (float) ($this->gp_amount ?? 0),
-            'total_amount_with_gp' => $effectiveTotalAmount + (float) ($this->gp_amount ?? 0),
+            'gp_amount' => ($this->gp_percentage && $this->gp_percentage > 0) 
+                ? round($effectiveTotalAmount * (float) $this->gp_percentage / 100, 2) 
+                : (float) ($this->gp_amount ?? 0),
+            'total_amount_with_gp' => ($this->gp_percentage && $this->gp_percentage > 0)
+                ? round($effectiveTotalAmount * (1 + (float) $this->gp_percentage / 100), 2)
+                : ($effectiveTotalAmount + (float) ($this->gp_amount ?? 0)),
             'planned_advance_amount' => (float) ($this->planned_advance_amount ?? 0),
             'actual_advance_amount' => (float) ($this->actual_advance_amount ?? 0),
             'remaining_advance_amount' => (float) ($this->remaining_advance_amount ?? 0),
@@ -357,8 +361,12 @@ class ContractResource extends JsonResource
                     'percentage' => (float) ($this->gp_percentage ?? 0),
                     'coefficient' => (float) ($this->gp_coefficient ?? 0),
                     'calculation_type' => $this->gp_calculation_type?->value,
-                    'gp_amount' => (float) ($this->gp_amount ?? 0),
-                    'total_with_gp' => $effectiveTotalAmount + (float) ($this->gp_amount ?? 0),
+                    'gp_amount' => ($this->gp_percentage && $this->gp_percentage > 0)
+                        ? round($effectiveTotalAmount * (float) $this->gp_percentage / 100, 2)
+                        : (float) ($this->gp_amount ?? 0),
+                    'total_with_gp' => ($this->gp_percentage && $this->gp_percentage > 0)
+                        ? round($effectiveTotalAmount * (1 + (float) $this->gp_percentage / 100), 2)
+                        : ($effectiveTotalAmount + (float) ($this->gp_amount ?? 0)),
                 ] : null,
                 
                 // Субподряд

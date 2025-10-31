@@ -108,6 +108,19 @@ class SupplementaryAgreementService
                     'error' => $e->getMessage()
                 ]);
             }
+        } elseif ($contract) {
+            // Для legacy контрактов (без Event Sourcing) также обновляем total_amount
+            if ($dto->change_amount !== null && $dto->change_amount != 0) {
+                $contract->total_amount = ($contract->total_amount ?? 0) + (float) $dto->change_amount;
+                $contract->save();
+            }
+            // Если указан supersede_agreement_ids для legacy контракта - это не поддерживается без Event Sourcing
+            if (!empty($dto->supersede_agreement_ids)) {
+                \Illuminate\Support\Facades\Log::warning('Attempted to supersede agreements for legacy contract without Event Sourcing', [
+                    'contract_id' => $contract->id,
+                    'agreement_id' => $agreement->id,
+                ]);
+            }
         }
         
         return $agreement;
