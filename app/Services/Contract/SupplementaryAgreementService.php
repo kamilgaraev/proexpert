@@ -208,22 +208,44 @@ class SupplementaryAgreementService
                     $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
                     
                     if ($agreement->new_amount !== null) {
-                        // Если указана новая абсолютная сумма - аннулируем все предыдущие события
-                        $events = $this->getStateEventService()->createAmendmentWithAllSupersede(
-                            $contract,
-                            $agreement,
-                            $agreement->new_amount,
-                            $activeSpecification?->id
-                        );
-                        
-                        // BUSINESS: Логирование массового аннулирования
-                        $this->logging->business('agreement.all_events_superseded', [
-                            'agreement_id' => $agreementId,
-                            'contract_id' => $contract->id,
-                            'new_amount' => $agreement->new_amount,
-                            'events_created' => count($events),
-                            'user_id' => Auth::id(),
-                        ]);
+                        // Если указана новая абсолютная сумма
+                        if (!empty($agreement->supersede_agreement_ids)) {
+                            // Аннулируем только выбранные ДС
+                            $events = $this->getStateEventService()->createAmendmentWithSelectedSupersede(
+                                $contract,
+                                $agreement,
+                                $agreement->new_amount,
+                                $agreement->supersede_agreement_ids,
+                                $activeSpecification?->id
+                            );
+                            
+                            // BUSINESS: Логирование аннулирования выбранных ДС
+                            $this->logging->business('agreement.selected_events_superseded', [
+                                'agreement_id' => $agreementId,
+                                'contract_id' => $contract->id,
+                                'new_amount' => $agreement->new_amount,
+                                'supersede_agreement_ids' => $agreement->supersede_agreement_ids,
+                                'events_created' => count($events),
+                                'user_id' => Auth::id(),
+                            ]);
+                        } else {
+                            // Аннулируем все предыдущие события
+                            $events = $this->getStateEventService()->createAmendmentWithAllSupersede(
+                                $contract,
+                                $agreement,
+                                $agreement->new_amount,
+                                $activeSpecification?->id
+                            );
+                            
+                            // BUSINESS: Логирование массового аннулирования
+                            $this->logging->business('agreement.all_events_superseded', [
+                                'agreement_id' => $agreementId,
+                                'contract_id' => $contract->id,
+                                'new_amount' => $agreement->new_amount,
+                                'events_created' => count($events),
+                                'user_id' => Auth::id(),
+                            ]);
+                        }
                     } else {
                         // Старая логика: простое изменение суммы через дельту
                         $this->getStateEventService()->createAmendedEvent(

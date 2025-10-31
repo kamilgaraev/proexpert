@@ -19,6 +19,24 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
             'agreement_date' => ['sometimes', 'date_format:Y-m-d'],
             'change_amount' => ['sometimes', 'nullable', 'numeric'],
             'new_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'supersede_agreement_ids' => ['sometimes', 'nullable', 'array'],
+            'supersede_agreement_ids.*' => [
+                'required',
+                'integer',
+                'exists:supplementary_agreements,id',
+                function ($attribute, $value, $fail) {
+                    $currentAgreement = $this->route('agreement');
+                    $contractId = $currentAgreement 
+                        ? \App\Models\SupplementaryAgreement::find($currentAgreement)?->contract_id 
+                        : null;
+                    if ($contractId) {
+                        $agreement = \App\Models\SupplementaryAgreement::find($value);
+                        if ($agreement && $agreement->contract_id != $contractId) {
+                            $fail("Дополнительное соглашение #{$value} не принадлежит указанному контракту.");
+                        }
+                    }
+                },
+            ],
             'subject_changes' => ['sometimes', 'array'],
             'subject_changes.*' => ['string'],
             'subcontract_changes' => ['sometimes', 'nullable', 'array'],
@@ -31,6 +49,11 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
 
     public function toDto(int $contractId): SupplementaryAgreementDTO
     {
+        $supersedeIds = $this->validated('supersede_agreement_ids');
+        if ($supersedeIds !== null) {
+            $supersedeIds = array_map('intval', $supersedeIds);
+        }
+
         return new SupplementaryAgreementDTO(
             contract_id: $contractId,
             number: $this->validated('number'),
@@ -41,6 +64,7 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
             gp_changes: $this->validated('gp_changes'),
             advance_changes: $this->validated('advance_changes'),
             new_amount: $this->validated('new_amount') !== null ? (float) $this->validated('new_amount') : null,
+            supersede_agreement_ids: $supersedeIds,
         );
     }
 } 

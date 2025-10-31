@@ -14,6 +14,7 @@ class SupplementaryAgreementDTO
         public readonly ?array $gp_changes,
         public readonly ?array $advance_changes,
         public readonly ?float $new_amount = null,
+        public readonly ?array $supersede_agreement_ids = null,
     ) {}
 
     public function toArray(): array
@@ -31,6 +32,10 @@ class SupplementaryAgreementDTO
 
         if ($this->new_amount !== null) {
             $data['new_amount'] = $this->new_amount;
+        }
+
+        if ($this->supersede_agreement_ids !== null) {
+            $data['supersede_agreement_ids'] = $this->supersede_agreement_ids;
         }
 
         return $data;

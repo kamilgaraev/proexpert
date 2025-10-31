@@ -250,6 +250,92 @@ class ContractStateEventService
     }
 
     /**
+     * Создать доп.соглашение с аннулированием ВЫБРАННЫХ ДС
+     * и установкой новой абсолютной суммы
+     */
+    public function createAmendmentWithSelectedSupersede(
+        Contract $contract,
+        SupplementaryAgreement $agreement,
+        float $newAmount,
+        array $supersedeAgreementIds,
+        ?int $newSpecificationId = null
+    ): array {
+        return DB::transaction(function () use ($contract, $agreement, $newAmount, $supersedeAgreementIds, $newSpecificationId) {
+            $events = [];
+
+            // Находим все активные события контракта
+            $activeEvents = $this->eventRepository->findActiveEvents($contract->id);
+            
+            // Фильтруем только события, влияющие на сумму контракта
+            $amountAffectingEvents = $activeEvents->filter(function ($event) {
+                return !in_array($event->event_type, [
+                    ContractStateEventTypeEnum::PAYMENT_CREATED
+                ]);
+            });
+
+            // Находим события, связанные с выбранными ДС для аннулирования
+            $eventsToSupersede = $amountAffectingEvents->filter(function ($event) use ($supersedeAgreementIds) {
+                return $event->triggered_by_type === SupplementaryAgreement::class
+                    && in_array($event->triggered_by_id, $supersedeAgreementIds)
+                    && $event->isActive();
+            });
+
+            if ($eventsToSupersede->isEmpty()) {
+                throw new Exception('Не найдено активных событий для указанных дополнительных соглашений');
+            }
+
+            // Вычисляем текущую сумму из всех активных событий
+            $currentAmount = $amountAffectingEvents->sum('amount_delta');
+            
+            // Вычисляем сумму из событий, которые будут аннулированы
+            $supersededAmount = $eventsToSupersede->sum('amount_delta');
+            
+            // После аннулирования выбранных событий сумма будет: currentAmount - supersededAmount
+            // Нужно добавить дельту, чтобы получить newAmount
+            // newAmount = (currentAmount - supersededAmount) + delta
+            // delta = newAmount - (currentAmount - supersededAmount)
+            $amountAfterSupersede = $currentAmount - $supersededAmount;
+            $amountDelta = $newAmount - $amountAfterSupersede;
+
+            // Аннулируем выбранные события
+            foreach ($eventsToSupersede as $eventToSupersede) {
+                $supersededEvent = $this->createSupersededEvent(
+                    $contract,
+                    $eventToSupersede,
+                    $agreement,
+                    [
+                        'reason' => 'Аннулировано доп. соглашением ' . $agreement->number,
+                        'superseded_agreement_id' => $eventToSupersede->triggered_by_id,
+                    ]
+                );
+                $events[] = $supersededEvent;
+            }
+
+            // Создаем новое событие AMENDED с вычисленной дельтой
+            $amendedEvent = $this->createAmendedEvent(
+                $contract,
+                $newSpecificationId,
+                $amountDelta,
+                $agreement,
+                $agreement->agreement_date ?? now(),
+                [
+                    'agreement_id' => $agreement->id,
+                    'agreement_number' => $agreement->number,
+                    'new_amount' => $newAmount,
+                    'superseded_agreement_ids' => $supersedeAgreementIds,
+                    'superseded_events_count' => $eventsToSupersede->count(),
+                    'previous_amount' => $currentAmount,
+                    'superseded_amount' => $supersededAmount,
+                    'amount_after_supersede' => $amountAfterSupersede,
+                ]
+            );
+            $events[] = $amendedEvent;
+
+            return $events;
+        });
+    }
+
+    /**
      * Создать событие для дополнительного соглашения
      */
     public function createSupplementaryAgreementEvent(
