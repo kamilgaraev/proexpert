@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Admin\Agreement;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use App\DTOs\SupplementaryAgreementDTO;
 
 class StoreSupplementaryAgreementRequest extends FormRequest
@@ -18,7 +19,14 @@ class StoreSupplementaryAgreementRequest extends FormRequest
 
         return [
             'contract_id' => ['required', 'integer', 'exists:contracts,id'],
-            'number' => ['required', 'string', 'max:255'],
+            'number' => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('supplementary_agreements', 'number')
+                    ->where('contract_id', $contractId)
+                    ->whereNull('deleted_at'),
+            ],
             'agreement_date' => ['required', 'date_format:Y-m-d'],
             'change_amount' => ['nullable', 'numeric'],
             'supersede_agreement_ids' => [
@@ -50,6 +58,7 @@ class StoreSupplementaryAgreementRequest extends FormRequest
     public function messages(): array
     {
         return [
+            'number.unique' => 'Дополнительное соглашение с таким номером уже существует для этого контракта',
             'supersede_agreement_ids.*.exists' => 'Одно из указанных дополнительных соглашений не найдено',
         ];
     }

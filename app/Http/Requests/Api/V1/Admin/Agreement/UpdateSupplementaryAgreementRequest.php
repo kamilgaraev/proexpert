@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Admin\Agreement;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 use App\DTOs\SupplementaryAgreementDTO;
 
 class UpdateSupplementaryAgreementRequest extends FormRequest
@@ -14,8 +15,26 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
 
     public function rules(): array
     {
+        $agreementId = $this->route('agreement');
+        $contractId = null;
+        
+        if ($agreementId) {
+            $agreement = \App\Models\SupplementaryAgreement::find($agreementId);
+            $contractId = $agreement?->contract_id;
+        }
+        
         return [
-            'number' => ['sometimes', 'string', 'max:255'],
+            'number' => [
+                'sometimes',
+                'string',
+                'max:255',
+                $contractId && $agreementId
+                    ? Rule::unique('supplementary_agreements', 'number')
+                        ->ignore($agreementId)
+                        ->where('contract_id', $contractId)
+                        ->whereNull('deleted_at')
+                    : 'sometimes',
+            ],
             'agreement_date' => ['sometimes', 'date_format:Y-m-d'],
             'change_amount' => ['sometimes', 'nullable', 'numeric'],
             'supersede_agreement_ids' => ['sometimes', 'nullable', 'array'],
@@ -43,6 +62,14 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
             'advance_changes' => ['sometimes', 'nullable', 'array'],
             'advance_changes.*.payment_id' => ['required', 'integer', 'exists:contract_payments,id'],
             'advance_changes.*.new_amount' => ['required', 'numeric', 'min:0'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'number.unique' => 'Дополнительное соглашение с таким номером уже существует для этого контракта',
+            'supersede_agreement_ids.*.exists' => 'Одно из указанных дополнительных соглашений не найдено',
         ];
     }
 
