@@ -29,12 +29,49 @@ class ContractResource extends JsonResource
             ? $confirmedWorks->sum('total_amount') : 0;
 
         // Рассчитываем итоговую сумму контракта с учетом допсоглашений
-        $agreementsDelta = $this->whenLoaded('agreements', function() {
-            return $this->agreements->sum('change_amount') ?? 0;
-        }, 0);
-        
-        $baseTotalAmount = (float) ($this->total_amount ?? 0);
-        $effectiveTotalAmount = $baseTotalAmount + $agreementsDelta;
+        // Если контракт использует Event Sourcing, считаем из активных событий
+        // Иначе используем старый способ (sum change_amount)
+        if ($this->usesEventSourcing()) {
+            try {
+                $stateEventService = app(\App\Services\Contract\ContractStateEventService::class);
+                $currentState = $stateEventService->getCurrentState($this->resource);
+                $calculatedTotalAmount = $currentState['total_amount'] ?? 0;
+                
+                // Получаем все активные события для расчета agreements_total_change
+                $activeEvents = $stateEventService->getTimeline($this->resource);
+                
+                // Базовая сумма из события CREATED
+                $createdEvent = $activeEvents->where('event_type', \App\Enums\Contract\ContractStateEventTypeEnum::CREATED)->first();
+                $baseTotalAmount = $createdEvent ? (float) ($createdEvent->amount_delta ?? 0) : (float) ($this->total_amount ?? 0);
+                
+                // Дельта ДС = сумма всех активных событий, влияющих на сумму ДС
+                // Исключаем CREATED (базовая сумма) и PAYMENT_CREATED (платежи)
+                $agreementsDelta = $activeEvents
+                    ->filter(function($event) {
+                        return !in_array($event->event_type, [
+                            \App\Enums\Contract\ContractStateEventTypeEnum::CREATED,
+                            \App\Enums\Contract\ContractStateEventTypeEnum::PAYMENT_CREATED,
+                        ]);
+                    })
+                    ->sum('amount_delta');
+                
+                $effectiveTotalAmount = $calculatedTotalAmount;
+            } catch (\Exception $e) {
+                // Fallback на старый способ если Event Sourcing не работает
+                $agreementsDelta = $this->whenLoaded('agreements', function() {
+                    return $this->agreements->sum('change_amount') ?? 0;
+                }, 0);
+                $baseTotalAmount = (float) ($this->total_amount ?? 0);
+                $effectiveTotalAmount = $baseTotalAmount + $agreementsDelta;
+            }
+        } else {
+            // Старый способ для legacy контрактов
+            $agreementsDelta = $this->whenLoaded('agreements', function() {
+                return $this->agreements->sum('change_amount') ?? 0;
+            }, 0);
+            $baseTotalAmount = (float) ($this->total_amount ?? 0);
+            $effectiveTotalAmount = $baseTotalAmount + $agreementsDelta;
+        }
 
         return [
             'id' => $this->id,
