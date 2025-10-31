@@ -313,7 +313,56 @@ class ContractStateEventController extends Controller
                 }
                 return "Изменение договора: +{$delta} руб.";
             case 'superseded':
-                return "Аннулирование предыдущего изменения: {$delta} руб.";
+                // Получаем информацию об аннулированном событии
+                $supersedesEvent = $event->supersedesEvent;
+                $reason = $event->metadata['reason'] ?? null;
+                $agreementNumber = $event->metadata['agreement_number'] ?? null;
+                $supersededAgreementId = $event->metadata['superseded_agreement_id'] ?? null;
+                
+                $description = "Аннулирование ";
+                
+                if ($supersedesEvent) {
+                    // Определяем тип аннулированного события
+                    $supersededType = $supersedesEvent->event_type->value;
+                    $supersededDelta = number_format(abs($supersedesEvent->amount_delta), 2, '.', ' ');
+                    
+                    if ($supersededType === 'supplementary_agreement_created' || $supersededType === 'amended') {
+                        $supersededAgreementNum = $supersedesEvent->metadata['agreement_number'] ?? 
+                                                 ($supersededAgreementId ? '#' . $supersededAgreementId : null);
+                        
+                        if ($supersededAgreementNum) {
+                            $description .= "дополнительного соглашения №{$supersededAgreementNum} ";
+                        } else {
+                            $description .= "дополнительного соглашения ";
+                        }
+                        
+                        $description .= "на сумму {$supersededDelta} руб.";
+                    } elseif ($supersededType === 'created') {
+                        $description .= "создания договора на сумму {$supersededDelta} руб.";
+                    } else {
+                        $description .= "события типа '{$supersededType}' на сумму {$supersededDelta} руб.";
+                    }
+                    
+                    // Добавляем информацию о том, каким ДС было аннулировано
+                    if ($agreementNumber) {
+                        $description .= " (аннулировано ДС №{$agreementNumber})";
+                    } elseif ($reason) {
+                        $description .= " ({$reason})";
+                    }
+                } else {
+                    // Fallback, если связь не загружена
+                    $description .= "события ";
+                    if ($reason) {
+                        $description .= $reason;
+                    } else {
+                        $description .= "на сумму " . number_format(abs($delta), 2, '.', ' ') . " руб.";
+                    }
+                    if ($agreementNumber) {
+                        $description .= " (аннулировано ДС №{$agreementNumber})";
+                    }
+                }
+                
+                return $description;
             case 'cancelled':
                 return "Отмена: {$delta} руб.";
             case 'supplementary_agreement_created':

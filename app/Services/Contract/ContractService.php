@@ -598,7 +598,7 @@ class ContractService
             'completedWorks.workType:id,name',
             'completedWorks.user:id,name',
             'completedWorks.materials',
-            'agreements:id,contract_id,number,agreement_date,change_amount,status,subject_changes,supersede_agreement_ids,created_at,updated_at',
+            'agreements:id,contract_id,number,agreement_date,change_amount,subject_changes,supersede_agreement_ids,created_at,updated_at',
             'specifications:id,number,spec_date,total_amount,status,scope_items'
         ]);
 

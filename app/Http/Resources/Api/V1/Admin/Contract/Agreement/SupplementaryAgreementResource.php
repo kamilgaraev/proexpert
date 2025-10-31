@@ -15,7 +15,6 @@ class SupplementaryAgreementResource extends JsonResource
             'number' => $this->number,
             'agreement_date' => $this->agreement_date?->format('Y-m-d\TH:i:s.v\Z') ?? ($this->agreement_date ? date('Y-m-d\TH:i:s.v\Z', strtotime($this->agreement_date)) : null),
             'change_amount' => (float) ($this->change_amount ?? 0),
-            'status' => $this->status?->value ?? ($this->status ?? null),
             'subject_changes' => $this->subject_changes,
             'supersede_agreement_ids' => $this->supersede_agreement_ids,
             'created_at' => $this->created_at?->toIso8601String(),

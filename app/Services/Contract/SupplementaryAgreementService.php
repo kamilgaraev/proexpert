@@ -10,7 +10,6 @@ use App\Models\Contract;
 use App\Models\ContractPayment;
 use App\Models\ContractStateEvent;
 use App\Enums\Contract\GpCalculationTypeEnum;
-use App\Enums\Contract\SupplementaryAgreementStatusEnum;
 use App\Services\Logging\LoggingService;
 use App\Services\Contract\ContractStateEventService;
 use App\Services\Contract\ContractStateCalculatorService;
@@ -255,12 +254,27 @@ class SupplementaryAgreementService
                     // Обновляем материализованное представление
                     $this->getStateCalculatorService()->recalculateContractState($contract);
                     
-                    // Если было только аннулирование без change_amount, обновляем сумму контракта из Event Sourcing
-                    if (!empty($agreement->supersede_agreement_ids) && ($agreement->change_amount === null || $agreement->change_amount == 0)) {
-                        $contract->refresh();
-                        $calculatedAmount = $this->getStateEventService()->getCurrentState($contract)['total_amount'];
+                    // ВСЕГДА обновляем сумму контракта из Event Sourcing после изменений
+                    // (особенно важно при аннулировании ДС без change_amount)
+                    $contract->refresh();
+                    $currentState = $this->getStateEventService()->getCurrentState($contract);
+                    $calculatedAmount = $currentState['total_amount'];
+                    
+                    if (abs($contract->total_amount - $calculatedAmount) > 0.01) {
+                        // Сумма изменилась, обновляем
+                        $oldAmount = $contract->total_amount;
                         $contract->total_amount = $calculatedAmount;
                         $contract->save();
+                        
+                        // BUSINESS: Логирование обновления суммы из Event Sourcing
+                        $this->logging->business('agreement.contract_amount_recalculated_from_events', [
+                            'agreement_id' => $agreementId,
+                            'contract_id' => $contract->id,
+                            'old_amount' => $oldAmount,
+                            'new_amount' => $calculatedAmount,
+                            'reason' => !empty($agreement->supersede_agreement_ids) ? 'Аннулирование ДС' : 'Применение изменений',
+                            'user_id' => Auth::id(),
+                        ]);
                     }
                 } catch (Exception $e) {
                     \Illuminate\Support\Facades\Log::warning('Failed to create state event for agreement', [
@@ -439,7 +453,6 @@ class SupplementaryAgreementService
             // Создаем доп.соглашение
             $agreement = $this->repository->create(array_merge($dto->toArray(), [
                 'contract_id' => $contract->id,
-                'status' => SupplementaryAgreementStatusEnum::ACTIVE->value,
             ]));
 
             // Если договор использует Event Sourcing, создаем события
@@ -485,9 +498,7 @@ class SupplementaryAgreementService
         SupplementaryAgreement $newAgreement
     ): void {
         DB::transaction(function () use ($agreement, $newAgreement) {
-            // Обновляем статус аннулированного доп.соглашения
-            $agreement->status = SupplementaryAgreementStatusEnum::SUPERSEDED;
-            $agreement->save();
+            // Статусы убраны, аннулирование теперь отслеживается только через Event Sourcing
 
             $contract = $agreement->contract;
 
