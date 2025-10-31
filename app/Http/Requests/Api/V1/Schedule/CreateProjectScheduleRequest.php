@@ -15,7 +15,7 @@ class CreateProjectScheduleRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'project_id' => 'required|integer|exists:projects,id',
+            'project_id' => 'sometimes|integer|exists:projects,id',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:5000',
             'planned_start_date' => 'required|date|after_or_equal:today',

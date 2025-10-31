@@ -345,4 +345,58 @@ class ProjectScheduleRepository extends BaseRepository implements ProjectSchedul
             ->where('organization_id', $organizationId)
             ->first();
     }
+
+    public function getPaginatedForProject(
+        int $projectId,
+        int $perPage = 15,
+        array $filters = []
+    ): LengthAwarePaginator {
+        $query = $this->model->newQuery()
+            ->where('project_id', $projectId)
+            ->with(['project', 'createdBy'])
+            ->withCount(['tasks', 'dependencies', 'resources']);
+
+        // Применяем фильтры
+        if (!empty($filters['status'])) {
+            $query->where('status', $filters['status']);
+        }
+
+        if (!empty($filters['is_template'])) {
+            $query->where('is_template', $filters['is_template']);
+        }
+
+        if (!empty($filters['search'])) {
+            $query->where(function ($q) use ($filters) {
+                $q->where('name', 'like', '%' . $filters['search'] . '%')
+                  ->orWhere('description', 'like', '%' . $filters['search'] . '%');
+            });
+        }
+
+        if (!empty($filters['date_from'])) {
+            $query->where('planned_start_date', '>=', $filters['date_from']);
+        }
+
+        if (!empty($filters['date_to'])) {
+            $query->where('planned_end_date', '<=', $filters['date_to']);
+        }
+
+        if (!empty($filters['critical_path_calculated'])) {
+            $query->where('critical_path_calculated', $filters['critical_path_calculated']);
+        }
+
+        // Сортировка
+        $sortBy = $filters['sort_by'] ?? 'created_at';
+        $sortOrder = $filters['sort_order'] ?? 'desc';
+        $query->orderBy($sortBy, $sortOrder);
+
+        return $query->paginate($perPage);
+    }
+
+    public function findForProject(int $scheduleId, int $projectId): ?ProjectSchedule
+    {
+        return $this->model->newQuery()
+            ->where('id', $scheduleId)
+            ->where('project_id', $projectId)
+            ->first();
+    }
 } 

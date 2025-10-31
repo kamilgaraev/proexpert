@@ -17,6 +17,7 @@ use App\Http\Controllers\Api\V1\Admin\EstimateController;
 use App\Http\Controllers\Api\V1\Admin\EstimateImportController;
 use App\Http\Controllers\Api\V1\Admin\EstimateSectionController;
 use App\Http\Controllers\Api\V1\Admin\EstimateItemController;
+use App\Http\Controllers\Api\V1\Admin\Schedule\ProjectScheduleController;
 
 /**
  * PROJECT-BASED ROUTES
@@ -127,9 +128,24 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::delete('/{agreement}', [AgreementController::class, 'destroy']);
     });
     
-    // === SCHEDULE ===
-    // NOTE: Schedule routes имеют свою отдельную структуру в routes/api/v1/admin/schedule.php
-    // Если нужна project-scoped version, используйте ProjectScheduleController
+    // === SCHEDULES ===
+    Route::prefix('schedules')->group(function () {
+        Route::get('/', [ProjectScheduleController::class, 'index']);
+        Route::post('/', [ProjectScheduleController::class, 'store']);
+        Route::get('/{schedule}', [ProjectScheduleController::class, 'show']);
+        Route::put('/{schedule}', [ProjectScheduleController::class, 'update']);
+        Route::delete('/{schedule}', [ProjectScheduleController::class, 'destroy']);
+        
+        // Специальные методы
+        Route::post('/{schedule}/critical-path', [ProjectScheduleController::class, 'calculateCriticalPath']);
+        Route::post('/{schedule}/baseline', [ProjectScheduleController::class, 'saveBaseline']);
+        Route::delete('/{schedule}/baseline', [ProjectScheduleController::class, 'clearBaseline']);
+        Route::get('/{schedule}/tasks', [ProjectScheduleController::class, 'tasks']);
+        Route::post('/{schedule}/tasks', [ProjectScheduleController::class, 'storeTask']);
+        Route::get('/{schedule}/dependencies', [ProjectScheduleController::class, 'dependencies']);
+        Route::post('/{schedule}/dependencies', [ProjectScheduleController::class, 'storeDependency']);
+        Route::get('/{schedule}/resource-conflicts', [ProjectScheduleController::class, 'resourceConflicts']);
+    });
     
     // === MATERIAL ANALYTICS (в контексте проекта) ===
     Route::prefix('analytics')->group(function () {

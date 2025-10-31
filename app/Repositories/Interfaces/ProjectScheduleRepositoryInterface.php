@@ -97,4 +97,18 @@ interface ProjectScheduleRepositoryInterface extends BaseRepositoryInterface
      * Найти график по ID для конкретной организации
      */
     public function findForOrganization(int $scheduleId, int $organizationId): ?ProjectSchedule;
+
+    /**
+     * Получить пагинированный список графиков для проекта
+     */
+    public function getPaginatedForProject(
+        int $projectId,
+        int $perPage = 15,
+        array $filters = []
+    ): LengthAwarePaginator;
+
+    /**
+     * Найти график по ID для конкретного проекта
+     */
+    public function findForProject(int $scheduleId, int $projectId): ?ProjectSchedule;
 } 
