@@ -13,7 +13,6 @@ class SupplementaryAgreementDTO
         public readonly ?array $subcontract_changes,
         public readonly ?array $gp_changes,
         public readonly ?array $advance_changes,
-        public readonly ?float $new_amount = null,
         public readonly ?array $supersede_agreement_ids = null,
     ) {}
 
@@ -29,10 +28,6 @@ class SupplementaryAgreementDTO
             'gp_changes' => $this->gp_changes,
             'advance_changes' => $this->advance_changes,
         ];
-
-        if ($this->new_amount !== null) {
-            $data['new_amount'] = $this->new_amount;
-        }
 
         if ($this->supersede_agreement_ids !== null) {
             $data['supersede_agreement_ids'] = $this->supersede_agreement_ids;

@@ -191,76 +191,14 @@ class ContractStateEventService
     }
 
     /**
-     * Создать доп.соглашение с аннулированием ВСЕХ предыдущих активных событий
-     * и установкой новой абсолютной суммы
+     * Аннулировать выбранные ДС без изменения суммы контракта
      */
-    public function createAmendmentWithAllSupersede(
+    public function supersedeAgreementsWithoutAmountChange(
         Contract $contract,
         SupplementaryAgreement $agreement,
-        float $newAmount,
-        ?int $newSpecificationId = null
+        array $supersedeAgreementIds
     ): array {
-        return DB::transaction(function () use ($contract, $agreement, $newAmount, $newSpecificationId) {
-            $events = [];
-
-            // Находим все активные события (кроме PAYMENT_CREATED, они не влияют на сумму контракта)
-            $activeEvents = $this->eventRepository->findActiveEvents($contract->id);
-            
-            // Фильтруем только события, влияющие на сумму контракта
-            $amountAffectingEvents = $activeEvents->filter(function ($event) {
-                return !in_array($event->event_type, [
-                    ContractStateEventTypeEnum::PAYMENT_CREATED
-                ]);
-            });
-
-            // Аннулируем все активные события, влияющие на сумму
-            foreach ($amountAffectingEvents as $eventToSupersede) {
-                $supersededEvent = $this->createSupersededEvent(
-                    $contract,
-                    $eventToSupersede,
-                    $agreement,
-                    ['reason' => 'Аннулировано доп. соглашением ' . $agreement->number]
-                );
-                $events[] = $supersededEvent;
-            }
-
-            // Вычисляем текущую сумму из аннулированных событий
-            // После аннулирования всех событий, сумма = 0
-            // Поэтому дельта для нового события = newAmount - 0 = newAmount
-            $amountDelta = $newAmount;
-
-            // Создаем новое событие AMENDED с новой абсолютной суммой
-            $amendedEvent = $this->createAmendedEvent(
-                $contract,
-                $newSpecificationId,
-                $amountDelta,
-                $agreement,
-                $agreement->agreement_date ?? now(),
-                [
-                    'agreement_id' => $agreement->id,
-                    'agreement_number' => $agreement->number,
-                    'new_amount' => $newAmount,
-                    'superseded_events_count' => $amountAffectingEvents->count(),
-                ]
-            );
-            $events[] = $amendedEvent;
-
-            return $events;
-        });
-    }
-
-    /**
-     * Создать доп.соглашение с аннулированием ВЫБРАННЫХ ДС
-     * и установкой новой абсолютной суммы
-     */
-    public function createAmendmentWithSelectedSupersede(
-        Contract $contract,
-        SupplementaryAgreement $agreement,
-        float $newAmount,
-        array $supersedeAgreementIds,
-        ?int $newSpecificationId = null
-    ): array {
-        return DB::transaction(function () use ($contract, $agreement, $newAmount, $supersedeAgreementIds, $newSpecificationId) {
+        return DB::transaction(function () use ($contract, $agreement, $supersedeAgreementIds) {
             $events = [];
 
             // Находим все активные события контракта
@@ -284,18 +222,15 @@ class ContractStateEventService
                 throw new Exception('Не найдено активных событий для указанных дополнительных соглашений');
             }
 
-            // Вычисляем текущую сумму из всех активных событий
-            $currentAmount = $amountAffectingEvents->sum('amount_delta');
-            
             // Вычисляем сумму из событий, которые будут аннулированы
             $supersededAmount = $eventsToSupersede->sum('amount_delta');
             
-            // После аннулирования выбранных событий сумма будет: currentAmount - supersededAmount
-            // Нужно добавить дельту, чтобы получить newAmount
-            // newAmount = (currentAmount - supersededAmount) + delta
-            // delta = newAmount - (currentAmount - supersededAmount)
-            $amountAfterSupersede = $currentAmount - $supersededAmount;
-            $amountDelta = $newAmount - $amountAfterSupersede;
+            // Чтобы сохранить текущую сумму после аннулирования,
+            // нужно создать компенсирующее событие с противоположной суммой
+            // Но проще - после аннулирования события сумма автоматически пересчитается
+            // и станет меньше на supersededAmount
+            // Поэтому создаем событие AMENDED с дельтой = +supersededAmount для компенсации
+            // Это сохранит текущую сумму контракта
 
             // Аннулируем выбранные события
             foreach ($eventsToSupersede as $eventToSupersede) {
@@ -304,32 +239,31 @@ class ContractStateEventService
                     $eventToSupersede,
                     $agreement,
                     [
-                        'reason' => 'Аннулировано доп. соглашением ' . $agreement->number,
+                        'reason' => 'Аннулировано доп. соглашением ' . $agreement->number . ' без изменения суммы',
                         'superseded_agreement_id' => $eventToSupersede->triggered_by_id,
                     ]
                 );
                 $events[] = $supersededEvent;
             }
 
-            // Создаем новое событие AMENDED с вычисленной дельтой
-            $amendedEvent = $this->createAmendedEvent(
+            // Создаем компенсирующее событие AMENDED, чтобы сумма осталась прежней
+            // Дельта = сумма аннулированных событий (компенсация)
+            $compensatingEvent = $this->createAmendedEvent(
                 $contract,
-                $newSpecificationId,
-                $amountDelta,
+                null, // без спецификации, так как сумма не меняется
+                $supersededAmount, // компенсация аннулированной суммы
                 $agreement,
                 $agreement->agreement_date ?? now(),
                 [
                     'agreement_id' => $agreement->id,
                     'agreement_number' => $agreement->number,
-                    'new_amount' => $newAmount,
+                    'reason' => 'Компенсация аннулированных ДС без изменения суммы контракта',
                     'superseded_agreement_ids' => $supersedeAgreementIds,
                     'superseded_events_count' => $eventsToSupersede->count(),
-                    'previous_amount' => $currentAmount,
-                    'superseded_amount' => $supersededAmount,
-                    'amount_after_supersede' => $amountAfterSupersede,
+                    'is_compensating' => true,
                 ]
             );
-            $events[] = $amendedEvent;
+            $events[] = $compensatingEvent;
 
             return $events;
         });

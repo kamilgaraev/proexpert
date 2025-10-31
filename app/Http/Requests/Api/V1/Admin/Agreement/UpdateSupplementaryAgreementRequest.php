@@ -18,7 +18,6 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
             'number' => ['sometimes', 'string', 'max:255'],
             'agreement_date' => ['sometimes', 'date_format:Y-m-d'],
             'change_amount' => ['sometimes', 'nullable', 'numeric'],
-            'new_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'supersede_agreement_ids' => ['sometimes', 'nullable', 'array'],
             'supersede_agreement_ids.*' => [
                 'required',
@@ -63,7 +62,6 @@ class UpdateSupplementaryAgreementRequest extends FormRequest
             subcontract_changes: $this->validated('subcontract_changes'),
             gp_changes: $this->validated('gp_changes'),
             advance_changes: $this->validated('advance_changes'),
-            new_amount: $this->validated('new_amount') !== null ? (float) $this->validated('new_amount') : null,
             supersede_agreement_ids: $supersedeIds,
         );
     }

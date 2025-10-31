@@ -17,7 +17,6 @@ class SupplementaryAgreement extends Model
         'number',
         'agreement_date',
         'change_amount',
-        'new_amount',
         'supersede_agreement_ids',
         'subject_changes',
         'subcontract_changes',
@@ -29,7 +28,6 @@ class SupplementaryAgreement extends Model
     protected $casts = [
         'agreement_date' => 'date',
         'change_amount' => 'decimal:2',
-        'new_amount' => 'decimal:2',
         'supersede_agreement_ids' => 'array',
         'subject_changes' => 'array',
         'subcontract_changes' => 'array',

@@ -20,8 +20,7 @@ class StoreSupplementaryAgreementRequest extends FormRequest
             'contract_id' => ['required', 'integer', 'exists:contracts,id'],
             'number' => ['required', 'string', 'max:255'],
             'agreement_date' => ['required', 'date_format:Y-m-d'],
-            'change_amount' => ['nullable', 'numeric', 'required_without:new_amount'],
-            'new_amount' => ['nullable', 'numeric', 'min:0', 'required_without:change_amount'],
+            'change_amount' => ['nullable', 'numeric'],
             'supersede_agreement_ids' => [
                 'nullable',
                 'array',
@@ -51,11 +50,27 @@ class StoreSupplementaryAgreementRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'change_amount.required_without' => 'Необходимо указать либо изменение суммы (change_amount), либо новую сумму (new_amount)',
-            'new_amount.required_without' => 'Необходимо указать либо изменение суммы (change_amount), либо новую сумму (new_amount)',
-            'new_amount.min' => 'Новая сумма не может быть отрицательной',
             'supersede_agreement_ids.*.exists' => 'Одно из указанных дополнительных соглашений не найдено',
         ];
+    }
+
+    /**
+     * Дополнительная валидация: должно быть указано хотя бы одно из полей
+     */
+    public function withValidator($validator)
+    {
+        $validator->after(function ($validator) {
+            $hasChangeAmount = $this->filled('change_amount');
+            $hasSupersedeIds = $this->filled('supersede_agreement_ids') && !empty($this->input('supersede_agreement_ids'));
+
+            // Если ничего не указано - ошибка
+            if (!$hasChangeAmount && !$hasSupersedeIds) {
+                $validator->errors()->add(
+                    'change_amount',
+                    'Необходимо указать либо изменение суммы (change_amount), либо список ДС для аннулирования (supersede_agreement_ids).'
+                );
+            }
+        });
     }
 
     public function toDto(): SupplementaryAgreementDTO
@@ -74,7 +89,6 @@ class StoreSupplementaryAgreementRequest extends FormRequest
             subcontract_changes: $this->validated('subcontract_changes'),
             gp_changes: $this->validated('gp_changes'),
             advance_changes: $this->validated('advance_changes'),
-            new_amount: $this->validated('new_amount') !== null ? (float) $this->validated('new_amount') : null,
             supersede_agreement_ids: $supersedeIds,
         );
     }

@@ -115,31 +115,8 @@ class SupplementaryAgreementService
             DB::beginTransaction();
 
             // 1. Применяем изменение суммы контракта
-            // Приоритет у new_amount (если указан) - это абсолютная сумма с аннулированием всех предыдущих
-            if ($agreement->new_amount !== null) {
-                // Установка новой абсолютной суммы с аннулированием всех предыдущих событий
-                $newTotalAmount = $agreement->new_amount;
-                
-                // Валидация: сумма контракта не может быть отрицательной
-                if ($newTotalAmount < 0) {
-                    throw new Exception(
-                        "Невозможно применить изменения: новая сумма контракта не может быть отрицательной " .
-                        "({$newTotalAmount})"
-                    );
-                }
-                
-                $contract->total_amount = $newTotalAmount;
-                
-                // BUSINESS: Установка новой абсолютной суммы
-                $this->logging->business('agreement.contract_amount_set_absolute', [
-                    'agreement_id' => $agreementId,
-                    'contract_id' => $contract->id,
-                    'old_amount' => $oldValues['total_amount'],
-                    'new_amount' => $newTotalAmount,
-                    'user_id' => Auth::id(),
-                ]);
-            } elseif ($agreement->change_amount !== null && $agreement->change_amount != 0) {
-                // Старая логика: изменение суммы через дельту
+            if ($agreement->change_amount !== null && $agreement->change_amount != 0) {
+                // Изменение суммы через дельту
                 $newTotalAmount = $contract->total_amount + $agreement->change_amount;
                 
                 // Валидация: сумма контракта не может быть отрицательной
@@ -163,6 +140,7 @@ class SupplementaryAgreementService
                     'user_id' => Auth::id(),
                 ]);
             }
+            // Если только supersede_agreement_ids без change_amount - сумма пересчитается автоматически через Event Sourcing
 
             // 2. Применяем изменения субподряда
             if ($agreement->subcontract_changes) {
@@ -207,51 +185,64 @@ class SupplementaryAgreementService
                     // Находим активную спецификацию для события (если есть)
                     $activeSpecification = $contract->specifications()->wherePivot('is_active', true)->first();
                     
-                    if ($agreement->new_amount !== null) {
-                        // Если указана новая абсолютная сумма
-                        if (!empty($agreement->supersede_agreement_ids)) {
-                            // Аннулируем только выбранные ДС
-                            $events = $this->getStateEventService()->createAmendmentWithSelectedSupersede(
+                    // Проверяем, нужно ли аннулировать ДС
+                    if (!empty($agreement->supersede_agreement_ids)) {
+                        // Аннулирование выбранных ДС
+                        if ($agreement->change_amount !== null && $agreement->change_amount != 0) {
+                            // Аннулируем выбранные ДС и применяем изменение суммы
+                            // Сначала аннулируем, потом применяем change_amount
+                            $supersedeEvents = $this->getStateEventService()->supersedeAgreementsWithoutAmountChange(
                                 $contract,
                                 $agreement,
-                                $agreement->new_amount,
-                                $agreement->supersede_agreement_ids,
-                                $activeSpecification?->id
+                                $agreement->supersede_agreement_ids
                             );
                             
-                            // BUSINESS: Логирование аннулирования выбранных ДС
-                            $this->logging->business('agreement.selected_events_superseded', [
+                            // Затем создаем событие с change_amount
+                            $amendedEvent = $this->getStateEventService()->createAmendedEvent(
+                                $contract,
+                                $activeSpecification?->id,
+                                $agreement->change_amount,
+                                $agreement,
+                                $agreement->agreement_date ?? now(),
+                                [
+                                    'agreement_number' => $agreement->number,
+                                    'reason' => 'Применено дополнительное соглашение после аннулирования ДС',
+                                    'superseded_agreement_ids' => $agreement->supersede_agreement_ids,
+                                ]
+                            );
+                            
+                            // BUSINESS: Логирование аннулирования с изменением суммы
+                            $this->logging->business('agreement.superseded_with_change_amount', [
                                 'agreement_id' => $agreementId,
                                 'contract_id' => $contract->id,
-                                'new_amount' => $agreement->new_amount,
+                                'supersede_agreement_ids' => $agreement->supersede_agreement_ids,
+                                'change_amount' => $agreement->change_amount,
+                                'events_created' => count($supersedeEvents) + 1,
+                                'user_id' => Auth::id(),
+                            ]);
+                        } else {
+                            // Только аннулирование без изменения суммы
+                            $events = $this->getStateEventService()->supersedeAgreementsWithoutAmountChange(
+                                $contract,
+                                $agreement,
+                                $agreement->supersede_agreement_ids
+                            );
+                            
+                            // BUSINESS: Логирование аннулирования без изменения суммы
+                            $this->logging->business('agreement.superseded_without_amount_change', [
+                                'agreement_id' => $agreementId,
+                                'contract_id' => $contract->id,
                                 'supersede_agreement_ids' => $agreement->supersede_agreement_ids,
                                 'events_created' => count($events),
                                 'user_id' => Auth::id(),
                             ]);
-                        } else {
-                            // Аннулируем все предыдущие события
-                            $events = $this->getStateEventService()->createAmendmentWithAllSupersede(
-                                $contract,
-                                $agreement,
-                                $agreement->new_amount,
-                                $activeSpecification?->id
-                            );
-                            
-                            // BUSINESS: Логирование массового аннулирования
-                            $this->logging->business('agreement.all_events_superseded', [
-                                'agreement_id' => $agreementId,
-                                'contract_id' => $contract->id,
-                                'new_amount' => $agreement->new_amount,
-                                'events_created' => count($events),
-                                'user_id' => Auth::id(),
-                            ]);
                         }
-                    } else {
+                    } elseif ($agreement->change_amount !== null && $agreement->change_amount != 0) {
                         // Старая логика: простое изменение суммы через дельту
                         $this->getStateEventService()->createAmendedEvent(
                             $contract,
                             $activeSpecification?->id,
-                            $agreement->change_amount ?? 0,
+                            $agreement->change_amount,
                             $agreement,
                             $agreement->agreement_date ?? now(),
                             [
@@ -263,6 +254,14 @@ class SupplementaryAgreementService
 
                     // Обновляем материализованное представление
                     $this->getStateCalculatorService()->recalculateContractState($contract);
+                    
+                    // Если было только аннулирование без change_amount, обновляем сумму контракта из Event Sourcing
+                    if (!empty($agreement->supersede_agreement_ids) && ($agreement->change_amount === null || $agreement->change_amount == 0)) {
+                        $contract->refresh();
+                        $calculatedAmount = $this->getStateEventService()->getCurrentState($contract)['total_amount'];
+                        $contract->total_amount = $calculatedAmount;
+                        $contract->save();
+                    }
                 } catch (Exception $e) {
                     \Illuminate\Support\Facades\Log::warning('Failed to create state event for agreement', [
                         'contract_id' => $contract->id,
@@ -553,4 +552,5 @@ class SupplementaryAgreementService
         }
         return $this->stateCalculatorService;
     }
+} 
 } 
