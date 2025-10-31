@@ -39,19 +39,47 @@ class ContractResource extends JsonResource
                 
                 // Получаем все активные события для расчета agreements_total_change
                 $activeEvents = $stateEventService->getTimeline($this->resource);
+                $activeEventsOnly = $activeEvents->filter(fn($e) => $e->isActive());
                 
-                // Базовая сумма из события CREATED
-                $createdEvent = $activeEvents->where('event_type', \App\Enums\Contract\ContractStateEventTypeEnum::CREATED)->first();
-                $baseTotalAmount = $createdEvent ? (float) ($createdEvent->amount_delta ?? 0) : (float) ($this->total_amount ?? 0);
+                // Базовая сумма = сумма события CREATED + первого AMENDED (если есть до первого ДС)
+                // Или просто первоначальная сумма контракта
+                $createdEvent = $activeEventsOnly->where('event_type', \App\Enums\Contract\ContractStateEventTypeEnum::CREATED)->first();
                 
-                // Дельта ДС = сумма всех активных событий, влияющих на сумму ДС
-                // Исключаем CREATED (базовая сумма) и PAYMENT_CREATED (платежи)
-                $agreementsDelta = $activeEvents
+                // Находим первое событие AMENDED (изменение базовой суммы контракта)
+                $firstAmended = $activeEventsOnly
+                    ->where('event_type', \App\Enums\Contract\ContractStateEventTypeEnum::AMENDED)
+                    ->where('triggered_by_type', '!=', \App\Models\SupplementaryAgreement::class)
+                    ->first();
+                
+                if ($createdEvent && $firstAmended) {
+                    $baseTotalAmount = (float) ($createdEvent->amount_delta ?? 0) + (float) ($firstAmended->amount_delta ?? 0);
+                } elseif ($createdEvent) {
+                    $baseTotalAmount = (float) ($createdEvent->amount_delta ?? 0);
+                } else {
+                    $baseTotalAmount = (float) ($this->base_amount ?? $this->total_amount ?? 0);
+                }
+                
+                // Дельта ДС = сумма только активных событий, связанных с ДС
+                // Включаем: AMENDED от ДС, SUPPL_AGREEMENT_CREATED
+                // Исключаем: CREATED, PAYMENT_CREATED, SUPERSEDED, AMENDED не от ДС
+                $agreementsDelta = $activeEventsOnly
                     ->filter(function($event) {
-                        return !in_array($event->event_type, [
+                        // Исключаем CREATED и PAYMENT_CREATED
+                        if (in_array($event->event_type, [
                             \App\Enums\Contract\ContractStateEventTypeEnum::CREATED,
                             \App\Enums\Contract\ContractStateEventTypeEnum::PAYMENT_CREATED,
-                        ]);
+                            \App\Enums\Contract\ContractStateEventTypeEnum::SUPERSEDED,
+                        ])) {
+                            return false;
+                        }
+                        
+                        // Для AMENDED - учитываем только если оно от ДС
+                        if ($event->event_type === \App\Enums\Contract\ContractStateEventTypeEnum::AMENDED) {
+                            return $event->triggered_by_type === \App\Models\SupplementaryAgreement::class;
+                        }
+                        
+                        // Для SUPPL_AGREEMENT_CREATED - всегда учитываем
+                        return $event->event_type === \App\Enums\Contract\ContractStateEventTypeEnum::SUPPLEMENTARY_AGREEMENT_CREATED;
                     })
                     ->sum('amount_delta');
                 

@@ -316,8 +316,13 @@ class ContractStateEventController extends Controller
                 // Получаем информацию об аннулированном событии
                 $supersedesEvent = $event->supersedesEvent;
                 $reason = $event->metadata['reason'] ?? null;
-                $agreementNumber = $event->metadata['agreement_number'] ?? null;
                 $supersededAgreementId = $event->metadata['superseded_agreement_id'] ?? null;
+                
+                // Получаем номер ДС, которое аннулирует (из triggered_by)
+                $supersedingAgreement = null;
+                if ($event->triggered_by_type === \App\Models\SupplementaryAgreement::class && $event->triggered_by_id) {
+                    $supersedingAgreement = \App\Models\SupplementaryAgreement::find($event->triggered_by_id);
+                }
                 
                 $description = "Аннулирование ";
                 
@@ -327,8 +332,12 @@ class ContractStateEventController extends Controller
                     $supersededDelta = number_format(abs($supersedesEvent->amount_delta), 2, '.', ' ');
                     
                     if ($supersededType === 'supplementary_agreement_created' || $supersededType === 'amended') {
-                        $supersededAgreementNum = $supersedesEvent->metadata['agreement_number'] ?? 
-                                                 ($supersededAgreementId ? '#' . $supersededAgreementId : null);
+                        // Пытаемся получить номер из metadata или из связанного ДС
+                        $supersededAgreementNum = $supersedesEvent->metadata['agreement_number'] ?? null;
+                        if (!$supersededAgreementNum && $supersedesEvent->triggered_by_id) {
+                            $supersededAgreementModel = \App\Models\SupplementaryAgreement::find($supersedesEvent->triggered_by_id);
+                            $supersededAgreementNum = $supersededAgreementModel?->number;
+                        }
                         
                         if ($supersededAgreementNum) {
                             $description .= "дополнительного соглашения №{$supersededAgreementNum} ";
@@ -344,8 +353,8 @@ class ContractStateEventController extends Controller
                     }
                     
                     // Добавляем информацию о том, каким ДС было аннулировано
-                    if ($agreementNumber) {
-                        $description .= " (аннулировано ДС №{$agreementNumber})";
+                    if ($supersedingAgreement) {
+                        $description .= " (аннулировано ДС №{$supersedingAgreement->number})";
                     } elseif ($reason) {
                         $description .= " ({$reason})";
                     }
@@ -357,8 +366,8 @@ class ContractStateEventController extends Controller
                     } else {
                         $description .= "на сумму " . number_format(abs($delta), 2, '.', ' ') . " руб.";
                     }
-                    if ($agreementNumber) {
-                        $description .= " (аннулировано ДС №{$agreementNumber})";
+                    if ($supersedingAgreement) {
+                        $description .= " (аннулировано ДС №{$supersedingAgreement->number})";
                     }
                 }
                 
