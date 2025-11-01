@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\V1\Admin\EstimateImportController;
 use App\Http\Controllers\Api\V1\Admin\EstimateSectionController;
 use App\Http\Controllers\Api\V1\Admin\EstimateItemController;
 use App\Http\Controllers\Api\V1\Admin\Schedule\ProjectScheduleController;
+use App\Http\Controllers\Api\V1\Admin\Schedule\ScheduleTaskController;
 
 /**
  * PROJECT-BASED ROUTES
@@ -136,12 +137,20 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::put('/{schedule}', [ProjectScheduleController::class, 'update']);
         Route::delete('/{schedule}', [ProjectScheduleController::class, 'destroy']);
         
-        // Специальные методы
+        // Специальные методы графика
         Route::post('/{schedule}/critical-path', [ProjectScheduleController::class, 'calculateCriticalPath']);
         Route::post('/{schedule}/baseline', [ProjectScheduleController::class, 'saveBaseline']);
         Route::delete('/{schedule}/baseline', [ProjectScheduleController::class, 'clearBaseline']);
+        
+        // Задачи графика
         Route::get('/{schedule}/tasks', [ProjectScheduleController::class, 'tasks']);
         Route::post('/{schedule}/tasks', [ProjectScheduleController::class, 'storeTask']);
+        Route::get('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'show']);
+        Route::put('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'update']);
+        Route::patch('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'update']);
+        Route::delete('/{schedule}/tasks/{task}', [ScheduleTaskController::class, 'destroy']);
+        
+        // Зависимости и ресурсы
         Route::get('/{schedule}/dependencies', [ProjectScheduleController::class, 'dependencies']);
         Route::post('/{schedule}/dependencies', [ProjectScheduleController::class, 'storeDependency']);
         Route::get('/{schedule}/resource-conflicts', [ProjectScheduleController::class, 'resourceConflicts']);
