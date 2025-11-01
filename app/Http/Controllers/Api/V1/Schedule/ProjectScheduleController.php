@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Schedule;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Traits\HasScheduleOperations;
 use App\Repositories\Interfaces\ProjectScheduleRepositoryInterface;
 use App\Services\Schedule\CriticalPathService;
 use App\Http\Requests\Api\V1\Schedule\CreateProjectScheduleRequest;
@@ -11,15 +12,21 @@ use App\Http\Requests\Api\V1\Schedule\CreateScheduleTaskRequest;
 use App\Http\Requests\Api\V1\Schedule\CreateTaskDependencyRequest;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleResource;
 use App\Http\Resources\Api\V1\Schedule\ProjectScheduleCollection;
+use App\Http\Resources\Api\V1\Schedule\ScheduleGanttResource;
 use App\Models\ScheduleTask;
 use App\Models\TaskDependency;
 use App\Enums\Schedule\PriorityEnum;
+use App\Exceptions\Schedule\ScheduleNotFoundException;
+use App\Exceptions\Schedule\CircularDependencyException;
+use App\Exceptions\Schedule\ResourceConflictException;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
 
 class ProjectScheduleController extends Controller
 {
+    use HasScheduleOperations;
+
     public function __construct(
         protected ProjectScheduleRepositoryInterface $scheduleRepository,
         protected CriticalPathService $criticalPathService
@@ -68,21 +75,7 @@ class ProjectScheduleController extends Controller
      */
     public function store(CreateProjectScheduleRequest $request): JsonResponse
     {
-        $data = $request->validated();
-        $data['organization_id'] = $this->getOrganizationId($request);
-        $data['created_by_user_id'] = $request->user()->id;
-
-        // Устанавливаем значения по умолчанию
-        $data['status'] = $data['status'] ?? 'draft';
-        $data['overall_progress_percent'] = 0;
-        $data['critical_path_calculated'] = false;
-
-        $schedule = $this->scheduleRepository->create($data);
-
-        return response()->json([
-            'message' => 'График проекта успешно создан',
-            'data' => new ProjectScheduleResource($schedule->load(['project', 'createdBy']))
-        ], 201);
+        return $this->createSchedule($request, $this->getOrganizationId($request));
     }
 
     /**
@@ -96,7 +89,25 @@ class ProjectScheduleController extends Controller
         );
 
         if (!$schedule) {
-            return response()->json(['message' => 'График не найден'], 404);
+            throw new ScheduleNotFoundException((int) $id);
+        }
+
+        // Если запрашивается формат Gantt
+        if ($request->get('format') === 'gantt') {
+            $schedule->load([
+                'rootTasks.childTasks' => function ($query) {
+                    $query->orderBy('sort_order');
+                },
+                'rootTasks.predecessorDependencies',
+                'tasks' => function ($query) {
+                    $query->orderBy('sort_order');
+                },
+                'dependencies'
+            ]);
+
+            return response()->json([
+                'data' => new ScheduleGanttResource($schedule)
+            ]);
         }
 
         return response()->json([
@@ -109,31 +120,11 @@ class ProjectScheduleController extends Controller
      */
     public function update(string $id, UpdateProjectScheduleRequest $request): JsonResponse
     {
-        $schedule = $this->scheduleRepository->findForOrganization(
-            (int) $id,
-            $this->getOrganizationId($request)
-        );
-
-        if (!$schedule) {
-            return response()->json(['message' => 'График не найден'], 404);
-        }
-
-        $data = $request->validated();
+        $organizationId = $this->getOrganizationId($request);
         
-        // Не позволяем изменять organization_id и created_by_user_id через update
-        unset($data['organization_id'], $data['created_by_user_id']);
-        
-        if (isset($data['is_template']) && $data['is_template']) {
-            unset($data['project_id']); // Шаблоны не привязаны к проектам
-        }
-
-        $this->scheduleRepository->update($schedule->id, $data);
-        $schedule = $this->scheduleRepository->findForOrganization($schedule->id, $this->getOrganizationId($request));
-
-        return response()->json([
-            'message' => 'График проекта обновлен',
-            'data' => new ProjectScheduleResource($schedule->load(['project', 'createdBy']))
-        ]);
+        return $this->updateSchedule((int) $id, $request, function ($scheduleId) use ($organizationId) {
+            return $this->scheduleRepository->findForOrganization($scheduleId, $organizationId);
+        });
     }
 
     /**
@@ -141,18 +132,11 @@ class ProjectScheduleController extends Controller
      */
     public function destroy(string $id, Request $request): JsonResponse
     {
-        $schedule = $this->scheduleRepository->findForOrganization(
-            (int) $id,
-            $this->getOrganizationId($request)
-        );
-
-        if (!$schedule) {
-            return response()->json(['message' => 'График не найден'], 404);
-        }
-
-        $this->scheduleRepository->delete($schedule->id);
-
-        return response()->json(['message' => 'График проекта удален'], 200);
+        $organizationId = $this->getOrganizationId($request);
+        
+        return $this->deleteSchedule((int) $id, function ($scheduleId) use ($organizationId) {
+            return $this->scheduleRepository->findForOrganization($scheduleId, $organizationId);
+        });
     }
 
     /**
@@ -160,33 +144,11 @@ class ProjectScheduleController extends Controller
      */
     public function calculateCriticalPath(string $id, Request $request): JsonResponse
     {
-        $schedule = $this->scheduleRepository->findForOrganization(
-            (int) $id,
-            $this->getOrganizationId($request)
-        );
-
-        if (!$schedule) {
-            return response()->json(['message' => 'График не найден'], 404);
-        }
-
-        try {
-            $criticalPath = $this->criticalPathService->calculateCriticalPath($schedule);
-            
-            // Обновляем флаг что критический путь рассчитан
-            $this->scheduleRepository->update($schedule->id, [
-                'critical_path_calculated' => true,
-                'critical_path_duration_days' => $criticalPath['duration']
-            ]);
-
-            return response()->json([
-                'message' => 'Критический путь рассчитан',
-                'data' => $criticalPath
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Ошибка при расчете критического пути: ' . $e->getMessage()
-            ], 500);
-        }
+        $organizationId = $this->getOrganizationId($request);
+        
+        return $this->calculateCriticalPathForSchedule((int) $id, function ($scheduleId) use ($organizationId) {
+            return $this->scheduleRepository->findForOrganization($scheduleId, $organizationId);
+        });
     }
 
     /**
@@ -194,26 +156,11 @@ class ProjectScheduleController extends Controller
      */
     public function saveBaseline(string $id, Request $request): JsonResponse
     {
-        $schedule = $this->scheduleRepository->findForOrganization(
-            (int) $id,
-            $this->getOrganizationId($request)
-        );
-
-        if (!$schedule) {
-            return response()->json(['message' => 'График не найден'], 404);
-        }
-
-        try {
-            $this->scheduleRepository->saveBaseline($schedule->id, $request->user()->id);
-
-            return response()->json([
-                'message' => 'Базовый план сохранен'
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Ошибка при сохранении базового плана: ' . $e->getMessage()
-            ], 500);
-        }
+        $organizationId = $this->getOrganizationId($request);
+        
+        return $this->saveBaselineForSchedule((int) $id, $request, function ($scheduleId) use ($organizationId) {
+            return $this->scheduleRepository->findForOrganization($scheduleId, $organizationId);
+        });
     }
 
     /**
@@ -221,26 +168,11 @@ class ProjectScheduleController extends Controller
      */
     public function clearBaseline(string $id, Request $request): JsonResponse
     {
-        $schedule = $this->scheduleRepository->findForOrganization(
-            (int) $id,
-            $this->getOrganizationId($request)
-        );
-
-        if (!$schedule) {
-            return response()->json(['message' => 'График не найден'], 404);
-        }
-
-        try {
-            $this->scheduleRepository->clearBaseline($schedule->id);
-
-            return response()->json([
-                'message' => 'Базовый план очищен'
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Ошибка при очистке базового плана: ' . $e->getMessage()
-            ], 500);
-        }
+        $organizationId = $this->getOrganizationId($request);
+        
+        return $this->clearBaselineForSchedule((int) $id, function ($scheduleId) use ($organizationId) {
+            return $this->scheduleRepository->findForOrganization($scheduleId, $organizationId);
+        });
     }
 
     /**
@@ -431,20 +363,11 @@ class ProjectScheduleController extends Controller
      */
     public function tasks(string $id, Request $request): JsonResponse
     {
-        $schedule = $this->scheduleRepository->findForOrganization(
-            (int) $id,
-            $this->getOrganizationId($request)
-        );
-
-        if (!$schedule) {
-            return response()->json(['message' => 'График не найден'], 404);
-        }
-
-        $tasks = $schedule->tasks()->with(['assignedUser', 'workType'])->get();
-
-        return response()->json([
-            'data' => $tasks
-        ]);
+        $organizationId = $this->getOrganizationId($request);
+        
+        return $this->getScheduleTasks((int) $id, function ($scheduleId) use ($organizationId) {
+            return $this->scheduleRepository->findForOrganization($scheduleId, $organizationId);
+        });
     }
 
     /**
@@ -452,22 +375,11 @@ class ProjectScheduleController extends Controller
      */
     public function dependencies(string $id, Request $request): JsonResponse
     {
-        $schedule = $this->scheduleRepository->findForOrganization(
-            (int) $id,
-            $this->getOrganizationId($request)
-        );
-
-        if (!$schedule) {
-            return response()->json(['message' => 'График не найден'], 404);
-        }
-
-        $dependencies = $schedule->dependencies()
-            ->with(['predecessorTask', 'successorTask'])
-            ->get();
-
-        return response()->json([
-            'data' => $dependencies
-        ]);
+        $organizationId = $this->getOrganizationId($request);
+        
+        return $this->getScheduleDependencies((int) $id, function ($scheduleId) use ($organizationId) {
+            return $this->scheduleRepository->findForOrganization($scheduleId, $organizationId);
+        });
     }
 
     /**
@@ -475,69 +387,11 @@ class ProjectScheduleController extends Controller
      */
     public function storeDependency(string $id, CreateTaskDependencyRequest $request): JsonResponse
     {
-        $schedule = $this->scheduleRepository->findForOrganization(
-            (int) $id,
-            $this->getOrganizationId($request)
-        );
-
-        if (!$schedule) {
-            return response()->json(['message' => 'График не найден'], 404);
-        }
-
-        $data = $request->validated();
-        $data['schedule_id'] = $schedule->id;
-        $data['organization_id'] = $this->getOrganizationId($request);
-        $data['created_by_user_id'] = $request->user()->id;
+        $organizationId = $this->getOrganizationId($request);
         
-        // Устанавливаем значения по умолчанию
-        $data['is_active'] = true;
-        $data['validation_status'] = 'valid';
-
-        try {
-            $dependency = TaskDependency::create($data);
-            
-            // Загружаем связанные данные для ответа
-            $dependency->load(['predecessorTask', 'successorTask', 'createdBy']);
-
-            return response()->json([
-                'message' => 'Зависимость между задачами успешно создана',
-                'data' => [
-                    'id' => $dependency->id,
-                    'dependency_type' => $dependency->dependency_type->value,
-                    'dependency_type_label' => $dependency->dependency_type->label(),
-                    'lag_days' => $dependency->lag_days,
-                    'lag_hours' => $dependency->lag_hours,
-                    'lag_type' => $dependency->lag_type,
-                    'description' => $dependency->description,
-                    'is_hard_constraint' => $dependency->is_hard_constraint,
-                    'priority' => $dependency->priority,
-                    'is_active' => $dependency->is_active,
-                    'validation_status' => $dependency->validation_status,
-                    'created_at' => $dependency->created_at,
-                    'predecessor_task' => [
-                        'id' => $dependency->predecessorTask->id,
-                        'name' => $dependency->predecessorTask->name,
-                        'planned_start_date' => $dependency->predecessorTask->planned_start_date,
-                        'planned_end_date' => $dependency->predecessorTask->planned_end_date,
-                    ],
-                    'successor_task' => [
-                        'id' => $dependency->successorTask->id,
-                        'name' => $dependency->successorTask->name,
-                        'planned_start_date' => $dependency->successorTask->planned_start_date,
-                        'planned_end_date' => $dependency->successorTask->planned_end_date,
-                    ],
-                    'created_by' => [
-                        'id' => $dependency->createdBy->id,
-                        'name' => $dependency->createdBy->name,
-                        'email' => $dependency->createdBy->email,
-                    ]
-                ]
-            ], 201);
-        } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Ошибка при создании зависимости: ' . $e->getMessage()
-            ], 500);
-        }
+        return $this->createScheduleDependency((int) $id, $request, $organizationId, function ($scheduleId) use ($organizationId) {
+            return $this->scheduleRepository->findForOrganization($scheduleId, $organizationId);
+        });
     }
 
     /**
@@ -545,63 +399,11 @@ class ProjectScheduleController extends Controller
      */
     public function resourceConflicts(string $id, Request $request): JsonResponse
     {
-        $schedule = $this->scheduleRepository->findForOrganization(
-            (int) $id,
-            $this->getOrganizationId($request)
-        );
-
-        if (!$schedule) {
-            return response()->json(['message' => 'График не найден'], 404);
-        }
-
-        try {
-            // Получаем конфликты ресурсов для данного графика
-            $conflicts = $this->scheduleRepository->getWithResourceConflicts(
-                $this->getOrganizationId($request)
-            )->where('id', $schedule->id);
-
-            // Если нет конфликтов для этого графика
-            if ($conflicts->isEmpty()) {
-                return response()->json([
-                    'data' => [],
-                    'meta' => [
-                        'conflicts_count' => 0,
-                        'has_conflicts' => false,
-                        'message' => 'Конфликтов ресурсов не обнаружено'
-                    ]
-                ]);
-            }
-
-            // Загружаем детальную информацию о конфликтах
-            $schedule->load([
-                'tasks' => function ($query) {
-                    $query->whereHas('resources', function ($q) {
-                        $q->where('is_overallocated', true);
-                    })->with(['resources', 'assignedUser']);
-                },
-                'resources' => function ($query) {
-                    $query->where('is_overallocated', true);
-                }
-            ]);
-
-            return response()->json([
-                'data' => [
-                    'schedule_id' => $schedule->id,
-                    'schedule_name' => $schedule->name,
-                    'conflicted_tasks' => $schedule->tasks,
-                    'conflicted_resources' => $schedule->resources,
-                ],
-                'meta' => [
-                    'conflicts_count' => $schedule->tasks->count() + $schedule->resources->count(),
-                    'has_conflicts' => true,
-                    'message' => 'Обнаружены конфликты ресурсов'
-                ]
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Ошибка при получении конфликтов ресурсов: ' . $e->getMessage()
-            ], 500);
-        }
+        $organizationId = $this->getOrganizationId($request);
+        
+        return $this->getResourceConflicts((int) $id, $organizationId, function ($scheduleId) use ($organizationId) {
+            return $this->scheduleRepository->findForOrganization($scheduleId, $organizationId);
+        });
     }
 
     /**
@@ -609,34 +411,10 @@ class ProjectScheduleController extends Controller
      */
     public function storeTask(string $id, CreateScheduleTaskRequest $request): JsonResponse
     {
-        $schedule = $this->scheduleRepository->findForOrganization(
-            (int) $id,
-            $this->getOrganizationId($request)
-        );
-
-        if (!$schedule) {
-            return response()->json(['message' => 'График не найден'], 404);
-        }
-
-        $data = $request->validated();
-        $data['schedule_id'] = $schedule->id;
-        $data['organization_id'] = $this->getOrganizationId($request);
-        $data['created_by_user_id'] = $request->user()->id;
-
-        try {
-            $task = ScheduleTask::create($data);
-            
-            // Загружаем связанные данные для ответа
-            $task->load(['assignedUser', 'workType', 'parentTask']);
-
-            return response()->json([
-                'message' => 'Задача успешно создана',
-                'data' => $task
-            ], 201);
-        } catch (\Exception $e) {
-            return response()->json([
-                'message' => 'Ошибка при создании задачи: ' . $e->getMessage()
-            ], 500);
-        }
+        $organizationId = $this->getOrganizationId($request);
+        
+        return $this->createScheduleTask((int) $id, $request, $organizationId, function ($scheduleId) use ($organizationId) {
+            return $this->scheduleRepository->findForOrganization($scheduleId, $organizationId);
+        });
     }
 } 

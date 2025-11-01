@@ -13,9 +13,51 @@ use Carbon\Carbon;
 
 class ProjectScheduleRepository extends BaseRepository implements ProjectScheduleRepositoryInterface
 {
+    /**
+     * Разрешенные поля для сортировки
+     */
+    protected const ALLOWED_SORT_FIELDS = [
+        'created_at',
+        'updated_at',
+        'name',
+        'planned_start_date',
+        'planned_end_date',
+        'status',
+        'overall_progress_percent',
+    ];
+
+    /**
+     * Разрешенные направления сортировки
+     */
+    protected const ALLOWED_SORT_ORDERS = ['asc', 'desc'];
+
     public function __construct()
     {
         parent::__construct(ProjectSchedule::class);
+    }
+
+    /**
+     * Валидировать и получить поле для сортировки
+     */
+    protected function getValidatedSortBy(?string $sortBy): string
+    {
+        if (!$sortBy || !in_array($sortBy, self::ALLOWED_SORT_FIELDS, true)) {
+            return 'created_at';
+        }
+
+        return $sortBy;
+    }
+
+    /**
+     * Валидировать и получить направление сортировки
+     */
+    protected function getValidatedSortOrder(?string $sortOrder): string
+    {
+        if (!$sortOrder || !in_array(strtolower($sortOrder), self::ALLOWED_SORT_ORDERS, true)) {
+            return 'desc';
+        }
+
+        return strtolower($sortOrder);
     }
 
     public function getPaginatedForOrganization(
@@ -60,9 +102,9 @@ class ProjectScheduleRepository extends BaseRepository implements ProjectSchedul
             $query->where('critical_path_calculated', $filters['critical_path_calculated']);
         }
 
-        // Сортировка
-        $sortBy = $filters['sort_by'] ?? 'created_at';
-        $sortOrder = $filters['sort_order'] ?? 'desc';
+        // Сортировка с валидацией
+        $sortBy = $this->getValidatedSortBy($filters['sort_by'] ?? null);
+        $sortOrder = $this->getValidatedSortOrder($filters['sort_order'] ?? null);
         $query->orderBy($sortBy, $sortOrder);
 
         return $query->paginate($perPage);
@@ -133,55 +175,213 @@ class ProjectScheduleRepository extends BaseRepository implements ProjectSchedul
 
     protected function copyTasksFromTemplate(ProjectSchedule $template, ProjectSchedule $newSchedule): void
     {
-        $templateTasks = $template->tasks()->with(['childTasks', 'resources', 'milestones'])->get();
-        $taskMapping = [];
-
-        // Сначала создаем все задачи
-        foreach ($templateTasks as $templateTask) {
-            $taskData = $templateTask->toArray();
-            unset($taskData['id'], $taskData['created_at'], $taskData['updated_at']);
-            
-            $taskData['schedule_id'] = $newSchedule->id;
-            $taskData['parent_task_id'] = null; // Установим позже
-            $taskData['status'] = 'not_started';
-            $taskData['progress_percent'] = 0;
-            $taskData['actual_start_date'] = null;
-            $taskData['actual_end_date'] = null;
-            $taskData['actual_duration_days'] = null;
-            $taskData['actual_work_hours'] = 0;
-            $taskData['actual_cost'] = 0;
-            $taskData['is_critical'] = false;
-
-            $newTask = $newSchedule->tasks()->create($taskData);
-            $taskMapping[$templateTask->id] = $newTask->id;
+        // Загружаем все задачи одним запросом с необходимыми связями
+        $templateTasks = $template->tasks()
+            ->with(['childTasks', 'resources', 'milestones'])
+            ->orderBy('sort_order')
+            ->get();
+        
+        if ($templateTasks->isEmpty()) {
+            return;
         }
 
-        // Устанавливаем родительские связи
+        $taskMapping = [];
+        $tasksToInsert = [];
+        
+        // Подготавливаем данные для массовой вставки
         foreach ($templateTasks as $templateTask) {
-            if ($templateTask->parent_task_id && isset($taskMapping[$templateTask->parent_task_id])) {
-                $newTaskId = $taskMapping[$templateTask->id];
-                $newParentId = $taskMapping[$templateTask->parent_task_id];
-                
-                DB::table('schedule_tasks')
-                    ->where('id', $newTaskId)
-                    ->update(['parent_task_id' => $newParentId]);
+            $taskData = [
+                'schedule_id' => $newSchedule->id,
+                'organization_id' => $newSchedule->organization_id,
+                'parent_task_id' => null, // Установим позже
+                'work_type_id' => $templateTask->work_type_id,
+                'assigned_user_id' => $templateTask->assigned_user_id,
+                'created_by_user_id' => $templateTask->created_by_user_id,
+                'name' => $templateTask->name,
+                'description' => $templateTask->description,
+                'wbs_code' => $templateTask->wbs_code,
+                'task_type' => $templateTask->task_type,
+                'planned_start_date' => $templateTask->planned_start_date,
+                'planned_end_date' => $templateTask->planned_end_date,
+                'planned_duration_days' => $templateTask->planned_duration_days,
+                'planned_work_hours' => $templateTask->planned_work_hours,
+                'baseline_start_date' => $templateTask->baseline_start_date,
+                'baseline_end_date' => $templateTask->baseline_end_date,
+                'baseline_duration_days' => $templateTask->baseline_duration_days,
+                'status' => 'not_started',
+                'priority' => $templateTask->priority,
+                'estimated_cost' => $templateTask->estimated_cost,
+                'required_resources' => $templateTask->required_resources,
+                'constraint_type' => $templateTask->constraint_type,
+                'constraint_date' => $templateTask->constraint_date,
+                'custom_fields' => $templateTask->custom_fields,
+                'notes' => $templateTask->notes,
+                'tags' => $templateTask->tags,
+                'level' => $templateTask->level,
+                'sort_order' => $templateTask->sort_order,
+                'progress_percent' => 0,
+                'actual_start_date' => null,
+                'actual_end_date' => null,
+                'actual_duration_days' => null,
+                'actual_work_hours' => 0,
+                'actual_cost' => 0,
+                'is_critical' => false,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+
+            $tasksToInsert[] = [
+                'data' => $taskData,
+                'template_id' => $templateTask->id,
+                'template_parent_id' => $templateTask->parent_task_id,
+                'resources' => $templateTask->resources,
+                'milestones' => $templateTask->milestones,
+            ];
+        }
+
+        // Массовая вставка задач
+        $chunks = array_chunk($tasksToInsert, 100);
+        foreach ($chunks as $chunk) {
+            $insertData = array_map(fn($item) => $item['data'], $chunk);
+            
+            // Используем insertGetId для получения ID новых задач
+            $insertedIds = [];
+            foreach ($insertData as $data) {
+                $id = DB::table('schedule_tasks')->insertGetId($data);
+                $insertedIds[] = $id;
+            }
+
+            // Сохраняем маппинг старых ID на новые
+            foreach ($chunk as $index => $item) {
+                $taskMapping[$item['template_id']] = $insertedIds[$index];
             }
         }
 
-        // Копируем зависимости
+        // Обновляем parent_task_id массовым обновлением
+        $parentUpdates = [];
+        foreach ($tasksToInsert as $item) {
+            if ($item['template_parent_id'] && isset($taskMapping[$item['template_parent_id']])) {
+                $newTaskId = $taskMapping[$item['template_id']] ?? null;
+                $newParentId = $taskMapping[$item['template_parent_id']];
+                
+                if ($newTaskId) {
+                    $parentUpdates[$newTaskId] = $newParentId;
+                }
+            }
+        }
+
+        if (!empty($parentUpdates)) {
+            foreach ($parentUpdates as $taskId => $parentId) {
+                DB::table('schedule_tasks')
+                    ->where('id', $taskId)
+                    ->update(['parent_task_id' => $parentId]);
+            }
+        }
+
+        // Копируем зависимости массовой вставкой
         $templateDependencies = $template->dependencies;
+        $dependenciesToInsert = [];
+        
         foreach ($templateDependencies as $dependency) {
             if (isset($taskMapping[$dependency->predecessor_task_id]) && 
                 isset($taskMapping[$dependency->successor_task_id])) {
                 
-                $dependencyData = $dependency->toArray();
-                unset($dependencyData['id'], $dependencyData['created_at'], $dependencyData['updated_at']);
-                
-                $dependencyData['schedule_id'] = $newSchedule->id;
-                $dependencyData['predecessor_task_id'] = $taskMapping[$dependency->predecessor_task_id];
-                $dependencyData['successor_task_id'] = $taskMapping[$dependency->successor_task_id];
-                
-                $newSchedule->dependencies()->create($dependencyData);
+                $dependenciesToInsert[] = [
+                    'predecessor_task_id' => $taskMapping[$dependency->predecessor_task_id],
+                    'successor_task_id' => $taskMapping[$dependency->successor_task_id],
+                    'schedule_id' => $newSchedule->id,
+                    'organization_id' => $newSchedule->organization_id,
+                    'created_by_user_id' => $dependency->created_by_user_id,
+                    'dependency_type' => $dependency->dependency_type,
+                    'lag_days' => $dependency->lag_days,
+                    'lag_hours' => $dependency->lag_hours,
+                    'lag_type' => $dependency->lag_type,
+                    'is_critical' => false,
+                    'is_hard_constraint' => $dependency->is_hard_constraint,
+                    'priority' => $dependency->priority,
+                    'description' => $dependency->description,
+                    'constraint_reason' => $dependency->constraint_reason,
+                    'is_active' => $dependency->is_active,
+                    'validation_status' => 'valid',
+                    'advanced_settings' => $dependency->advanced_settings,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            }
+        }
+
+        if (!empty($dependenciesToInsert)) {
+            DB::table('task_dependencies')->insert($dependenciesToInsert);
+        }
+
+        // Копируем ресурсы и вехи для каждой задачи
+        foreach ($tasksToInsert as $item) {
+            $newTaskId = $taskMapping[$item['template_id']] ?? null;
+            if (!$newTaskId) {
+                continue;
+            }
+
+            // Копируем ресурсы задачи
+            if ($item['resources']->isNotEmpty()) {
+                $resourcesToInsert = [];
+                foreach ($item['resources'] as $resource) {
+                    $resourcesToInsert[] = [
+                        'task_id' => $newTaskId,
+                        'schedule_id' => $newSchedule->id,
+                        'organization_id' => $newSchedule->organization_id,
+                        'assigned_by_user_id' => $resource->assigned_by_user_id,
+                        'resource_type' => $resource->resource_type,
+                        'resource_id' => $resource->resource_id,
+                        'user_id' => $resource->user_id,
+                        'material_id' => $resource->material_id,
+                        'equipment_name' => $resource->equipment_name,
+                        'external_resource_name' => $resource->external_resource_name,
+                        'allocated_units' => $resource->allocated_units,
+                        'allocated_hours' => $resource->allocated_hours,
+                        'allocation_percent' => $resource->allocation_percent,
+                        'assignment_start_date' => $resource->assignment_start_date,
+                        'assignment_end_date' => $resource->assignment_end_date,
+                        'cost_per_hour' => $resource->cost_per_hour,
+                        'cost_per_unit' => $resource->cost_per_unit,
+                        'assignment_status' => $resource->assignment_status,
+                        'priority' => $resource->priority,
+                        'role' => $resource->role,
+                        'requirements' => json_encode($resource->requirements ?? []),
+                        'working_calendar' => json_encode($resource->working_calendar ?? []),
+                        'daily_working_hours' => $resource->daily_working_hours,
+                        'has_conflicts' => false,
+                        'conflict_details' => null,
+                        'notes' => $resource->notes,
+                        'allocation_details' => json_encode($resource->allocation_details ?? []),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                }
+                if (!empty($resourcesToInsert)) {
+                    DB::table('task_resources')->insert($resourcesToInsert);
+                }
+            }
+
+            // Копируем вехи задачи
+            if ($item['milestones']->isNotEmpty()) {
+                $milestonesToInsert = [];
+                foreach ($item['milestones'] as $milestone) {
+                    $milestonesToInsert[] = [
+                        'task_id' => $newTaskId,
+                        'schedule_id' => $newSchedule->id,
+                        'organization_id' => $newSchedule->organization_id,
+                        'name' => $milestone->name,
+                        'description' => $milestone->description,
+                        'target_date' => $milestone->target_date,
+                        'status' => 'pending',
+                        'is_critical' => false,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                }
+                if (!empty($milestonesToInsert)) {
+                    DB::table('task_milestones')->insert($milestonesToInsert);
+                }
             }
         }
     }
@@ -384,9 +584,9 @@ class ProjectScheduleRepository extends BaseRepository implements ProjectSchedul
             $query->where('critical_path_calculated', $filters['critical_path_calculated']);
         }
 
-        // Сортировка
-        $sortBy = $filters['sort_by'] ?? 'created_at';
-        $sortOrder = $filters['sort_order'] ?? 'desc';
+        // Сортировка с валидацией
+        $sortBy = $this->getValidatedSortBy($filters['sort_by'] ?? null);
+        $sortOrder = $this->getValidatedSortOrder($filters['sort_order'] ?? null);
         $query->orderBy($sortBy, $sortOrder);
 
         return $query->paginate($perPage);

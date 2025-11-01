@@ -6,6 +6,8 @@ use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use App\Models\TaskDependency;
 use App\Enums\Schedule\DependencyTypeEnum;
+use App\Exceptions\Schedule\CircularDependencyException;
+use App\Exceptions\Schedule\ScheduleValidationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -17,6 +19,7 @@ class CriticalPathService
     protected array $dependencies = [];
     protected array $taskMap = [];
     protected array $criticalPath = [];
+    protected ?Carbon $baseDate = null;
 
     public function calculateCriticalPath(ProjectSchedule $schedule): array
     {
@@ -24,6 +27,9 @@ class CriticalPathService
             Log::info("Начинаем расчет критического пути для графика {$schedule->id}");
             
             return DB::transaction(function () use ($schedule) {
+                // Устанавливаем базовую дату для расчета (planned_start_date графика)
+                $this->baseDate = $schedule->planned_start_date ?? Carbon::now();
+                
                 $this->initializeData($schedule);
                 
                 if (empty($this->tasks)) {
@@ -33,7 +39,11 @@ class CriticalPathService
 
                 // Проверка на циклические зависимости
                 if ($this->hasCycles()) {
-                    throw new \Exception('Обнаружены циклические зависимости в графике');
+                    $cycleTasks = $this->getCycleTasks();
+                    throw new CircularDependencyException(
+                        'Обнаружены циклические зависимости в графике',
+                        $cycleTasks
+                    );
                 }
 
                 // Forward Pass - расчет ранних дат
@@ -153,6 +163,49 @@ class CriticalPathService
         
         unset($recursionStack[$taskId]);
         return false;
+    }
+
+    protected function getCycleTasks(): array
+    {
+        $cycleTasks = [];
+        $visited = [];
+        $recursionStack = [];
+        
+        foreach (array_keys($this->tasks) as $taskId) {
+            if (!isset($visited[$taskId])) {
+                $cycle = $this->findCycleRecursive($taskId, $visited, $recursionStack, []);
+                if (!empty($cycle)) {
+                    $cycleTasks = array_merge($cycleTasks, $cycle);
+                }
+            }
+        }
+        
+        return array_unique($cycleTasks);
+    }
+
+    protected function findCycleRecursive(int $taskId, array &$visited, array &$recursionStack, array $path): array
+    {
+        $visited[$taskId] = true;
+        $recursionStack[$taskId] = true;
+        $path[] = $taskId;
+        
+        foreach ($this->tasks[$taskId]['successors'] as $successorId) {
+            if (!isset($visited[$successorId])) {
+                $cycle = $this->findCycleRecursive($successorId, $visited, $recursionStack, $path);
+                if (!empty($cycle)) {
+                    return $cycle;
+                }
+            } elseif (isset($recursionStack[$successorId]) && $recursionStack[$successorId]) {
+                // Найден цикл
+                $cycleStart = array_search($successorId, $path);
+                if ($cycleStart !== false) {
+                    return array_slice($path, $cycleStart);
+                }
+            }
+        }
+        
+        unset($recursionStack[$taskId]);
+        return [];
     }
 
     protected function calculateEarlyDates(): void
@@ -356,12 +409,14 @@ class CriticalPathService
 
     protected function updateTasksInDatabase(): void
     {
+        $baseDate = $this->baseDate ?? Carbon::now();
+        
         foreach ($this->tasks as $taskId => $taskData) {
             ScheduleTask::where('id', $taskId)->update([
-                'early_start_date' => Carbon::now()->addDays($taskData['early_start'])->toDateString(),
-                'early_finish_date' => Carbon::now()->addDays($taskData['early_finish'])->toDateString(),
-                'late_start_date' => Carbon::now()->addDays($taskData['late_start'])->toDateString(),
-                'late_finish_date' => Carbon::now()->addDays($taskData['late_finish'])->toDateString(),
+                'early_start_date' => $baseDate->copy()->addDays($taskData['early_start'])->toDateString(),
+                'early_finish_date' => $baseDate->copy()->addDays($taskData['early_finish'])->toDateString(),
+                'late_start_date' => $baseDate->copy()->addDays($taskData['late_start'])->toDateString(),
+                'late_finish_date' => $baseDate->copy()->addDays($taskData['late_finish'])->toDateString(),
                 'total_float_days' => (int) $taskData['total_float'],
                 'free_float_days' => (int) $taskData['free_float'],
                 'is_critical' => $taskData['is_critical'],

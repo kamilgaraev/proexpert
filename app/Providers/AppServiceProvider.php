@@ -16,6 +16,9 @@ use App\Models\MaterialReceipt;
 use App\Models\Project;
 use App\Models\Organization;
 use App\Models\ProjectOrganization;
+use App\Models\ScheduleTask;
+use App\Models\TaskDependency;
+use App\Models\TaskResource;
 // ОТКЛЮЧЕНЫ: переключились на warehouse_balances
 // use App\Observers\MaterialUsageLogObserver;
 use App\Observers\CompletedWorkObserver;
@@ -23,6 +26,9 @@ use App\Observers\CompletedWorkObserver;
 use App\Observers\ProjectObserver;
 use App\Observers\OrganizationObserver;
 use App\Observers\ProjectOrganizationObserver;
+use App\Observers\ScheduleTaskObserver;
+use App\Observers\TaskDependencyObserver;
+use App\Observers\TaskResourceObserver;
 use Illuminate\Support\Facades\Event;
 use App\Events\ProjectOrganizationAdded;
 use App\Events\ProjectOrganizationRoleChanged;
@@ -140,6 +146,11 @@ class AppServiceProvider extends ServiceProvider
         Organization::observe(OrganizationObserver::class);
         ProjectOrganization::observe(ProjectOrganizationObserver::class);
         \App\Models\OrganizationModuleActivation::observe(\App\Observers\OrganizationModuleActivationObserver::class);
+        
+        // Schedule observers
+        ScheduleTask::observe(ScheduleTaskObserver::class);
+        TaskDependency::observe(TaskDependencyObserver::class);
+        TaskResource::observe(TaskResourceObserver::class);
         
         // Project-Based RBAC Events
         Event::listen(ProjectOrganizationAdded::class, [LogProjectOrganizationActivity::class, 'handleAdded']);

@@ -4,12 +4,38 @@ namespace App\Http\Requests\Api\V1\Schedule;
 
 use Illuminate\Foundation\Http\FormRequest;
 use App\Enums\Schedule\ScheduleStatusEnum;
+use App\Domain\Authorization\Services\AuthorizationService;
 
 class UpdateProjectScheduleRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return true; // Авторизация уже проверена в middleware
+        $user = $this->user();
+        
+        if (!$user) {
+            return false;
+        }
+        
+        $organizationId = $this->getOrganizationId();
+        
+        if (!$organizationId) {
+            return false;
+        }
+        
+        $authorizationService = app(AuthorizationService::class);
+        
+        return $authorizationService->can($user, 'schedule.edit', [
+            'organization_id' => $organizationId,
+            'context_type' => 'organization'
+        ]);
+    }
+    
+    protected function getOrganizationId(): ?int
+    {
+        $user = $this->user();
+        $organizationId = $user->current_organization_id ?? $user->organization_id;
+        
+        return $organizationId ? (int) $organizationId : null;
     }
 
     public function rules(): array

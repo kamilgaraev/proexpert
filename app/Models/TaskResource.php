@@ -253,31 +253,260 @@ class TaskResource extends Model
     {
         $conflicts = $this->conflict_details ?? [];
         
-        foreach ($conflicts as $conflict) {
-            if ($conflict['type'] === 'overallocation') {
-                // Уменьшаем процент загрузки до безопасного уровня
-                $maxSafeAllocation = 100 - $conflict['conflicting_allocation'] ?? 50;
-                $this->update(['allocation_percent' => max($maxSafeAllocation, 25)]);
-                break;
-            }
+        if (empty($conflicts)) {
+            return true;
         }
 
+        // Собираем все конфликты перезагрузки
+        $overallocationConflicts = array_filter($conflicts, function ($conflict) {
+            return ($conflict['type'] ?? '') === 'overallocation';
+        });
+
+        if (empty($overallocationConflicts)) {
+            return true;
+        }
+
+        // Вычисляем максимальную безопасную загрузку
+        // Берем минимальное доступное значение из всех конфликтов
+        $maxSafeAllocation = 100;
+        
+        foreach ($overallocationConflicts as $conflict) {
+            $conflictingAllocation = $conflict['conflicting_allocation'] ?? 0;
+            // Безопасная загрузка = 100% - сумма загрузок других назначений
+            $safeAllocation = max(0, 100 - $conflictingAllocation);
+            $maxSafeAllocation = min($maxSafeAllocation, $safeAllocation);
+        }
+
+        // Минимальная загрузка 25%, чтобы не обнулить назначение полностью
+        $newAllocation = max(25, min($maxSafeAllocation, 100));
+        
+        // Обновляем только если изменилось
+        if ($newAllocation != $this->allocation_percent) {
+            $this->update(['allocation_percent' => $newAllocation]);
+        }
+
+        // Проверяем, что конфликты исчезли после корректировки
         return $this->checkConflicts() === [];
     }
 
     protected function rescheduleAssignment(): bool
     {
-        // Логика перепланирования назначения
-        // Находим ближайшее свободное время для ресурса
-        // Это сложная логика, требующая анализа всех назначений ресурса
-        return false; // Заглушка для сложной логики
+        if (!$this->assignment_start_date || !$this->assignment_end_date) {
+            return false;
+        }
+
+        // Получаем все назначения ресурса в диапазоне дат
+        $conflictingAssignments = $this->getConflictingAssignments();
+        
+        if (empty($conflictingAssignments)) {
+            return true;
+        }
+
+        // Вычисляем общую длительность назначения
+        $duration = $this->assignment_start_date->diffInDays($this->assignment_end_date) + 1;
+        
+        // Находим ближайшее свободное окно после последнего конфликтующего назначения
+        $lastConflictEnd = $conflictingAssignments->max(function ($assignment) {
+            return $assignment->assignment_end_date ?: $assignment->assignment_start_date;
+        });
+        
+        if (!$lastConflictEnd) {
+            return false;
+        }
+
+        // Сдвигаем назначение на день после последнего конфликта
+        $newStartDate = $lastConflictEnd->copy()->addDay();
+        $newEndDate = $newStartDate->copy()->addDays($duration - 1);
+
+        // Проверяем, что новые даты не выходят за границы задачи
+        if ($this->task) {
+            $taskEnd = $this->task->planned_end_date ?? $this->task->actual_end_date;
+            
+            if ($taskEnd && $newEndDate > $taskEnd) {
+                // Если не помещается в даты задачи, сдвигаем в начало
+                $taskStart = $this->task->planned_start_date ?? $this->task->actual_start_date;
+                
+                if (!$taskStart) {
+                    return false;
+                }
+
+                // Ищем свободное окно перед первым конфликтом
+                $firstConflictStart = $conflictingAssignments->min(function ($assignment) {
+                    return $assignment->assignment_start_date;
+                });
+
+                if ($firstConflictStart && $taskStart < $firstConflictStart) {
+                    $newEndDate = $firstConflictStart->copy()->subDay();
+                    $newStartDate = $newEndDate->copy()->subDays($duration - 1);
+                    
+                    if ($newStartDate < $taskStart) {
+                        return false; // Не помещается в доступное окно
+                    }
+                } else {
+                    return false; // Нет свободного места
+                }
+            }
+        }
+
+        // Обновляем даты назначения
+        $this->update([
+            'assignment_start_date' => $newStartDate->toDateString(),
+            'assignment_end_date' => $newEndDate->toDateString(),
+        ]);
+
+        // Проверяем, что конфликты исчезли
+        return $this->checkConflicts() === [];
     }
 
     protected function splitAssignment(): bool
     {
-        // Логика разделения назначения на несколько частей
-        // чтобы избежать конфликтов
-        return false; // Заглушка для сложной логики
+        if (!$this->assignment_start_date || !$this->assignment_end_date) {
+            return false;
+        }
+
+        // Получаем конфликтующие назначения
+        $conflictingAssignments = $this->getConflictingAssignments();
+        
+        if (empty($conflictingAssignments)) {
+            return true;
+        }
+
+        // Сортируем конфликты по дате начала
+        $sortedConflicts = $conflictingAssignments->sortBy(function ($assignment) {
+            return $assignment->assignment_start_date;
+        });
+
+        $segments = [];
+        $currentStart = $this->assignment_start_date->copy();
+        $originalEnd = $this->assignment_end_date->copy();
+        $allocationPercent = $this->allocation_percent ?? 100;
+
+        // Разделяем назначение на сегменты вокруг конфликтов
+        foreach ($sortedConflicts as $conflict) {
+            $conflictStart = $conflict->assignment_start_date;
+            $conflictEnd = $conflict->assignment_end_date ?? $conflictStart;
+
+            // Сегмент до конфликта
+            if ($currentStart < $conflictStart) {
+                $segmentEnd = $conflictStart->copy()->subDay();
+                if ($segmentEnd >= $currentStart) {
+                    $segments[] = [
+                        'start' => $currentStart->copy(),
+                        'end' => $segmentEnd,
+                        'allocation_percent' => $allocationPercent,
+                    ];
+                }
+            }
+
+            // Пропускаем период конфликта
+            $currentStart = $conflictEnd->copy()->addDay();
+        }
+
+        // Последний сегмент после всех конфликтов
+        if ($currentStart <= $originalEnd) {
+            $segments[] = [
+                'start' => $currentStart->copy(),
+                'end' => $originalEnd->copy(),
+                'allocation_percent' => $allocationPercent,
+            ];
+        }
+
+        if (empty($segments)) {
+            return false; // Невозможно разделить без конфликтов
+        }
+
+        // Если только один сегмент, просто обновляем текущее назначение
+        if (count($segments) === 1) {
+            $segment = $segments[0];
+            $this->update([
+                'assignment_start_date' => $segment['start']->toDateString(),
+                'assignment_end_date' => $segment['end']->toDateString(),
+            ]);
+            
+            return $this->checkConflicts() === [];
+        }
+
+        // Обновляем текущее назначение первым сегментом
+        $firstSegment = array_shift($segments);
+        $this->update([
+            'assignment_start_date' => $firstSegment['start']->toDateString(),
+            'assignment_end_date' => $firstSegment['end']->toDateString(),
+            'allocation_percent' => $firstSegment['allocation_percent'],
+        ]);
+
+        // Создаем дополнительные назначения для остальных сегментов
+        foreach ($segments as $segment) {
+            static::create([
+                'task_id' => $this->task_id,
+                'schedule_id' => $this->schedule_id,
+                'organization_id' => $this->organization_id,
+                'resource_type' => $this->resource_type,
+                'resource_id' => $this->resource_id,
+                'user_id' => $this->user_id,
+                'material_id' => $this->material_id,
+                'equipment_name' => $this->equipment_name,
+                'external_resource_name' => $this->external_resource_name,
+                'allocated_units' => $this->allocated_units,
+                'allocated_hours' => $this->allocated_hours,
+                'allocation_percent' => $segment['allocation_percent'],
+                'assignment_start_date' => $segment['start']->toDateString(),
+                'assignment_end_date' => $segment['end']->toDateString(),
+                'cost_per_hour' => $this->cost_per_hour,
+                'cost_per_unit' => $this->cost_per_unit,
+                'assignment_status' => $this->assignment_status,
+                'priority' => $this->priority,
+                'role' => $this->role,
+                'requirements' => $this->requirements,
+                'working_calendar' => $this->working_calendar,
+                'daily_working_hours' => $this->daily_working_hours,
+                'assigned_by_user_id' => $this->assigned_by_user_id,
+            ]);
+        }
+
+        // Проверяем, что конфликты исчезли
+        return $this->checkConflicts() === [];
+    }
+
+    /**
+     * Получить конфликтующие назначения ресурса
+     */
+    protected function getConflictingAssignments(): \Illuminate\Support\Collection
+    {
+        if (!$this->assignment_start_date || !$this->assignment_end_date) {
+            return collect();
+        }
+
+        $query = static::where('id', '!=', $this->id)
+            ->where('has_conflicts', false) // Исключаем уже конфликтующие
+            ->where(function ($q) {
+                // Фильтруем по типу ресурса
+                if ($this->user_id) {
+                    $q->where('user_id', $this->user_id);
+                }
+                if ($this->material_id) {
+                    $q->orWhere('material_id', $this->material_id);
+                }
+                if ($this->equipment_name) {
+                    $q->orWhere('equipment_name', $this->equipment_name);
+                }
+            })
+            ->where(function ($q) {
+                // Находим пересекающиеся периоды
+                $q->whereBetween('assignment_start_date', [
+                    $this->assignment_start_date,
+                    $this->assignment_end_date
+                ])
+                ->orWhereBetween('assignment_end_date', [
+                    $this->assignment_start_date,
+                    $this->assignment_end_date
+                ])
+                ->orWhere(function ($subQ) {
+                    $subQ->where('assignment_start_date', '<=', $this->assignment_start_date)
+                          ->where('assignment_end_date', '>=', $this->assignment_end_date);
+                });
+            });
+
+        return $query->get();
     }
 
     public function isAvailable(): bool
