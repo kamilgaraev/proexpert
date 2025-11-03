@@ -18,6 +18,9 @@ class EstimateItemService
     public function addItem(array $data, Estimate $estimate): EstimateItem
     {
         return DB::transaction(function () use ($data, $estimate) {
+            // Проверка лимита позиций
+            $this->checkItemsLimit($estimate);
+            
             if (!isset($data['position_number'])) {
                 $data['position_number'] = $this->repository->getNextPositionNumber($estimate->id);
             }
@@ -35,8 +38,31 @@ class EstimateItemService
             
             $this->calculationService->calculateEstimateTotal($estimate);
             
+            \Log::debug('estimate.item.added', [
+                'estimate_id' => $estimate->id,
+                'item_id' => $item->id,
+                'position_number' => $item->position_number,
+                'total_amount' => $item->total_amount,
+            ]);
+            
             return $item;
         });
+    }
+    
+    /**
+     * Проверить лимит позиций в смете
+     */
+    private function checkItemsLimit(Estimate $estimate): void
+    {
+        $module = app(\App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesModule::class);
+        $limits = $module->getLimits();
+        
+        $currentCount = $this->repository->countByEstimate($estimate->id);
+        $maxItems = $limits['max_items_per_estimate'];
+        
+        if ($maxItems && $currentCount >= $maxItems) {
+            throw new \DomainException("Достигнут лимит позиций в смете: {$maxItems}");
+        }
     }
 
     public function addItemFromWorkType(WorkType $workType, Estimate $estimate, array $overrides = []): EstimateItem
@@ -89,6 +115,13 @@ class EstimateItemService
             $estimate = $item->estimate;
             $section = $item->section;
             
+            \Log::debug('estimate.item.deleting', [
+                'estimate_id' => $estimate->id,
+                'item_id' => $item->id,
+                'position_number' => $item->position_number,
+                'total_amount' => $item->total_amount,
+            ]);
+            
             $result = $this->repository->delete($item);
             
             if ($section) {
@@ -124,6 +157,21 @@ class EstimateItemService
     public function bulkAdd(array $items, Estimate $estimate): array
     {
         return DB::transaction(function () use ($items, $estimate) {
+            // Проверить лимит для массового добавления
+            $module = app(\App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesModule::class);
+            $limits = $module->getLimits();
+            $maxItems = $limits['max_items_per_estimate'];
+            
+            $currentCount = $this->repository->countByEstimate($estimate->id);
+            $newItemsCount = count($items);
+            
+            if ($maxItems && ($currentCount + $newItemsCount) > $maxItems) {
+                throw new \DomainException(
+                    "Массовое добавление невозможно. Будет превышен лимит позиций: {$maxItems}. " .
+                    "Текущее количество: {$currentCount}, добавляется: {$newItemsCount}"
+                );
+            }
+            
             $createdItems = [];
             
             foreach ($items as $itemData) {

@@ -95,10 +95,10 @@
       "advanced-dashboard.export.scheduled_reports"
     ],
     "budget-estimates": [
-      "estimates.view",
-      "estimates.view_all",
-      "estimates.export",
-      "estimates.versions.compare"
+      "budget-estimates.view",
+      "budget-estimates.view_all",
+      "budget-estimates.export",
+      "budget-estimates.versions.compare"
     ]
   },
   

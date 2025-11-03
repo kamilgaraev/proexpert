@@ -36,6 +36,14 @@ class EstimateService
                     
                     $estimate = $this->repository->create($data);
                     
+                    \Log::info('estimate.created', [
+                        'estimate_id' => $estimate->id,
+                        'number' => $estimate->number,
+                        'organization_id' => $estimate->organization_id,
+                        'project_id' => $estimate->project_id,
+                        'user_id' => auth()->id(),
+                    ]);
+                    
                     return $estimate;
                 });
             } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
@@ -66,6 +74,12 @@ class EstimateService
                 $this->calculationService->recalculateAll($estimate);
             }
             
+            \Log::info('estimate.updated', [
+                'estimate_id' => $estimate->id,
+                'changed_fields' => array_keys($data),
+                'user_id' => auth()->id(),
+            ]);
+            
             return $estimate->fresh();
         });
     }
@@ -76,7 +90,25 @@ class EstimateService
             throw new \Exception('Нельзя удалить утвержденную смету');
         }
         
-        return $this->repository->delete($estimate);
+        \Log::warning('estimate.deleting', [
+            'estimate_id' => $estimate->id,
+            'number' => $estimate->number,
+            'organization_id' => $estimate->organization_id,
+            'status' => $estimate->status,
+            'total_amount' => $estimate->total_amount,
+            'user_id' => auth()->id(),
+        ]);
+        
+        $result = $this->repository->delete($estimate);
+        
+        if ($result) {
+            \Log::info('estimate.deleted', [
+                'estimate_id' => $estimate->id,
+                'number' => $estimate->number,
+            ]);
+        }
+        
+        return $result;
     }
 
     public function duplicate(Estimate $estimate, ?string $newNumber = null, ?string $newName = null): Estimate
@@ -187,7 +219,12 @@ class EstimateService
         $driver = config('database.default');
         $connection = config("database.connections.{$driver}.driver");
         
+        // Используем advisory lock для PostgreSQL или табличную блокировку
         if ($connection === 'pgsql') {
+            // PostgreSQL advisory lock - самый надежный способ
+            $lockKey = crc32("estimate_number_{$organizationId}_{$year}");
+            DB::statement("SELECT pg_advisory_xact_lock(?);", [$lockKey]);
+            
             $orderBy = 'CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS INTEGER) DESC';
         } else {
             $orderBy = 'CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS UNSIGNED) DESC';
@@ -208,7 +245,17 @@ class EstimateService
             $newNumber = 1;
         }
         
-        return $prefix . str_pad($newNumber, 4, '0', STR_PAD_LEFT);
+        $number = $prefix . str_pad($newNumber, 4, '0', STR_PAD_LEFT);
+        
+        // Логирование для отладки
+        \Log::debug('estimate.number_generated', [
+            'organization_id' => $organizationId,
+            'year' => $year,
+            'generated_number' => $number,
+            'last_number' => $lastEstimate?->number,
+        ]);
+        
+        return $number;
     }
 }
 

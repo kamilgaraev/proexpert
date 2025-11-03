@@ -81,19 +81,19 @@ class BudgetEstimatesModule implements ModuleInterface, ConfigurableInterface
     public function getPermissions(): array
     {
         return [
-            'estimates.view',
-            'estimates.view_all',
-            'estimates.create',
-            'estimates.edit',
-            'estimates.edit_approved',
-            'estimates.delete',
-            'estimates.approve',
-            'estimates.import',
-            'estimates.export',
-            'estimates.templates.manage',
-            'estimates.analytics',
-            'estimates.versions.create',
-            'estimates.versions.compare',
+            'budget-estimates.view',
+            'budget-estimates.view_all',
+            'budget-estimates.create',
+            'budget-estimates.edit',
+            'budget-estimates.edit_approved',
+            'budget-estimates.delete',
+            'budget-estimates.approve',
+            'budget-estimates.import',
+            'budget-estimates.export',
+            'budget-estimates.templates.manage',
+            'budget-estimates.analytics',
+            'budget-estimates.versions.create',
+            'budget-estimates.versions.compare',
         ];
     }
 

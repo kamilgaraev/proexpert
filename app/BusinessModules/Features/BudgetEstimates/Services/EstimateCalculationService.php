@@ -12,7 +12,8 @@ class EstimateCalculationService
 {
     public function __construct(
         protected EstimateSectionRepository $sectionRepository,
-        protected EstimateItemRepository $itemRepository
+        protected EstimateItemRepository $itemRepository,
+        protected EstimateCacheService $cacheService
     ) {}
 
     public function calculateItemTotal(EstimateItem $item, Estimate $estimate): float
@@ -55,17 +56,34 @@ class EstimateCalculationService
 
     public function calculateEstimateTotal(Estimate $estimate): array
     {
-        $totalDirectCosts = 0;
-        $totalOverheadCosts = 0;
-        $totalEstimatedProfit = 0;
-        
-        $items = $this->itemRepository->getAllByEstimate($estimate->id);
-        
-        foreach ($items as $item) {
-            $totalDirectCosts += $item->direct_costs;
-            $totalOverheadCosts += $item->overhead_amount;
-            $totalEstimatedProfit += $item->profit_amount;
+        // Для утвержденных смет используем кеш
+        if ($estimate->isApproved()) {
+            return $this->cacheService->rememberTotals($estimate, function () use ($estimate) {
+                return $this->performCalculation($estimate);
+            });
         }
+        
+        // Для черновиков считаем без кеша
+        return $this->performCalculation($estimate);
+    }
+    
+    /**
+     * Выполнить расчет итоговых сумм (с оптимизацией через БД)
+     */
+    private function performCalculation(Estimate $estimate): array
+    {
+        // Используем агрегацию на уровне БД вместо цикла
+        $totals = EstimateItem::where('estimate_id', $estimate->id)
+            ->selectRaw('
+                COALESCE(SUM(direct_costs), 0) as total_direct_costs,
+                COALESCE(SUM(overhead_amount), 0) as total_overhead_costs,
+                COALESCE(SUM(profit_amount), 0) as total_estimated_profit
+            ')
+            ->first();
+        
+        $totalDirectCosts = (float) $totals->total_direct_costs;
+        $totalOverheadCosts = (float) $totals->total_overhead_costs;
+        $totalEstimatedProfit = (float) $totals->total_estimated_profit;
         
         $totalAmount = $totalDirectCosts + $totalOverheadCosts + $totalEstimatedProfit;
         $totalAmountWithVat = $totalAmount * (1 + $estimate->vat_rate / 100);
@@ -80,11 +98,16 @@ class EstimateCalculationService
         
         $estimate->update($result);
         
+        // Инвалидировать кеш после обновления
+        $this->cacheService->invalidateTotals($estimate);
+        
         return $result;
     }
 
     public function recalculateAll(Estimate $estimate): array
     {
+        $startTime = microtime(true);
+        
         $items = $this->itemRepository->getAllByEstimate($estimate->id);
         
         foreach ($items as $item) {
@@ -96,7 +119,19 @@ class EstimateCalculationService
             $this->calculateSectionTotal($section);
         }
         
-        return $this->calculateEstimateTotal($estimate);
+        $result = $this->calculateEstimateTotal($estimate);
+        
+        $duration = round((microtime(true) - $startTime) * 1000, 2);
+        
+        // Логирование
+        \Log::info('estimate.recalculated', [
+            'estimate_id' => $estimate->id,
+            'items_count' => $items->count(),
+            'total_amount' => $result['total_amount'],
+            'duration_ms' => $duration,
+        ]);
+        
+        return $result;
     }
 
     public function applyCoefficients(Estimate $estimate, array $coefficients): void

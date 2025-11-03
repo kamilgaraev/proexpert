@@ -83,9 +83,9 @@
       "schedule.view", "schedule.create", "schedule.edit"
     ],
     "budget-estimates": [
-      "estimates.view",
-      "estimates.create",
-      "estimates.edit"
+      "budget-estimates.view",
+      "budget-estimates.create",
+      "budget-estimates.edit"
     ]
   },
   

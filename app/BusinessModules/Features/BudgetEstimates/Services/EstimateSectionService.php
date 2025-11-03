@@ -18,6 +18,9 @@ class EstimateSectionService
 
     public function createSection(array $data): EstimateSection
     {
+        // Проверка лимита разделов
+        $this->checkSectionsLimit($data['estimate_id']);
+        
         if (!isset($data['sort_order'])) {
             $data['sort_order'] = $this->repository->getNextSortOrder(
                 $data['estimate_id'],
@@ -26,6 +29,22 @@ class EstimateSectionService
         }
         
         return $this->repository->create($data);
+    }
+    
+    /**
+     * Проверить лимит разделов в смете
+     */
+    private function checkSectionsLimit(int $estimateId): void
+    {
+        $module = app(\App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesModule::class);
+        $limits = $module->getLimits();
+        
+        $currentCount = EstimateSection::where('estimate_id', $estimateId)->count();
+        $maxSections = $limits['max_sections_per_estimate'];
+        
+        if ($maxSections && $currentCount >= $maxSections) {
+            throw new \DomainException("Достигнут лимит разделов в смете: {$maxSections}");
+        }
     }
 
     public function updateSection(EstimateSection $section, array $data): EstimateSection
@@ -81,6 +100,21 @@ class EstimateSectionService
 
     public function createFromTemplate(Estimate $estimate, array $templateSections): array
     {
+        // Проверить лимит для массового создания разделов
+        $module = app(\App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesModule::class);
+        $limits = $module->getLimits();
+        $maxSections = $limits['max_sections_per_estimate'];
+        
+        $currentCount = EstimateSection::where('estimate_id', $estimate->id)->count();
+        $newSectionsCount = count($templateSections);
+        
+        if ($maxSections && ($currentCount + $newSectionsCount) > $maxSections) {
+            throw new \DomainException(
+                "Невозможно применить шаблон. Будет превышен лимит разделов: {$maxSections}. " .
+                "Текущее количество: {$currentCount}, добавляется: {$newSectionsCount}"
+            );
+        }
+        
         $createdSections = [];
         $sectionMapping = [];
         
@@ -97,7 +131,15 @@ class EstimateSectionService
                 'is_summary' => $templateSection['is_summary'] ?? false,
             ];
             
-            $section = $this->createSection($sectionData);
+            // createSection уже не будет проверять лимит, так как мы это сделали выше
+            if (!isset($sectionData['sort_order'])) {
+                $sectionData['sort_order'] = $this->repository->getNextSortOrder(
+                    $sectionData['estimate_id'],
+                    $sectionData['parent_section_id'] ?? null
+                );
+            }
+            
+            $section = $this->repository->create($sectionData);
             $createdSections[] = $section;
             
             if (isset($templateSection['id'])) {

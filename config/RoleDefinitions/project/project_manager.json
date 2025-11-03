@@ -102,12 +102,12 @@
       "schedule.approve", "schedule.notifications"
     ],
     "budget-estimates": [
-      "estimates.view",
-      "estimates.create",
-      "estimates.edit",
-      "estimates.import",
-      "estimates.export",
-      "estimates.templates.manage"
+      "budget-estimates.view",
+      "budget-estimates.create",
+      "budget-estimates.edit",
+      "budget-estimates.import",
+      "budget-estimates.export",
+      "budget-estimates.templates.manage"
     ]
   },
   

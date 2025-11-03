@@ -76,23 +76,43 @@ class EstimateController extends Controller
     {
         $this->authorize('view', $estimate);
         
+        // Оптимизированная загрузка: используем рекурсивную загрузку с ограничением глубины
         $estimate->load([
-            'sections.children.children.children',
-            'sections.items.workType',
-            'sections.items.measurementUnit',
-            'sections.items.resources',
-            'sections.children.items.workType',
-            'sections.children.items.measurementUnit',
-            'sections.children.items.resources',
-            'sections.children.children.items.workType',
-            'sections.children.children.items.measurementUnit',
-            'sections.children.children.items.resources',
-            'sections.children.children.children.items.workType',
-            'sections.children.children.children.items.measurementUnit',
-            'sections.children.children.children.items.resources',
-            'items.resources',
-            'items.workType',
-            'items.measurementUnit',
+            // Загружаем только корневые разделы с их вложенностью
+            'sections' => function ($query) {
+                $query->whereNull('parent_section_id')
+                    ->with([
+                        'items.workType',
+                        'items.measurementUnit',
+                        'items.resources',
+                        // Загружаем дочерние разделы до 3 уровней
+                        'children' => function ($q) {
+                            $q->with([
+                                'items.workType',
+                                'items.measurementUnit',
+                                'items.resources',
+                                'children' => function ($q2) {
+                                    $q2->with([
+                                        'items.workType',
+                                        'items.measurementUnit',
+                                        'items.resources',
+                                    ])->orderBy('sort_order');
+                                }
+                            ])->orderBy('sort_order');
+                        }
+                    ])
+                    ->orderBy('sort_order');
+            },
+            // Загружаем позиции без разделов отдельно
+            'items' => function ($query) {
+                $query->whereNull('estimate_section_id')
+                    ->with(['workType', 'measurementUnit', 'resources'])
+                    ->orderBy('position_number');
+            },
+            // Дополнительные связи
+            'project',
+            'contract',
+            'approvedBy',
         ]);
         
         return response()->json([
@@ -195,19 +215,25 @@ class EstimateController extends Controller
     {
         $this->authorize('view', $estimate);
         
+        // Оптимизированная загрузка структуры
         $sections = $estimate->sections()
+            ->whereNull('parent_section_id')
             ->with([
-                'children.children.children',
                 'items.workType',
                 'items.measurementUnit',
-                'children.items.workType',
-                'children.items.measurementUnit',
-                'children.children.items.workType',
-                'children.children.items.measurementUnit',
-                'children.children.children.items.workType',
-                'children.children.children.items.measurementUnit',
+                'children' => function ($query) {
+                    $query->with([
+                        'items.workType',
+                        'items.measurementUnit',
+                        'children' => function ($q) {
+                            $q->with([
+                                'items.workType',
+                                'items.measurementUnit',
+                            ])->orderBy('sort_order');
+                        }
+                    ])->orderBy('sort_order');
+                }
             ])
-            ->whereNull('parent_section_id')
             ->orderBy('sort_order')
             ->get();
         
