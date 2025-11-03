@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Schedule;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Facades\Log;
 use App\Enums\Schedule\TaskTypeEnum;
 use App\Enums\Schedule\TaskStatusEnum;
 use App\Enums\Schedule\PriorityEnum;
@@ -12,25 +13,58 @@ class CreateScheduleTaskRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        $user = $this->user();
+        Log::info('[CreateScheduleTaskRequest] authorize() called');
         
-        if (!$user) {
+        try {
+            $user = $this->user();
+            
+            Log::info('[CreateScheduleTaskRequest] User found', [
+                'user_id' => $user?->id,
+                'email' => $user?->email,
+            ]);
+            
+            if (!$user) {
+                Log::warning('[CreateScheduleTaskRequest] No user - returning false');
+                return false;
+            }
+            
+            $organizationId = $this->getOrganizationId();
+            
+            Log::info('[CreateScheduleTaskRequest] Organization ID', [
+                'organization_id' => $organizationId,
+            ]);
+            
+            if (!$organizationId) {
+                Log::warning('[CreateScheduleTaskRequest] No organization ID - returning false');
+                return false;
+            }
+            
+            $authorizationService = app(AuthorizationService::class);
+            
+            Log::info('[CreateScheduleTaskRequest] Checking permission schedule.edit');
+            
+            // Для создания задачи нужно право редактировать график
+            $hasPermission = $authorizationService->can($user, 'schedule.edit', [
+                'organization_id' => $organizationId,
+                'context_type' => 'organization'
+            ]);
+            
+            Log::info('[CreateScheduleTaskRequest] Permission check result', [
+                'has_permission' => $hasPermission,
+            ]);
+            
+            return $hasPermission;
+        } catch (\Exception $e) {
+            Log::error('[CreateScheduleTaskRequest] EXCEPTION in authorize()', [
+                'error' => $e->getMessage(),
+                'class' => get_class($e),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            // При исключении возвращаем false (нет доступа)
             return false;
         }
-        
-        $organizationId = $this->getOrganizationId();
-        
-        if (!$organizationId) {
-            return false;
-        }
-        
-        $authorizationService = app(AuthorizationService::class);
-        
-        // Для создания задачи нужно право редактировать график
-        return $authorizationService->can($user, 'schedule.edit', [
-            'organization_id' => $organizationId,
-            'context_type' => 'organization'
-        ]);
     }
     
     protected function getOrganizationId(): ?int
