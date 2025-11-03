@@ -25,11 +25,12 @@ class EstimateService
         
         while ($attempt < $maxAttempts) {
             try {
+                // Generate number BEFORE main transaction to avoid race conditions
+                if (!isset($data['number'])) {
+                    $data['number'] = $this->generateNumber($data['organization_id']);
+                }
+                
                 return DB::transaction(function () use ($data) {
-                    if (!isset($data['number'])) {
-                        $data['number'] = $this->generateNumber($data['organization_id']);
-                    }
-                    
                     if (!isset($data['estimate_date'])) {
                         $data['estimate_date'] = now();
                     }
@@ -49,8 +50,18 @@ class EstimateService
             } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
                 $attempt++;
                 
+                \Log::warning('estimate.create.duplicate_number', [
+                    'attempt' => $attempt,
+                    'number' => $data['number'] ?? null,
+                    'organization_id' => $data['organization_id'],
+                ]);
+                
                 // If this was the last attempt, rethrow the exception
                 if ($attempt >= $maxAttempts) {
+                    \Log::error('estimate.create.failed', [
+                        'max_attempts_reached' => $maxAttempts,
+                        'last_number' => $data['number'] ?? null,
+                    ]);
                     throw $e;
                 }
                 
@@ -116,12 +127,18 @@ class EstimateService
         // Retry mechanism for race condition protection
         $maxAttempts = 3;
         $attempt = 0;
+        $providedNumber = $newNumber; // Save original provided number
         
         while ($attempt < $maxAttempts) {
             try {
+                // Generate number BEFORE transaction if not provided
+                if (!$newNumber) {
+                    $newNumber = $this->generateNumber($estimate->organization_id);
+                }
+                
                 return DB::transaction(function () use ($estimate, $newNumber, $newName) {
                     $overrides = [
-                        'number' => $newNumber ?? $this->generateNumber($estimate->organization_id),
+                        'number' => $newNumber,
                         'name' => $newName ?? $estimate->name . ' (копия)',
                         'status' => 'draft',
                         'version' => 1,
@@ -180,8 +197,18 @@ class EstimateService
             } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
                 $attempt++;
                 
+                \Log::warning('estimate.duplicate.duplicate_number', [
+                    'attempt' => $attempt,
+                    'number' => $newNumber,
+                    'source_estimate_id' => $estimate->id,
+                ]);
+                
                 // If this was the last attempt, rethrow the exception
                 if ($attempt >= $maxAttempts) {
+                    \Log::error('estimate.duplicate.failed', [
+                        'max_attempts_reached' => $maxAttempts,
+                        'last_number' => $newNumber,
+                    ]);
                     throw $e;
                 }
                 
@@ -189,7 +216,10 @@ class EstimateService
                 usleep(rand(10000, 50000)); // 10-50ms
                 
                 // Clear newNumber to force regeneration on next attempt
-                $newNumber = null;
+                // Only regenerate if number was not explicitly provided
+                if (!$providedNumber) {
+                    $newNumber = null;
+                }
             }
         }
         
@@ -213,49 +243,54 @@ class EstimateService
 
     protected function generateNumber(int $organizationId): string
     {
-        $year = now()->year;
-        $prefix = "СМ-{$year}-";
-        
-        $driver = config('database.default');
-        $connection = config("database.connections.{$driver}.driver");
-        
-        // Используем advisory lock для PostgreSQL или табличную блокировку
-        if ($connection === 'pgsql') {
-            // PostgreSQL advisory lock - самый надежный способ
-            $lockKey = crc32("estimate_number_{$organizationId}_{$year}");
-            DB::statement("SELECT pg_advisory_xact_lock(?);", [$lockKey]);
+        // Generate number in a separate transaction with advisory lock
+        return DB::transaction(function () use ($organizationId) {
+            $year = now()->year;
+            $prefix = "СМ-{$year}-";
             
-            $orderBy = 'CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS INTEGER) DESC';
-        } else {
-            $orderBy = 'CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS UNSIGNED) DESC';
-        }
-        
-        // Use pessimistic locking to prevent race conditions
-        // lockForUpdate() will lock the row until the transaction commits
-        $lastEstimate = Estimate::where('organization_id', $organizationId)
-            ->where('number', 'like', $prefix . '%')
-            ->orderByRaw($orderBy)
-            ->lockForUpdate()
-            ->first();
-        
-        if ($lastEstimate) {
-            $lastNumber = (int) substr($lastEstimate->number, strlen($prefix));
-            $newNumber = $lastNumber + 1;
-        } else {
-            $newNumber = 1;
-        }
-        
-        $number = $prefix . str_pad($newNumber, 4, '0', STR_PAD_LEFT);
-        
-        // Логирование для отладки
-        \Log::debug('estimate.number_generated', [
-            'organization_id' => $organizationId,
-            'year' => $year,
-            'generated_number' => $number,
-            'last_number' => $lastEstimate?->number,
-        ]);
-        
-        return $number;
+            $driver = config('database.default');
+            $connection = config("database.connections.{$driver}.driver");
+            
+            // Используем advisory lock для PostgreSQL
+            if ($connection === 'pgsql') {
+                // PostgreSQL advisory lock - самый надежный способ
+                // Блокировка на уровне организации + год
+                $lockKey = crc32("estimate_number_{$organizationId}_{$year}");
+                DB::statement("SELECT pg_advisory_xact_lock(?);", [$lockKey]);
+                
+                $orderBy = 'CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS INTEGER) DESC';
+            } else {
+                $orderBy = 'CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS UNSIGNED) DESC';
+            }
+            
+            // Use pessimistic locking to prevent race conditions
+            // lockForUpdate() will lock the row until the transaction commits
+            $lastEstimate = Estimate::where('organization_id', $organizationId)
+                ->where('number', 'like', $prefix . '%')
+                ->orderByRaw($orderBy)
+                ->lockForUpdate()
+                ->first();
+            
+            if ($lastEstimate) {
+                $lastNumber = (int) substr($lastEstimate->number, strlen($prefix));
+                $newNumber = $lastNumber + 1;
+            } else {
+                $newNumber = 1;
+            }
+            
+            $number = $prefix . str_pad($newNumber, 4, '0', STR_PAD_LEFT);
+            
+            // Логирование для отладки
+            \Log::debug('estimate.number_generated', [
+                'organization_id' => $organizationId,
+                'year' => $year,
+                'generated_number' => $number,
+                'last_number' => $lastEstimate?->number,
+                'last_number_numeric' => $lastEstimate ? (int) substr($lastEstimate->number, strlen($prefix)) : null,
+            ]);
+            
+            return $number;
+        });
     }
 }
 
