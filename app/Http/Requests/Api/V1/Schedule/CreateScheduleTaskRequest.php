@@ -53,6 +53,10 @@ class CreateScheduleTaskRequest extends FormRequest
                 'has_permission' => $hasPermission,
             ]);
             
+            if (!$hasPermission) {
+                Log::warning('[CreateScheduleTaskRequest] Access denied - will throw AuthorizationException');
+            }
+            
             return $hasPermission;
         } catch (\Exception $e) {
             Log::error('[CreateScheduleTaskRequest] EXCEPTION in authorize()', [

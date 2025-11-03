@@ -77,6 +77,13 @@ class Handler extends ExceptionHandler
         // Для API запросов мы хотим всегда возвращать JSON
         $this->renderable(function (Throwable $e, $request) {
             if ($request->expectsJson() || $request->is('api/*')) {
+                \Log::info('[Handler] renderable() called', [
+                    'exception_class' => get_class($e),
+                    'exception_message' => $e->getMessage(),
+                    'exception_code' => $e->getCode(),
+                    'uri' => $request->getRequestUri(),
+                    'method' => $request->getMethod(),
+                ]);
                 
                 // Получаем CORS заголовки из CorsMiddleware если есть
                 $corsHeaders = $request->attributes->get('cors_headers', []);
@@ -101,12 +108,20 @@ class Handler extends ExceptionHandler
                 }
 
                 if ($e instanceof AuthorizationException) {
+                    \Log::info('[Handler] AuthorizationException caught', [
+                        'message' => $e->getMessage(),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                    ]);
+                    
                     $message = $e->getMessage();
                     
                     // Делаем сообщение более понятным
                     if (empty($message) || $message === 'This action is unauthorized.') {
                         $message = 'У вас недостаточно прав для выполнения этого действия. Обратитесь к администратору.';
                     }
+                    
+                    \Log::info('[Handler] Returning 403 response');
                     
                     return response()->json([
                         'success' => false,
