@@ -33,7 +33,7 @@ class CreateScheduleTaskRequest extends FormRequest
             $authorizationService = app(AuthorizationService::class);
             
             // Для создания задачи нужно право редактировать график
-            $hasPermission = $authorizationService->can($user, 'schedule_management.edit', [
+            $hasPermission = $authorizationService->can($user, 'schedule-management.edit', [
                 'organization_id' => $organizationId,
                 'context_type' => 'organization'
             ]);

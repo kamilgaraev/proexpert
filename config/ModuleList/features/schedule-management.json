@@ -19,14 +19,14 @@
   },
   
   "permissions": [
-    "schedule_management.view",
-    "schedule_management.create",
-    "schedule_management.edit",
-    "schedule_management.delete",
-    "schedule_management.assign",
-    "schedule_management.approve",
-    "schedule_management.export",
-    "schedule_management.notifications"
+    "schedule-management.view",
+    "schedule-management.create",
+    "schedule-management.edit",
+    "schedule-management.delete",
+    "schedule-management.assign",
+    "schedule-management.approve",
+    "schedule-management.export",
+    "schedule-management.notifications"
   ],
   
   "features": [
