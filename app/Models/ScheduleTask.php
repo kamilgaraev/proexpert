@@ -171,15 +171,6 @@ class ScheduleTask extends Model
         return $value;
     }
 
-    /**
-     * При установке длительности явно - сохраняем, но computed property все равно будет вычислять по датам
-     */
-    public function setPlannedDurationDaysAttribute($value): void
-    {
-        // Сохраняем значение в БД (может использоваться если даты не указаны)
-        $this->attributes['planned_duration_days'] = $value;
-    }
-
     public function getActualDurationDaysAttribute(): ?int
     {
         if (!$this->actual_start_date || !$this->actual_end_date) {

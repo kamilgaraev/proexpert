@@ -182,7 +182,7 @@ class ScheduleTaskObserver
                     : Carbon::parse($endDateValue);
                 
                 $duration = $startDate->diffInDays($endDate) + 1;
-                $task->attributes['planned_duration_days'] = $duration;
+                $task->setAttribute('planned_duration_days', $duration);
                 
                 Log::info('[ScheduleTaskObserver] Плановая длительность вычислена', [
                     'planned_duration_days' => $duration,
@@ -194,11 +194,11 @@ class ScheduleTaskObserver
                     'error' => $e->getMessage(),
                 ]);
                 // Если не удалось вычислить, устанавливаем 1 день по умолчанию
-                $task->attributes['planned_duration_days'] = 1;
+                $task->setAttribute('planned_duration_days', 1);
             }
         } else {
             // Если даты не указаны, устанавливаем 1 день по умолчанию
-            $task->attributes['planned_duration_days'] = 1;
+            $task->setAttribute('planned_duration_days', 1);
         }
         
         // Фактическая длительность
@@ -216,7 +216,7 @@ class ScheduleTaskObserver
                     : Carbon::parse($actualEndValue);
                 
                 $actualDuration = $actualStartDate->diffInDays($actualEndDate) + 1;
-                $task->attributes['actual_duration_days'] = $actualDuration;
+                $task->setAttribute('actual_duration_days', $actualDuration);
                 
                 Log::info('[ScheduleTaskObserver] Фактическая длительность вычислена', [
                     'actual_duration_days' => $actualDuration,
