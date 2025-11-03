@@ -113,7 +113,15 @@ return Application::configure(basePath: dirname(__DIR__))
         
         // Обработка всех остальных ошибок для API, когда НЕ в режиме отладки
         $exceptions->renderable(function (\Throwable $e, $request) {
-             if ($request->expectsJson() && !app()->hasDebugModeEnabled()) {
+             if (($request->expectsJson() || $request->is('api/*')) && !app()->hasDebugModeEnabled()) {
+                \Log::error('[bootstrap/app.php] Throwable caught in general handler', [
+                    'exception_class' => get_class($e),
+                    'exception_message' => $e->getMessage(),
+                    'exception_code' => $e->getCode(),
+                    'uri' => $request->getRequestUri(),
+                    'is_authorization' => $e instanceof \Illuminate\Auth\Access\AuthorizationException,
+                ]);
+                
                 error_log('[bootstrap/app.php withExceptions] Caught Throwable for non-debug API: ' . $e->getMessage() . "\nStack Trace:\n" . $e->getTraceAsString());
                 report($e); // Логируем ошибку стандартным механизмом Laravel
                 
