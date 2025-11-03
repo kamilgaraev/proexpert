@@ -49,7 +49,7 @@
     "report-templates": ["*"],
     "data-filters": ["*"],
     "dashboard-widgets": ["*"],
-    "schedule": ["*"],
+    "schedule-management": ["*"],
     "advanced-dashboard": ["*"],
     "ai-assistant": ["*"],
     "basic-warehouse": ["*"],
