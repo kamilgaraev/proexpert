@@ -283,6 +283,14 @@ class PermissionResolver
      */
     protected function checkModulePermission(array $modulePermissions, string $module, string $action): bool
     {
+        \Log::info('[PermissionResolver] checkModulePermission', [
+            'module' => $module,
+            'action' => $action,
+            'available_modules' => array_keys($modulePermissions),
+            'module_exists' => isset($modulePermissions[$module]),
+            'permissions_for_module' => $modulePermissions[$module] ?? 'NOT_FOUND',
+        ]);
+        
         if (!isset($modulePermissions[$module])) {
             return false;
         }
@@ -291,21 +299,25 @@ class PermissionResolver
         
         // Проверяем точное совпадение
         if (in_array($action, $permissions)) {
+            \Log::info('[PermissionResolver] GRANTED by exact match');
             return true;
         }
 
         // Проверяем wildcard
         if (in_array('*', $permissions)) {
+            \Log::info('[PermissionResolver] GRANTED by wildcard');
             return true;
         }
 
         // Проверяем wildcard с префиксом (например: create_* для create_project)
         foreach ($permissions as $permission) {
             if ($this->matchesWildcard($action, $permission)) {
+                \Log::info('[PermissionResolver] GRANTED by pattern match', ['pattern' => $permission]);
                 return true;
             }
         }
 
+        \Log::info('[PermissionResolver] DENIED - no match found');
         return false;
     }
 
