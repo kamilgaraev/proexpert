@@ -51,16 +51,19 @@ class CreateScheduleTaskRequest extends FormRequest
             
             Log::info('[CreateScheduleTaskRequest] authorize() SUCCESS');
             return true;
+        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
+            // AuthorizationException должен проходить дальше в Handler
+            Log::info('[CreateScheduleTaskRequest] AuthorizationException - re-throwing for Handler');
+            throw $e;
         } catch (\Exception $e) {
-            Log::error('[CreateScheduleTaskRequest] EXCEPTION in authorize()', [
+            // Только для других исключений логируем и возвращаем false
+            Log::error('[CreateScheduleTaskRequest] UNEXPECTED EXCEPTION in authorize()', [
                 'error' => $e->getMessage(),
                 'class' => get_class($e),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
             ]);
-            // При исключении тоже вызываем failedAuthorization
-            $this->failedAuthorization();
-            return false; // никогда не выполнится, но нужно для linter
+            return false;
         }
     }
     
