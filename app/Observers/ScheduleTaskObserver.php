@@ -181,10 +181,11 @@ class ScheduleTaskObserver
                     ? $endDateValue 
                     : Carbon::parse($endDateValue);
                 
-                $task->planned_duration_days = $startDate->diffInDays($endDate) + 1;
+                $duration = $startDate->diffInDays($endDate) + 1;
+                $task->attributes['planned_duration_days'] = $duration;
                 
                 Log::info('[ScheduleTaskObserver] Плановая длительность вычислена', [
-                    'planned_duration_days' => $task->planned_duration_days,
+                    'planned_duration_days' => $duration,
                     'start' => $startDate->format('Y-m-d'),
                     'end' => $endDate->format('Y-m-d'),
                 ]);
@@ -193,11 +194,11 @@ class ScheduleTaskObserver
                     'error' => $e->getMessage(),
                 ]);
                 // Если не удалось вычислить, устанавливаем 1 день по умолчанию
-                $task->planned_duration_days = 1;
+                $task->attributes['planned_duration_days'] = 1;
             }
         } else {
             // Если даты не указаны, устанавливаем 1 день по умолчанию
-            $task->planned_duration_days = 1;
+            $task->attributes['planned_duration_days'] = 1;
         }
         
         // Фактическая длительность
@@ -214,10 +215,11 @@ class ScheduleTaskObserver
                     ? $actualEndValue 
                     : Carbon::parse($actualEndValue);
                 
-                $task->actual_duration_days = $actualStartDate->diffInDays($actualEndDate) + 1;
+                $actualDuration = $actualStartDate->diffInDays($actualEndDate) + 1;
+                $task->attributes['actual_duration_days'] = $actualDuration;
                 
                 Log::info('[ScheduleTaskObserver] Фактическая длительность вычислена', [
-                    'actual_duration_days' => $task->actual_duration_days,
+                    'actual_duration_days' => $actualDuration,
                 ]);
             } catch (\Exception $e) {
                 Log::warning('[ScheduleTaskObserver] Не удалось вычислить фактическую длительность', [
