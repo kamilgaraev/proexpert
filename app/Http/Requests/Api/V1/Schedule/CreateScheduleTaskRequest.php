@@ -13,35 +13,24 @@ class CreateScheduleTaskRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        Log::info('[CreateScheduleTaskRequest] authorize() called');
+        Log::info('[CreateScheduleTaskRequest] authorize() START');
         
         try {
             $user = $this->user();
             
-            Log::info('[CreateScheduleTaskRequest] User found', [
-                'user_id' => $user?->id,
-                'email' => $user?->email,
-            ]);
-            
             if (!$user) {
-                Log::warning('[CreateScheduleTaskRequest] No user - returning false');
-                return false;
+                Log::warning('[CreateScheduleTaskRequest] No user');
+                $this->failedAuthorization();
             }
             
             $organizationId = $this->getOrganizationId();
             
-            Log::info('[CreateScheduleTaskRequest] Organization ID', [
-                'organization_id' => $organizationId,
-            ]);
-            
             if (!$organizationId) {
-                Log::warning('[CreateScheduleTaskRequest] No organization ID - returning false');
-                return false;
+                Log::warning('[CreateScheduleTaskRequest] No organization ID');
+                $this->failedAuthorization();
             }
             
             $authorizationService = app(AuthorizationService::class);
-            
-            Log::info('[CreateScheduleTaskRequest] Checking permission schedule.edit');
             
             // Для создания задачи нужно право редактировать график
             $hasPermission = $authorizationService->can($user, 'schedule.edit', [
@@ -49,25 +38,29 @@ class CreateScheduleTaskRequest extends FormRequest
                 'context_type' => 'organization'
             ]);
             
-            Log::info('[CreateScheduleTaskRequest] Permission check result', [
+            Log::info('[CreateScheduleTaskRequest] Permission check', [
+                'user_id' => $user?->id,
+                'organization_id' => $organizationId,
                 'has_permission' => $hasPermission,
             ]);
             
             if (!$hasPermission) {
-                Log::warning('[CreateScheduleTaskRequest] Access denied - will throw AuthorizationException');
+                Log::warning('[CreateScheduleTaskRequest] Access denied - calling failedAuthorization()');
+                $this->failedAuthorization();
             }
             
-            return $hasPermission;
+            Log::info('[CreateScheduleTaskRequest] authorize() SUCCESS');
+            return true;
         } catch (\Exception $e) {
             Log::error('[CreateScheduleTaskRequest] EXCEPTION in authorize()', [
                 'error' => $e->getMessage(),
                 'class' => get_class($e),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString(),
             ]);
-            // При исключении возвращаем false (нет доступа)
-            return false;
+            // При исключении тоже вызываем failedAuthorization
+            $this->failedAuthorization();
+            return false; // никогда не выполнится, но нужно для linter
         }
     }
     
