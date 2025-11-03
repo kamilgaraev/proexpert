@@ -67,13 +67,18 @@ return Application::configure(basePath: dirname(__DIR__))
         });
 
         $exceptions->renderable(function (\Illuminate\Auth\Access\AuthorizationException $e, $request) {
-            if ($request->expectsJson()) {
+            if ($request->expectsJson() || $request->is('api/*')) {
                  $message = $e->getMessage();
                  
                  // Делаем сообщение более понятным
                  if (empty($message) || $message === 'This action is unauthorized.') {
                      $message = 'У вас недостаточно прав для выполнения этого действия. Обратитесь к администратору.';
                  }
+                 
+                 \Log::info('[bootstrap/app.php] AuthorizationException caught', [
+                     'message' => $message,
+                     'uri' => $request->getRequestUri(),
+                 ]);
                  
                  return response()->json([
                      'success' => false,

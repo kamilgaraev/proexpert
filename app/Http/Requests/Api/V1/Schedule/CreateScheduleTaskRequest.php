@@ -60,18 +60,6 @@ class CreateScheduleTaskRequest extends FormRequest
         }
     }
     
-    /**
-     * Handle a failed authorization attempt.
-     */
-    protected function failedAuthorization()
-    {
-        Log::info('[CreateScheduleTaskRequest] failedAuthorization() called - throwing AuthorizationException');
-        
-        throw new \Illuminate\Auth\Access\AuthorizationException(
-            'У вас недостаточно прав для создания задач в графике. Требуется право "schedule.edit".'
-        );
-    }
-    
     protected function getOrganizationId(): ?int
     {
         $user = $this->user();
