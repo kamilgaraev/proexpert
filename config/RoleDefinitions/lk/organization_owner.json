@@ -49,7 +49,10 @@
     "report-templates": ["*"],
     "data-filters": ["*"],
     "dashboard-widgets": ["*"],
-    "schedule-management": ["*"],
+    "schedule-management": [
+      "schedule.view", "schedule.create", "schedule.edit", "schedule.delete",
+      "schedule.assign", "schedule.approve", "schedule.export", "schedule.notifications"
+    ],
     "advanced-dashboard": ["*"],
     "ai-assistant": ["*"],
     "basic-warehouse": ["*"],
