@@ -243,28 +243,57 @@ class EstimateService
 
     protected function generateNumber(int $organizationId): string
     {
-        // Generate number in a separate transaction with advisory lock
-        return DB::transaction(function () use ($organizationId) {
-            $year = now()->year;
-            $prefix = "СМ-{$year}-";
+        $year = now()->year;
+        $prefix = "СМ-{$year}-";
+        
+        $driver = config('database.default');
+        $connection = config("database.connections.{$driver}.driver");
+        
+        // Используем session-level advisory lock для PostgreSQL
+        if ($connection === 'pgsql') {
+            // PostgreSQL session advisory lock - блокировка на уровне сессии
+            // Блокировка на уровне организации + год
+            $lockKey = crc32("estimate_number_{$organizationId}_{$year}");
             
-            $driver = config('database.default');
-            $connection = config("database.connections.{$driver}.driver");
+            // pg_advisory_lock - блокирует до явного unlock или конца сессии
+            DB::statement("SELECT pg_advisory_lock(?);", [$lockKey]);
             
-            // Используем advisory lock для PostgreSQL
-            if ($connection === 'pgsql') {
-                // PostgreSQL advisory lock - самый надежный способ
-                // Блокировка на уровне организации + год
-                $lockKey = crc32("estimate_number_{$organizationId}_{$year}");
-                DB::statement("SELECT pg_advisory_xact_lock(?);", [$lockKey]);
+            try {
+                // Читаем ВСЕ существующие сметы без lockForUpdate
+                // чтобы видеть COMMITTED данные из других транзакций
+                $lastEstimate = Estimate::where('organization_id', $organizationId)
+                    ->where('number', 'like', $prefix . '%')
+                    ->orderByRaw('CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS INTEGER) DESC')
+                    ->first();
                 
-                $orderBy = 'CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS INTEGER) DESC';
-            } else {
-                $orderBy = 'CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS UNSIGNED) DESC';
+                if ($lastEstimate) {
+                    $lastNumber = (int) substr($lastEstimate->number, strlen($prefix));
+                    $newNumber = $lastNumber + 1;
+                } else {
+                    $newNumber = 1;
+                }
+                
+                $number = $prefix . str_pad($newNumber, 4, '0', STR_PAD_LEFT);
+                
+                // Логирование для отладки
+                \Log::debug('estimate.number_generated', [
+                    'organization_id' => $organizationId,
+                    'year' => $year,
+                    'generated_number' => $number,
+                    'last_number' => $lastEstimate?->number,
+                    'last_number_numeric' => $lastEstimate ? (int) substr($lastEstimate->number, strlen($prefix)) : null,
+                    'lock_key' => $lockKey,
+                ]);
+                
+                return $number;
+            } finally {
+                // Освобождаем advisory lock
+                DB::statement("SELECT pg_advisory_unlock(?);", [$lockKey]);
             }
+        } else {
+            // Для других БД используем pessimistic locking
+            $orderBy = 'CAST(SUBSTRING(number, ' . (strlen($prefix) + 1) . ') AS UNSIGNED) DESC';
             
-            // Use pessimistic locking to prevent race conditions
-            // lockForUpdate() will lock the row until the transaction commits
             $lastEstimate = Estimate::where('organization_id', $organizationId)
                 ->where('number', 'like', $prefix . '%')
                 ->orderByRaw($orderBy)
@@ -280,17 +309,15 @@ class EstimateService
             
             $number = $prefix . str_pad($newNumber, 4, '0', STR_PAD_LEFT);
             
-            // Логирование для отладки
             \Log::debug('estimate.number_generated', [
                 'organization_id' => $organizationId,
                 'year' => $year,
                 'generated_number' => $number,
                 'last_number' => $lastEstimate?->number,
-                'last_number_numeric' => $lastEstimate ? (int) substr($lastEstimate->number, strlen($prefix)) : null,
             ]);
             
             return $number;
-        });
+        }
     }
 }
 
