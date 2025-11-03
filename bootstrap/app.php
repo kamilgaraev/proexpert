@@ -87,6 +87,27 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
 
+        $exceptions->renderable(function (\Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException $e, $request) {
+            if ($request->expectsJson() || $request->is('api/*')) {
+                 $message = $e->getMessage();
+                 
+                 // Делаем сообщение более понятным
+                 if (empty($message) || $message === 'This action is unauthorized.') {
+                     $message = 'У вас недостаточно прав для выполнения этого действия. Обратитесь к администратору.';
+                 }
+                 
+                 \Log::info('[bootstrap/app.php] AccessDeniedHttpException caught', [
+                     'message' => $message,
+                     'uri' => $request->getRequestUri(),
+                 ]);
+                 
+                 return response()->json([
+                     'success' => false,
+                     'message' => $message
+                 ], \Symfony\Component\HttpFoundation\Response::HTTP_FORBIDDEN);
+            }
+        });
+
         $exceptions->renderable(function (\Symfony\Component\HttpKernel\Exception\NotFoundHttpException $e, $request) {
             if ($request->expectsJson()) {
                 return new \App\Http\Responses\Api\V1\NotFoundResponse('Resource not found.');
