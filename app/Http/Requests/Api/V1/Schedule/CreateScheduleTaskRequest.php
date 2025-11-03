@@ -15,21 +15,21 @@ class CreateScheduleTaskRequest extends FormRequest
     {
         Log::info('[CreateScheduleTaskRequest] authorize() START');
         
+        $user = $this->user();
+        
+        if (!$user) {
+            Log::warning('[CreateScheduleTaskRequest] No user - returning false');
+            return false;
+        }
+        
+        $organizationId = $this->getOrganizationId();
+        
+        if (!$organizationId) {
+            Log::warning('[CreateScheduleTaskRequest] No organization ID - returning false');
+            return false;
+        }
+        
         try {
-            $user = $this->user();
-            
-            if (!$user) {
-                Log::warning('[CreateScheduleTaskRequest] No user');
-                $this->failedAuthorization();
-            }
-            
-            $organizationId = $this->getOrganizationId();
-            
-            if (!$organizationId) {
-                Log::warning('[CreateScheduleTaskRequest] No organization ID');
-                $this->failedAuthorization();
-            }
-            
             $authorizationService = app(AuthorizationService::class);
             
             // Для создания задачи нужно право редактировать график
@@ -39,25 +39,18 @@ class CreateScheduleTaskRequest extends FormRequest
             ]);
             
             Log::info('[CreateScheduleTaskRequest] Permission check', [
-                'user_id' => $user?->id,
+                'user_id' => $user->id,
                 'organization_id' => $organizationId,
                 'has_permission' => $hasPermission,
             ]);
             
             if (!$hasPermission) {
-                Log::warning('[CreateScheduleTaskRequest] Access denied - calling failedAuthorization()');
-                $this->failedAuthorization();
+                Log::warning('[CreateScheduleTaskRequest] Access denied - returning false');
             }
             
-            Log::info('[CreateScheduleTaskRequest] authorize() SUCCESS');
-            return true;
-        } catch (\Illuminate\Auth\Access\AuthorizationException $e) {
-            // AuthorizationException должен проходить дальше в Handler
-            Log::info('[CreateScheduleTaskRequest] AuthorizationException - re-throwing for Handler');
-            throw $e;
+            return $hasPermission;
         } catch (\Exception $e) {
-            // Только для других исключений логируем и возвращаем false
-            Log::error('[CreateScheduleTaskRequest] UNEXPECTED EXCEPTION in authorize()', [
+            Log::error('[CreateScheduleTaskRequest] EXCEPTION in authorize()', [
                 'error' => $e->getMessage(),
                 'class' => get_class($e),
                 'file' => $e->getFile(),
@@ -65,6 +58,18 @@ class CreateScheduleTaskRequest extends FormRequest
             ]);
             return false;
         }
+    }
+    
+    /**
+     * Handle a failed authorization attempt.
+     */
+    protected function failedAuthorization()
+    {
+        Log::info('[CreateScheduleTaskRequest] failedAuthorization() called - throwing AuthorizationException');
+        
+        throw new \Illuminate\Auth\Access\AuthorizationException(
+            'У вас недостаточно прав для создания задач в графике. Требуется право "schedule.edit".'
+        );
     }
     
     protected function getOrganizationId(): ?int
