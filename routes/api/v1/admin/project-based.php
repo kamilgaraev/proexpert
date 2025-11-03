@@ -185,12 +185,12 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::get('/{estimate}/dashboard', [EstimateController::class, 'dashboard']);
         Route::get('/{estimate}/structure', [EstimateController::class, 'structure']);
         
-        Route::prefix('{estimate}/sections')->group(function () {
+        Route::prefix('{estimate}/sections')->scopeBindings()->group(function () {
             Route::get('/', [EstimateSectionController::class, 'index']);
             Route::post('/', [EstimateSectionController::class, 'store']);
         });
         
-        Route::prefix('{estimate}/items')->group(function () {
+        Route::prefix('{estimate}/items')->scopeBindings()->group(function () {
             Route::get('/', [EstimateItemController::class, 'index']);
             Route::post('/', [EstimateItemController::class, 'store']);
             Route::post('/bulk', [EstimateItemController::class, 'bulkStore']);
