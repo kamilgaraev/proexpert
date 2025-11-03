@@ -47,16 +47,20 @@ class ScheduleTaskObserver
     {
         $errors = [];
 
+        // Получаем даты из атрибутов напрямую
+        $startDateValue = $task->attributes['planned_start_date'] ?? $task->planned_start_date;
+        $endDateValue = $task->attributes['planned_end_date'] ?? $task->planned_end_date;
+        
         // Плановые даты
-        if ($task->planned_start_date && $task->planned_end_date) {
+        if ($startDateValue && $endDateValue) {
             try {
-                $startDate = $task->planned_start_date instanceof Carbon 
-                    ? $task->planned_start_date 
-                    : Carbon::parse($task->planned_start_date);
+                $startDate = $startDateValue instanceof Carbon 
+                    ? $startDateValue 
+                    : Carbon::parse($startDateValue);
                     
-                $endDate = $task->planned_end_date instanceof Carbon 
-                    ? $task->planned_end_date 
-                    : Carbon::parse($task->planned_end_date);
+                $endDate = $endDateValue instanceof Carbon 
+                    ? $endDateValue 
+                    : Carbon::parse($endDateValue);
                 
                 if ($endDate < $startDate) {
                     $errors['planned_end_date'] = ['Дата окончания должна быть позже или равна дате начала'];
@@ -66,16 +70,20 @@ class ScheduleTaskObserver
             }
         }
 
+        // Получаем фактические даты из атрибутов напрямую
+        $actualStartValue = $task->attributes['actual_start_date'] ?? $task->actual_start_date;
+        $actualEndValue = $task->attributes['actual_end_date'] ?? $task->actual_end_date;
+        
         // Фактические даты
-        if ($task->actual_start_date && $task->actual_end_date) {
+        if ($actualStartValue && $actualEndValue) {
             try {
-                $actualStartDate = $task->actual_start_date instanceof Carbon 
-                    ? $task->actual_start_date 
-                    : Carbon::parse($task->actual_start_date);
+                $actualStartDate = $actualStartValue instanceof Carbon 
+                    ? $actualStartValue 
+                    : Carbon::parse($actualStartValue);
                     
-                $actualEndDate = $task->actual_end_date instanceof Carbon 
-                    ? $task->actual_end_date 
-                    : Carbon::parse($task->actual_end_date);
+                $actualEndDate = $actualEndValue instanceof Carbon 
+                    ? $actualEndValue 
+                    : Carbon::parse($actualEndValue);
                 
                 if ($actualEndDate < $actualStartDate) {
                     $errors['actual_end_date'] = ['Фактическая дата окончания должна быть позже или равна дате начала'];
@@ -95,26 +103,30 @@ class ScheduleTaskObserver
      */
     protected function calculateAndSetDuration(ScheduleTask $task): void
     {
+        // Получаем даты из атрибутов напрямую
+        $startDateValue = $task->attributes['planned_start_date'] ?? $task->planned_start_date;
+        $endDateValue = $task->attributes['planned_end_date'] ?? $task->planned_end_date;
+        
         // Вычисляем планируемую длительность
-        if ($task->planned_start_date && $task->planned_end_date) {
+        if ($startDateValue && $endDateValue) {
             try {
                 // Преобразуем в Carbon если нужно
-                $startDate = $task->planned_start_date instanceof Carbon 
-                    ? $task->planned_start_date 
-                    : Carbon::parse($task->planned_start_date);
+                $startDate = $startDateValue instanceof Carbon 
+                    ? $startDateValue 
+                    : Carbon::parse($startDateValue);
                     
-                $endDate = $task->planned_end_date instanceof Carbon 
-                    ? $task->planned_end_date 
-                    : Carbon::parse($task->planned_end_date);
+                $endDate = $endDateValue instanceof Carbon 
+                    ? $endDateValue 
+                    : Carbon::parse($endDateValue);
                 
                 $calculatedDuration = $startDate->diffInDays($endDate) + 1;
                 
                 // Автоматически устанавливаем вычисленную длительность
-                $task->setAttribute('planned_duration_days', $calculatedDuration);
+                $task->planned_duration_days = $calculatedDuration;
                 
                 Log::info('Автоматически вычислена длительность задачи', [
                     'task_id' => $task->id ?? 'new',
-                    'task_name' => $task->name,
+                    'task_name' => $task->name ?? 'unknown',
                     'calculated_duration' => $calculatedDuration,
                     'planned_start_date' => $startDate->format('Y-m-d'),
                     'planned_end_date' => $endDate->format('Y-m-d'),
@@ -123,38 +135,46 @@ class ScheduleTaskObserver
                 Log::error('Ошибка при вычислении длительности задачи', [
                     'task_id' => $task->id ?? 'new',
                     'error' => $e->getMessage(),
-                    'planned_start_date' => $task->planned_start_date,
-                    'planned_end_date' => $task->planned_end_date,
+                    'trace' => $e->getTraceAsString(),
+                    'planned_start_date' => $startDateValue,
+                    'planned_end_date' => $endDateValue,
                 ]);
+                // Не бросаем исключение - позволяем создаться задаче
             }
         }
         
+        // Получаем фактические даты из атрибутов напрямую
+        $actualStartValue = $task->attributes['actual_start_date'] ?? $task->actual_start_date;
+        $actualEndValue = $task->attributes['actual_end_date'] ?? $task->actual_end_date;
+        
         // Вычисляем фактическую длительность если есть обе даты
-        if ($task->actual_start_date && $task->actual_end_date) {
+        if ($actualStartValue && $actualEndValue) {
             try {
-                $actualStartDate = $task->actual_start_date instanceof Carbon 
-                    ? $task->actual_start_date 
-                    : Carbon::parse($task->actual_start_date);
+                $actualStartDate = $actualStartValue instanceof Carbon 
+                    ? $actualStartValue 
+                    : Carbon::parse($actualStartValue);
                     
-                $actualEndDate = $task->actual_end_date instanceof Carbon 
-                    ? $task->actual_end_date 
-                    : Carbon::parse($task->actual_end_date);
+                $actualEndDate = $actualEndValue instanceof Carbon 
+                    ? $actualEndValue 
+                    : Carbon::parse($actualEndValue);
                 
                 $actualDuration = $actualStartDate->diffInDays($actualEndDate) + 1;
-                $task->setAttribute('actual_duration_days', $actualDuration);
+                $task->actual_duration_days = $actualDuration;
                 
                 Log::info('Автоматически вычислена фактическая длительность задачи', [
                     'task_id' => $task->id ?? 'new',
-                    'task_name' => $task->name,
+                    'task_name' => $task->name ?? 'unknown',
                     'actual_duration' => $actualDuration,
                 ]);
             } catch (\Exception $e) {
                 Log::error('Ошибка при вычислении фактической длительности задачи', [
                     'task_id' => $task->id ?? 'new',
                     'error' => $e->getMessage(),
-                    'actual_start_date' => $task->actual_start_date,
-                    'actual_end_date' => $task->actual_end_date,
+                    'trace' => $e->getTraceAsString(),
+                    'actual_start_date' => $actualStartValue,
+                    'actual_end_date' => $actualEndValue,
                 ]);
+                // Не бросаем исключение - позволяем создаться задаче
             }
         }
     }
