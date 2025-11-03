@@ -1,0 +1,604 @@
+---
+description: Общие конвенции и стандарты кодирования для всего проекта ProHelper
+globs:
+  - "**/*.php"
+alwaysApply: true
+---
+
+# Общие конвенции кодирования ProHelper
+
+## Стек технологий
+
+### Backend
+- **PHP**: 8.2+
+- **Laravel**: 11.x
+- **Database**: PostgreSQL / MySQL
+- **Cache**: Redis
+- **Queue**: Redis / Horizon
+- **WebSocket**: Laravel Reverb
+
+### Дополнительные сервисы
+- **S3**: Yandex Object Storage / AWS S3
+- **PDF**: DomPDF
+- **Excel**: PhpSpreadsheet
+- **AI**: OpenAI GPT / YandexGPT
+- **Monitoring**: Prometheus + Grafana + Loki
+
+## Стандарты кодирования (PSR)
+
+Проект следует стандартам PHP:
+- ✅ **PSR-1**: Basic Coding Standard
+- ✅ **PSR-2**: Coding Style Guide (устарел, но база)
+- ✅ **PSR-4**: Autoloading Standard
+- ✅ **PSR-12**: Extended Coding Style Guide (текущий)
+
+## Именование
+
+### Классы (PascalCase)
+
+```php
+✅ class UserController
+✅ class OrganizationService
+✅ class ProjectRepository
+✅ class MyEntityModel
+
+❌ class user_controller
+❌ class organization_service
+```
+
+### Методы и переменные (camelCase)
+
+```php
+✅ public function getUserData()
+✅ private $organizationId
+✅ protected $isActive
+
+❌ public function get_user_data()
+❌ private $organization_id
+```
+
+### Константы (SCREAMING_SNAKE_CASE)
+
+```php
+✅ const MAX_RETRY_ATTEMPTS = 3;
+✅ const API_BASE_URL = 'https://api.example.com';
+✅ private const CACHE_TTL = 3600;
+
+❌ const maxRetryAttempts = 3;
+❌ const ApiBaseUrl = 'https://api.example.com';
+```
+
+### Namespace (PascalCase с обратными слешами)
+
+```php
+✅ namespace App\BusinessModules\Features\MyModule\Services;
+✅ use App\Models\Organization;
+✅ use Illuminate\Support\Facades\Cache;
+
+❌ namespace app\business_modules\features\my_module\services;
+```
+
+### Файлы и директории
+
+```
+Классы PHP: PascalCase.php
+✅ UserController.php
+✅ OrganizationService.php
+
+Директории модулей: PascalCase
+✅ MultiOrganization/
+✅ AdvancedDashboard/
+
+Config файлы, миграции: snake_case
+✅ multi-organization.json
+✅ 2025_01_01_create_users_table.php
+```
+
+### Таблицы БД (snake_case, множественное число)
+
+```sql
+✅ users
+✅ organizations
+✅ project_tasks
+✅ organization_module_activations
+
+❌ Users
+❌ user
+❌ projectTasks
+```
+
+### Колонки БД (snake_case)
+
+```sql
+✅ organization_id
+✅ created_at
+✅ is_active
+✅ first_name
+
+❌ OrganizationId
+❌ createdAt
+❌ IsActive
+```
+
+## Структура классов
+
+### Порядок элементов в классе
+
+```php
+class MyClass
+{
+    // 1. Константы
+    public const PUBLIC_CONSTANT = 'value';
+    protected const PROTECTED_CONSTANT = 'value';
+    private const PRIVATE_CONSTANT = 'value';
+    
+    // 2. Свойства (properties)
+    public $publicProperty;
+    protected $protectedProperty;
+    private $privateProperty;
+    
+    // 3. Конструктор
+    public function __construct() {}
+    
+    // 4. Публичные методы
+    public function publicMethod() {}
+    
+    // 5. Protected методы
+    protected function protectedMethod() {}
+    
+    // 6. Private методы
+    private function privateMethod() {}
+    
+    // 7. Magic методы
+    public function __toString() {}
+}
+```
+
+### Visibility модификаторы
+
+Всегда явно указывайте видимость:
+
+```php
+✅ public function method() {}
+✅ private $property;
+✅ protected const CONSTANT = 1;
+
+❌ function method() {}  // Плохо: подразумевается public
+❌ $property;            // Плохо: подразумевается public
+```
+
+## Type Hints (строгая типизация)
+
+### Параметры и возвращаемые типы
+
+```php
+✅ public function calculateTotal(int $amount, float $tax): float
+✅ public function getUser(int $id): ?User
+✅ public function getItems(): array
+✅ public function process(): void
+
+❌ public function calculateTotal($amount, $tax)  // Нет типов
+❌ public function getUser($id)                   // Нет типов
+```
+
+### Nullable типы
+
+```php
+✅ public function findUser(int $id): ?User
+✅ public function getName(?string $default = null): string
+
+// PHP 8+ union types
+✅ public function getData(): array|Collection
+✅ public function getId(): int|string
+```
+
+### Свойства класса (PHP 7.4+)
+
+```php
+✅ private int $userId;
+✅ private ?string $name = null;
+✅ private array $items = [];
+
+❌ private $userId;      // Нет типа
+❌ private $name;        // Нет типа
+```
+
+### Constructor Property Promotion (PHP 8+)
+
+```php
+✅ public function __construct(
+    private readonly MyService $service,
+    private readonly int $organizationId,
+    private ?string $name = null
+) {}
+
+// Эквивалентно:
+private readonly MyService $service;
+private readonly int $organizationId;
+private ?string $name;
+
+public function __construct(
+    MyService $service,
+    int $organizationId,
+    ?string $name = null
+) {
+    $this->service = $service;
+    $this->organizationId = $organizationId;
+    $this->name = $name;
+}
+```
+
+## Комментарии и документация
+
+### PHPDoc блоки
+
+```php
+/**
+ * Получить данные пользователя по ID
+ *
+ * @param int $userId ID пользователя
+ * @param bool $withRelations Загружать связи
+ * @return User|null Пользователь или null
+ * @throws UserNotFoundException Если пользователь не найден
+ */
+public function getUser(int $userId, bool $withRelations = false): ?User
+{
+    // ...
+}
+```
+
+### Inline комментарии
+
+```php
+// ✅ Хорошо: объясняет ПОЧЕМУ, а не ЧТО
+// Используем кеш для тяжелого запроса, чтобы не нагружать БД
+$data = Cache::remember('heavy_query', 3600, fn() => $this->heavyQuery());
+
+// ❌ Плохо: дублирует очевидное из кода
+// Получаем данные из кеша
+$data = Cache::get('data');
+```
+
+### TODO, FIXME, NOTE
+
+```php
+// TODO: Добавить валидацию входных данных
+// FIXME: Исправить баг с расчетом суммы при отрицательных значениях
+// NOTE: Этот метод вызывается из queue job, не блокировать main thread
+```
+
+## Обработка ошибок
+
+### Try-Catch блоки
+
+```php
+✅ try {
+    $result = $this->service->process($data);
+    
+    return response()->json([
+        'success' => true,
+        'data' => $result,
+    ]);
+} catch (\DomainException $e) {
+    // Бизнес-ошибки (ожидаемые)
+    return response()->json([
+        'success' => false,
+        'error' => $e->getMessage(),
+    ], 422);
+} catch (\Exception $e) {
+    // Неожиданные ошибки
+    \Log::error('process.failed', [
+        'error' => $e->getMessage(),
+        'trace' => $e->getTraceAsString(),
+    ]);
+    
+    return response()->json([
+        'success' => false,
+        'error' => 'Internal server error',
+    ], 500);
+}
+```
+
+### Исключения
+
+```php
+// Используйте встроенные исключения Laravel
+throw new \InvalidArgumentException('Некорректный параметр');
+throw new \RuntimeException('Не удалось выполнить операцию');
+throw new \DomainException('Превышен лимит организации');
+
+// Или создайте кастомные:
+throw new UserNotFoundException("User {$id} not found");
+throw new ModuleNotActiveException('Module not activated');
+```
+
+## Логирование
+
+### Уровни логирования
+
+```php
+\Log::emergency('Система недоступна');       // Критические сбои
+\Log::alert('Необходимы немедленные действия');
+\Log::critical('Критическая ошибка');
+\Log::error('Ошибка выполнения');           // Ошибки
+\Log::warning('Предупреждение');            // Предупреждения
+\Log::notice('Важное событие');
+\Log::info('Информационное сообщение');     // Информация
+\Log::debug('Отладочная информация');       // Отладка
+```
+
+### Контекст логов
+
+```php
+✅ \Log::info('user.login', [
+    'user_id' => $user->id,
+    'organization_id' => $organization->id,
+    'ip' => $request->ip(),
+]);
+
+✅ \Log::error('payment.failed', [
+    'order_id' => $order->id,
+    'amount' => $order->amount,
+    'error' => $e->getMessage(),
+    'trace' => $e->getTraceAsString(),
+]);
+
+❌ \Log::info('User logged in');  // Нет контекста
+```
+
+### Структурированные логи
+
+```php
+// Используйте точечную нотацию для категорий
+'module.action.status'
+
+✅ 'user.login.success'
+✅ 'payment.process.failed'
+✅ 'module.activation.completed'
+✅ 'api.external.timeout'
+```
+
+## Работа с БД
+
+### Query Builder vs Eloquent
+
+```php
+// ✅ Используйте Eloquent для простых запросов
+$users = User::where('is_active', true)->get();
+$user = User::find($id);
+
+// ✅ Используйте Query Builder для сложных запросов
+$stats = DB::table('orders')
+    ->select('status', DB::raw('COUNT(*) as count'))
+    ->groupBy('status')
+    ->get();
+
+// ❌ Избегайте N+1 проблемы
+$users = User::all();
+foreach ($users as $user) {
+    echo $user->organization->name;  // N+1!
+}
+
+// ✅ Используйте Eager Loading
+$users = User::with('organization')->get();
+foreach ($users as $user) {
+    echo $user->organization->name;
+}
+```
+
+### Транзакции
+
+```php
+✅ use Illuminate\Support\Facades\DB;
+
+DB::transaction(function () use ($data) {
+    $order = Order::create($data['order']);
+    
+    foreach ($data['items'] as $item) {
+        OrderItem::create([
+            'order_id' => $order->id,
+            ...$item
+        ]);
+    }
+    
+    return $order;
+});
+```
+
+### Raw SQL (с осторожностью)
+
+```php
+// ✅ С параметрами (защита от SQL injection)
+DB::select('SELECT * FROM users WHERE id = ?', [$id]);
+DB::select('SELECT * FROM users WHERE email = :email', ['email' => $email]);
+
+// ❌ Конкатенация строк (уязвимость!)
+DB::select("SELECT * FROM users WHERE id = {$id}");  // ОПАСНО!
+```
+
+## Кеширование
+
+### Redis Tags (рекомендуется)
+
+```php
+✅ Cache::tags(['organizations', "org_{$orgId}"])
+    ->remember("dashboard_{$orgId}", 3600, fn() => $this->getData());
+
+// Инвалидация
+Cache::tags("org_{$orgId}")->flush();
+Cache::tags(['organizations'])->flush();
+```
+
+### Простое кеширование
+
+```php
+✅ Cache::remember('key', 3600, function () {
+    return $this->heavyOperation();
+});
+
+// Инвалидация
+Cache::forget('key');
+
+// Проверка существования
+if (Cache::has('key')) {
+    $data = Cache::get('key');
+}
+```
+
+## HTTP Responses
+
+### Успешные ответы
+
+```php
+✅ return response()->json([
+    'success' => true,
+    'data' => $data,
+], 200);
+
+✅ return response()->json([
+    'success' => true,
+    'message' => 'Entity created',
+    'data' => $entity,
+], 201);
+```
+
+### Ошибки
+
+```php
+✅ return response()->json([
+    'success' => false,
+    'error' => 'Validation error',
+    'errors' => $validator->errors(),
+], 422);
+
+✅ return response()->json([
+    'success' => false,
+    'error' => 'Not found',
+], 404);
+
+✅ return response()->json([
+    'success' => false,
+    'error' => 'Internal server error',
+], 500);
+```
+
+## Security
+
+### SQL Injection Prevention
+
+```php
+✅ User::where('email', $email)->first();              // Eloquent
+✅ DB::select('SELECT * FROM users WHERE id = ?', [$id]); // Prepared statements
+
+❌ DB::select("SELECT * FROM users WHERE id = {$id}");    // ОПАСНО!
+```
+
+### XSS Prevention
+
+```php
+✅ {{ $variable }}              // Автоэкранирование в Blade
+✅ {!! e($variable) !!}         // Явное экранирование
+
+❌ {!! $variable !!}            // Без экранирования (только для trusted content)
+```
+
+### CSRF Protection
+
+```php
+// Все POST/PUT/DELETE маршруты автоматически защищены
+// через VerifyCsrfToken middleware
+
+// Для API используйте JWT/Sanctum вместо CSRF
+Route::middleware('auth:api')->group(function () {
+    // ...
+});
+```
+
+### Mass Assignment Protection
+
+```php
+✅ class User extends Model
+{
+    protected $fillable = ['name', 'email'];  // Разрешенные для массового заполнения
+    
+    // ИЛИ
+    
+    protected $guarded = ['id', 'password'];  // Запрещенные
+}
+
+❌ User::create($request->all());  // Без защиты!
+✅ User::create($request->only(['name', 'email']));
+```
+
+## Performance
+
+### Database Indexes
+
+```php
+// В миграциях добавляйте индексы на часто используемые колонки
+$table->index('organization_id');
+$table->index(['organization_id', 'status']);
+$table->unique(['organization_id', 'email']);
+```
+
+### Eager Loading
+
+```php
+❌ $users = User::all();
+foreach ($users as $user) {
+    echo $user->organization->name;  // N+1 queries
+}
+
+✅ $users = User::with('organization')->get();
+foreach ($users as $user) {
+    echo $user->organization->name;  // 2 queries total
+}
+```
+
+### Caching
+
+```php
+✅ Cache::remember('expensive_query', 3600, fn() => $this->query());
+✅ Cache::tags(['org', "org_{$id}"])->remember(...);
+```
+
+### Queue Heavy Operations
+
+```php
+✅ dispatch(new ProcessHeavyTaskJob($data));
+✅ SendEmailJob::dispatch($user, $content)->delay(now()->addMinutes(5));
+```
+
+## Тестирование
+
+### Структура тестов
+
+```php
+public function test_can_create_entity(): void
+{
+    // Arrange (подготовка)
+    $user = User::factory()->create();
+    $data = ['name' => 'Test Entity'];
+    
+    // Act (действие)
+    $response = $this->actingAs($user)->postJson('/api/entities', $data);
+    
+    // Assert (проверка)
+    $response->assertStatus(201);
+    $response->assertJson(['success' => true]);
+    $this->assertDatabaseHas('entities', ['name' => 'Test Entity']);
+}
+```
+
+## Лучшие практики
+
+1. ✅ **DRY**: Don't Repeat Yourself - избегайте дублирования кода
+2. ✅ **SOLID**: следуйте SOLID принципам
+3. ✅ **KISS**: Keep It Simple, Stupid - простота превыше всего
+4. ✅ **YAGNI**: You Aren't Gonna Need It - не добавляйте лишнюю функциональность
+5. ✅ **Dependency Injection**: внедряйте зависимости, не создавайте внутри
+6. ✅ **Type Safety**: используйте строгую типизацию
+7. ✅ **Early Returns**: возвращайтесь рано, избегайте глубокой вложенности
+8. ✅ **Meaningful Names**: используйте понятные имена
+9. ✅ **Small Functions**: функции должны делать одну вещь хорошо
+10. ✅ **Comments**: комментируйте ПОЧЕМУ, а не ЧТО

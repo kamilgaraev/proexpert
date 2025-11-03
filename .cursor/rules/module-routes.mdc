@@ -1,0 +1,379 @@
+---
+description: Правила создания маршрутов в бизнес-модулях
+globs:
+  - "app/BusinessModules/**/routes.php"
+alwaysApply: true
+---
+
+# Создание маршрутов в модулях
+
+## Структура файла routes.php
+
+Каждый модуль имеет свой файл `routes.php` в корне модуля:
+
+```
+app/BusinessModules/{Category}/{Module}/routes.php
+```
+
+## Базовый шаблон routes.php
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\BusinessModules\Features\MyModule\Http\Controllers\MyModuleController;
+use App\BusinessModules\Features\MyModule\Http\Controllers\MyModuleDashboardController;
+use App\BusinessModules\Features\MyModule\Http\Controllers\MyModuleSettingsController;
+use App\BusinessModules\Features\MyModule\Http\Controllers\MyModuleExportController;
+
+/*
+|--------------------------------------------------------------------------
+| MyModule Routes
+|--------------------------------------------------------------------------
+|
+| Маршруты для модуля MyModule
+| Все маршруты защищены middleware: auth:api_admin, organization.context, my_module.active
+|
+*/
+
+Route::prefix('api/v1/admin/my-module')
+    ->name('admin.my_module.')
+    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'my_module.active'])
+    ->group(function () {
+        
+        // ============================================
+        // Основной CRUD
+        // ============================================
+        Route::get('/', [MyModuleController::class, 'index'])->name('index');
+        Route::post('/', [MyModuleController::class, 'store'])->name('store');
+        Route::get('/{id}', [MyModuleController::class, 'show'])->name('show');
+        Route::put('/{id}', [MyModuleController::class, 'update'])->name('update');
+        Route::delete('/{id}', [MyModuleController::class, 'destroy'])->name('destroy');
+        
+        // ============================================
+        // Дашборд и статистика
+        // ============================================
+        Route::prefix('dashboard')->name('dashboard.')->group(function () {
+            Route::get('/', [MyModuleDashboardController::class, 'index'])->name('index');
+            Route::get('/statistics', [MyModuleDashboardController::class, 'statistics'])->name('statistics');
+        });
+        
+        // ============================================
+        // Настройки модуля
+        // ============================================
+        Route::prefix('settings')->name('settings.')->group(function () {
+            Route::get('/', [MyModuleSettingsController::class, 'show'])->name('show');
+            Route::put('/', [MyModuleSettingsController::class, 'update'])->name('update');
+            Route::post('/reset', [MyModuleSettingsController::class, 'reset'])->name('reset');
+        });
+        
+        // ============================================
+        // Экспорт данных
+        // ============================================
+        Route::prefix('export')->name('export.')->group(function () {
+            Route::post('/excel', [MyModuleExportController::class, 'exportExcel'])->name('excel');
+            Route::post('/pdf', [MyModuleExportController::class, 'exportPdf'])->name('pdf');
+        });
+    });
+```
+
+## Конвенции именования маршрутов
+
+### Префиксы URL
+
+```php
+// Для админ панели
+'api/v1/admin/{module-slug}'
+
+// Для личного кабинета (если нужно)
+'api/v1/lk/{module-slug}'
+
+// Для мобильного API (если нужно)
+'api/v1/mobile/{module-slug}'
+```
+
+### Имена маршрутов (name)
+
+```php
+// Паттерн: {context}.{module_slug}.{action}
+'admin.my_module.index'
+'admin.my_module.store'
+'admin.my_module.show'
+'admin.my_module.update'
+'admin.my_module.destroy'
+
+// С вложенными группами:
+'admin.my_module.dashboard.index'
+'admin.my_module.settings.update'
+'admin.my_module.export.excel'
+```
+
+## Стандартные middleware
+
+### Обязательные для всех модулей
+
+```php
+[
+    'auth:api_admin',           // JWT аутентификация
+    'auth.jwt:api_admin',       // Дополнительная проверка JWT
+    'organization.context',     // Установка current_organization_id
+]
+```
+
+### Специфичные для модуля
+
+```php
+[
+    '{module_slug}.active',     // Проверка активации модуля
+]
+```
+
+### Дополнительные (по необходимости)
+
+```php
+[
+    'can:permission-name',      // Проверка конкретного permission
+    'throttle:60,1',           // Rate limiting (60 запросов в минуту)
+    'verified',                // Проверка верификации email
+]
+```
+
+## Примеры разных типов маршрутов
+
+### 1. Базовый CRUD
+
+```php
+// RESTful маршруты
+Route::get('/', [Controller::class, 'index']);        // GET /api/v1/admin/module
+Route::post('/', [Controller::class, 'store']);       // POST /api/v1/admin/module
+Route::get('/{id}', [Controller::class, 'show']);     // GET /api/v1/admin/module/{id}
+Route::put('/{id}', [Controller::class, 'update']);   // PUT /api/v1/admin/module/{id}
+Route::delete('/{id}', [Controller::class, 'destroy']);// DELETE /api/v1/admin/module/{id}
+```
+
+### 2. Вложенные ресурсы
+
+```php
+// Проекты -> Задачи
+Route::prefix('projects/{projectId}/tasks')->name('projects.tasks.')->group(function () {
+    Route::get('/', [TaskController::class, 'index'])->name('index');
+    Route::post('/', [TaskController::class, 'store'])->name('store');
+    Route::get('/{taskId}', [TaskController::class, 'show'])->name('show');
+    Route::put('/{taskId}', [TaskController::class, 'update'])->name('update');
+    Route::delete('/{taskId}', [TaskController::class, 'destroy'])->name('destroy');
+});
+```
+
+### 3. Дополнительные действия (не CRUD)
+
+```php
+// POST вместо GET для действий, меняющих состояние
+Route::post('/{id}/activate', [Controller::class, 'activate'])->name('activate');
+Route::post('/{id}/deactivate', [Controller::class, 'deactivate'])->name('deactivate');
+Route::post('/{id}/duplicate', [Controller::class, 'duplicate'])->name('duplicate');
+Route::post('/{id}/archive', [Controller::class, 'archive'])->name('archive');
+
+// GET для получения данных
+Route::get('/{id}/history', [Controller::class, 'history'])->name('history');
+Route::get('/{id}/logs', [Controller::class, 'logs'])->name('logs');
+```
+
+### 4. Массовые операции
+
+```php
+Route::post('/bulk-delete', [Controller::class, 'bulkDelete'])->name('bulk_delete');
+Route::post('/bulk-update', [Controller::class, 'bulkUpdate'])->name('bulk_update');
+Route::post('/bulk-export', [Controller::class, 'bulkExport'])->name('bulk_export');
+```
+
+### 5. Поиск и фильтрация
+
+```php
+Route::get('/search', [Controller::class, 'search'])->name('search');
+Route::post('/filter', [Controller::class, 'filter'])->name('filter');
+```
+
+### 6. Экспорт/импорт
+
+```php
+Route::prefix('export')->name('export.')->group(function () {
+    Route::post('/excel', [ExportController::class, 'excel'])->name('excel');
+    Route::post('/pdf', [ExportController::class, 'pdf'])->name('pdf');
+    Route::post('/csv', [ExportController::class, 'csv'])->name('csv');
+});
+
+Route::prefix('import')->name('import.')->group(function () {
+    Route::post('/excel', [ImportController::class, 'excel'])->name('excel');
+    Route::post('/csv', [ImportController::class, 'csv'])->name('csv');
+    Route::get('/template', [ImportController::class, 'template'])->name('template');
+});
+```
+
+## Расширенный пример с разными контекстами
+
+```php
+<?php
+
+use Illuminate\Support\Facades\Route;
+use App\BusinessModules\Features\MyModule\Http\Controllers\{
+    Admin\MyModuleController,
+    Admin\MyModuleDashboardController,
+    Admin\MyModuleSettingsController,
+    Lk\MyModuleLkController,
+    Mobile\MyModuleMobileController,
+};
+
+// ============================================
+// АДМИН ПАНЕЛЬ
+// ============================================
+Route::prefix('api/v1/admin/my-module')
+    ->name('admin.my_module.')
+    ->middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'my_module.active'])
+    ->group(function () {
+        
+        // Основной CRUD
+        Route::apiResource('/', MyModuleController::class)->parameters([
+            '' => 'id'
+        ]);
+        
+        // Дашборд
+        Route::get('/dashboard', [MyModuleDashboardController::class, 'index'])->name('dashboard');
+        Route::get('/dashboard/statistics', [MyModuleDashboardController::class, 'statistics'])->name('dashboard.statistics');
+        
+        // Настройки
+        Route::get('/settings', [MyModuleSettingsController::class, 'show'])->name('settings.show');
+        Route::put('/settings', [MyModuleSettingsController::class, 'update'])->name('settings.update');
+        
+        // Дополнительные действия
+        Route::post('/{id}/activate', [MyModuleController::class, 'activate'])->name('activate');
+        Route::post('/{id}/sync', [MyModuleController::class, 'sync'])->name('sync');
+    });
+
+// ============================================
+// ЛИЧНЫЙ КАБИНЕТ (если нужен отдельный API)
+// ============================================
+Route::prefix('api/v1/lk/my-module')
+    ->name('lk.my_module.')
+    ->middleware(['auth:api', 'organization.context', 'my_module.active'])
+    ->group(function () {
+        
+        Route::get('/', [MyModuleLkController::class, 'index'])->name('index');
+        Route::get('/{id}', [MyModuleLkController::class, 'show'])->name('show');
+        // Ограниченный CRUD для пользователей ЛК
+    });
+
+// ============================================
+// МОБИЛЬНОЕ ПРИЛОЖЕНИЕ (если нужно)
+// ============================================
+Route::prefix('api/v1/mobile/my-module')
+    ->name('mobile.my_module.')
+    ->middleware(['auth:api', 'organization.context', 'my_module.active'])
+    ->group(function () {
+        
+        Route::get('/', [MyModuleMobileController::class, 'index'])->name('index');
+        Route::get('/{id}', [MyModuleMobileController::class, 'show'])->name('show');
+        // Оптимизированный API для мобильных устройств
+    });
+```
+
+## Пример с использованием Route::apiResource()
+
+```php
+// Вместо ручного определения всех маршрутов:
+Route::get('/', [Controller::class, 'index']);
+Route::post('/', [Controller::class, 'store']);
+Route::get('/{id}', [Controller::class, 'show']);
+Route::put('/{id}', [Controller::class, 'update']);
+Route::delete('/{id}', [Controller::class, 'destroy']);
+
+// Можно использовать:
+Route::apiResource('my-module', MyModuleController::class);
+
+// Это создаст все стандартные CRUD маршруты
+// Методы контроллера должны называться: index, store, show, update, destroy
+
+// С кастомным параметром:
+Route::apiResource('my-module', MyModuleController::class)->parameters([
+    'my-module' => 'id'
+]);
+
+// Исключить некоторые маршруты:
+Route::apiResource('my-module', MyModuleController::class)->except(['destroy']);
+
+// Включить только определенные:
+Route::apiResource('my-module', MyModuleController::class)->only(['index', 'show']);
+```
+
+## Группировка с разными middleware
+
+```php
+// Публичные маршруты (без аутентификации)
+Route::prefix('api/v1/public/my-module')
+    ->name('public.my_module.')
+    ->middleware(['throttle:60,1'])
+    ->group(function () {
+        Route::get('/info', [PublicController::class, 'info'])->name('info');
+    });
+
+// Защищенные маршруты (требуют аутентификации)
+Route::prefix('api/v1/admin/my-module')
+    ->name('admin.my_module.')
+    ->middleware(['auth:api_admin', 'organization.context', 'my_module.active'])
+    ->group(function () {
+        
+        // Маршруты с дополнительным permission
+        Route::middleware('can:my-module.manage')->group(function () {
+            Route::post('/', [Controller::class, 'store']);
+            Route::put('/{id}', [Controller::class, 'update']);
+            Route::delete('/{id}', [Controller::class, 'destroy']);
+        });
+        
+        // Маршруты только для просмотра
+        Route::middleware('can:my-module.view')->group(function () {
+            Route::get('/', [Controller::class, 'index']);
+            Route::get('/{id}', [Controller::class, 'show']);
+        });
+    });
+```
+
+## Rate Limiting
+
+```php
+// Ограничение частоты запросов
+Route::middleware('throttle:60,1')->group(function () {
+    // Максимум 60 запросов в минуту
+});
+
+// Разные лимиты для разных маршрутов
+Route::get('/heavy-operation', [Controller::class, 'heavy'])
+    ->middleware('throttle:10,1');  // Максимум 10 в минуту
+
+Route::get('/light-operation', [Controller::class, 'light'])
+    ->middleware('throttle:100,1'); // Максимум 100 в минуту
+```
+
+## Загрузка маршрутов в ServiceProvider
+
+```php
+protected function loadRoutes(): void
+{
+    $routesPath = __DIR__ . '/routes.php';
+    
+    if (file_exists($routesPath)) {
+        require $routesPath;
+    }
+}
+```
+
+## Лучшие практики
+
+1. ✅ **RESTful**: следуйте REST conventions для CRUD операций
+2. ✅ **Prefixes**: используйте префиксы для группировки
+3. ✅ **Names**: всегда именуйте маршруты (->name())
+4. ✅ **Middleware**: применяйте на уровне группы
+5. ✅ **Versioning**: используйте версионирование API (/v1/, /v2/)
+6. ✅ **Contexts**: разделяйте admin, lk, mobile
+7. ✅ **Protection**: защищайте все маршруты аутентификацией
+8. ✅ **Module Check**: проверяйте активацию модуля
+9. ✅ **Rate Limiting**: ограничивайте частоту запросов
+10. ✅ **Documentation**: комментируйте сложные маршруты

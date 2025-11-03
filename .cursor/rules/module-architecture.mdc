@@ -1,0 +1,313 @@
+---
+description: Основная архитектура бизнес-модулей в проекте ProHelper
+globs:
+  - "app/BusinessModules/**/*.php"
+alwaysApply: true
+---
+
+# Архитектура бизнес-модулей ProHelper
+
+## Общие принципы
+
+Проект использует **модульную архитектуру** для изоляции бизнес-логики и возможности гибкого включения/отключения функциональности на уровне организаций.
+
+## Структура модулей
+
+### Категории модулей (по директориям)
+
+```
+app/BusinessModules/
+├── Core/          # Базовая функциональность (организации, пользователи, мультиорганизация)
+├── Features/      # Основные функциональные модули (проекты, дашборды, AI и т.д.)
+├── Addons/        # Дополнительные модули (интеграции, порталы, аналитика)
+├── Services/      # Сервисные модули (экспорт, фильтры, шаблоны)
+└── Enterprise/    # Корпоративные расширения
+```
+
+### Типы модулей (enum ModuleType)
+
+- `CORE` - базовая функциональность системы
+- `FEATURE` - основные бизнес-модули
+- `ADDON` - дополнения и расширения
+- `SERVICE` - сервисные модули
+- `EXTENSION` - расширения существующих функций
+
+### Модели биллинга (enum BillingModel)
+
+- `FREE` - бесплатные модули
+- `SUBSCRIPTION` - подписочная модель (ежемесячная оплата)
+- `ONE_TIME` - разовая оплата
+- `USAGE_BASED` - оплата по использованию
+- `FREEMIUM` - базовый функционал бесплатно, премиум платно
+
+## Структура одного модуля
+
+```
+app/BusinessModules/{Category}/{ModuleName}/
+├── {ModuleName}Module.php              # Основной класс модуля (implements ModuleInterface)
+├── {ModuleName}ServiceProvider.php     # Service Provider для регистрации
+├── README.md                           # Документация модуля
+├── routes.php                          # Маршруты модуля (опционально)
+├── config/                             # Конфигурационные файлы (опционально)
+├── migrations/                         # Миграции БД
+├── Models/                             # Eloquent модели
+├── Services/                           # Бизнес-логика
+├── Http/
+│   ├── Controllers/                    # REST API контроллеры
+│   ├── Middleware/                     # Middleware модуля
+│   ├── Requests/                       # Form Request валидация
+│   └── Resources/                      # API Resources
+├── Contracts/                          # Интерфейсы модуля
+├── Events/                             # События
+├── Listeners/                          # Обработчики событий
+├── Jobs/                               # Асинхронные задачи
+├── Observers/                          # Eloquent Observers
+├── DTOs/                               # Data Transfer Objects
+├── Enums/                              # Enums модуля
+└── Traits/                             # Переиспользуемые трейты
+```
+
+## Обязательные компоненты модуля
+
+### 1. Основной класс модуля ({ModuleName}Module.php)
+
+**ОБЯЗАТЕЛЬНО** должен реализовывать интерфейс `ModuleInterface`:
+
+```php
+namespace App\BusinessModules\{Category}\{ModuleName};
+
+use App\Modules\Contracts\ModuleInterface;
+use App\Enums\ModuleType;
+use App\Enums\BillingModel;
+
+class {ModuleName}Module implements ModuleInterface
+{
+    // Обязательные методы из ModuleInterface
+    public function getName(): string;
+    public function getSlug(): string;
+    public function getVersion(): string;
+    public function getDescription(): string;
+    public function getType(): ModuleType;
+    public function getBillingModel(): BillingModel;
+    public function getManifest(): array;
+    public function install(): void;
+    public function uninstall(): void;
+    public function upgrade(string $fromVersion): void;
+    public function canActivate(int $organizationId): bool;
+    public function getDependencies(): array;
+    public function getConflicts(): array;
+    public function getPermissions(): array;
+    public function getFeatures(): array;
+    public function getLimits(): array;
+}
+```
+
+### 2. Дополнительные интерфейсы (опционально, но рекомендуется)
+
+#### BillableInterface - для платных модулей
+
+```php
+use App\Modules\Contracts\BillableInterface;
+
+class {ModuleName}Module implements ModuleInterface, BillableInterface
+{
+    public function getPrice(): float;
+    public function getCurrency(): string;
+    public function getDurationDays(): int;
+    public function getPricingConfig(): array;
+    public function calculateCost(int $organizationId): float;
+    public function canAfford(int $organizationId): bool;
+}
+```
+
+#### ConfigurableInterface - для модулей с настройками
+
+```php
+use App\Modules\Contracts\ConfigurableInterface;
+
+class {ModuleName}Module implements ModuleInterface, ConfigurableInterface
+{
+    public function getDefaultSettings(): array;
+    public function validateSettings(array $settings): bool;
+    public function applySettings(int $organizationId, array $settings): void;
+    public function getSettings(int $organizationId): array;
+}
+```
+
+### 3. Service Provider ({ModuleName}ServiceProvider.php)
+
+```php
+namespace App\BusinessModules\{Category}\{ModuleName};
+
+use Illuminate\Support\ServiceProvider;
+
+class {ModuleName}ServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        // Регистрация singleton основного модуля
+        $this->app->singleton({ModuleName}Module::class);
+        
+        // Регистрация сервисов
+        $this->registerServices();
+        
+        // Регистрация интерфейсов к реализациям
+        $this->registerContracts();
+    }
+
+    public function boot(): void
+    {
+        // Загрузка миграций
+        $this->loadMigrations();
+        
+        // Загрузка маршрутов
+        $this->loadRoutes();
+        
+        // Регистрация middleware
+        $this->registerMiddleware();
+        
+        // Регистрация событий
+        $this->registerEvents();
+        
+        // Регистрация observers
+        $this->registerObservers();
+    }
+}
+```
+
+### 4. JSON манифест модуля
+
+Каждый модуль должен иметь JSON файл в `config/ModuleList/{category}/{slug}.json`:
+
+```json
+{
+  "name": "Название модуля",
+  "slug": "module-slug",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "analytics",
+  "description": "Описание модуля",
+  
+  "class_name": "App\\BusinessModules\\{Category}\\{ModuleName}\\{ModuleName}Module",
+  "service_provider": "App\\BusinessModules\\{Category}\\{ModuleName}\\{ModuleName}ServiceProvider",
+  
+  "pricing": {
+    "base_price": 4990,
+    "currency": "RUB",
+    "included_in_plans": ["profi", "enterprise"],
+    "duration_days": 30,
+    "trial_days": 7
+  },
+  
+  "permissions": [
+    "module-slug.view",
+    "module-slug.manage"
+  ],
+  
+  "features": [
+    "Список возможностей модуля"
+  ],
+  
+  "dependencies": ["organizations", "users"],
+  "conflicts": [],
+  
+  "limits": {
+    "max_items": 100
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "icon-name",
+  "display_order": 10
+}
+```
+
+## Именование и конвенции
+
+### Naming conventions
+
+1. **Slug модуля**: kebab-case (`multi-organization`, `advanced-dashboard`)
+2. **Классы**: PascalCase (`MultiOrganizationModule`)
+3. **Методы**: camelCase (`getSettings()`)
+4. **Permissions**: `module-slug.action` (`multi-organization.view`)
+5. **Routes**: `api/v1/admin/{module-slug}/...`
+6. **Таблицы БД**: snake_case множественное число
+
+### Namespace conventions
+
+```php
+// Основной модуль
+App\BusinessModules\{Category}\{ModuleName}\{ModuleName}Module
+
+// Service Provider
+App\BusinessModules\{Category}\{ModuleName}\{ModuleName}ServiceProvider
+
+// Контроллеры
+App\BusinessModules\{Category}\{ModuleName}\Http\Controllers\{Name}Controller
+
+// Сервисы
+App\BusinessModules\{Category}\{ModuleName}\Services\{Name}Service
+
+// Модели
+App\BusinessModules\{Category}\{ModuleName}\Models\{ModelName}
+```
+
+## Регистрация модуля
+
+Модули автоматически обнаруживаются через `ModuleScanner`, но ServiceProvider должен быть зарегистрирован в `bootstrap/providers.php`:
+
+```php
+return [
+    // ...
+    App\BusinessModules\{Category}\{ModuleName}\{ModuleName}ServiceProvider::class,
+];
+```
+
+## Проверка доступа к модулю
+
+### В коде PHP
+
+```php
+// Проверка активации модуля
+$accessController = app(\App\Modules\Core\AccessController::class);
+$hasAccess = $accessController->hasModuleAccess($organizationId, 'module-slug');
+
+// Проверка permission
+$hasPermission = hasModulePermission('module-slug.action', $user);
+
+// Helper функция
+$hasAccess = hasModuleAccess('module-slug', $user);
+```
+
+### В маршрутах
+
+```php
+Route::middleware(['auth:api', 'organization.context', 'module.access:module-slug'])
+    ->group(function () {
+        // Защищенные маршруты
+    });
+```
+
+## Лучшие практики
+
+1. ✅ **Всегда используйте интерфейсы** для зависимостей между модулями
+2. ✅ **Кешируйте тяжелые операции** с TTL и тегами для инвалидации
+3. ✅ **Логируйте бизнес-события** через `LoggingService`
+4. ✅ **Используйте Events/Listeners** для слабой связанности
+5. ✅ **Валидируйте настройки** в `validateSettings()`
+6. ✅ **Документируйте API** в OpenAPI (docs/openapi/)
+7. ✅ **Пишите README.md** для каждого модуля
+8. ✅ **Используйте миграции** для изменений БД
+9. ✅ **Покрывайте тестами** критичную логику
+10. ✅ **Следуйте SOLID принципам**
+
+## Примеры успешных модулей для изучения
+
+- `app/BusinessModules/Core/MultiOrganization/` - эталонный пример архитектуры
+- `app/BusinessModules/Features/AdvancedDashboard/` - большой функциональный модуль
+- `app/BusinessModules/Features/AIAssistant/` - модуль с внешними интеграциями

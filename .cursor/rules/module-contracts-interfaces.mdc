@@ -1,0 +1,631 @@
+---
+description: Правила создания контрактов (интерфейсов) в бизнес-модулях
+globs:
+  - "app/BusinessModules/**/Contracts/*.php"
+  - "app/Modules/Contracts/*.php"
+alwaysApply: true
+---
+
+# Контракты (интерфейсы) в модулях
+
+## Зачем нужны интерфейсы
+
+Интерфейсы обеспечивают:
+- ✅ **Слабую связанность** между модулями
+- ✅ **Тестируемость** через моки
+- ✅ **Гибкость** - легко заменить реализацию
+- ✅ **Контрактность** - четкий API между компонентами
+
+## Структура
+
+```
+app/BusinessModules/{Category}/{Module}/Contracts/
+├── {Service}Interface.php
+├── {Repository}Interface.php
+└── {Provider}Interface.php
+
+app/Modules/Contracts/  # Глобальные интерфейсы модульной системы
+├── ModuleInterface.php
+├── BillableInterface.php
+├── ConfigurableInterface.php
+└── ServiceInterface.php
+```
+
+## Базовые интерфейсы модульной системы
+
+### ModuleInterface (обязательный для всех модулей)
+
+```php
+<?php
+
+namespace App\Modules\Contracts;
+
+use App\Enums\ModuleType;
+use App\Enums\BillingModel;
+
+interface ModuleInterface
+{
+    /**
+     * Название модуля (для отображения)
+     */
+    public function getName(): string;
+    
+    /**
+     * Уникальный slug модуля (kebab-case)
+     */
+    public function getSlug(): string;
+    
+    /**
+     * Версия модуля (semantic versioning: 1.0.0)
+     */
+    public function getVersion(): string;
+    
+    /**
+     * Описание функциональности
+     */
+    public function getDescription(): string;
+    
+    /**
+     * Тип модуля (core, feature, addon, service)
+     */
+    public function getType(): ModuleType;
+    
+    /**
+     * Модель биллинга (free, subscription, one_time, usage_based)
+     */
+    public function getBillingModel(): BillingModel;
+    
+    /**
+     * Полный манифест модуля из JSON
+     */
+    public function getManifest(): array;
+    
+    /**
+     * Логика установки модуля
+     */
+    public function install(): void;
+    
+    /**
+     * Логика удаления модуля
+     */
+    public function uninstall(): void;
+    
+    /**
+     * Логика обновления с предыдущей версии
+     */
+    public function upgrade(string $fromVersion): void;
+    
+    /**
+     * Проверка возможности активации для организации
+     */
+    public function canActivate(int $organizationId): bool;
+    
+    /**
+     * Зависимости от других модулей (их slugs)
+     */
+    public function getDependencies(): array;
+    
+    /**
+     * Конфликтующие модули (их slugs)
+     */
+    public function getConflicts(): array;
+    
+    /**
+     * Permissions модуля
+     */
+    public function getPermissions(): array;
+    
+    /**
+     * Список возможностей (для маркетинга)
+     */
+    public function getFeatures(): array;
+    
+    /**
+     * Технические лимиты модуля
+     */
+    public function getLimits(): array;
+}
+```
+
+### BillableInterface (для платных модулей)
+
+```php
+<?php
+
+namespace App\Modules\Contracts;
+
+interface BillableInterface
+{
+    /**
+     * Базовая цена модуля
+     */
+    public function getPrice(): float;
+    
+    /**
+     * Валюта (RUB, USD, EUR)
+     */
+    public function getCurrency(): string;
+    
+    /**
+     * Длительность подписки в днях
+     */
+    public function getDurationDays(): int;
+    
+    /**
+     * Полная конфигурация ценообразования
+     */
+    public function getPricingConfig(): array;
+    
+    /**
+     * Расчет стоимости для конкретной организации
+     * (может зависеть от объемов, тарифа и т.д.)
+     */
+    public function calculateCost(int $organizationId): float;
+    
+    /**
+     * Проверка платежеспособности организации
+     */
+    public function canAfford(int $organizationId): bool;
+}
+```
+
+### ConfigurableInterface (для модулей с настройками)
+
+```php
+<?php
+
+namespace App\Modules\Contracts;
+
+interface ConfigurableInterface
+{
+    /**
+     * Настройки по умолчанию
+     */
+    public function getDefaultSettings(): array;
+    
+    /**
+     * Валидация настроек
+     */
+    public function validateSettings(array $settings): bool;
+    
+    /**
+     * Применить настройки для организации
+     */
+    public function applySettings(int $organizationId, array $settings): void;
+    
+    /**
+     * Получить текущие настройки организации
+     */
+    public function getSettings(int $organizationId): array;
+}
+```
+
+## Интерфейсы для сервисов модуля
+
+### Repository Interface
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyModule\Contracts;
+
+use Illuminate\Database\Eloquent\Collection;
+use App\BusinessModules\Features\MyModule\Models\MyEntity;
+
+interface MyEntityRepositoryInterface
+{
+    /**
+     * Получить все сущности для организации
+     */
+    public function getAllForOrganization(int $organizationId): Collection;
+    
+    /**
+     * Найти по ID в рамках организации
+     */
+    public function findForOrganization(int $id, int $organizationId): ?MyEntity;
+    
+    /**
+     * Создать сущность
+     */
+    public function create(int $organizationId, array $data): MyEntity;
+    
+    /**
+     * Обновить сущность
+     */
+    public function update(MyEntity $entity, array $data): MyEntity;
+    
+    /**
+     * Удалить сущность
+     */
+    public function delete(MyEntity $entity): bool;
+    
+    /**
+     * Получить с пагинацией
+     */
+    public function paginate(int $organizationId, int $perPage = 15);
+    
+    /**
+     * Поиск по критериям
+     */
+    public function search(int $organizationId, array $criteria): Collection;
+    
+    /**
+     * Статистика
+     */
+    public function getStatistics(int $organizationId): array;
+}
+```
+
+### Service Interface
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyModule\Contracts;
+
+use App\BusinessModules\Features\MyModule\Models\MyEntity;
+use Illuminate\Pagination\LengthAwarePaginator;
+
+interface MyModuleServiceInterface
+{
+    /**
+     * Получить данные для дашборда
+     */
+    public function getDashboardData(int $organizationId): array;
+    
+    /**
+     * Создать новую сущность с валидацией и бизнес-логикой
+     */
+    public function create(int $organizationId, array $data): MyEntity;
+    
+    /**
+     * Обновить сущность с валидацией
+     */
+    public function update(MyEntity $entity, array $data): MyEntity;
+    
+    /**
+     * Удалить сущность с проверками
+     */
+    public function delete(MyEntity $entity): bool;
+    
+    /**
+     * Получить с пагинацией
+     */
+    public function paginate(int $organizationId, int $perPage = 15): LengthAwarePaginator;
+    
+    /**
+     * Получить статистику
+     */
+    public function getStatistics(int $organizationId, string $period): array;
+}
+```
+
+### Integration Client Interface
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyModule\Contracts;
+
+interface ExternalApiClientInterface
+{
+    /**
+     * Синхронизировать данные с внешним API
+     */
+    public function syncData(int $organizationId): array;
+    
+    /**
+     * Получить данные из внешнего API
+     */
+    public function fetchData(int $organizationId, array $filters = []): array;
+    
+    /**
+     * Отправить данные во внешний API
+     */
+    public function pushData(int $organizationId, array $data): bool;
+    
+    /**
+     * Проверить подключение к API
+     */
+    public function testConnection(): bool;
+}
+```
+
+## Интерфейсы для специфичных паттернов
+
+### Strategy Pattern
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyModule\Contracts;
+
+/**
+ * Интерфейс стратегии расчета
+ */
+interface CalculationStrategyInterface
+{
+    /**
+     * Выполнить расчет
+     */
+    public function calculate(array $data): float;
+    
+    /**
+     * Валидация входных данных для стратегии
+     */
+    public function validate(array $data): bool;
+    
+    /**
+     * Название стратегии
+     */
+    public function getName(): string;
+}
+
+// Реализации:
+// - SimpleCalculationStrategy
+// - AdvancedCalculationStrategy
+// - CustomCalculationStrategy
+```
+
+### Factory Pattern
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyModule\Contracts;
+
+interface EntityFactoryInterface
+{
+    /**
+     * Создать сущность по типу
+     */
+    public function create(string $type, array $data): object;
+    
+    /**
+     * Проверить поддержку типа
+     */
+    public function supports(string $type): bool;
+    
+    /**
+     * Получить список поддерживаемых типов
+     */
+    public function getSupportedTypes(): array;
+}
+```
+
+### Observer Pattern
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyModule\Contracts;
+
+interface EntityObserverInterface
+{
+    /**
+     * Обработка при создании
+     */
+    public function created(object $entity): void;
+    
+    /**
+     * Обработка при обновлении
+     */
+    public function updated(object $entity): void;
+    
+    /**
+     * Обработка при удалении
+     */
+    public function deleted(object $entity): void;
+}
+```
+
+## Интерфейсы для Multi-Organization
+
+### OrganizationScopeInterface
+
+```php
+<?php
+
+namespace App\BusinessModules\Core\MultiOrganization\Contracts;
+
+use Illuminate\Database\Eloquent\Builder;
+
+interface OrganizationScopeInterface
+{
+    /**
+     * Получить список ID организаций в области видимости
+     */
+    public function getOrganizationScope(int $currentOrgId): array;
+    
+    /**
+     * Проверить, находится ли организация в области видимости
+     */
+    public function isInScope(int $currentOrgId, int $targetOrgId): bool;
+    
+    /**
+     * Применить scope к query builder
+     */
+    public function applyScopeToQuery(
+        Builder $query, 
+        int $currentOrgId, 
+        string $column = 'organization_id'
+    ): Builder;
+}
+```
+
+### ContractorSharingInterface
+
+```php
+<?php
+
+namespace App\BusinessModules\Core\MultiOrganization\Contracts;
+
+use Illuminate\Support\Collection;
+
+interface ContractorSharingInterface
+{
+    /**
+     * Получить доступных подрядчиков для организации
+     */
+    public function getAvailableContractors(int $organizationId): Collection;
+    
+    /**
+     * Проверить доступность подрядчика для организации
+     */
+    public function canUseContractor(int $contractorId, int $organizationId): bool;
+}
+```
+
+## Регистрация интерфейсов в ServiceProvider
+
+### Простая регистрация
+
+```php
+public function register(): void
+{
+    // Bind - новый экземпляр при каждом resolve
+    $this->app->bind(
+        MyServiceInterface::class,
+        MyServiceImplementation::class
+    );
+    
+    // Singleton - один экземпляр на весь запрос
+    $this->app->singleton(
+        MyRepositoryInterface::class,
+        MyRepositoryImplementation::class
+    );
+}
+```
+
+### Условная регистрация
+
+```php
+public function register(): void
+{
+    // Разные реализации в зависимости от условий
+    $this->app->bind(
+        PaymentProcessorInterface::class,
+        function ($app) {
+            if (config('payment.provider') === 'stripe') {
+                return new StripePaymentProcessor();
+            }
+            return new DefaultPaymentProcessor();
+        }
+    );
+}
+```
+
+### Contextual Binding
+
+```php
+public function register(): void
+{
+    // Разные реализации для разных контекстов
+    $this->app->when(OrderController::class)
+        ->needs(PaymentProcessorInterface::class)
+        ->give(StripePaymentProcessor::class);
+    
+    $this->app->when(InvoiceController::class)
+        ->needs(PaymentProcessorInterface::class)
+        ->give(LocalPaymentProcessor::class);
+}
+```
+
+### Extended Binding (для Multi-Organization)
+
+```php
+public function register(): void
+{
+    // Дефолтная реализация
+    $this->app->bind(
+        OrganizationScopeInterface::class,
+        SingleOrganizationScope::class
+    );
+    
+    // Расширение с проверкой условий
+    $this->app->extend(OrganizationScopeInterface::class, function ($default, $app) {
+        $orgId = request()->attributes->get('current_organization_id');
+        
+        if ($orgId && $this->isMultiOrgActive($orgId)) {
+            return $app->make(ContextAwareOrganizationScope::class);
+        }
+        
+        return $default;
+    });
+}
+```
+
+## Использование интерфейсов
+
+### В контроллерах
+
+```php
+class MyController extends Controller
+{
+    public function __construct(
+        private readonly MyServiceInterface $service
+    ) {}
+    
+    public function index(Request $request)
+    {
+        $data = $this->service->getDashboardData($request->get('org_id'));
+        return response()->json($data);
+    }
+}
+```
+
+### В сервисах
+
+```php
+class MyService implements MyServiceInterface
+{
+    public function __construct(
+        private readonly MyRepositoryInterface $repository,
+        private readonly ExternalApiClientInterface $apiClient
+    ) {}
+    
+    public function syncData(int $organizationId): void
+    {
+        $data = $this->apiClient->fetchData($organizationId);
+        
+        foreach ($data as $item) {
+            $this->repository->create($organizationId, $item);
+        }
+    }
+}
+```
+
+### В тестах (мокирование)
+
+```php
+public function test_can_create_entity()
+{
+    // Создать мок
+    $repositoryMock = $this->createMock(MyRepositoryInterface::class);
+    
+    // Настроить ожидания
+    $repositoryMock->expects($this->once())
+        ->method('create')
+        ->with(1, ['name' => 'Test'])
+        ->willReturn(new MyEntity(['id' => 1, 'name' => 'Test']));
+    
+    // Использовать мок
+    $service = new MyService($repositoryMock);
+    $result = $service->create(1, ['name' => 'Test']);
+    
+    $this->assertEquals('Test', $result->name);
+}
+```
+
+## Лучшие практики
+
+1. ✅ **Prefer Interfaces**: программируйте на интерфейсах, а не на реализациях
+2. ✅ **Single Responsibility**: один интерфейс = одна ответственность
+3. ✅ **Interface Segregation**: не заставляйте классы реализовывать ненужные методы
+4. ✅ **Naming**: используйте суффикс `Interface` (MyServiceInterface)
+5. ✅ **Documentation**: добавляйте PHPDoc к каждому методу
+6. ✅ **Type Hints**: всегда указывайте типы параметров и возвратов
+7. ✅ **Return Types**: используйте union types где нужно (PHP 8+)
+8. ✅ **Dependency Injection**: внедряйте зависимости через конструктор
+9. ✅ **Testing**: используйте моки для unit-тестирования
+10. ✅ **Decoupling**: интерфейсы для связи между модулями

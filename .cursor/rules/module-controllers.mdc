@@ -1,0 +1,641 @@
+---
+description: Правила создания контроллеров в бизнес-модулях
+globs:
+  - "app/BusinessModules/**/Http/Controllers/*.php"
+alwaysApply: true
+---
+
+# Создание контроллеров в модулях
+
+## Принципы
+
+Контроллеры в модулях должны быть:
+- ✅ **Thin** (тонкими) - минимум логики, делегирование сервисам
+- ✅ **RESTful** - следовать REST conventions
+- ✅ **Стандартными** - единообразные ответы API
+- ✅ **Защищенными** - middleware для аутентификации и авторизации
+
+## Структура директории Controllers
+
+```
+app/BusinessModules/{Category}/{Module}/Http/Controllers/
+├── {Module}Controller.php           # Основной CRUD контроллер
+├── {Module}DashboardController.php  # Дашборд данные
+├── {Module}ExportController.php     # Экспорт данных
+├── {Module}SettingsController.php   # Настройки модуля
+└── {Specific}Controller.php         # Специфичные контроллеры
+```
+
+## Базовый CRUD контроллер
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyModule\Http\Controllers;
+
+use App\Http\Controllers\Controller;
+use App\BusinessModules\Features\MyModule\Services\MyModuleService;
+use App\BusinessModules\Features\MyModule\Http\Requests\StoreMyEntityRequest;
+use App\BusinessModules\Features\MyModule\Http\Requests\UpdateMyEntityRequest;
+use App\BusinessModules\Features\MyModule\Http\Resources\MyEntityResource;
+use App\BusinessModules\Features\MyModule\Http\Resources\MyEntityCollection;
+use App\BusinessModules\Features\MyModule\Models\MyEntity;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+
+class MyModuleController extends Controller
+{
+    public function __construct(
+        private readonly MyModuleService $service
+    ) {
+        // Middleware применяется в routes.php, но можно и здесь
+        // $this->middleware('my_module.active');
+    }
+
+    /**
+     * Список сущностей с пагинацией
+     * 
+     * @group MyModule
+     * @authenticated
+     */
+    public function index(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $perPage = $request->input('per_page', 15);
+            $perPage = min($perPage, 100); // Максимум 100 на страницу
+            
+            $entities = $this->service->paginate($organizationId, $perPage);
+            
+            return response()->json([
+                'success' => true,
+                'data' => new MyEntityCollection($entities),
+                'meta' => [
+                    'current_page' => $entities->currentPage(),
+                    'per_page' => $entities->perPage(),
+                    'total' => $entities->total(),
+                    'last_page' => $entities->lastPage(),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('my_module.index.error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось загрузить данные',
+            ], 500);
+        }
+    }
+
+    /**
+     * Показать конкретную сущность
+     * 
+     * @group MyModule
+     * @authenticated
+     */
+    public function show(Request $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $entity = $this->service->find($id, $organizationId);
+            
+            if (!$entity) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Сущность не найдена',
+                ], 404);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => new MyEntityResource($entity),
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('my_module.show.error', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось загрузить сущность',
+            ], 500);
+        }
+    }
+
+    /**
+     * Создать новую сущность
+     * 
+     * @group MyModule
+     * @authenticated
+     */
+    public function store(StoreMyEntityRequest $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $entity = $this->service->create(
+                $organizationId,
+                $request->validated()
+            );
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Сущность успешно создана',
+                'data' => new MyEntityResource($entity),
+            ], 201);
+        } catch (\DomainException $e) {
+            // Бизнес-ошибки (лимиты, валидация)
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 422);
+        } catch (\Exception $e) {
+            \Log::error('my_module.store.error', [
+                'data' => $request->validated(),
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось создать сущность',
+            ], 500);
+        }
+    }
+
+    /**
+     * Обновить сущность
+     * 
+     * @group MyModule
+     * @authenticated
+     */
+    public function update(UpdateMyEntityRequest $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $entity = $this->service->find($id, $organizationId);
+            
+            if (!$entity) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Сущность не найдена',
+                ], 404);
+            }
+            
+            $updated = $this->service->update($entity, $request->validated());
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Сущность успешно обновлена',
+                'data' => new MyEntityResource($updated),
+            ]);
+        } catch (\DomainException $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 422);
+        } catch (\Exception $e) {
+            \Log::error('my_module.update.error', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось обновить сущность',
+            ], 500);
+        }
+    }
+
+    /**
+     * Удалить сущность
+     * 
+     * @group MyModule
+     * @authenticated
+     */
+    public function destroy(Request $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $entity = $this->service->find($id, $organizationId);
+            
+            if (!$entity) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Сущность не найдена',
+                ], 404);
+            }
+            
+            $this->service->delete($entity);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Сущность успешно удалена',
+            ]);
+        } catch (\DomainException $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 422);
+        } catch (\Exception $e) {
+            \Log::error('my_module.destroy.error', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось удалить сущность',
+            ], 500);
+        }
+    }
+}
+```
+
+## Контроллер дашборда
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyModule\Http\Controllers;
+
+use App\Http\Controllers\Controller;
+use App\BusinessModules\Features\MyModule\Services\MyModuleService;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+
+class MyModuleDashboardController extends Controller
+{
+    public function __construct(
+        private readonly MyModuleService $service
+    ) {}
+
+    /**
+     * Получить данные дашборда
+     * 
+     * @group MyModule Dashboard
+     * @authenticated
+     */
+    public function index(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $dashboardData = $this->service->getDashboardData($organizationId);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $dashboardData,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('my_module.dashboard.error', [
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось загрузить дашборд',
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить статистику
+     * 
+     * @group MyModule Dashboard
+     * @authenticated
+     */
+    public function statistics(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $period = $request->input('period', '30d'); // 7d, 30d, 90d, 1y
+            
+            $stats = $this->service->getStatistics($organizationId, $period);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $stats,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('my_module.statistics.error', [
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось загрузить статистику',
+            ], 500);
+        }
+    }
+}
+```
+
+## Контроллер настроек
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyModule\Http\Controllers;
+
+use App\Http\Controllers\Controller;
+use App\BusinessModules\Features\MyModule\MyModuleModule;
+use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+
+class MyModuleSettingsController extends Controller
+{
+    public function __construct(
+        private readonly MyModuleModule $module
+    ) {}
+
+    /**
+     * Получить настройки модуля
+     * 
+     * @group MyModule Settings
+     * @authenticated
+     */
+    public function show(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $settings = $this->module->getSettings($organizationId);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $settings,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('my_module.settings.show.error', [
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось загрузить настройки',
+            ], 500);
+        }
+    }
+
+    /**
+     * Обновить настройки модуля
+     * 
+     * @group MyModule Settings
+     * @authenticated
+     */
+    public function update(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $validated = $request->validate([
+                'max_items' => 'sometimes|integer|min:1',
+                'enabled' => 'sometimes|boolean',
+                'auto_sync' => 'sometimes|boolean',
+                // Добавьте все поддерживаемые настройки
+            ]);
+            
+            $this->module->applySettings($organizationId, $validated);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Настройки успешно обновлены',
+                'data' => $this->module->getSettings($organizationId),
+            ]);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 422);
+        } catch (\Exception $e) {
+            \Log::error('my_module.settings.update.error', [
+                'data' => $request->all(),
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось обновить настройки',
+            ], 500);
+        }
+    }
+
+    /**
+     * Сбросить настройки к значениям по умолчанию
+     * 
+     * @group MyModule Settings
+     * @authenticated
+     */
+    public function reset(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $defaultSettings = $this->module->getDefaultSettings();
+            $this->module->applySettings($organizationId, $defaultSettings);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Настройки сброшены к значениям по умолчанию',
+                'data' => $defaultSettings,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('my_module.settings.reset.error', [
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось сбросить настройки',
+            ], 500);
+        }
+    }
+}
+```
+
+## Контроллер экспорта
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyModule\Http\Controllers;
+
+use App\Http\Controllers\Controller;
+use App\BusinessModules\Features\MyModule\Services\MyModuleExportService;
+use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Http\JsonResponse;
+
+class MyModuleExportController extends Controller
+{
+    public function __construct(
+        private readonly MyModuleExportService $exportService
+    ) {}
+
+    /**
+     * Экспорт в Excel
+     * 
+     * @group MyModule Export
+     * @authenticated
+     */
+    public function exportExcel(Request $request): Response
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $filters = $request->only(['status', 'date_from', 'date_to']);
+            
+            $excel = $this->exportService->exportToExcel($organizationId, $filters);
+            
+            return response($excel, 200, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'Content-Disposition' => 'attachment; filename="my-module-export-' . date('Y-m-d') . '.xlsx"',
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('my_module.export.excel.error', [
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось экспортировать данные',
+            ], 500);
+        }
+    }
+
+    /**
+     * Экспорт в PDF
+     * 
+     * @group MyModule Export
+     * @authenticated
+     */
+    public function exportPdf(Request $request): Response
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $filters = $request->only(['status', 'date_from', 'date_to']);
+            
+            $pdf = $this->exportService->exportToPdf($organizationId, $filters);
+            
+            return response($pdf, 200, [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' => 'attachment; filename="my-module-export-' . date('Y-m-d') . '.pdf"',
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('my_module.export.pdf.error', [
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось экспортировать данные',
+            ], 500);
+        }
+    }
+}
+```
+
+## Стандартный формат ответа API
+
+### Успешный ответ
+
+```php
+return response()->json([
+    'success' => true,
+    'data' => $data,           // Основные данные
+    'message' => 'Операция выполнена успешно', // Опционально
+    'meta' => [                // Опционально (пагинация, статистика)
+        'total' => 100,
+        'page' => 1,
+    ],
+], 200);
+```
+
+### Ошибка валидации (422)
+
+```php
+return response()->json([
+    'success' => false,
+    'error' => 'Validation error message',
+    'errors' => [              // Опционально (детали валидации)
+        'field1' => ['Error message 1'],
+        'field2' => ['Error message 2'],
+    ],
+], 422);
+```
+
+### Ошибка доступа (403)
+
+```php
+return response()->json([
+    'success' => false,
+    'error' => 'Access denied',
+], 403);
+```
+
+### Не найдено (404)
+
+```php
+return response()->json([
+    'success' => false,
+    'error' => 'Resource not found',
+], 404);
+```
+
+### Внутренняя ошибка (500)
+
+```php
+return response()->json([
+    'success' => false,
+    'error' => 'Internal server error',
+], 500);
+```
+
+## Middleware для контроллеров
+
+### В маршрутах (рекомендуется)
+
+```php
+Route::middleware(['auth:api', 'organization.context', 'my_module.active'])
+    ->group(function () {
+        // Маршруты
+    });
+```
+
+### В конструкторе контроллера
+
+```php
+public function __construct()
+{
+    $this->middleware('auth:api');
+    $this->middleware('organization.context');
+    $this->middleware('my_module.active');
+    
+    // Применить только к определенным методам
+    $this->middleware('can:my-module.create')->only(['store']);
+    $this->middleware('can:my-module.delete')->only(['destroy']);
+}
+```
+
+## Лучшие практики
+
+1. ✅ **Dependency Injection**: внедряйте сервисы через конструктор
+2. ✅ **Thin Controllers**: вся бизнес-логика в сервисах
+3. ✅ **Form Requests**: используйте для валидации
+4. ✅ **API Resources**: используйте для форматирования ответов
+5. ✅ **Try-Catch**: обрабатывайте исключения
+6. ✅ **Логирование**: логируйте ошибки
+7. ✅ **HTTP статусы**: возвращайте правильные коды
+8. ✅ **Единый формат**: используйте стандартный формат ответов
+9. ✅ **PHPDoc**: документируйте методы для API документации
+10. ✅ **Type Hints**: указывайте типы параметров и возвратов

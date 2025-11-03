@@ -165,29 +165,59 @@ class PermissionResolver
      */
     public function hasModulePermission(UserRoleAssignment $assignment, string $permission, ?array $context = null): bool
     {
+        $this->logging->technical('permission.module.check.start', [
+            'permission' => $permission,
+            'role_slug' => $assignment->role_slug,
+            'role_type' => $assignment->role_type,
+        ]);
+        
         $organizationId = $this->extractOrganizationId($assignment, $context);
         
         if (!$organizationId) {
+            $this->logging->technical('permission.module.denied.no_org', [
+                'permission' => $permission,
+            ]);
             return false;
         }
 
         $parts = explode('.', $permission, 2);
         if (count($parts) !== 2) {
+            $this->logging->technical('permission.module.denied.invalid_format', [
+                'permission' => $permission,
+            ]);
             return false;
         }
 
         [$module, $action] = $parts;
+        
+        $this->logging->technical('permission.module.parsed', [
+            'module' => $module,
+            'action' => $action,
+            'organization_id' => $organizationId,
+        ]);
         
         $cacheKey = "module_active_{$module}_{$organizationId}";
         $isActive = Cache::remember($cacheKey, 300, function () use ($module, $organizationId) {
             return $this->moduleChecker->isModuleActive($module, $organizationId);
         });
         
+        $this->logging->technical('permission.module.active_check', [
+            'module' => $module,
+            'is_active' => $isActive,
+        ]);
+        
         if (!$isActive) {
+            $this->logging->technical('permission.module.denied.not_active', [
+                'module' => $module,
+            ]);
             return false;
         }
 
         $modulePermissions = $this->getModulePermissions($assignment);
+        
+        $this->logging->technical('permission.module.permissions_retrieved', [
+            'module_permissions' => $modulePermissions,
+        ]);
         
         return $this->checkModulePermission($modulePermissions, $module, $action);
     }
@@ -283,7 +313,7 @@ class PermissionResolver
      */
     protected function checkModulePermission(array $modulePermissions, string $module, string $action): bool
     {
-        \Log::info('[PermissionResolver] checkModulePermission', [
+        $this->logging->technical('permission.module.check_permissions', [
             'module' => $module,
             'action' => $action,
             'available_modules' => array_keys($modulePermissions),
@@ -292,6 +322,9 @@ class PermissionResolver
         ]);
         
         if (!isset($modulePermissions[$module])) {
+            $this->logging->technical('permission.module.denied.module_not_found', [
+                'module' => $module,
+            ]);
             return false;
         }
 
@@ -299,25 +332,38 @@ class PermissionResolver
         
         // Проверяем точное совпадение
         if (in_array($action, $permissions)) {
-            \Log::info('[PermissionResolver] GRANTED by exact match');
+            $this->logging->technical('permission.module.granted.exact_match', [
+                'module' => $module,
+                'action' => $action,
+            ]);
             return true;
         }
 
         // Проверяем wildcard
         if (in_array('*', $permissions)) {
-            \Log::info('[PermissionResolver] GRANTED by wildcard');
+            $this->logging->technical('permission.module.granted.wildcard', [
+                'module' => $module,
+                'action' => $action,
+            ]);
             return true;
         }
 
         // Проверяем wildcard с префиксом (например: create_* для create_project)
         foreach ($permissions as $permission) {
             if ($this->matchesWildcard($action, $permission)) {
-                \Log::info('[PermissionResolver] GRANTED by pattern match', ['pattern' => $permission]);
+                $this->logging->technical('permission.module.granted.pattern_match', [
+                    'module' => $module,
+                    'action' => $action,
+                    'pattern' => $permission,
+                ]);
                 return true;
             }
         }
 
-        \Log::info('[PermissionResolver] DENIED - no match found');
+        $this->logging->technical('permission.module.denied.no_match', [
+            'module' => $module,
+            'action' => $action,
+        ]);
         return false;
     }
 

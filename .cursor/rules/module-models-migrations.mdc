@@ -1,0 +1,668 @@
+---
+description: Правила создания моделей и миграций в бизнес-модулях
+globs:
+  - "app/BusinessModules/**/Models/*.php"
+  - "app/BusinessModules/**/migrations/*.php"
+alwaysApply: true
+---
+
+# Создание моделей и миграций в модулях
+
+## Структура
+
+```
+app/BusinessModules/{Category}/{Module}/
+├── Models/
+│   ├── MyEntity.php
+│   ├── MyEntityRelation.php
+│   └── Traits/
+│       └── HasOrganization.php
+└── migrations/
+    ├── 2025_01_01_000001_create_my_entities_table.php
+    └── 2025_01_01_000002_create_my_entity_relations_table.php
+```
+
+## Создание модели Eloquent
+
+### Базовая модель
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyModule\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+
+class MyEntity extends Model
+{
+    use HasFactory, SoftDeletes;
+
+    /**
+     * Таблица БД
+     */
+    protected $table = 'my_entities';
+
+    /**
+     * Массово заполняемые атрибуты
+     */
+    protected $fillable = [
+        'organization_id',
+        'name',
+        'description',
+        'status',
+        'amount',
+        'is_active',
+        'settings',
+        'metadata',
+    ];
+
+    /**
+     * Атрибуты, которые должны быть скрыты при сериализации
+     */
+    protected $hidden = [
+        'deleted_at',
+    ];
+
+    /**
+     * Приведение типов
+     */
+    protected $casts = [
+        'is_active' => 'boolean',
+        'amount' => 'decimal:2',
+        'settings' => 'array',
+        'metadata' => 'array',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+        'deleted_at' => 'datetime',
+    ];
+
+    /**
+     * Значения по умолчанию
+     */
+    protected $attributes = [
+        'status' => 'draft',
+        'is_active' => true,
+        'settings' => '{}',
+    ];
+
+    // ============================================
+    // RELATIONSHIPS
+    // ============================================
+
+    /**
+     * Организация-владелец
+     */
+    public function organization(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Organization::class);
+    }
+
+    /**
+     * Пользователь-создатель
+     */
+    public function creator(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\User::class, 'created_by');
+    }
+
+    // ============================================
+    // SCOPES (Query Scopes)
+    // ============================================
+
+    /**
+     * Scope для организации
+     */
+    public function scopeForOrganization($query, int $organizationId)
+    {
+        return $query->where('organization_id', $organizationId);
+    }
+
+    /**
+     * Scope для активных записей
+     */
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
+    }
+
+    /**
+     * Scope для статуса
+     */
+    public function scopeWithStatus($query, string $status)
+    {
+        return $query->where('status', $status);
+    }
+
+    // ============================================
+    // ACCESSORS (Геттеры)
+    // ============================================
+
+    /**
+     * Форматированная сумма
+     */
+    public function getFormattedAmountAttribute(): string
+    {
+        return number_format($this->amount, 2, '.', ' ') . ' ₽';
+    }
+
+    /**
+     * Полное имя с префиксом
+     */
+    public function getFullNameAttribute(): string
+    {
+        return "#{$this->id} - {$this->name}";
+    }
+
+    // ============================================
+    // MUTATORS (Сеттеры)
+    // ============================================
+
+    /**
+     * Установка имени (всегда в верхнем регистре первой буквы)
+     */
+    public function setNameAttribute(string $value): void
+    {
+        $this->attributes['name'] = ucfirst(trim($value));
+    }
+
+    // ============================================
+    // CUSTOM METHODS
+    // ============================================
+
+    /**
+     * Проверка возможности редактирования
+     */
+    public function canBeEdited(): bool
+    {
+        return $this->status === 'draft' && !$this->is_locked;
+    }
+
+    /**
+     * Проверка возможности удаления
+     */
+    public function canBeDeleted(): bool
+    {
+        return !$this->hasRelatedData();
+    }
+
+    /**
+     * Проверка наличия связанных данных
+     */
+    public function hasRelatedData(): bool
+    {
+        // Проверить связанные таблицы
+        return false;
+    }
+
+    /**
+     * Активация
+     */
+    public function activate(): bool
+    {
+        return $this->update(['is_active' => true]);
+    }
+
+    /**
+     * Деактивация
+     */
+    public function deactivate(): bool
+    {
+        return $this->update(['is_active' => false]);
+    }
+}
+```
+
+### Модель с трейтом HasOrganization
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyModule\Models\Traits;
+
+trait HasOrganization
+{
+    /**
+     * Boot trait
+     */
+    protected static function bootHasOrganization(): void
+    {
+        // Автоматически устанавливать organization_id при создании
+        static::creating(function ($model) {
+            if (!$model->organization_id) {
+                $model->organization_id = request()->attributes->get('current_organization_id');
+            }
+        });
+
+        // Всегда фильтровать по текущей организации
+        static::addGlobalScope('organization', function ($builder) {
+            $organizationId = request()->attributes->get('current_organization_id');
+            
+            if ($organizationId) {
+                $builder->where($builder->getModel()->getTable() . '.organization_id', $organizationId);
+            }
+        });
+    }
+
+    /**
+     * Relationship к организации
+     */
+    public function organization()
+    {
+        return $this->belongsTo(\App\Models\Organization::class);
+    }
+
+    /**
+     * Scope для другой организации (обход global scope)
+     */
+    public function scopeForAnyOrganization($query, ?int $organizationId = null)
+    {
+        $query->withoutGlobalScope('organization');
+        
+        if ($organizationId) {
+            $query->where('organization_id', $organizationId);
+        }
+        
+        return $query;
+    }
+}
+
+// Использование в модели:
+class MyEntity extends Model
+{
+    use HasOrganization;
+    
+    // ...
+}
+```
+
+## Создание миграции
+
+### Базовая миграция создания таблицы
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::create('my_entities', function (Blueprint $table) {
+            // ============================================
+            // PRIMARY KEY
+            // ============================================
+            $table->id();
+
+            // ============================================
+            // FOREIGN KEYS
+            // ============================================
+            $table->foreignId('organization_id')
+                ->constrained('organizations')
+                ->onDelete('cascade');
+
+            $table->foreignId('created_by')
+                ->nullable()
+                ->constrained('users')
+                ->onDelete('set null');
+
+            // ============================================
+            // ОСНОВНЫЕ ПОЛЯ
+            // ============================================
+            $table->string('name');
+            $table->text('description')->nullable();
+            $table->string('status')->default('draft');
+            
+            // ============================================
+            // ЧИСЛОВЫЕ ПОЛЯ
+            // ============================================
+            $table->decimal('amount', 15, 2)->default(0);
+            $table->integer('quantity')->default(0);
+            
+            // ============================================
+            // БУЛЕВЫ ПОЛЯ
+            // ============================================
+            $table->boolean('is_active')->default(true);
+            $table->boolean('is_locked')->default(false);
+            
+            // ============================================
+            // JSON ПОЛЯ
+            // ============================================
+            $table->json('settings')->nullable();
+            $table->json('metadata')->nullable();
+            
+            // ============================================
+            // ДАТЫ
+            // ============================================
+            $table->timestamp('started_at')->nullable();
+            $table->timestamp('completed_at')->nullable();
+            
+            // ============================================
+            // TIMESTAMPS & SOFT DELETES
+            // ============================================
+            $table->timestamps();
+            $table->softDeletes();
+
+            // ============================================
+            // ИНДЕКСЫ
+            // ============================================
+            $table->index('organization_id');
+            $table->index('status');
+            $table->index(['organization_id', 'status']);
+            $table->index('created_at');
+            
+            // Уникальные индексы
+            $table->unique(['organization_id', 'name']);
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::dropIfExists('my_entities');
+    }
+};
+```
+
+### Миграция связующей таблицы (Many-to-Many)
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('my_entity_tag', function (Blueprint $table) {
+            $table->id();
+            
+            $table->foreignId('my_entity_id')
+                ->constrained('my_entities')
+                ->onDelete('cascade');
+            
+            $table->foreignId('tag_id')
+                ->constrained('tags')
+                ->onDelete('cascade');
+            
+            $table->timestamps();
+
+            // Уникальный индекс для предотвращения дублей
+            $table->unique(['my_entity_id', 'tag_id']);
+            
+            // Индексы для быстрого поиска
+            $table->index('my_entity_id');
+            $table->index('tag_id');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('my_entity_tag');
+    }
+};
+```
+
+### Миграция добавления колонок
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table('my_entities', function (Blueprint $table) {
+            $table->string('new_field')->nullable()->after('name');
+            $table->decimal('new_amount', 15, 2)->default(0)->after('amount');
+            
+            // Добавить индекс
+            $table->index('new_field');
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::table('my_entities', function (Blueprint $table) {
+            $table->dropIndex(['new_field']);
+            $table->dropColumn(['new_field', 'new_amount']);
+        });
+    }
+};
+```
+
+### Миграция изменения колонок
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::table('my_entities', function (Blueprint $table) {
+            // Изменить тип колонки
+            $table->text('description')->nullable()->change();
+            
+            // Изменить длину строки
+            $table->string('name', 500)->change();
+            
+            // Сделать nullable
+            $table->string('status')->nullable()->change();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::table('my_entities', function (Blueprint $table) {
+            $table->string('description')->nullable()->change();
+            $table->string('name', 255)->change();
+            $table->string('status')->default('draft')->change();
+        });
+    }
+};
+```
+
+### Миграция с данными (Seeding)
+
+```php
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Support\Facades\DB;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        // Вставить начальные данные
+        DB::table('my_entity_statuses')->insert([
+            ['name' => 'draft', 'label' => 'Черновик', 'order' => 1],
+            ['name' => 'active', 'label' => 'Активный', 'order' => 2],
+            ['name' => 'completed', 'label' => 'Завершен', 'order' => 3],
+            ['name' => 'cancelled', 'label' => 'Отменен', 'order' => 4],
+        ]);
+    }
+
+    public function down(): void
+    {
+        DB::table('my_entity_statuses')->whereIn('name', [
+            'draft', 'active', 'completed', 'cancelled'
+        ])->delete();
+    }
+};
+```
+
+## Именование таблиц и полей
+
+### Таблицы
+
+```
+snake_case, множественное число
+✅ my_entities
+✅ project_tasks
+✅ user_permissions
+❌ MyEntities
+❌ my_entity
+```
+
+### Колонки
+
+```
+snake_case
+✅ organization_id
+✅ created_at
+✅ is_active
+✅ first_name
+❌ OrganizationId
+❌ createdAt
+```
+
+### Foreign Keys
+
+```
+{related_table_singular}_id
+✅ organization_id (ссылка на organizations)
+✅ user_id (ссылка на users)
+✅ project_id (ссылка на projects)
+```
+
+## Стандартные поля
+
+### Обязательные для всех модулей
+
+```php
+$table->id();                           // PRIMARY KEY
+$table->foreignId('organization_id');   // Связь с организацией
+$table->timestamps();                   // created_at, updated_at
+$table->softDeletes();                  // deleted_at (рекомендуется)
+```
+
+### Рекомендуемые
+
+```php
+$table->foreignId('created_by')->nullable();  // Кто создал
+$table->foreignId('updated_by')->nullable();  // Кто обновил
+$table->boolean('is_active')->default(true);  // Активность
+$table->json('metadata')->nullable();         // Доп. метаданные
+```
+
+## Типы данных
+
+### Строки
+
+```php
+$table->string('name', 255);          // VARCHAR (до 255 символов)
+$table->text('description');          // TEXT (большой текст)
+$table->char('code', 10);            // CHAR (фиксированная длина)
+$table->uuid('uuid');                // UUID
+```
+
+### Числа
+
+```php
+$table->integer('count');            // INT
+$table->bigInteger('big_count');     // BIGINT
+$table->decimal('amount', 15, 2);    // DECIMAL (15 цифр, 2 после запятой)
+$table->float('rate', 8, 2);         // FLOAT
+$table->double('precise', 15, 8);    // DOUBLE
+```
+
+### Булевы
+
+```php
+$table->boolean('is_active');        // BOOLEAN (0 или 1)
+```
+
+### Даты и время
+
+```php
+$table->date('birth_date');          // DATE
+$table->time('start_time');          // TIME
+$table->datetime('event_at');        // DATETIME
+$table->timestamp('created_at');     // TIMESTAMP
+$table->timestamps();                // created_at + updated_at
+```
+
+### JSON
+
+```php
+$table->json('settings');            // JSON
+$table->jsonb('data');               // JSONB (только PostgreSQL)
+```
+
+## Индексы
+
+### Простые индексы
+
+```php
+$table->index('column');             // Обычный индекс
+$table->unique('email');             // Уникальный индекс
+$table->primary('id');               // PRIMARY KEY
+```
+
+### Составные индексы
+
+```php
+$table->index(['organization_id', 'status']);        // Составной индекс
+$table->unique(['organization_id', 'name']);         // Составной уникальный
+```
+
+### Foreign Keys
+
+```php
+$table->foreignId('user_id')
+    ->constrained('users')           // Создать FK на таблицу users
+    ->onDelete('cascade');           // При удалении user удалить связанные записи
+
+$table->foreignId('organization_id')
+    ->constrained()                  // Автоматически определит таблицу organizations
+    ->onDelete('set null');          // При удалении организации установить NULL
+```
+
+## Загрузка миграций в ServiceProvider
+
+```php
+protected function loadMigrations(): void
+{
+    $migrationsPath = __DIR__ . '/migrations';
+    
+    if (is_dir($migrationsPath)) {
+        $this->loadMigrationsFrom($migrationsPath);
+    }
+}
+```
+
+## Лучшие практики
+
+1. ✅ **Organization ID**: всегда добавляйте foreign key на organizations
+2. ✅ **Soft Deletes**: используйте softDeletes() для важных данных
+3. ✅ **Timestamps**: всегда используйте timestamps()
+4. ✅ **Индексы**: добавляйте индексы на часто фильтруемые колонки
+5. ✅ **FK Constraints**: используйте foreign keys для ссылочной целостности
+6. ✅ **Nullable**: явно указывайте nullable() там, где поле опционально
+7. ✅ **Default Values**: устанавливайте значения по умолчанию
+8. ✅ **Down Method**: всегда реализуйте корректный rollback
+9. ✅ **Type Casting**: используйте $casts в модели для типизации
+10. ✅ **Scopes**: создавайте scopes для частых запросов

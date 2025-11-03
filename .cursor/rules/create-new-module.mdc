@@ -1,0 +1,606 @@
+---
+description: Пошаговое руководство по созданию нового бизнес-модуля
+globs:
+  - "app/BusinessModules/**/*.php"
+alwaysApply: false
+---
+
+# Создание нового бизнес-модуля
+
+## Чеклист создания модуля
+
+- [ ] 1. Определить категорию и тип модуля
+- [ ] 2. Создать структуру директорий
+- [ ] 3. Создать основной класс модуля (implements ModuleInterface)
+- [ ] 4. Создать ServiceProvider
+- [ ] 5. Создать JSON манифест
+- [ ] 6. Зарегистрировать ServiceProvider в bootstrap/providers.php
+- [ ] 7. Создать миграции (если нужны)
+- [ ] 8. Создать модели (если нужны)
+- [ ] 9. Создать контракты/интерфейсы
+- [ ] 10. Создать сервисы
+- [ ] 11. Создать контроллеры
+- [ ] 12. Определить маршруты (routes.php)
+- [ ] 13. Создать README.md с документацией
+- [ ] 14. Добавить тесты
+
+## Шаг 1: Определить параметры модуля
+
+### Выбор категории
+
+```php
+Core/          // Только для критической базовой функциональности
+Features/      // Основные бизнес-функции (проекты, отчеты, и т.д.)
+Addons/        // Дополнения (интеграции, порталы)
+Services/      // Сервисные модули (экспорт, импорт)
+Enterprise/    // Корпоративные функции
+```
+
+### Выбор типа (ModuleType)
+
+```php
+ModuleType::CORE        // Базовая функциональность
+ModuleType::FEATURE     // Основной функционал
+ModuleType::ADDON       // Дополнительный функционал
+ModuleType::SERVICE     // Сервисная функциональность
+ModuleType::EXTENSION   // Расширение существующего
+```
+
+### Выбор модели биллинга (BillingModel)
+
+```php
+BillingModel::FREE              // Бесплатный
+BillingModel::SUBSCRIPTION      // Подписка (рекомендуется для большинства)
+BillingModel::ONE_TIME          // Разовая оплата
+BillingModel::USAGE_BASED       // По использованию
+BillingModel::FREEMIUM          // Базовый бесплатно + премиум
+```
+
+## Шаг 2: Создать структуру директорий
+
+```bash
+# Пример для Features/MyNewModule
+mkdir -p app/BusinessModules/Features/MyNewModule/{Http/Controllers,Services,Models,Contracts,migrations,Events,Listeners}
+```
+
+## Шаг 3: Создать основной класс модуля
+
+**Путь**: `app/BusinessModules/Features/MyNewModule/MyNewModuleModule.php`
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyNewModule;
+
+use App\Modules\Contracts\ModuleInterface;
+use App\Modules\Contracts\BillableInterface;
+use App\Modules\Contracts\ConfigurableInterface;
+use App\Enums\ModuleType;
+use App\Enums\BillingModel;
+
+class MyNewModuleModule implements ModuleInterface, BillableInterface, ConfigurableInterface
+{
+    // ============================================
+    // ModuleInterface - ОБЯЗАТЕЛЬНЫЕ методы
+    // ============================================
+    
+    public function getName(): string
+    {
+        return 'Название модуля';
+    }
+
+    public function getSlug(): string
+    {
+        return 'my-new-module';  // kebab-case
+    }
+
+    public function getVersion(): string
+    {
+        return '1.0.0';  // Semantic versioning
+    }
+
+    public function getDescription(): string
+    {
+        return 'Описание функциональности модуля';
+    }
+
+    public function getType(): ModuleType
+    {
+        return ModuleType::FEATURE;
+    }
+
+    public function getBillingModel(): BillingModel
+    {
+        return BillingModel::SUBSCRIPTION;
+    }
+
+    public function getManifest(): array
+    {
+        return json_decode(
+            file_get_contents(config_path('ModuleList/features/my-new-module.json')), 
+            true
+        );
+    }
+
+    public function install(): void
+    {
+        // Логика установки (опционально)
+        // Миграции выполняются автоматически
+    }
+
+    public function uninstall(): void
+    {
+        // Логика удаления
+        // ВНИМАНИЕ: данные не удаляются автоматически!
+    }
+
+    public function upgrade(string $fromVersion): void
+    {
+        // Логика обновления при изменении версии
+        // match ($fromVersion) {
+        //     '1.0.0' => $this->upgradeFrom100(),
+        //     default => null,
+        // };
+    }
+
+    public function canActivate(int $organizationId): bool
+    {
+        // Проверка возможности активации
+        $organization = \App\Models\Organization::find($organizationId);
+        
+        if (!$organization) {
+            return false;
+        }
+
+        // Проверка зависимостей
+        $accessController = app(\App\Modules\Core\AccessController::class);
+        foreach ($this->getDependencies() as $dependency) {
+            if (!$accessController->hasModuleAccess($organizationId, $dependency)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function getDependencies(): array
+    {
+        return [
+            'organizations',  // Почти всегда нужно
+            'users',          // Почти всегда нужно
+            // 'projects',    // Если зависит от проектов
+        ];
+    }
+
+    public function getConflicts(): array
+    {
+        return [
+            // 'old-module',  // Если есть конфликтующие модули
+        ];
+    }
+
+    public function getPermissions(): array
+    {
+        return [
+            'my-new-module.view',
+            'my-new-module.manage',
+            'my-new-module.create',
+            'my-new-module.edit',
+            'my-new-module.delete',
+            'my-new-module.settings',
+            // Добавьте все необходимые permissions
+        ];
+    }
+
+    public function getFeatures(): array
+    {
+        return [
+            'Основная функция 1',
+            'Основная функция 2',
+            'Интеграция с ...',
+            'Экспорт данных',
+            // Список возможностей для маркетинга
+        ];
+    }
+
+    public function getLimits(): array
+    {
+        return [
+            'max_items_per_organization' => 100,
+            'max_api_requests_per_hour' => 1000,
+            'data_retention_months' => 12,
+            // Технические лимиты модуля
+        ];
+    }
+
+    // ============================================
+    // BillableInterface - для платных модулей
+    // ============================================
+    
+    public function getPrice(): float
+    {
+        return 3990.0;  // Цена в RUB
+    }
+
+    public function getCurrency(): string
+    {
+        return 'RUB';
+    }
+
+    public function getDurationDays(): int
+    {
+        return 30;  // Месячная подписка
+    }
+
+    public function getPricingConfig(): array
+    {
+        return [
+            'base_price' => 3990,
+            'currency' => 'RUB',
+            'included_in_plans' => ['profi', 'enterprise'],  // или []
+            'duration_days' => 30,
+            'trial_days' => 7,  // Пробный период
+        ];
+    }
+
+    public function calculateCost(int $organizationId): float
+    {
+        // Для простых модулей - фиксированная цена
+        return $this->getPrice();
+        
+        // Для сложных - расчет на основе использования
+        // $organization = \App\Models\Organization::find($organizationId);
+        // return $basePrice * $multiplier;
+    }
+
+    public function canAfford(int $organizationId): bool
+    {
+        $organization = \App\Models\Organization::find($organizationId);
+        
+        if (!$organization) {
+            return false;
+        }
+
+        $billingEngine = app(\App\Modules\Core\BillingEngine::class);
+        $module = \App\Models\Module::where('slug', $this->getSlug())->first();
+        
+        return $module ? $billingEngine->canAfford($organization, $module) : false;
+    }
+
+    // ============================================
+    // ConfigurableInterface - для модулей с настройками
+    // ============================================
+    
+    public function getDefaultSettings(): array
+    {
+        return [
+            // Основные настройки
+            'enabled' => true,
+            'auto_sync' => false,
+            
+            // Лимиты
+            'max_items' => 100,
+            'refresh_interval' => 300,  // секунд
+            
+            // Функции
+            'enable_notifications' => true,
+            'enable_export' => true,
+            
+            // Интеграции
+            'api_enabled' => false,
+            'webhook_url' => null,
+            
+            // Вложенные настройки
+            'notification_settings' => [
+                'email' => true,
+                'in_app' => true,
+                'telegram' => false,
+            ],
+        ];
+    }
+
+    public function validateSettings(array $settings): bool
+    {
+        // Валидация обязательных полей
+        $requiredKeys = ['enabled', 'max_items'];
+        
+        foreach ($requiredKeys as $key) {
+            if (!array_key_exists($key, $settings)) {
+                return false;
+            }
+        }
+
+        // Валидация типов и значений
+        if (isset($settings['max_items']) && 
+            (!is_int($settings['max_items']) || $settings['max_items'] < 1)) {
+            return false;
+        }
+
+        if (isset($settings['refresh_interval']) && 
+            (!is_int($settings['refresh_interval']) || $settings['refresh_interval'] < 60)) {
+            return false;
+        }
+
+        // Дополнительная бизнес-логика
+        // ...
+
+        return true;
+    }
+
+    public function applySettings(int $organizationId, array $settings): void
+    {
+        if (!$this->validateSettings($settings)) {
+            throw new \InvalidArgumentException('Некорректные настройки модуля');
+        }
+
+        $activation = \App\Models\OrganizationModuleActivation::where('organization_id', $organizationId)
+            ->whereHas('module', function ($query) {
+                $query->where('slug', $this->getSlug());
+            })
+            ->first();
+
+        if ($activation) {
+            $currentSettings = $activation->module_settings ?? [];
+            $activation->update([
+                'module_settings' => array_merge($currentSettings, $settings)
+            ]);
+            
+            // Инвалидация кеша
+            \Illuminate\Support\Facades\Cache::forget("module_settings_{$this->getSlug()}_{$organizationId}");
+        }
+    }
+
+    public function getSettings(int $organizationId): array
+    {
+        return \Illuminate\Support\Facades\Cache::remember(
+            "module_settings_{$this->getSlug()}_{$organizationId}",
+            3600,  // 1 час
+            function () use ($organizationId) {
+                $activation = \App\Models\OrganizationModuleActivation::where('organization_id', $organizationId)
+                    ->whereHas('module', function ($query) {
+                        $query->where('slug', $this->getSlug());
+                    })
+                    ->first();
+
+                if (!$activation) {
+                    return $this->getDefaultSettings();
+                }
+
+                return array_merge(
+                    $this->getDefaultSettings(),
+                    $activation->module_settings ?? []
+                );
+            }
+        );
+    }
+}
+```
+
+## Шаг 4: Создать ServiceProvider
+
+**Путь**: `app/BusinessModules/Features/MyNewModule/MyNewModuleServiceProvider.php`
+
+```php
+<?php
+
+namespace App\BusinessModules\Features\MyNewModule;
+
+use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Event;
+
+class MyNewModuleServiceProvider extends ServiceProvider
+{
+    public function register(): void
+    {
+        // 1. Регистрация singleton основного модуля
+        $this->app->singleton(MyNewModuleModule::class);
+        
+        // 2. Регистрация сервисов
+        $this->registerServices();
+        
+        // 3. Регистрация контрактов (интерфейсов)
+        $this->registerContracts();
+    }
+
+    public function boot(): void
+    {
+        // 1. Загрузка миграций
+        $this->loadMigrations();
+        
+        // 2. Загрузка маршрутов
+        $this->loadRoutes();
+        
+        // 3. Регистрация middleware
+        $this->registerMiddleware();
+        
+        // 4. Регистрация событий и слушателей
+        $this->registerEvents();
+        
+        // 5. Регистрация observers
+        $this->registerObservers();
+        
+        // 6. Публикация конфигов (опционально)
+        $this->publishConfig();
+    }
+
+    protected function registerServices(): void
+    {
+        // Singleton сервисы
+        $this->app->singleton(
+            \App\BusinessModules\Features\MyNewModule\Services\MyNewModuleService::class
+        );
+        
+        // Дополнительные сервисы
+        // ...
+    }
+
+    protected function registerContracts(): void
+    {
+        // Биндинг интерфейсов к реализациям
+        $this->app->bind(
+            \App\BusinessModules\Features\MyNewModule\Contracts\MyServiceInterface::class,
+            \App\BusinessModules\Features\MyNewModule\Services\MyServiceImplementation::class
+        );
+    }
+
+    protected function loadRoutes(): void
+    {
+        $routesPath = __DIR__ . '/routes.php';
+        
+        if (file_exists($routesPath)) {
+            require $routesPath;
+        }
+    }
+
+    protected function loadMigrations(): void
+    {
+        $migrationsPath = __DIR__ . '/migrations';
+        
+        if (is_dir($migrationsPath)) {
+            $this->loadMigrationsFrom($migrationsPath);
+        }
+    }
+
+    protected function registerMiddleware(): void
+    {
+        $router = $this->app['router'];
+        
+        $router->aliasMiddleware(
+            'my_new_module.active',
+            \App\BusinessModules\Features\MyNewModule\Http\Middleware\EnsureModuleActive::class
+        );
+    }
+
+    protected function registerEvents(): void
+    {
+        // Подписка на события
+        Event::listen(
+            \App\BusinessModules\Features\MyNewModule\Events\SomethingHappened::class,
+            \App\BusinessModules\Features\MyNewModule\Listeners\HandleSomething::class
+        );
+    }
+
+    protected function registerObservers(): void
+    {
+        // Регистрация Eloquent Observers
+        // \App\BusinessModules\Features\MyNewModule\Models\MyModel::observe(
+        //     \App\BusinessModules\Features\MyNewModule\Observers\MyModelObserver::class
+        // );
+    }
+
+    protected function publishConfig(): void
+    {
+        // Для публикации конфигов (редко нужно)
+        // $this->publishes([
+        //     __DIR__.'/config/my-new-module.php' => config_path('my-new-module.php'),
+        // ], 'config');
+    }
+}
+```
+
+## Шаг 5: Создать JSON манифест
+
+**Путь**: `config/ModuleList/features/my-new-module.json`
+
+```json
+{
+  "name": "Название модуля",
+  "slug": "my-new-module",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "analytics",
+  "description": "Подробное описание функциональности модуля",
+  
+  "class_name": "App\\BusinessModules\\Features\\MyNewModule\\MyNewModuleModule",
+  "service_provider": "App\\BusinessModules\\Features\\MyNewModule\\MyNewModuleServiceProvider",
+  
+  "pricing": {
+    "base_price": 3990,
+    "currency": "RUB",
+    "included_in_plans": ["profi", "enterprise"],
+    "duration_days": 30,
+    "trial_days": 7
+  },
+  
+  "permissions": [
+    "my-new-module.view",
+    "my-new-module.manage",
+    "my-new-module.create",
+    "my-new-module.edit",
+    "my-new-module.delete"
+  ],
+  
+  "features": [
+    "Основная функция 1",
+    "Основная функция 2",
+    "Интеграция с API",
+    "Экспорт в Excel/PDF"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_items": 100,
+    "api_requests_per_hour": 1000
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "icon-name",
+  "display_order": 50,
+  
+  "tags": ["analytics", "reporting"],
+  
+  "documentation_url": "/docs/modules/my-new-module"
+}
+```
+
+## Шаг 6: Зарегистрировать ServiceProvider
+
+**Файл**: `bootstrap/providers.php`
+
+```php
+return [
+    // ... существующие провайдеры
+    App\BusinessModules\Features\MyNewModule\MyNewModuleServiceProvider::class,
+];
+```
+
+## Шаг 7-13: Дополнительные файлы
+
+Создайте по необходимости:
+- migrations/ - миграции БД
+- Models/ - Eloquent модели
+- Services/ - бизнес-логика
+- Http/Controllers/ - REST API
+- routes.php - маршруты
+- README.md - документация
+- tests/ - тесты
+
+## Быстрый старт с командой
+
+```bash
+# После создания всех файлов:
+php artisan migrate
+php artisan cache:clear
+php artisan config:clear
+```
+
+## Тестирование активации модуля
+
+```bash
+# Через API
+POST /api/v1/admin/modules/my-new-module/activate-trial
+POST /api/v1/admin/modules/my-new-module/activate
+```
