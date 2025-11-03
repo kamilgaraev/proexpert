@@ -197,30 +197,77 @@ trait HasScheduleOperations
      */
     protected function createScheduleTask(int $scheduleId, CreateScheduleTaskRequest $request, int $organizationId, callable $finder): JsonResponse
     {
-        $schedule = $this->findScheduleOrFail($scheduleId, $finder);
+        Log::info('[ScheduleTask] Начало создания задачи', [
+            'schedule_id' => $scheduleId,
+            'organization_id' => $organizationId,
+            'user_id' => $request->user()->id,
+        ]);
+
+        try {
+            $schedule = $this->findScheduleOrFail($scheduleId, $finder);
+            
+            Log::info('[ScheduleTask] График найден', [
+                'schedule_id' => $schedule->id,
+                'schedule_name' => $schedule->name,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[ScheduleTask] График не найден', [
+                'schedule_id' => $scheduleId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            throw $e;
+        }
 
         $data = $request->validated();
         $data['schedule_id'] = $schedule->id;
         $data['organization_id'] = $organizationId;
         $data['created_by_user_id'] = $request->user()->id;
 
+        Log::info('[ScheduleTask] Данные для создания задачи', [
+            'data' => $data,
+        ]);
+
         try {
+            Log::info('[ScheduleTask] Попытка создания модели ScheduleTask');
             $task = ScheduleTask::create($data);
             
+            Log::info('[ScheduleTask] Модель создана успешно', [
+                'task_id' => $task->id,
+                'task_name' => $task->name,
+            ]);
+            
             // Загружаем связанные данные для ответа
+            Log::info('[ScheduleTask] Загрузка связанных данных');
             $task->load(['assignedUser', 'workType', 'parentTask']);
+            
+            Log::info('[ScheduleTask] Задача успешно создана', [
+                'task_id' => $task->id,
+            ]);
 
             return response()->json([
                 'message' => 'Задача успешно создана',
                 'data' => $task
             ], 201);
         } catch (\Exception $e) {
-            Log::error('Ошибка при создании задачи', [
+            Log::error('[ScheduleTask] ОШИБКА при создании задачи', [
                 'schedule_id' => $scheduleId,
-                'error' => $e->getMessage()
+                'organization_id' => $organizationId,
+                'error_message' => $e->getMessage(),
+                'error_class' => get_class($e),
+                'error_file' => $e->getFile(),
+                'error_line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+                'data' => $data,
             ]);
+            
             return response()->json([
-                'message' => 'Ошибка при создании задачи: ' . $e->getMessage()
+                'message' => 'Ошибка при создании задачи: ' . $e->getMessage(),
+                'error_details' => [
+                    'class' => get_class($e),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                ]
             ], 500);
         }
     }

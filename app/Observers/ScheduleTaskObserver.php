@@ -14,7 +14,24 @@ class ScheduleTaskObserver
      */
     public function creating(ScheduleTask $task): void
     {
-        $this->validateDates($task);
+        Log::info('[ScheduleTaskObserver] creating event triggered', [
+            'task_name' => $task->name ?? 'unknown',
+            'planned_start_date' => $task->attributes['planned_start_date'] ?? null,
+            'planned_end_date' => $task->attributes['planned_end_date'] ?? null,
+            'attributes' => $task->attributes,
+        ]);
+        
+        try {
+            $this->validateDates($task);
+            Log::info('[ScheduleTaskObserver] Валидация прошла успешно');
+        } catch (\Exception $e) {
+            Log::error('[ScheduleTaskObserver] Ошибка валидации', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            throw $e;
+        }
+        
         // Длительность вычисляется автоматически через computed property в модели
     }
 
@@ -59,15 +76,24 @@ class ScheduleTaskObserver
      */
     protected function validateDates(ScheduleTask $task): void
     {
+        Log::info('[ScheduleTaskObserver] validateDates started');
+        
         $errors = [];
 
         // Получаем даты из атрибутов напрямую
         $startDateValue = $task->attributes['planned_start_date'] ?? $task->planned_start_date;
         $endDateValue = $task->attributes['planned_end_date'] ?? $task->planned_end_date;
         
+        Log::info('[ScheduleTaskObserver] Плановые даты', [
+            'start' => $startDateValue,
+            'end' => $endDateValue,
+        ]);
+        
         // Плановые даты
         if ($startDateValue && $endDateValue) {
             try {
+                Log::info('[ScheduleTaskObserver] Парсинг плановых дат');
+                
                 $startDate = $startDateValue instanceof Carbon 
                     ? $startDateValue 
                     : Carbon::parse($startDateValue);
@@ -76,10 +102,21 @@ class ScheduleTaskObserver
                     ? $endDateValue 
                     : Carbon::parse($endDateValue);
                 
+                Log::info('[ScheduleTaskObserver] Даты распарсены', [
+                    'start' => $startDate->format('Y-m-d'),
+                    'end' => $endDate->format('Y-m-d'),
+                ]);
+                
                 if ($endDate < $startDate) {
                     $errors['planned_end_date'] = ['Дата окончания должна быть позже или равна дате начала'];
+                    Log::warning('[ScheduleTaskObserver] Дата окончания раньше даты начала');
                 }
             } catch (\Exception $e) {
+                Log::error('[ScheduleTaskObserver] Ошибка парсинга плановых дат', [
+                    'error' => $e->getMessage(),
+                    'start' => $startDateValue,
+                    'end' => $endDateValue,
+                ]);
                 $errors['planned_dates'] = ['Неверный формат даты: ' . $e->getMessage()];
             }
         }
@@ -91,6 +128,8 @@ class ScheduleTaskObserver
         // Фактические даты
         if ($actualStartValue && $actualEndValue) {
             try {
+                Log::info('[ScheduleTaskObserver] Парсинг фактических дат');
+                
                 $actualStartDate = $actualStartValue instanceof Carbon 
                     ? $actualStartValue 
                     : Carbon::parse($actualStartValue);
@@ -101,15 +140,24 @@ class ScheduleTaskObserver
                 
                 if ($actualEndDate < $actualStartDate) {
                     $errors['actual_end_date'] = ['Фактическая дата окончания должна быть позже или равна дате начала'];
+                    Log::warning('[ScheduleTaskObserver] Фактическая дата окончания раньше даты начала');
                 }
             } catch (\Exception $e) {
+                Log::error('[ScheduleTaskObserver] Ошибка парсинга фактических дат', [
+                    'error' => $e->getMessage(),
+                ]);
                 $errors['actual_dates'] = ['Неверный формат даты: ' . $e->getMessage()];
             }
         }
 
         if (!empty($errors)) {
+            Log::error('[ScheduleTaskObserver] Ошибки валидации', [
+                'errors' => $errors,
+            ]);
             throw new ScheduleValidationException('Ошибка валидации дат задачи', $errors);
         }
+        
+        Log::info('[ScheduleTaskObserver] validateDates completed successfully');
     }
 
 }
