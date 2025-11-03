@@ -14,7 +14,7 @@ class ScheduleTaskObserver
     public function creating(ScheduleTask $task): void
     {
         $this->validateDates($task);
-        $this->validateDatesRelation($task);
+        $this->calculateAndSetDuration($task);
     }
 
     /**
@@ -25,7 +25,7 @@ class ScheduleTaskObserver
         // Валидируем только измененные поля
         if ($task->isDirty(['planned_start_date', 'planned_end_date', 'actual_start_date', 'actual_end_date'])) {
             $this->validateDates($task);
-            $this->validateDatesRelation($task);
+            $this->calculateAndSetDuration($task);
         }
 
         // Проверка, что задача не завершается раньше начала
@@ -66,20 +66,36 @@ class ScheduleTaskObserver
     }
 
     /**
-     * Валидация соответствия дат и длительности
+     * Автоматически вычисляем и устанавливаем длительность на основе дат
      */
-    protected function validateDatesRelation(ScheduleTask $task): void
+    protected function calculateAndSetDuration(ScheduleTask $task): void
     {
-        if ($task->planned_start_date && $task->planned_end_date && $task->planned_duration_days) {
+        // Вычисляем планируемую длительность
+        if ($task->planned_start_date && $task->planned_end_date) {
             $calculatedDuration = $task->planned_start_date->diffInDays($task->planned_end_date) + 1;
             
-            if (abs($calculatedDuration - $task->planned_duration_days) > 1) {
-                Log::warning('Несоответствие длительности и дат задачи', [
-                    'task_id' => $task->id,
-                    'calculated_duration' => $calculatedDuration,
-                    'planned_duration_days' => $task->planned_duration_days,
-                ]);
-            }
+            // Автоматически устанавливаем вычисленную длительность
+            $task->setAttribute('planned_duration_days', $calculatedDuration);
+            
+            Log::info('Автоматически вычислена длительность задачи', [
+                'task_id' => $task->id ?? 'new',
+                'task_name' => $task->name,
+                'calculated_duration' => $calculatedDuration,
+                'planned_start_date' => $task->planned_start_date->format('Y-m-d'),
+                'planned_end_date' => $task->planned_end_date->format('Y-m-d'),
+            ]);
+        }
+        
+        // Вычисляем фактическую длительность если есть обе даты
+        if ($task->actual_start_date && $task->actual_end_date) {
+            $actualDuration = $task->actual_start_date->diffInDays($task->actual_end_date) + 1;
+            $task->setAttribute('actual_duration_days', $actualDuration);
+            
+            Log::info('Автоматически вычислена фактическая длительность задачи', [
+                'task_id' => $task->id ?? 'new',
+                'task_name' => $task->name,
+                'actual_duration' => $actualDuration,
+            ]);
         }
     }
 }

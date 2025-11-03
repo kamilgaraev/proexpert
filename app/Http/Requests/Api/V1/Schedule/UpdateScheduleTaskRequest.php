@@ -61,7 +61,7 @@ class UpdateScheduleTaskRequest extends FormRequest
             'status' => 'sometimes|string|in:not_started,in_progress,completed,cancelled,on_hold',
             
             // Приоритет и тип
-            'priority' => 'sometimes|string|in:low,normal,high,urgent',
+            'priority' => 'sometimes|string|in:low,normal,high,critical',
             'task_type' => 'sometimes|string|in:task,milestone,summary,container',
             
             // Затраты
@@ -74,8 +74,8 @@ class UpdateScheduleTaskRequest extends FormRequest
             'parent_task_id' => 'sometimes|integer|exists:schedule_tasks,id|nullable',
             
             // Ограничения
-            'constraint_type' => 'sometimes|string|in:as_soon_as_possible,as_late_as_possible,must_start_on,must_finish_on,start_no_earlier_than,finish_no_later_than|nullable',
-            'constraint_date' => 'sometimes|date|nullable',
+            'constraint_type' => 'sometimes|string|in:none,must_start_on,must_finish_on,start_no_earlier_than,start_no_later_than,finish_no_earlier_than,finish_no_later_than|nullable',
+            'constraint_date' => 'sometimes|date|nullable|required_unless:constraint_type,none,null',
             
             // Дополнительные поля
             'notes' => 'sometimes|string|nullable',
@@ -93,6 +93,7 @@ class UpdateScheduleTaskRequest extends FormRequest
             'actual_end_date.after_or_equal' => 'Фактическая дата окончания должна быть не раньше даты начала',
             'progress_percent.min' => 'Прогресс не может быть меньше 0%',
             'progress_percent.max' => 'Прогресс не может быть больше 100%',
+            'constraint_date.required_unless' => 'Дата ограничения обязательна при указании типа ограничения',
         ];
     }
 }

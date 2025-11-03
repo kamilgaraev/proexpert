@@ -53,14 +53,14 @@ class CreateScheduleTaskRequest extends FormRequest
             'task_type' => 'nullable|string|in:task,milestone,summary,container',
             'planned_start_date' => 'required|date',
             'planned_end_date' => 'required|date|after_or_equal:planned_start_date',
-            'planned_duration_days' => 'required|integer|min:1',
+            'planned_duration_days' => 'nullable|integer|min:1',
             'planned_work_hours' => 'nullable|numeric|min:0',
             'status' => 'nullable|string|in:not_started,in_progress,completed,cancelled,on_hold',
             'priority' => 'nullable|string|in:low,normal,high,critical',
             'estimated_cost' => 'nullable|numeric|min:0',
             'required_resources' => 'nullable|array',
-            'constraint_type' => 'nullable|string|max:50',
-            'constraint_date' => 'nullable|date',
+            'constraint_type' => 'nullable|string|in:none,must_start_on,must_finish_on,start_no_earlier_than,start_no_later_than,finish_no_earlier_than,finish_no_later_than',
+            'constraint_date' => 'nullable|date|required_unless:constraint_type,none,null',
             'custom_fields' => 'nullable|array',
             'notes' => 'nullable|string|max:2000',
             'tags' => 'nullable|array',
@@ -79,24 +79,47 @@ class CreateScheduleTaskRequest extends FormRequest
             'planned_end_date.required' => 'Дата окончания обязательна',
             'planned_end_date.date' => 'Неверный формат даты окончания',
             'planned_end_date.after_or_equal' => 'Дата окончания должна быть не раньше даты начала',
-            'planned_duration_days.required' => 'Длительность задачи обязательна',
             'planned_duration_days.min' => 'Длительность задачи должна быть не менее 1 дня',
             'parent_task_id.exists' => 'Указанная родительская задача не найдена',
             'work_type_id.exists' => 'Указанный тип работ не найден',
             'assigned_user_id.exists' => 'Указанный пользователь не найден',
             'estimated_cost.min' => 'Стоимость не может быть отрицательной',
             'planned_work_hours.min' => 'Трудозатраты не могут быть отрицательными',
+            'constraint_date.required_unless' => 'Дата ограничения обязательна при указании типа ограничения',
         ];
     }
 
     public function prepareForValidation(): void
     {
-        $this->merge([
-            'task_type' => $this->task_type ?? 'task',
-            'status' => $this->status ?? 'not_started',
-            'priority' => $this->priority ?? 'normal',
-            'level' => $this->level ?? 0,
-            'sort_order' => $this->sort_order ?? 0,
-        ]);
+        // Устанавливаем значения по умолчанию только если они не были переданы
+        $defaults = [];
+        
+        if (!$this->has('task_type')) {
+            $defaults['task_type'] = 'task';
+        }
+        
+        if (!$this->has('status')) {
+            $defaults['status'] = 'not_started';
+        }
+        
+        if (!$this->has('priority')) {
+            $defaults['priority'] = 'normal';
+        }
+        
+        if (!$this->has('level')) {
+            $defaults['level'] = 0;
+        }
+        
+        if (!$this->has('sort_order')) {
+            $defaults['sort_order'] = 0;
+        }
+        
+        if (!$this->has('constraint_type')) {
+            $defaults['constraint_type'] = 'none';
+        }
+        
+        if (!empty($defaults)) {
+            $this->merge($defaults);
+        }
     }
 }

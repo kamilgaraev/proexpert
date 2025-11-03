@@ -50,10 +50,12 @@ class ScheduleTaskController extends Controller
             'actual_end_date' => 'sometimes|date|nullable|after_or_equal:actual_start_date',
             'progress_percent' => 'sometimes|numeric|min:0|max:100',
             'status' => 'sometimes|string|in:not_started,in_progress,completed,cancelled,on_hold',
-            'priority' => 'sometimes|string|in:low,normal,high,urgent',
+            'priority' => 'sometimes|string|in:low,normal,high,critical',
             'estimated_cost' => 'sometimes|numeric|min:0|nullable',
             'assigned_user_id' => 'sometimes|integer|exists:users,id|nullable',
             'parent_task_id' => 'sometimes|integer|exists:schedule_tasks,id|nullable',
+            'constraint_type' => 'sometimes|string|in:none,must_start_on,must_finish_on,start_no_earlier_than,start_no_later_than,finish_no_earlier_than,finish_no_later_than|nullable',
+            'constraint_date' => 'sometimes|date|nullable|required_unless:constraint_type,none,null',
         ]);
 
         // Обновляем задачу
