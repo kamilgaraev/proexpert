@@ -32,7 +32,8 @@ class ScheduleTaskObserver
             throw $e;
         }
         
-        // Длительность вычисляется автоматически через computed property в модели
+        // Вычисляем длительность ПЕРЕД сохранением
+        $this->calculateDuration($task);
     }
 
     /**
@@ -43,7 +44,8 @@ class ScheduleTaskObserver
         // Валидируем только измененные поля
         if ($task->isDirty(['planned_start_date', 'planned_end_date', 'actual_start_date', 'actual_end_date'])) {
             $this->validateDates($task);
-            // Длительность вычисляется автоматически через computed property в модели
+            // Пересчитываем длительность при изменении дат
+            $this->calculateDuration($task);
         }
 
         // Проверка, что задача не завершается раньше начала
@@ -158,6 +160,71 @@ class ScheduleTaskObserver
         }
         
         Log::info('[ScheduleTaskObserver] validateDates completed successfully');
+    }
+
+    /**
+     * Вычислить длительность задачи на основе дат
+     */
+    protected function calculateDuration(ScheduleTask $task): void
+    {
+        // Плановая длительность
+        $startDateValue = $task->attributes['planned_start_date'] ?? $task->planned_start_date;
+        $endDateValue = $task->attributes['planned_end_date'] ?? $task->planned_end_date;
+        
+        if ($startDateValue && $endDateValue) {
+            try {
+                $startDate = $startDateValue instanceof Carbon 
+                    ? $startDateValue 
+                    : Carbon::parse($startDateValue);
+                    
+                $endDate = $endDateValue instanceof Carbon 
+                    ? $endDateValue 
+                    : Carbon::parse($endDateValue);
+                
+                $task->planned_duration_days = $startDate->diffInDays($endDate) + 1;
+                
+                Log::info('[ScheduleTaskObserver] Плановая длительность вычислена', [
+                    'planned_duration_days' => $task->planned_duration_days,
+                    'start' => $startDate->format('Y-m-d'),
+                    'end' => $endDate->format('Y-m-d'),
+                ]);
+            } catch (\Exception $e) {
+                Log::warning('[ScheduleTaskObserver] Не удалось вычислить плановую длительность', [
+                    'error' => $e->getMessage(),
+                ]);
+                // Если не удалось вычислить, устанавливаем 1 день по умолчанию
+                $task->planned_duration_days = 1;
+            }
+        } else {
+            // Если даты не указаны, устанавливаем 1 день по умолчанию
+            $task->planned_duration_days = 1;
+        }
+        
+        // Фактическая длительность
+        $actualStartValue = $task->attributes['actual_start_date'] ?? $task->actual_start_date;
+        $actualEndValue = $task->attributes['actual_end_date'] ?? $task->actual_end_date;
+        
+        if ($actualStartValue && $actualEndValue) {
+            try {
+                $actualStartDate = $actualStartValue instanceof Carbon 
+                    ? $actualStartValue 
+                    : Carbon::parse($actualStartValue);
+                    
+                $actualEndDate = $actualEndValue instanceof Carbon 
+                    ? $actualEndValue 
+                    : Carbon::parse($actualEndValue);
+                
+                $task->actual_duration_days = $actualStartDate->diffInDays($actualEndDate) + 1;
+                
+                Log::info('[ScheduleTaskObserver] Фактическая длительность вычислена', [
+                    'actual_duration_days' => $task->actual_duration_days,
+                ]);
+            } catch (\Exception $e) {
+                Log::warning('[ScheduleTaskObserver] Не удалось вычислить фактическую длительность', [
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
     }
 
 }
