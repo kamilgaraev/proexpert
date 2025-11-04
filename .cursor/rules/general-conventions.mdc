@@ -602,3 +602,4 @@ public function test_can_create_entity(): void
 8. ✅ **Meaningful Names**: используйте понятные имена
 9. ✅ **Small Functions**: функции должны делать одну вещь хорошо
 10. ✅ **Comments**: комментируйте ПОЧЕМУ, а не ЧТО
+11. ❌ **NO MD FILES**: не создавайте .md файлы (документацию, README, гайды) без явной просьбы пользователя
