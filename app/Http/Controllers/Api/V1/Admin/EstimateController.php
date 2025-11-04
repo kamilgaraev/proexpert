@@ -72,12 +72,18 @@ class EstimateController extends Controller
         ], 201);
     }
 
-    public function show($project, Estimate $estimate): JsonResponse
+    public function show(Request $request, $project, int $estimate): JsonResponse
     {
-        $this->authorize('view', $estimate);
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('view', $estimateModel);
         
         // Оптимизированная загрузка: используем рекурсивную загрузку с ограничением глубины
-        $estimate->load([
+        $estimateModel->load([
             // Загружаем только корневые разделы с их вложенностью
             'sections' => function ($query) {
                 $query->whereNull('parent_section_id')
@@ -116,15 +122,21 @@ class EstimateController extends Controller
         ]);
         
         return response()->json([
-            'data' => new EstimateResource($estimate)
+            'data' => new EstimateResource($estimateModel)
         ]);
     }
 
-    public function update(UpdateEstimateRequest $request, $project, Estimate $estimate): JsonResponse
+    public function update(UpdateEstimateRequest $request, $project, int $estimate): JsonResponse
     {
-        $this->authorize('update', $estimate);
+        $organizationId = $request->attributes->get('current_organization_id');
         
-        $estimate = $this->estimateService->update($estimate, $request->validated());
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('update', $estimateModel);
+        
+        $estimate = $this->estimateService->update($estimateModel, $request->validated());
         
         return response()->json([
             'data' => new EstimateResource($estimate),
@@ -132,12 +144,18 @@ class EstimateController extends Controller
         ]);
     }
 
-    public function destroy($project, Estimate $estimate): JsonResponse
+    public function destroy(Request $request, $project, int $estimate): JsonResponse
     {
-        $this->authorize('delete', $estimate);
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('delete', $estimateModel);
         
         try {
-            $this->estimateService->delete($estimate);
+            $this->estimateService->delete($estimateModel);
             
             return response()->json([
                 'message' => 'Смета успешно удалена'
@@ -149,12 +167,18 @@ class EstimateController extends Controller
         }
     }
 
-    public function duplicate($project, Estimate $estimate, Request $request): JsonResponse
+    public function duplicate(Request $request, $project, int $estimate): JsonResponse
     {
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
         $this->authorize('create', Estimate::class);
         
         $newEstimate = $this->estimateService->duplicate(
-            $estimate,
+            $estimateModel,
             $request->input('number'),
             $request->input('name')
         );
@@ -165,11 +189,17 @@ class EstimateController extends Controller
         ], 201);
     }
 
-    public function recalculate($project, Estimate $estimate): JsonResponse
+    public function recalculate(Request $request, $project, int $estimate): JsonResponse
     {
-        $this->authorize('update', $estimate);
+        $organizationId = $request->attributes->get('current_organization_id');
         
-        $totals = $this->calculationService->recalculateAll($estimate);
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('update', $estimateModel);
+        
+        $totals = $this->calculationService->recalculateAll($estimateModel);
         
         return response()->json([
             'data' => $totals,
@@ -177,25 +207,31 @@ class EstimateController extends Controller
         ]);
     }
 
-    public function dashboard($project, Estimate $estimate): JsonResponse
+    public function dashboard(Request $request, $project, int $estimate): JsonResponse
     {
-        $this->authorize('view', $estimate);
+        $organizationId = $request->attributes->get('current_organization_id');
         
-        $itemsCount = $estimate->items()->count();
-        $sectionsCount = $estimate->sections()->count();
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
         
-        $structure = $this->calculationService->getEstimateStructure($estimate);
+        $this->authorize('view', $estimateModel);
         
-        $versions = $this->repository->getVersions($estimate);
+        $itemsCount = $estimateModel->items()->count();
+        $sectionsCount = $estimateModel->sections()->count();
+        
+        $structure = $this->calculationService->getEstimateStructure($estimateModel);
+        
+        $versions = $this->repository->getVersions($estimateModel);
         
         return response()->json([
             'data' => [
-                'estimate' => new EstimateResource($estimate),
+                'estimate' => new EstimateResource($estimateModel),
                 'statistics' => [
                     'items_count' => $itemsCount,
                     'sections_count' => $sectionsCount,
-                    'total_amount' => $estimate->total_amount,
-                    'total_amount_with_vat' => $estimate->total_amount_with_vat,
+                    'total_amount' => $estimateModel->total_amount,
+                    'total_amount_with_vat' => $estimateModel->total_amount_with_vat,
                 ],
                 'cost_structure' => $structure,
                 'versions' => $versions->map(fn($v) => [
@@ -204,19 +240,25 @@ class EstimateController extends Controller
                     'created_at' => $v->created_at,
                 ]),
                 'related' => [
-                    'project' => $estimate->project,
-                    'contract' => $estimate->contract,
+                    'project' => $estimateModel->project,
+                    'contract' => $estimateModel->contract,
                 ],
             ]
         ]);
     }
 
-    public function structure($project, Estimate $estimate): JsonResponse
+    public function structure(Request $request, $project, int $estimate): JsonResponse
     {
-        $this->authorize('view', $estimate);
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('view', $estimateModel);
         
         // Оптимизированная загрузка структуры
-        $sections = $estimate->sections()
+        $sections = $estimateModel->sections()
             ->whereNull('parent_section_id')
             ->with([
                 'items.workType',
