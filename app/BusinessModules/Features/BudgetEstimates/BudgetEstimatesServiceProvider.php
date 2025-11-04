@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\BudgetEstimates;
 
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Route;
 use App\BusinessModules\Features\BudgetEstimates\Services\{
     EstimateService,
     EstimateCalculationService,
@@ -118,11 +119,60 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
      */
     protected function loadRoutes(): void
     {
+        // Маршруты БЕЗ контекста проекта (настройки, версии, шаблоны)
         $routesPath = __DIR__ . '/routes.php';
-
         if (file_exists($routesPath)) {
             require $routesPath;
         }
+        
+        // Маршруты В КОНТЕКСТЕ проекта (estimates CRUD, sections, items)
+        $this->loadProjectBasedRoutes();
+    }
+    
+    /**
+     * Загрузка маршрутов в контексте проекта
+     */
+    protected function loadProjectBasedRoutes(): void
+    {
+        Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.context', 'authorize:admin.access', 'interface:admin', 'project.context'])
+            ->prefix('api/v1/admin/projects/{project}')
+            ->group(function () {
+                Route::middleware(['budget-estimates.active'])
+                    ->prefix('estimates')
+                    ->group(function () {
+                        Route::get('/', [\App\Http\Controllers\Api\V1\Admin\EstimateController::class, 'index']);
+                        Route::post('/', [\App\Http\Controllers\Api\V1\Admin\EstimateController::class, 'store']);
+                        Route::get('/{estimate}', [\App\Http\Controllers\Api\V1\Admin\EstimateController::class, 'show']);
+                        Route::put('/{estimate}', [\App\Http\Controllers\Api\V1\Admin\EstimateController::class, 'update']);
+                        Route::delete('/{estimate}', [\App\Http\Controllers\Api\V1\Admin\EstimateController::class, 'destroy']);
+                        
+                        Route::post('/{estimate}/duplicate', [\App\Http\Controllers\Api\V1\Admin\EstimateController::class, 'duplicate']);
+                        Route::post('/{estimate}/recalculate', [\App\Http\Controllers\Api\V1\Admin\EstimateController::class, 'recalculate']);
+                        Route::get('/{estimate}/dashboard', [\App\Http\Controllers\Api\V1\Admin\EstimateController::class, 'dashboard']);
+                        Route::get('/{estimate}/structure', [\App\Http\Controllers\Api\V1\Admin\EstimateController::class, 'structure']);
+                        
+                        Route::prefix('{estimate}/sections')->group(function () {
+                            Route::get('/', [\App\Http\Controllers\Api\V1\Admin\EstimateSectionController::class, 'index']);
+                            Route::post('/', [\App\Http\Controllers\Api\V1\Admin\EstimateSectionController::class, 'store']);
+                        });
+                        
+                        Route::prefix('{estimate}/items')->group(function () {
+                            Route::get('/', [\App\Http\Controllers\Api\V1\Admin\EstimateItemController::class, 'index']);
+                            Route::post('/', [\App\Http\Controllers\Api\V1\Admin\EstimateItemController::class, 'store']);
+                            Route::post('/bulk', [\App\Http\Controllers\Api\V1\Admin\EstimateItemController::class, 'bulkStore']);
+                        });
+                        
+                        Route::prefix('import')->name('estimates.import.')->group(function () {
+                            Route::post('/upload', [\App\Http\Controllers\Api\V1\Admin\EstimateImportController::class, 'upload'])->name('upload');
+                            Route::post('/detect', [\App\Http\Controllers\Api\V1\Admin\EstimateImportController::class, 'detect'])->name('detect');
+                            Route::post('/map', [\App\Http\Controllers\Api\V1\Admin\EstimateImportController::class, 'map'])->name('map');
+                            Route::post('/match', [\App\Http\Controllers\Api\V1\Admin\EstimateImportController::class, 'match'])->name('match');
+                            Route::post('/execute', [\App\Http\Controllers\Api\V1\Admin\EstimateImportController::class, 'execute'])->name('execute');
+                            Route::get('/status/{jobId}', [\App\Http\Controllers\Api\V1\Admin\EstimateImportController::class, 'status'])->name('status');
+                            Route::get('/history', [\App\Http\Controllers\Api\V1\Admin\EstimateImportController::class, 'history'])->name('history');
+                        });
+                    });
+            });
     }
 
     /**
