@@ -18,7 +18,7 @@ use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\BudgetEstimate
 | (настройки модуля, операции с разделами/позициями, версии, шаблоны)
 |
 | ПРИМЕЧАНИЕ: Маршруты в контексте проекта находятся в:
-| app/BusinessModules/Features/BudgetEstimates/routes-project-based.php
+| routes/api/v1/admin/project-based.php (секция ESTIMATES)
 |
 */
 
