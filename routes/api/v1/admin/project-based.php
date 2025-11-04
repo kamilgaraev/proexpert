@@ -171,8 +171,6 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
     
     // === ESTIMATES (сметы в контексте проекта) ===
     // Загружаются из модуля Budget Estimates
-    if (file_exists(app_path('BusinessModules/Features/BudgetEstimates/routes-project-based.php'))) {
-        require app_path('BusinessModules/Features/BudgetEstimates/routes-project-based.php');
-    }
+    require app_path('BusinessModules/Features/BudgetEstimates/routes-project-based.php');
 });
 

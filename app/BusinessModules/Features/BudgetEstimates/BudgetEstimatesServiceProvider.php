@@ -121,7 +121,7 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         $routesPath = __DIR__ . '/routes.php';
 
         if (file_exists($routesPath)) {
-            $this->loadRoutesFrom($routesPath);
+            require $routesPath;
         }
     }
 
