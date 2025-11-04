@@ -17,11 +17,17 @@ class EstimateItemController extends Controller
         protected EstimateItemService $itemService
     ) {}
 
-    public function index(Request $request, Estimate $estimate): JsonResponse
+    public function index(Request $request, int $estimate): JsonResponse
     {
-        $this->authorize('view', $estimate);
+        $organizationId = $request->attributes->get('current_organization_id');
         
-        $items = $estimate->items()
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('view', $estimateModel);
+        
+        $items = $estimateModel->items()
             ->with(['workType', 'measurementUnit', 'section'])
             ->paginate($request->input('per_page', 50));
         
@@ -35,9 +41,15 @@ class EstimateItemController extends Controller
         ]);
     }
 
-    public function store(Request $request, Estimate $estimate): JsonResponse
+    public function store(Request $request, int $estimate): JsonResponse
     {
-        $this->authorize('update', $estimate);
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('update', $estimateModel);
         
         $validated = $request->validate([
             'estimate_section_id' => 'nullable|exists:estimate_sections,id',
@@ -53,9 +65,9 @@ class EstimateItemController extends Controller
             'metadata' => 'nullable|array',
         ]);
         
-        $validated['estimate_id'] = $estimate->id;
+        $validated['estimate_id'] = $estimateModel->id;
         
-        $item = $this->itemService->addItem($validated, $estimate);
+        $item = $this->itemService->addItem($validated, $estimateModel);
         
         return response()->json([
             'data' => new EstimateItemResource($item),
@@ -63,9 +75,15 @@ class EstimateItemController extends Controller
         ], 201);
     }
 
-    public function bulkStore(Request $request, Estimate $estimate): JsonResponse
+    public function bulkStore(Request $request, int $estimate): JsonResponse
     {
-        $this->authorize('update', $estimate);
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('update', $estimateModel);
         
         $validated = $request->validate([
             'items' => 'required|array',
@@ -80,7 +98,7 @@ class EstimateItemController extends Controller
             'items.*.is_manual' => 'nullable|boolean',
         ]);
         
-        $items = $this->itemService->bulkAdd($validated['items'], $estimate);
+        $items = $this->itemService->bulkAdd($validated['items'], $estimateModel);
         
         return response()->json([
             'data' => EstimateItemResource::collection($items),

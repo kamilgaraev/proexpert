@@ -16,11 +16,17 @@ class EstimateSectionController extends Controller
         protected EstimateSectionService $sectionService
     ) {}
 
-    public function index(Estimate $estimate): JsonResponse
+    public function index(Request $request, int $estimate): JsonResponse
     {
-        $this->authorize('view', $estimate);
+        $organizationId = $request->attributes->get('current_organization_id');
         
-        $sections = $estimate->sections()
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('view', $estimateModel);
+        
+        $sections = $estimateModel->sections()
             ->with([
                 'children.children.children.children',
                 'items',
@@ -37,9 +43,15 @@ class EstimateSectionController extends Controller
         ]);
     }
 
-    public function store(Request $request, Estimate $estimate): JsonResponse
+    public function store(Request $request, int $estimate): JsonResponse
     {
-        $this->authorize('update', $estimate);
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('update', $estimateModel);
         
         $validated = $request->validate([
             'parent_section_id' => 'nullable|exists:estimate_sections,id',
@@ -50,7 +62,7 @@ class EstimateSectionController extends Controller
             'is_summary' => 'nullable|boolean',
         ]);
         
-        $validated['estimate_id'] = $estimate->id;
+        $validated['estimate_id'] = $estimateModel->id;
         
         $section = $this->sectionService->createSection($validated);
         
