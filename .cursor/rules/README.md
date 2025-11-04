@@ -289,3 +289,4 @@ php artisan test --coverage
 **Дата создания**: Ноябрь 2025  
 **Основано на**: Модуль MultiOrganization v1.0.0
 
+

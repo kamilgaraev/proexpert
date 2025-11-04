@@ -170,7 +170,7 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         
         $router->aliasMiddleware(
             'budget-estimates.active',
-            \App\Http\Middleware\CheckModuleActive::class
+            \App\BusinessModules\Features\BudgetEstimates\Http\Middleware\EnsureBudgetEstimatesActive::class
         );
     }
 }

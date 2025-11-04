@@ -94,6 +94,7 @@ class BudgetEstimatesModule implements ModuleInterface, ConfigurableInterface
             'budget-estimates.analytics',
             'budget-estimates.versions.create',
             'budget-estimates.versions.compare',
+            'budget-estimates.manage-settings',
         ];
     }
 

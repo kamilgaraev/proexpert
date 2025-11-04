@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Admin\EstimateSectionController;
 use App\Http\Controllers\Api\V1\Admin\EstimateItemController;
 use App\Http\Controllers\Api\V1\Admin\EstimateVersionController;
 use App\Http\Controllers\Api\V1\Admin\EstimateTemplateController;
+use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\BudgetEstimatesSettingsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -127,6 +128,16 @@ Route::prefix('api/v1/admin')
             Route::delete('/{template}', [EstimateTemplateController::class, 'destroy'])->name('destroy');
             Route::post('/{template}/apply', [EstimateTemplateController::class, 'apply'])->name('apply');
             Route::post('/{template}/share', [EstimateTemplateController::class, 'share'])->name('share');
+        });
+
+        // ============================================
+        // НАСТРОЙКИ МОДУЛЯ
+        // ============================================
+        Route::prefix('modules/budget-estimates')->name('modules.budget_estimates.')->group(function () {
+            Route::get('/settings', [BudgetEstimatesSettingsController::class, 'show'])->name('settings.show');
+            Route::put('/settings', [BudgetEstimatesSettingsController::class, 'update'])->name('settings.update');
+            Route::post('/settings/reset', [BudgetEstimatesSettingsController::class, 'reset'])->name('settings.reset');
+            Route::get('/info', [BudgetEstimatesSettingsController::class, 'info'])->name('info');
         });
     });
 
