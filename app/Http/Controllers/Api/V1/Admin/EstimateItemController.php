@@ -17,7 +17,7 @@ class EstimateItemController extends Controller
         protected EstimateItemService $itemService
     ) {}
 
-    public function index(Request $request, int $estimate): JsonResponse
+    public function index(Request $request, $project, int $estimate): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
         
@@ -41,7 +41,7 @@ class EstimateItemController extends Controller
         ]);
     }
 
-    public function store(Request $request, int $estimate): JsonResponse
+    public function store(Request $request, $project, int $estimate): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
         
@@ -75,7 +75,7 @@ class EstimateItemController extends Controller
         ], 201);
     }
 
-    public function bulkStore(Request $request, int $estimate): JsonResponse
+    public function bulkStore(Request $request, $project, int $estimate): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
         

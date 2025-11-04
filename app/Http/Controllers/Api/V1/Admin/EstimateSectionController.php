@@ -16,7 +16,7 @@ class EstimateSectionController extends Controller
         protected EstimateSectionService $sectionService
     ) {}
 
-    public function index(Request $request, int $estimate): JsonResponse
+    public function index(Request $request, $project, int $estimate): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
         
@@ -43,7 +43,7 @@ class EstimateSectionController extends Controller
         ]);
     }
 
-    public function store(Request $request, int $estimate): JsonResponse
+    public function store(Request $request, $project, int $estimate): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
         
