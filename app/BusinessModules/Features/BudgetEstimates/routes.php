@@ -4,76 +4,23 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\EstimateController;
 use App\Http\Controllers\Api\V1\Admin\EstimateSectionController;
 use App\Http\Controllers\Api\V1\Admin\EstimateItemController;
+use App\Http\Controllers\Api\V1\Admin\EstimateImportController;
 use App\Http\Controllers\Api\V1\Admin\EstimateVersionController;
 use App\Http\Controllers\Api\V1\Admin\EstimateTemplateController;
 use App\BusinessModules\Features\BudgetEstimates\Http\Controllers\BudgetEstimatesSettingsController;
 
 /*
 |--------------------------------------------------------------------------
-| Budget Estimates Module Routes
+| Budget Estimates Module Routes (non-project)
 |--------------------------------------------------------------------------
 |
-| Маршруты для модуля "Сметное дело"
-| Все маршруты защищены middleware: auth:api_admin, organization.context, budget-estimates.active
+| Маршруты модуля, не требующие контекста проекта
+| (настройки модуля, операции с разделами/позициями, версии, шаблоны)
+|
+| ПРИМЕЧАНИЕ: Маршруты в контексте проекта находятся в:
+| app/BusinessModules/Features/BudgetEstimates/routes-project-based.php
 |
 */
-
-Route::prefix('api/v1/admin/projects/{project}')
-    ->name('admin.projects.estimates.')
-    ->middleware([
-        'auth:api_admin',
-        'auth.jwt:api_admin',
-        'organization.context',
-        'budget-estimates.active'
-    ])
-    ->group(function () {
-        
-        // ============================================
-        // ОСНОВНОЙ CRUD СМЕТ
-        // ============================================
-        Route::prefix('estimates')->group(function () {
-            Route::get('/', [EstimateController::class, 'index'])->name('index');
-            Route::post('/', [EstimateController::class, 'store'])->name('store');
-            Route::get('/{estimate}', [EstimateController::class, 'show'])->name('show');
-            Route::put('/{estimate}', [EstimateController::class, 'update'])->name('update');
-            Route::delete('/{estimate}', [EstimateController::class, 'destroy'])->name('destroy');
-            
-            // Специальные действия
-            Route::post('/{estimate}/duplicate', [EstimateController::class, 'duplicate'])->name('duplicate');
-            Route::post('/{estimate}/recalculate', [EstimateController::class, 'recalculate'])->name('recalculate');
-            Route::get('/{estimate}/dashboard', [EstimateController::class, 'dashboard'])->name('dashboard');
-            Route::get('/{estimate}/structure', [EstimateController::class, 'structure'])->name('structure');
-            
-            // ============================================
-            // РАЗДЕЛЫ СМЕТЫ
-            // ============================================
-            Route::prefix('{estimate}/sections')->name('sections.')->group(function () {
-                Route::get('/', [EstimateSectionController::class, 'index'])->name('index');
-                Route::post('/', [EstimateSectionController::class, 'store'])->name('store');
-            });
-            
-            // ============================================
-            // ПОЗИЦИИ СМЕТЫ
-            // ============================================
-            Route::prefix('{estimate}/items')->name('items.')->group(function () {
-                Route::get('/', [EstimateItemController::class, 'index'])->name('index');
-                Route::post('/', [EstimateItemController::class, 'store'])->name('store');
-                Route::post('/bulk', [EstimateItemController::class, 'bulkStore'])->name('bulk_store');
-            });
-            
-            // ============================================
-            // ИМПОРТ (будет реализован позже)
-            // ============================================
-            Route::prefix('{estimate}/import')->name('import.')->group(function () {
-                // Wizard steps:
-                // Route::post('/upload', [EstimateImportController::class, 'upload'])->name('upload');
-                // Route::post('/detect', [EstimateImportController::class, 'detect'])->name('detect');
-                // Route::post('/map', [EstimateImportController::class, 'map'])->name('map');
-                // Route::post('/match', [EstimateImportController::class, 'match'])->name('match');
-                // Route::post('/execute', [EstimateImportController::class, 'execute'])->name('execute');
-            });
-        });
-    });
 
 // ============================================
 // МАРШРУТЫ БЕЗ КОНТЕКСТА ПРОЕКТА
