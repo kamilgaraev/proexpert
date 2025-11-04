@@ -9,7 +9,7 @@ class EstimatePolicy
 {
     public function viewAny(User $user): bool
     {
-        return $user->hasPermission('budget-estimates.view') || $user->hasPermission('budget-estimates.view_all');
+        return $this->hasModulePermission($user, ['view', 'view_all', '*']);
     }
 
     public function view(User $user, Estimate $estimate): bool
@@ -20,14 +20,26 @@ class EstimatePolicy
         }
         
         // Если есть любой из permissions для просмотра
-        return $user->hasPermission('budget-estimates.view') 
-            || $user->hasPermission('budget-estimates.view_all')
-            || $user->hasPermission('budget-estimates.manage');
+        return $this->hasModulePermission($user, ['view', 'view_all', 'manage', '*']);
+    }
+    
+    /**
+     * Проверка наличия прав модуля (с поддержкой wildcard)
+     */
+    private function hasModulePermission(User $user, array $permissions): bool
+    {
+        foreach ($permissions as $permission) {
+            if ($user->hasPermission("budget-estimates.{$permission}")) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     public function create(User $user): bool
     {
-        return $user->hasPermission('budget-estimates.create');
+        return $this->hasModulePermission($user, ['create', '*']);
     }
 
     public function update(User $user, Estimate $estimate): bool
@@ -37,34 +49,34 @@ class EstimatePolicy
         }
         
         if ($estimate->isApproved()) {
-            return $user->hasPermission('budget-estimates.edit_approved');
+            return $this->hasModulePermission($user, ['edit_approved', '*']);
         }
         
-        return $user->hasPermission('budget-estimates.edit');
+        return $this->hasModulePermission($user, ['edit', 'manage', '*']);
     }
 
     public function delete(User $user, Estimate $estimate): bool
     {
-        return $user->hasPermission('budget-estimates.delete') 
+        return $this->hasModulePermission($user, ['delete', '*'])
             && $user->current_organization_id === $estimate->organization_id
             && !$estimate->isApproved();
     }
 
     public function approve(User $user, Estimate $estimate): bool
     {
-        return $user->hasPermission('budget-estimates.approve') 
+        return $this->hasModulePermission($user, ['approve', '*'])
             && $user->current_organization_id === $estimate->organization_id
             && $estimate->status === 'in_review';
     }
 
     public function import(User $user): bool
     {
-        return $user->hasPermission('budget-estimates.import');
+        return $this->hasModulePermission($user, ['import', '*']);
     }
 
     public function export(User $user, Estimate $estimate): bool
     {
-        return $user->hasPermission('budget-estimates.export') 
+        return $this->hasModulePermission($user, ['export', '*'])
             && $user->current_organization_id === $estimate->organization_id;
     }
 }
