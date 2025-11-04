@@ -3,6 +3,7 @@
 return [
     App\BusinessModules\Features\AdvancedDashboard\AdvancedDashboardServiceProvider::class,
     App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider::class,
+    App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesServiceProvider::class,
     App\BusinessModules\Features\Notifications\NotificationServiceProvider::class,
     App\Providers\AppServiceProvider::class,
     App\Providers\AuthServiceProvider::class,
