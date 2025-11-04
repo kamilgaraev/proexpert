@@ -14,12 +14,15 @@ class EstimatePolicy
 
     public function view(User $user, Estimate $estimate): bool
     {
-        if ($user->hasPermission('budget-estimates.view_all')) {
-            return $user->current_organization_id === $estimate->organization_id;
+        // Проверка организации
+        if ($user->current_organization_id !== $estimate->organization_id) {
+            return false;
         }
         
+        // Если есть любой из permissions для просмотра
         return $user->hasPermission('budget-estimates.view') 
-            && $user->current_organization_id === $estimate->organization_id;
+            || $user->hasPermission('budget-estimates.view_all')
+            || $user->hasPermission('budget-estimates.manage');
     }
 
     public function create(User $user): bool
