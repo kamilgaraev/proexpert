@@ -29,46 +29,8 @@ class RouteServiceProvider extends ServiceProvider
             return \App\Models\ContractPerformanceAct::findOrFail($value);
         });
         
-        Route::bind('estimate', function ($value) {
-            $estimate = \App\Models\Estimate::findOrFail($value);
-            
-            $user = request()->user();
-            if ($user && $user->current_organization_id) {
-                if ($estimate->organization_id !== $user->current_organization_id) {
-                    abort(403, 'У вас нет доступа к этой смете');
-                }
-            }
-            
-            return $estimate;
-        });
-        
-        Route::bind('section', function ($value) {
-            $section = \App\Models\EstimateSection::findOrFail($value);
-            
-            $user = request()->user();
-            if ($user && $user->current_organization_id) {
-                $estimate = $section->estimate;
-                if ($estimate && $estimate->organization_id !== $user->current_organization_id) {
-                    abort(403, 'У вас нет доступа к этому разделу сметы');
-                }
-            }
-            
-            return $section;
-        });
-        
-        Route::bind('item', function ($value) {
-            $item = \App\Models\EstimateItem::findOrFail($value);
-            
-            $user = request()->user();
-            if ($user && $user->current_organization_id) {
-                $estimate = $item->estimate;
-                if ($estimate && $estimate->organization_id !== $user->current_organization_id) {
-                    abort(403, 'У вас нет доступа к этой позиции сметы');
-                }
-            }
-            
-            return $item;
-        });
+        // Route Model Binding для estimate, section, item УДАЛЕНЫ
+        // Контроллеры теперь сами загружают модели и проверяют организацию
         
         Route::bind('template', function ($value) {
             $template = \App\Models\EstimateTemplate::findOrFail($value);
