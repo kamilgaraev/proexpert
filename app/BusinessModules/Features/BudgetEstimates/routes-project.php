@@ -39,6 +39,15 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
             Route::prefix('{estimate}/sections')->name('sections.')->group(function () {
                 Route::get('/', [EstimateSectionController::class, 'index'])->name('index');
                 Route::post('/', [EstimateSectionController::class, 'store'])->name('store');
+                
+                // Массовое изменение порядка разделов (для drag-and-drop)
+                Route::post('/reorder', [EstimateSectionController::class, 'reorder'])->name('reorder');
+                
+                // Пересчет нумерации разделов
+                Route::post('/recalculate-numbers', [EstimateSectionController::class, 'recalculateNumbers'])->name('recalculate_numbers');
+                
+                // Валидация нумерации
+                Route::get('/validate-numbering', [EstimateSectionController::class, 'validateNumbering'])->name('validate_numbering');
             });
             
             // Позиции сметы
@@ -46,6 +55,12 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
                 Route::get('/', [EstimateItemController::class, 'index'])->name('index');
                 Route::post('/', [EstimateItemController::class, 'store'])->name('store');
                 Route::post('/bulk', [EstimateItemController::class, 'bulkStore'])->name('bulk_store');
+                
+                // Массовое изменение порядка позиций (для drag-and-drop)
+                Route::post('/reorder', [EstimateItemController::class, 'reorder'])->name('reorder');
+                
+                // Пересчет нумерации позиций
+                Route::post('/recalculate-numbers', [EstimateItemController::class, 'recalculateNumbers'])->name('recalculate_numbers');
             });
             
             // Импорт смет

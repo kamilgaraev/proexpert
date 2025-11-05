@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemService;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemNumberingService;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateItemResource;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
@@ -14,7 +15,8 @@ use Illuminate\Http\Request;
 class EstimateItemController extends Controller
 {
     public function __construct(
-        protected EstimateItemService $itemService
+        protected EstimateItemService $itemService,
+        protected EstimateItemNumberingService $numberingService
     ) {}
 
     public function index(Request $request, $project, int $estimate): JsonResponse
@@ -166,6 +168,137 @@ class EstimateItemController extends Controller
             'data' => new EstimateItemResource($item),
             'message' => 'Позиция успешно перемещена'
         ]);
+    }
+
+    /**
+     * Массовое обновление порядка позиций (для drag-and-drop)
+     * 
+     * @param Request $request
+     * @param int $project ID проекта
+     * @param int $estimate ID сметы
+     * @return JsonResponse
+     * 
+     * Формат входных данных:
+     * {
+     *   "items": [
+     *     {"id": 1, "estimate_section_id": 1, "sort_order": 0},
+     *     {"id": 2, "estimate_section_id": 1, "sort_order": 1},
+     *     {"id": 3, "estimate_section_id": 2, "sort_order": 0}
+     *   ],
+     *   "numbering_mode": "section"  // optional: global, section, hierarchical
+     * }
+     */
+    public function reorder(Request $request, $project, int $estimate): JsonResponse
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('update', $estimateModel);
+        
+        $validated = $request->validate([
+            'items' => 'required|array',
+            'items.*.id' => 'required|exists:estimate_items,id',
+            'items.*.estimate_section_id' => 'nullable|exists:estimate_sections,id',
+            'items.*.sort_order' => 'required|integer|min:0',
+            'numbering_mode' => 'nullable|string|in:global,section,hierarchical',
+        ]);
+
+        $numberingMode = $validated['numbering_mode'] ?? EstimateItemNumberingService::NUMBERING_BY_SECTION;
+
+        try {
+            // Обновляем порядок и секции для всех позиций
+            foreach ($validated['items'] as $itemData) {
+                $item = EstimateItem::find($itemData['id']);
+                
+                // Проверяем, что позиция принадлежит данной смете
+                if ($item->estimate_id !== $estimateModel->id) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => "Позиция {$itemData['id']} не принадлежит данной смете"
+                    ], 422);
+                }
+                
+                $item->update([
+                    'estimate_section_id' => $itemData['estimate_section_id'] ?? null,
+                    // sort_order будет использоваться для определения порядка при пересчете
+                ]);
+            }
+
+            // Пересчитываем номера всех позиций после изменения порядка
+            $this->numberingService->recalculateAllItemNumbers($estimateModel->id, $numberingMode);
+
+            // Возвращаем обновленный список позиций
+            $items = $estimateModel->items()
+                ->with(['workType', 'measurementUnit', 'section'])
+                ->orderBy('estimate_section_id')
+                ->orderBy('position_number')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Порядок позиций успешно обновлен',
+                'data' => EstimateItemResource::collection($items)
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('estimate.items.reorder.error', [
+                'estimate_id' => $estimateModel->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось обновить порядок позиций'
+            ], 500);
+        }
+    }
+
+    /**
+     * Пересчитать номера всех позиций сметы вручную
+     * 
+     * @param Request $request
+     * @param int $project ID проекта
+     * @param int $estimate ID сметы
+     * @return JsonResponse
+     */
+    public function recalculateNumbers(Request $request, $project, int $estimate): JsonResponse
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('update', $estimateModel);
+
+        $validated = $request->validate([
+            'numbering_mode' => 'nullable|string|in:global,section,hierarchical',
+        ]);
+
+        $numberingMode = $validated['numbering_mode'] ?? EstimateItemNumberingService::NUMBERING_BY_SECTION;
+
+        try {
+            $this->numberingService->recalculateAllItemNumbers($estimateModel->id, $numberingMode);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Нумерация позиций успешно пересчитана',
+                'numbering_mode' => $numberingMode
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('estimate.items.recalculate_numbers.error', [
+                'estimate_id' => $estimateModel->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось пересчитать нумерацию'
+            ], 500);
+        }
     }
 }
 

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionService;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionNumberingService;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateSectionResource;
 use App\Models\Estimate;
 use App\Models\EstimateSection;
@@ -13,7 +14,8 @@ use Illuminate\Http\Request;
 class EstimateSectionController extends Controller
 {
     public function __construct(
-        protected EstimateSectionService $sectionService
+        protected EstimateSectionService $sectionService,
+        protected EstimateSectionNumberingService $numberingService
     ) {}
 
     public function index(Request $request, $project, int $estimate): JsonResponse
@@ -55,7 +57,7 @@ class EstimateSectionController extends Controller
         
         $validated = $request->validate([
             'parent_section_id' => 'nullable|exists:estimate_sections,id',
-            'section_number' => 'required|string|max:50',
+            'section_number' => 'nullable|string|max:50', // ОПЦИОНАЛЬНЫЙ - генерируется автоматически, если не указан
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
             'sort_order' => 'nullable|integer',
@@ -142,6 +144,166 @@ class EstimateSectionController extends Controller
             'data' => new EstimateSectionResource($section),
             'message' => 'Раздел успешно перемещен'
         ]);
+    }
+
+    /**
+     * Массовое обновление порядка разделов (для drag-and-drop)
+     * 
+     * @param Request $request
+     * @param int $project ID проекта
+     * @param int $estimate ID сметы
+     * @return JsonResponse
+     * 
+     * Формат входных данных:
+     * {
+     *   "sections": [
+     *     {"id": 1, "sort_order": 0, "parent_section_id": null},
+     *     {"id": 2, "sort_order": 1, "parent_section_id": null},
+     *     {"id": 3, "sort_order": 0, "parent_section_id": 1},
+     *   ]
+     * }
+     */
+    public function reorder(Request $request, $project, int $estimate): JsonResponse
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('update', $estimateModel);
+        
+        $validated = $request->validate([
+            'sections' => 'required|array',
+            'sections.*.id' => 'required|exists:estimate_sections,id',
+            'sections.*.sort_order' => 'required|integer|min:0',
+            'sections.*.parent_section_id' => 'nullable|exists:estimate_sections,id',
+        ]);
+
+        try {
+            // Обновляем порядок и родителей для всех разделов
+            foreach ($validated['sections'] as $sectionData) {
+                $section = EstimateSection::find($sectionData['id']);
+                
+                // Проверяем, что раздел принадлежит данной смете
+                if ($section->estimate_id !== $estimateModel->id) {
+                    return response()->json([
+                        'success' => false,
+                        'error' => "Раздел {$sectionData['id']} не принадлежит данной смете"
+                    ], 422);
+                }
+                
+                $section->update([
+                    'sort_order' => $sectionData['sort_order'],
+                    'parent_section_id' => $sectionData['parent_section_id'] ?? null,
+                ]);
+            }
+
+            // Пересчитываем номера всех разделов после изменения порядка
+            $this->numberingService->recalculateAllSectionNumbers($estimateModel->id);
+
+            // Возвращаем обновленную иерархию разделов
+            $sections = $estimateModel->sections()
+                ->with([
+                    'children.children.children.children',
+                    'items',
+                    'children.items',
+                    'children.children.items',
+                    'children.children.children.items',
+                ])
+                ->whereNull('parent_section_id')
+                ->orderBy('sort_order')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Порядок разделов успешно обновлен',
+                'data' => EstimateSectionResource::collection($sections)
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('estimate.sections.reorder.error', [
+                'estimate_id' => $estimateModel->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось обновить порядок разделов'
+            ], 500);
+        }
+    }
+
+    /**
+     * Пересчитать номера всех разделов сметы вручную
+     * Полезно для нормализации после импорта или исправления ошибок
+     */
+    public function recalculateNumbers(Request $request, $project, int $estimate): JsonResponse
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('update', $estimateModel);
+
+        try {
+            $this->numberingService->recalculateAllSectionNumbers($estimateModel->id);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Нумерация разделов успешно пересчитана'
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('estimate.sections.recalculate_numbers.error', [
+                'estimate_id' => $estimateModel->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось пересчитать нумерацию'
+            ], 500);
+        }
+    }
+
+    /**
+     * Валидация корректности нумерации разделов
+     * Возвращает список ошибок, если они есть
+     */
+    public function validateNumbering(Request $request, $project, int $estimate): JsonResponse
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $this->authorize('view', $estimateModel);
+
+        try {
+            $errors = $this->numberingService->validateNumbering($estimateModel->id);
+
+            return response()->json([
+                'success' => true,
+                'is_valid' => empty($errors),
+                'errors' => $errors,
+                'message' => empty($errors) 
+                    ? 'Нумерация корректна' 
+                    : 'Обнаружены ошибки в нумерации'
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('estimate.sections.validate_numbering.error', [
+                'estimate_id' => $estimateModel->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось выполнить валидацию'
+            ], 500);
+        }
     }
 }
 

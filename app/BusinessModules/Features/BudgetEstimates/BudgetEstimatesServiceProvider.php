@@ -10,6 +10,8 @@ use App\BusinessModules\Features\BudgetEstimates\Services\{
     EstimateItemService,
     EstimateVersionService,
     EstimateTemplateService,
+    EstimateSectionNumberingService,
+    EstimateItemNumberingService,
 };
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\{
     EstimateProjectIntegrationService,
@@ -98,6 +100,10 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         $this->app->singleton(EstimateItemService::class);
         $this->app->singleton(EstimateVersionService::class);
         $this->app->singleton(EstimateTemplateService::class);
+        
+        // Numbering сервисы для автоматической нумерации
+        $this->app->singleton(EstimateSectionNumberingService::class);
+        $this->app->singleton(EstimateItemNumberingService::class);
 
         // Import сервисы
         $this->app->singleton(EstimateImportService::class);
@@ -164,6 +170,7 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
     protected function registerObservers(): void
     {
         \App\Models\Estimate::observe(\App\BusinessModules\Features\BudgetEstimates\Observers\EstimateObserver::class);
+        \App\Models\EstimateSection::observe(\App\BusinessModules\Features\BudgetEstimates\Observers\EstimateSectionObserver::class);
     }
 
     /**

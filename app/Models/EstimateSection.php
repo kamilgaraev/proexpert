@@ -15,6 +15,7 @@ class EstimateSection extends Model
         'estimate_id',
         'parent_section_id',
         'section_number',
+        'full_section_number',
         'name',
         'description',
         'sort_order',
