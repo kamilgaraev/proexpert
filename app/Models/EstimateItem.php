@@ -15,6 +15,7 @@ class EstimateItem extends Model
     protected $fillable = [
         'estimate_id',
         'estimate_section_id',
+        'parent_work_id', // ⭐ ID родительской работы ГЭСН
         'normative_rate_id',
         'normative_rate_code',
         'item_type',
@@ -55,6 +56,7 @@ class EstimateItem extends Model
         'justification',
         'notes',
         'is_manual',
+        'is_not_accounted', // ⭐ Флаг "не учтенного" материала (буква Н)
         'metadata',
     ];
 
@@ -89,6 +91,7 @@ class EstimateItem extends Model
         'total_amount' => 'decimal:2',
         'current_total_amount' => 'decimal:2',
         'is_manual' => 'boolean',
+        'is_not_accounted' => 'boolean', // ⭐ Флаг "Н"
         'metadata' => 'array',
     ];
 
@@ -100,6 +103,22 @@ class EstimateItem extends Model
     public function section(): BelongsTo
     {
         return $this->belongsTo(EstimateSection::class, 'estimate_section_id');
+    }
+
+    /**
+     * ⭐ Родительская работа ГЭСН (для подпозиций: материалы, механизмы, labor)
+     */
+    public function parentWork(): BelongsTo
+    {
+        return $this->belongsTo(EstimateItem::class, 'parent_work_id');
+    }
+
+    /**
+     * ⭐ Подпозиции (материалы, механизмы, labor) этой работы ГЭСН
+     */
+    public function childItems(): HasMany
+    {
+        return $this->hasMany(EstimateItem::class, 'parent_work_id');
     }
 
     public function workType(): BelongsTo

@@ -88,6 +88,7 @@ class ResourceMatchingService
                     'source' => 'estimate_import',
                     'imported_at' => now()->toIso8601String(),
                     'item_type' => $itemType,
+                    'is_not_accounted' => $additionalData['is_not_accounted'] ?? false, // ⭐ Флаг "Н"
                 ], $additionalData),
             ]);
 
@@ -141,6 +142,7 @@ class ResourceMatchingService
                 'metadata' => array_merge([
                     'source' => 'estimate_import',
                     'imported_at' => now()->toIso8601String(),
+                    'is_not_accounted' => $additionalData['is_not_accounted'] ?? false, // ⭐ Флаг "Н"
                 ], $additionalData),
             ]);
 
@@ -198,6 +200,7 @@ class ResourceMatchingService
                 'metadata' => array_merge([
                     'source' => 'estimate_import',
                     'imported_at' => now()->toIso8601String(),
+                    'is_not_accounted' => $additionalData['is_not_accounted'] ?? false, // ⭐ Флаг "Н"
                 ], $additionalData),
             ]);
 

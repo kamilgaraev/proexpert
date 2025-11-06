@@ -235,7 +235,7 @@ class EstimateImportService
                     // Найден норматив по коду
                     if ($normativeMatch['confidence'] === 100) {
                         $summary['code_exact_matches']++;
-                    } else {
+            } else {
                         $summary['code_fuzzy_matches']++;
                     }
                     
@@ -284,7 +284,7 @@ class EstimateImportService
                     'warning' => 'Код отсутствует, поиск по названию пока не реализован',
                 ];
                 $summary['new_work_types_needed']++;
-            }
+                }
             
             if ($matchResult) {
                 $matchResults[] = $matchResult;
@@ -535,6 +535,9 @@ class EstimateImportService
         $codeMatches = 0;
         $nameMatches = 0;
         
+        // ⭐ Отслеживание текущей работы ГЭСН для связывания подпозиций
+        $currentWorkId = null;
+        
         // 🔍 СТАТИСТИКА ПО ТИПАМ ДЛЯ ЛОГИРОВАНИЯ
         $typeStats = [
             'work' => 0,
@@ -586,6 +589,7 @@ class EstimateImportService
                 $itemData = [
                     'estimate_id' => $estimate->id,
                     'estimate_section_id' => $sectionId,
+                    'parent_work_id' => null, // ⭐ Будет установлен для подпозиций
                     'item_type' => $itemType,
                     'name' => $item['item_name'],
                     'unit' => $item['unit'],
@@ -599,12 +603,18 @@ class EstimateImportService
                     'price_coefficient' => $item['price_coefficient'] ?? null,
                     'current_total_amount' => $item['current_total_amount'] ?? null,
                     'code' => $item['code'] ?? null,
+                    'is_not_accounted' => $item['is_not_accounted'] ?? false, // ⭐ Флаг "Н"
                 ];
                 
                 // ⭐ ЛОГИКА ИМПОРТА С УЧЕТОМ ТИПА ПОЗИЦИИ
                 
                 // ⭐ ВСЕ РЕСУРСЫ (материалы, механизмы, трудозатраты): ищем/создаем в справочниках
                 if (in_array($itemType, ['material', 'equipment', 'machinery', 'labor'])) {
+                    // ⭐ Устанавливаем связь с родительской работой ГЭСН
+                    if ($currentWorkId) {
+                        $itemData['parent_work_id'] = $currentWorkId;
+                    }
+                    
                     if (!empty($item['code'])) {
                         try {
                             // Универсальный поиск/создание ресурса
@@ -615,7 +625,10 @@ class EstimateImportService
                                 $item['unit'],
                                 $item['unit_price'] ?? null,
                                 $organizationId,
-                                ['item_type' => $itemType]
+                                [
+                                    'item_type' => $itemType,
+                                    'is_not_accounted' => $item['is_not_accounted'] ?? false, // ⭐ Передаем флаг "Н"
+                                ]
                             );
                             
                             // Связываем с позицией сметы
@@ -633,6 +646,8 @@ class EstimateImportService
                                 'resource_id' => $result['resource']->id,
                                 'name' => $result['resource']->name,
                                 'created' => $result['created'],
+                                'parent_work_id' => $currentWorkId,
+                                'is_not_accounted' => $item['is_not_accounted'] ?? false,
                             ]);
                         } catch (\Exception $e) {
                             Log::error('estimate_import.resource_failed', [
@@ -701,8 +716,11 @@ class EstimateImportService
                 }
                 
                 // Импортируем позицию работы (с нормативом или без)
-                $this->itemService->addItem($itemData, $estimate);
+                $createdItem = $this->itemService->addItem($itemData, $estimate);
                 $imported++;
+                
+                // ⭐ Обновляем текущую работу ГЭСН для связывания последующих подпозиций
+                $currentWorkId = $createdItem->id;
                 
             } catch (\Exception $e) {
                 Log::error('estimate_import.create_item.failed', [

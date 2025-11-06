@@ -567,6 +567,16 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 continue;
             }
             
+            // ⭐ Пропуск служебных строк (заголовки групп, пояснения)
+            if ($this->shouldSkipRow($rowData)) {
+                Log::debug('[ExcelParser] Служебная строка пропущена', [
+                    'row' => $rowNum,
+                    'code' => $rowData['code'],
+                    'name' => substr($rowData['name'] ?? '', 0, 50),
+                ]);
+                continue;
+            }
+            
             $isSection = $this->isSectionRow($rowData);
             $level = $this->calculateSectionLevel($rowData['section_number']);
             
@@ -611,6 +621,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'price_coefficient' => null,
             'current_total_amount' => null,
             'code' => null,
+            'is_not_accounted' => false, // ⭐ Флаг "не учтенного" материала
         ];
         
         $numericFields = [
@@ -625,6 +636,13 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'current_total_amount',
         ];
         
+        // ⭐ Проверка буквы "Н" в колонке A (не учтенный материал)
+        $cellA = $sheet->getCell('A' . $rowNum);
+        $valueA = trim((string)$cellA->getValue());
+        if (mb_strtoupper($valueA) === 'Н') {
+            $data['is_not_accounted'] = true;
+        }
+        
         foreach ($columnMapping as $field => $columnLetter) {
             if ($columnLetter !== null) {
                 $cell = $sheet->getCell($columnLetter . $rowNum);
@@ -638,8 +656,8 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             }
         }
         
-        // 🔍 ЛОГИРОВАНИЕ ПЕРВЫХ 5 СТРОК ДЛЯ ДИАГНОСТИКИ
-        if ($rowNum <= 10) {
+        // 🔍 ЛОГИРОВАНИЕ (теперь без ограничения <= 10, чтобы видеть все строки)
+        if ($rowNum >= 30 && $rowNum <= 50) {
             Log::info("[ExcelParser] Row {$rowNum} extracted data", [
                 'row' => $rowNum,
                 'section_number' => $data['section_number'],
@@ -648,6 +666,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 'unit' => $data['unit'],
                 'quantity' => $data['quantity'],
                 'unit_price' => $data['unit_price'],
+                'is_not_accounted' => $data['is_not_accounted'],
             ]);
         }
         
@@ -668,6 +687,17 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $originalName = $data['name'] ?? '';
         $codeFromColumn = $data['code'] ?? '';
         
+        // ⭐ ФИЛЬТР ПСЕВДО-КОДОВ: игнорировать служебные строки
+        if (!empty($codeFromColumn) && $this->codeService->isPseudoCode($codeFromColumn)) {
+            Log::debug('[ExcelParser] Псевдо-код игнорируется', [
+                'code' => $codeFromColumn,
+                'name' => substr($originalName, 0, 50),
+            ]);
+            // Очистить псевдо-код
+            $data['code'] = null;
+            $codeFromColumn = '';
+        }
+        
         // Если код уже есть в отдельной колонке - нормализуем его
         if (!empty($codeFromColumn)) {
             $extracted = $this->codeService->extractCode($codeFromColumn);
@@ -686,6 +716,15 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             $extracted = $this->codeService->extractCode($originalName);
             
             if ($extracted) {
+                // ⭐ Проверка на псевдо-код
+                if ($this->codeService->isPseudoCode($extracted['code'])) {
+                    Log::debug('[ExcelParser] Псевдо-код из названия игнорируется', [
+                        'code' => $extracted['code'],
+                        'name' => substr($originalName, 0, 50),
+                    ]);
+                    return $data;
+                }
+                
                 $data['code'] = $extracted['code'];
                 $data['code_type'] = $extracted['type'];
                 $data['code_normalized'] = $this->codeService->normalizeCode($extracted['code']);
@@ -711,6 +750,54 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         }
         
         return $data;
+    }
+    
+    /**
+     * Проверить, является ли строка служебной (должна быть пропущена)
+     * 
+     * Служебные строки:
+     * - Заголовки групп: "ОТ(ЗТ)", "ЭМ", "М", "ОТм(ЗТм)"
+     * - Пояснения: "Объем=...", "Тех.часть...", "Примечание", "ИТОГО"
+     * - Категории (одиночные цифры без дефисов): "1", "2", "4"
+     * 
+     * НО НЕ валидные коды: "1-100-20", "ГЭСН01-01-012-20"
+     * 
+     * @param array $rowData Данные строки
+     * @return bool true если строку нужно пропустить
+     */
+    private function shouldSkipRow(array $rowData): bool
+    {
+        $name = trim($rowData['name'] ?? '');
+        $code = trim($rowData['code'] ?? '');
+        
+        // Если есть валидный код - НЕ пропускать
+        if (!empty($code) && !$this->codeService->isPseudoCode($code)) {
+            return false;
+        }
+        
+        // Если название - псевдо-код (заголовок группы)
+        if ($this->codeService->isPseudoCode($name)) {
+            return true;
+        }
+        
+        // Дополнительные пояснения (часто идут после основной позиции)
+        $skipPatterns = [
+            '/^Объем\s*=/ui',
+            '/^Тех\.?\s*часть/ui',
+            '/^Примечание/ui',
+            '/^ИТОГО\s+по/ui',
+            '/^ВСЕГО\s+по/ui',
+            '/^В том числе/ui',
+            '/^Из них/ui',
+        ];
+        
+        foreach ($skipPatterns as $pattern) {
+            if (preg_match($pattern, $name)) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     private function parseNumericValue($value): ?float

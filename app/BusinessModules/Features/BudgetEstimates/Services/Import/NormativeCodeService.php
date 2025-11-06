@@ -18,6 +18,7 @@ class NormativeCodeService
      * Типы нормативных баз
      */
     private const TYPE_GESN = 'GESN';
+    private const TYPE_GESN_TECH = 'GESN_TECH'; // Техническая часть ГЭСН (1-100-20, 4-100-060)
     private const TYPE_FER = 'FER';
     private const TYPE_TER = 'TER';
     private const TYPE_FSBC = 'FSBC';
@@ -30,6 +31,10 @@ class NormativeCodeService
     private const PATTERNS = [
         // ГЭСН: ГЭСН01-01-012-20 или ГЭСН-01-01-012-20
         self::TYPE_GESN => '/^(ГЭСН|GESN)[-\s]?(\d{2}[-.]?\d{2}[-.]?\d{3}(?:[-.]?\d{2})?)/ui',
+        
+        // Техническая часть ГЭСН: 1-100-20, 4-100-060 (средний разряд работы/машинистов)
+        // Формат: Х-ХХХ-ХХ или Х-ХХХ-ХХХ (одна цифра, дефис, три цифры, дефис, 2-3 цифры)
+        self::TYPE_GESN_TECH => '/^(\d)[-](\d{3})[-](\d{2,3})(?:\s|$)/u',
         
         // ФЕР: ФЕР01-01-012-1 или ФЕР-01-01-012-1
         self::TYPE_FER => '/^(ФЕР|FER)[-\s]?(\d{2}[-.]?\d{2}[-.]?\d{3}(?:[-.]?\d{1,2})?)/ui',
@@ -187,6 +192,68 @@ class NormativeCodeService
     }
 
     /**
+     * Проверить, является ли строка псевдо-кодом (служебной строкой)
+     * 
+     * Псевдо-коды - это:
+     * - Одиночные цифры: "1", "2", "4" (категории разделов)
+     * - Заголовки групп: "ОТ(ЗТ)", "ЭМ", "М", "ОТм(ЗТм)"
+     * - Пояснения: "Объем=...", "Тех.часть..."
+     * 
+     * НО НЕ коды технической части ГЭСН: "1-100-20", "4-100-060"
+     * 
+     * @param string $text Текст для проверки
+     * @return bool true если это псевдо-код, false если валидный код
+     */
+    public function isPseudoCode(string $text): bool
+    {
+        $text = trim($text);
+        
+        // Пустая строка - псевдо-код
+        if (empty($text)) {
+            return true;
+        }
+        
+        // Одиночная цифра без дефисов - это категория раздела (псевдо-код)
+        if (preg_match('/^\d{1}$/', $text)) {
+            return true;
+        }
+        
+        // Заголовки групп
+        $groupHeaders = [
+            'ОТ(ЗТ)', 'ОТ (ЗТ)', 'ОТ',
+            'ЭМ',
+            'М',
+            'ОТм(ЗТм)', 'ОТм (ЗТм)', 'ОТм',
+            'МАТ', 'МАТЕРИАЛЫ',
+            'МЕХ', 'МЕХАНИЗМЫ',
+        ];
+        
+        $upperText = mb_strtoupper($text);
+        foreach ($groupHeaders as $header) {
+            if ($upperText === mb_strtoupper($header)) {
+                return true;
+            }
+        }
+        
+        // Пояснения
+        if (preg_match('/^(Объем|Тех\.часть|Примечание|ИТОГО)/ui', $text)) {
+            return true;
+        }
+        
+        // Если это валидный код (включая GESN_TECH) - НЕ псевдо-код
+        if ($this->isValidCode($text)) {
+            return false;
+        }
+        
+        // Если содержит только текст без цифр и дефисов - скорее всего заголовок
+        if (preg_match('/^[а-яёА-ЯЁa-zA-Z\s\(\)]+$/u', $text)) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
      * Получить префикс кода (ГЭСН, ФЕР и т.д.)
      * 
      * @param string $code Код норматива
@@ -247,6 +314,7 @@ class NormativeCodeService
     {
         return match($type) {
             self::TYPE_GESN => 'ГЭСН (Государственные элементные сметные нормы)',
+            self::TYPE_GESN_TECH => 'ГЭСН Техническая часть (средний разряд работы)',
             self::TYPE_FER => 'ФЕР (Федеральные единичные расценки)',
             self::TYPE_TER => 'ТЕР (Территориальные единичные расценки)',
             self::TYPE_FSBC => 'ФСБЦ (Федеральная служба по ценообразованию)',
