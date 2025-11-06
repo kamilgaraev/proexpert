@@ -388,11 +388,17 @@ class EstimateImportService
             $jobId
         )->onQueue('imports');
         
+        // ⭐ Получаем project_id из настроек для правильного URL
+        $projectId = $estimateSettings['project_id'] ?? null;
+        $statusUrl = $projectId 
+            ? "/api/v1/admin/projects/{$projectId}/estimates/import/status/{$jobId}"
+            : "/api/v1/admin/estimates/import/status/{$jobId}";
+        
         return [
             'status' => 'processing',
             'job_id' => $jobId,
             'estimated_completion' => now()->addMinutes(5)->toIso8601String(),
-            'check_status_url' => "/api/v1/estimates/import/status/{$jobId}",
+            'check_status_url' => $statusUrl,
         ];
     }
 
