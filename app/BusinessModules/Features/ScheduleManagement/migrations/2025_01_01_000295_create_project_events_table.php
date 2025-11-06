@@ -21,14 +21,9 @@ return new class extends Migration
             $table->foreignId('organization_id')
                 ->constrained('organizations')
                 ->onDelete('cascade');
-            $table->foreignId('schedule_id')
-                ->nullable()
-                ->constrained('project_schedules')
-                ->onDelete('set null');
-            $table->foreignId('related_task_id')
-                ->nullable()
-                ->constrained('schedule_tasks')
-                ->onDelete('set null');
+            // Связь с графиком (опциональная, без FK constraint для независимости)
+            $table->unsignedBigInteger('schedule_id')->nullable();
+            $table->unsignedBigInteger('related_task_id')->nullable();
             $table->foreignId('created_by_user_id')
                 ->nullable()
                 ->constrained('users')
@@ -68,10 +63,8 @@ return new class extends Migration
             $table->boolean('is_recurring')->default(false);
             $table->string('recurrence_pattern')->nullable(); // daily, weekly, monthly
             $table->json('recurrence_config')->nullable(); // Детали повторения
-            $table->foreignId('recurring_parent_id')
-                ->nullable()
-                ->constrained('project_events')
-                ->onDelete('cascade');
+            // Родительское событие для повторяющихся событий (без FK для гибкости)
+            $table->unsignedBigInteger('recurring_parent_id')->nullable();
             
             // Вложения и заметки
             $table->json('attachments')->nullable(); // Файлы
