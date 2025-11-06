@@ -419,6 +419,12 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'code' => null,
         ];
         
+        // 🔍 ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ ЗАГОЛОВКОВ
+        Log::info('[ExcelParser] Detecting columns from headers', [
+            'headers_count' => count($headers),
+            'headers' => $headers,
+        ]);
+        
         foreach ($headers as $columnLetter => $headerText) {
             $normalized = mb_strtolower(trim($headerText));
             
@@ -427,10 +433,40 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                     foreach ($keywords as $keyword) {
                         if (str_contains($normalized, $keyword)) {
                             $mapping[$field] = $columnLetter;
+                            
+                            Log::debug('[ExcelParser] Column mapped', [
+                                'field' => $field,
+                                'column' => $columnLetter,
+                                'header_text' => $headerText,
+                                'matched_keyword' => $keyword,
+                            ]);
+                            
                             break 2;
                         }
                     }
                 }
+            }
+        }
+        
+        // 🔍 ЛОГИРОВАНИЕ ФИНАЛЬНОГО MAPPING
+        Log::info('[ExcelParser] Final column mapping', [
+            'mapping' => $mapping,
+            'name_column' => $mapping['name'],
+            'code_column' => $mapping['code'],
+            'unit_column' => $mapping['unit'],
+            'quantity_column' => $mapping['quantity'],
+            'unit_price_column' => $mapping['unit_price'],
+        ]);
+        
+        // ⚠️ ПРЕДУПРЕЖДЕНИЯ О НЕЗАМАПЛЕННЫХ КРИТИЧНЫХ КОЛОНКАХ
+        $criticalFields = ['name'];
+        foreach ($criticalFields as $field) {
+            if ($mapping[$field] === null) {
+                Log::warning('[ExcelParser] Critical field not mapped', [
+                    'field' => $field,
+                    'available_headers' => $headers,
+                    'keywords' => $this->columnKeywords[$field] ?? [],
+                ]);
             }
         }
         
@@ -600,6 +636,19 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                     $data[$field] = $value !== null ? trim((string)$value) : null;
                 }
             }
+        }
+        
+        // 🔍 ЛОГИРОВАНИЕ ПЕРВЫХ 5 СТРОК ДЛЯ ДИАГНОСТИКИ
+        if ($rowNum <= 10) {
+            Log::info("[ExcelParser] Row {$rowNum} extracted data", [
+                'row' => $rowNum,
+                'section_number' => $data['section_number'],
+                'name' => substr($data['name'] ?? '', 0, 100), // Первые 100 символов
+                'code' => $data['code'],
+                'unit' => $data['unit'],
+                'quantity' => $data['quantity'],
+                'unit_price' => $data['unit_price'],
+            ]);
         }
         
         // Улучшенное извлечение кода норматива

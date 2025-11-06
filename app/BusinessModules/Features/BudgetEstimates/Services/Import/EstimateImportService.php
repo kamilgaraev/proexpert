@@ -535,14 +535,54 @@ class EstimateImportService
         $codeMatches = 0;
         $nameMatches = 0;
         
-        foreach ($items as $item) {
+        // 🔍 СТАТИСТИКА ПО ТИПАМ ДЛЯ ЛОГИРОВАНИЯ
+        $typeStats = [
+            'work' => 0,
+            'material' => 0,
+            'equipment' => 0,
+            'machinery' => 0,
+            'labor' => 0,
+            'summary' => 0,
+        ];
+        
+        $totalItems = count($items);
+        
+        Log::info('[EstimateImport] ⏳ Начало импорта позиций', [
+            'total_items' => $totalItems,
+            'organization_id' => $organizationId,
+        ]);
+        
+        foreach ($items as $index => $item) {
             try {
+                // 🔍 ЛОГИРУЕМ КАЖДУЮ 50-Ю ПОЗИЦИЮ
+                if ($index > 0 && $index % 50 === 0) {
+                    Log::info("[EstimateImport] ⏳ Прогресс: {$index}/{$totalItems}", [
+                        'imported' => $imported,
+                        'skipped' => $skipped,
+                        'types' => $typeStats,
+                    ]);
+                }
+                
                 $sectionId = null;
                 if (!empty($item['section_path']) && isset($sectionsMap[$item['section_path']])) {
                     $sectionId = $sectionsMap[$item['section_path']];
                 }
                 
                 $itemType = $item['item_type'] ?? 'work';
+                $typeStats[$itemType] = ($typeStats[$itemType] ?? 0) + 1;
+                
+                // 🔍 ЛОГИРУЕМ ПЕРВЫЕ 3 ПОЗИЦИИ ПОЛНОСТЬЮ
+                if ($index < 3) {
+                    Log::info("[EstimateImport] 🔍 Позиция #{$index}", [
+                        'type' => $itemType,
+                        'name' => substr($item['item_name'] ?? '', 0, 100),
+                        'code' => $item['code'] ?? null,
+                        'unit' => $item['unit'] ?? null,
+                        'quantity' => $item['quantity'] ?? null,
+                        'unit_price' => $item['unit_price'] ?? null,
+                    ]);
+                }
+                
                 $itemData = [
                     'estimate_id' => $estimate->id,
                     'estimate_section_id' => $sectionId,
@@ -672,6 +712,16 @@ class EstimateImportService
                 $skipped++;
             }
         }
+        
+        // 🔍 ФИНАЛЬНАЯ СТАТИСТИКА ИМПОРТА
+        Log::info('[EstimateImport] ✅ Импорт завершен', [
+            'total_items' => $totalItems,
+            'imported' => $imported,
+            'skipped' => $skipped,
+            'code_matches' => $codeMatches,
+            'name_matches' => $nameMatches,
+            'types_breakdown' => $typeStats,
+        ]);
         
         return [
             'imported' => $imported,
