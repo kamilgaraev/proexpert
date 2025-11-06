@@ -152,7 +152,7 @@ class ProjectEventController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
 
-            $event = ProjectEvent::with(['createdBy', 'relatedTask', 'schedule', 'project'])
+            $event = ProjectEvent::with(['createdBy', 'project'])
                 ->where('project_id', $projectId)
                 ->where('organization_id', $organizationId)
                 ->findOrFail($eventId);
@@ -203,8 +203,8 @@ class ProjectEventController extends Controller
                 'is_blocking' => 'sometimes|boolean',
                 'priority' => 'sometimes|string|in:low,normal,high,critical',
                 'status' => 'sometimes|string|in:scheduled,in_progress,completed,cancelled',
-                'schedule_id' => 'nullable|integer|exists:project_schedules,id',
-                'related_task_id' => 'nullable|integer|exists:schedule_tasks,id',
+                'schedule_id' => 'nullable|integer',
+                'related_task_id' => 'nullable|integer',
                 'participants' => 'nullable|array',
                 'participants.*' => 'integer|exists:users,id',
                 'responsible_users' => 'nullable|array',
@@ -225,7 +225,7 @@ class ProjectEventController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Событие успешно создано',
-                'data' => $event->load(['createdBy', 'relatedTask']),
+                'data' => $event->load(['createdBy']),
             ], 201);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
@@ -279,8 +279,8 @@ class ProjectEventController extends Controller
                 'is_blocking' => 'sometimes|boolean',
                 'priority' => 'sometimes|string|in:low,normal,high,critical',
                 'status' => 'sometimes|string|in:scheduled,in_progress,completed,cancelled',
-                'schedule_id' => 'nullable|integer|exists:project_schedules,id',
-                'related_task_id' => 'nullable|integer|exists:schedule_tasks,id',
+                'schedule_id' => 'nullable|integer',
+                'related_task_id' => 'nullable|integer',
                 'participants' => 'nullable|array',
                 'responsible_users' => 'nullable|array',
                 'organizations' => 'nullable|array',
@@ -299,7 +299,7 @@ class ProjectEventController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Событие успешно обновлено',
-                'data' => $updatedEvent->load(['createdBy', 'relatedTask']),
+                'data' => $updatedEvent->load(['createdBy']),
             ]);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json([

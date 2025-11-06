@@ -20,7 +20,7 @@ class ProjectEventService
         array $filters = []
     ): Collection {
         $query = ProjectEvent::query()
-            ->with(['createdBy', 'relatedTask', 'schedule'])
+            ->with(['createdBy'])
             ->forProject($projectId)
             ->inDateRange($startDate, $endDate);
 
@@ -55,7 +55,7 @@ class ProjectEventService
         array $filters = []
     ): LengthAwarePaginator {
         $query = ProjectEvent::query()
-            ->with(['createdBy', 'relatedTask', 'schedule'])
+            ->with(['createdBy'])
             ->forProject($projectId);
 
         // Применяем фильтры
@@ -195,7 +195,7 @@ class ProjectEventService
     public function getUpcomingEvents(int $projectId, int $days = 7): Collection
     {
         return ProjectEvent::query()
-            ->with(['createdBy', 'relatedTask'])
+            ->with(['createdBy'])
             ->forProject($projectId)
             ->upcoming($days)
             ->orderBy('event_date')
@@ -209,7 +209,7 @@ class ProjectEventService
     public function getTodayEvents(int $projectId): Collection
     {
         return ProjectEvent::query()
-            ->with(['createdBy', 'relatedTask'])
+            ->with(['createdBy'])
             ->forProject($projectId)
             ->whereDate('event_date', today())
             ->whereIn('status', ['scheduled', 'in_progress'])
