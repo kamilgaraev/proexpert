@@ -339,25 +339,56 @@ class EstimateImportService
             metadata: $previewData['metadata']
         );
         
+        // ⭐ Создаем запись в истории ДО начала импорта (для updateProgress)
+        if ($jobId) {
+            EstimateImportHistory::create([
+                'organization_id' => $fileData['organization_id'],
+                'user_id' => $fileData['user_id'],
+                'job_id' => $jobId,
+                'file_name' => $fileData['file_name'],
+                'file_path' => $fileData['file_path'],
+                'file_size' => $fileData['file_size'],
+                'file_format' => $this->detectFileFormat($fileData['file_path']),
+                'status' => 'processing',
+                'progress' => 0,
+            ]);
+        }
+        
         try {
             $result = $this->createEstimateFromImport($importDTO, $matchingConfig, $estimateSettings, $jobId);
             
             $processingTime = (microtime(true) - $startTime) * 1000;
             $result->processingTimeMs = (int)$processingTime;
             
-            $this->recordImportHistory($fileData, $result, 'completed', null, $jobId); // ⭐ Передаем jobId
+            // ⭐ Обновляем запись (а не создаем новую)
+            if ($jobId) {
+                EstimateImportHistory::where('job_id', $jobId)->update([
+                    'status' => 'completed',
+                    'estimate_id' => $result->estimateId,
+                    'items_imported' => $result->itemsImported,
+                    'result_log' => $result->toArray(),
+                    'processing_time_ms' => $result->processingTimeMs,
+                    'progress' => 100,
+                ]);
+            }
             
             $this->cleanup($fileId);
             
             return [
                 'status' => 'completed',
-                'job_id' => $jobId, // ⭐ Возвращаем job_id для отслеживания
+                'job_id' => $jobId,
                 'estimate_id' => $result->estimateId,
                 'result' => $result->toArray(),
             ];
             
         } catch (\Exception $e) {
-            $this->recordImportHistory($fileData, null, 'failed', $e->getMessage(), $jobId); // ⭐ Передаем jobId
+            // ⭐ Обновляем запись при ошибке
+            if ($jobId) {
+                EstimateImportHistory::where('job_id', $jobId)->update([
+                    'status' => 'failed',
+                    'result_log' => ['error' => $e->getMessage()],
+                ]);
+            }
             throw $e;
         }
     }
@@ -886,24 +917,6 @@ class EstimateImportService
         }
         
         return $data;
-    }
-
-    private function recordImportHistory(array $fileData, ?EstimateImportResultDTO $result, string $status, ?string $error = null, ?string $jobId = null): void
-    {
-        EstimateImportHistory::create([
-            'organization_id' => $fileData['organization_id'],
-            'user_id' => $fileData['user_id'],
-            'job_id' => $jobId, // ⭐ Сохраняем job_id для отслеживания статуса
-            'file_name' => $fileData['file_name'],
-            'file_path' => $fileData['file_path'],
-            'file_size' => $fileData['file_size'],
-            'file_format' => $this->detectFileFormat($fileData['file_path']),
-            'status' => $status,
-            'estimate_id' => $result?->estimateId,
-            'items_imported' => $result?->itemsImported ?? 0,
-            'result_log' => $result?->toArray() ?? ['error' => $error],
-            'processing_time_ms' => $result?->processingTimeMs,
-        ]);
     }
 
     private function detectFileFormat(string $filePath): string

@@ -397,7 +397,7 @@ class EstimateItemTypeDetector
         
         // РАБОТЫ: ФСБЦ (формат ФСБЦ-XX.X.XX.XX-XXXX с буквами)
         if (preg_match('/^(ФСБЦ|ФССЦ|ФСБЦс|ФССЦп)[А-Я]?-\d{2}\.\d/ui', $code)) {
-            return 'work';
+        return 'work';
         }
         
         // МАТЕРИАЛЫ: ФСБЦ материалы (формат 01.X.XX.XX-XXXX или 14.X.XX.XX-XXXX)
