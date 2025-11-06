@@ -315,6 +315,13 @@ class EstimateImportService
         // ⭐ Генерируем job_id для отслеживания статуса
         $jobId = Str::uuid()->toString();
         
+        Log::info('[EstimateImport] 🚀 Начало импорта', [
+            'file_id' => $fileId,
+            'items_count' => $itemsCount,
+            'job_id' => $jobId,
+            'import_type' => $itemsCount <= 500 ? 'sync' : 'async',
+        ]);
+        
         if ($itemsCount <= 500) {
             return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId);
         } else {
@@ -341,7 +348,13 @@ class EstimateImportService
         
         // ⭐ Создаем запись в истории ДО начала импорта (для updateProgress)
         if ($jobId) {
-            EstimateImportHistory::create([
+            Log::info('[EstimateImport] 🔵 Создаём запись в истории', [
+                'job_id' => $jobId,
+                'organization_id' => $fileData['organization_id'],
+                'user_id' => $fileData['user_id'],
+            ]);
+            
+            $historyRecord = EstimateImportHistory::create([
                 'organization_id' => $fileData['organization_id'],
                 'user_id' => $fileData['user_id'],
                 'job_id' => $jobId,
@@ -352,6 +365,13 @@ class EstimateImportService
                 'status' => 'processing',
                 'progress' => 0,
             ]);
+            
+            Log::info('[EstimateImport] ✅ Запись создана', [
+                'id' => $historyRecord->id,
+                'job_id' => $historyRecord->job_id,
+            ]);
+        } else {
+            Log::warning('[EstimateImport] ⚠️ jobId не передан в syncImport!');
         }
         
         try {
@@ -435,7 +455,42 @@ class EstimateImportService
 
     public function getImportStatus(string $jobId): array
     {
-        $history = EstimateImportHistory::where('job_id', $jobId)->firstOrFail();
+        Log::info('[EstimateImport] 🔍 Поиск статуса импорта', [
+            'job_id' => $jobId,
+            'job_id_length' => strlen($jobId),
+        ]);
+        
+        // Проверим, есть ли вообще записи
+        $totalRecords = EstimateImportHistory::count();
+        $recordsWithJobId = EstimateImportHistory::whereNotNull('job_id')->count();
+        
+        Log::info('[EstimateImport] 📊 Статистика БД', [
+            'total_records' => $totalRecords,
+            'records_with_job_id' => $recordsWithJobId,
+        ]);
+        
+        $history = EstimateImportHistory::where('job_id', $jobId)->first();
+        
+        if (!$history) {
+            Log::error('[EstimateImport] ❌ Запись НЕ НАЙДЕНА', [
+                'job_id' => $jobId,
+                'last_10_job_ids' => EstimateImportHistory::whereNotNull('job_id')
+                    ->orderBy('created_at', 'desc')
+                    ->limit(10)
+                    ->pluck('job_id')
+                    ->toArray(),
+            ]);
+            
+            throw new \Illuminate\Database\Eloquent\ModelNotFoundException(
+                "EstimateImportHistory not found for job_id: {$jobId}"
+            );
+        }
+        
+        Log::info('[EstimateImport] ✅ Запись найдена', [
+            'id' => $history->id,
+            'status' => $history->status,
+            'progress' => $history->progress,
+        ]);
         
         return [
             'status' => $history->status,
