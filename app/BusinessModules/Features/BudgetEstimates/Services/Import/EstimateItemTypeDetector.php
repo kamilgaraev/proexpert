@@ -316,8 +316,16 @@ class EstimateItemTypeDetector
     {
         $justificationUpper = mb_strtoupper($justification ?? '');
         $nameUpper = mb_strtoupper($name);
-        $combinedText = trim(($code ?? '') . ' ' . ($justification ?? '') . ' ' . $name);
+        $codeValue = $code ?? $justification ?? '';
+        $combinedText = trim($codeValue . ' ' . $name);
         
+        // ⭐ ПРИОРИТЕТ 1: Определение по формату кода (САМОЕ ТОЧНОЕ)
+        $typeByCode = $this->detectTypeByCode($codeValue);
+        if ($typeByCode !== null) {
+            return $typeByCode;
+        }
+        
+        // ПРИОРИТЕТ 2: По префиксам в шифре
         if (preg_match('/^(ОТм|ЭТм|ТЗ|ТЗм|ТЗп|ФОТ)/ui', $justificationUpper)) {
             return 'labor';
         }
@@ -330,12 +338,13 @@ class EstimateItemTypeDetector
             return 'equipment';
         }
         
-        if ($this->matchesPatterns($combinedText, $this->laborPatterns)) {
-            return 'labor';
-        }
-        
+        // ПРИОРИТЕТ 3: По ключевым словам
         if ($this->matchesPatterns($combinedText, $this->summaryPatterns)) {
             return 'summary';
+        }
+        
+        if ($this->matchesPatterns($combinedText, $this->laborPatterns)) {
+            return 'labor';
         }
         
         if ($this->matchesPatterns($combinedText, $this->equipmentPatterns)) {
@@ -346,15 +355,64 @@ class EstimateItemTypeDetector
             return 'material';
         }
         
+        // ПРИОРИТЕТ 4: По виду кода работы
         if ($this->looksLikeWorkCode($justification)) {
             return 'work';
         }
         
-        if ($this->hasNumericCode($code)) {
+        // По умолчанию - работа
+        return 'work';
+    }
+    
+    /**
+     * Определение типа позиции по формату кода (самый точный метод)
+     * 
+     * @param string $code Код позиции
+     * @return string|null Тип или null если не определен
+     */
+    private function detectTypeByCode(string $code): ?string
+    {
+        if (empty($code)) {
+            return null;
+        }
+        
+        $code = trim($code);
+        
+        // РАБОТЫ: ГЭСН, ФЕР, ТЕР (формат XX-XX-XXX-XX)
+        if (preg_match('/^(ГЭСН|ГСН|ФЕР|ТЕР)?-?\d{2}-\d{2}-\d{3}-\d{1,2}$/ui', $code)) {
             return 'work';
         }
         
-        return 'work';
+        // РАБОТЫ: ФСБЦ (формат ФСБЦ-XX.X.XX.XX-XXXX с буквами)
+        if (preg_match('/^(ФСБЦ|ФССЦ|ФСБЦс|ФССЦп)[А-Я]?-\d{2}\.\d/ui', $code)) {
+            return 'work';
+        }
+        
+        // МАТЕРИАЛЫ: ФСБЦ материалы (формат 01.X.XX.XX-XXXX или 14.X.XX.XX-XXXX)
+        if (preg_match('/^(01|14)\.\d{1,2}\.\d{1,2}\.\d{1,2}-\d{4}$/u', $code)) {
+            return 'material';
+        }
+        
+        // МЕХАНИЗМЫ/ОБОРУДОВАНИЕ: коды 91.XX.XX-XXX
+        if (preg_match('/^91\.\d{2}\.\d{2}-\d{3}$/u', $code)) {
+            return 'equipment';
+        }
+        
+        // ОБОРУДОВАНИЕ: коды 08.X.XX.XX-XXXX
+        if (preg_match('/^08\.\d{1,2}\.\d{1,2}\.\d{1,2}-\d{4}$/u', $code)) {
+            return 'equipment';
+        }
+        
+        // МАТЕРИАЛЫ: общий формат XX.XX.XX-XXX (кроме 91 и 08)
+        if (preg_match('/^(\d{2})\.\d{2}\.\d{2}-\d{3,4}$/u', $code, $matches)) {
+            $prefix = $matches[1];
+            // 91 = механизмы, 08 = оборудование (уже обработаны выше)
+            if (!in_array($prefix, ['91', '08'])) {
+                return 'material';
+            }
+        }
+        
+        return null;
     }
 
     private function matchesPatterns(string $text, array $patterns): bool

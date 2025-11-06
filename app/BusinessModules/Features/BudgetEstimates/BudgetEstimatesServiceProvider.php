@@ -21,6 +21,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\{
     EstimateImportService,
     NormativeCodeService,
     NormativeMatchingService,
+    ResourceMatchingService,
 };
 use App\Repositories\{
     EstimateRepository,
@@ -110,6 +111,7 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         $this->app->singleton(EstimateImportService::class);
         $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeCodeService::class);
         $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeMatchingService::class);
+        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\ResourceMatchingService::class);
     }
 
     /**
@@ -136,6 +138,12 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         $routesProjectPath = __DIR__ . '/routes-project.php';
         if (file_exists($routesProjectPath)) {
             require $routesProjectPath;
+        }
+
+        // Маршруты СПРАВОЧНИКОВ РЕСУРСОВ (механизмы, трудозатраты)
+        $catalogsRoutesPath = __DIR__ . '/routes-catalogs.php';
+        if (file_exists($catalogsRoutesPath)) {
+            require $catalogsRoutesPath;
         }
     }
 
