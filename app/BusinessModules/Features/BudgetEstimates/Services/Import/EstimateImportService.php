@@ -501,7 +501,11 @@ class EstimateImportService
     {
         $sectionsMap = [];
         
-        foreach ($sections as $sectionData) {
+        Log::info('[EstimateImport] 📁 Создание разделов', [
+            'total_sections' => count($sections),
+        ]);
+        
+        foreach ($sections as $index => $sectionData) {
             if (empty($sectionData['section_number'])) {
                 continue;
             }
@@ -521,7 +525,24 @@ class EstimateImportService
             ]);
             
             $sectionsMap[$sectionData['section_number']] = $section->id;
+            
+            // 🔍 ЛОГИРУЕМ ПЕРВЫЕ 10 РАЗДЕЛОВ
+            if ($index < 10) {
+                Log::info("[EstimateImport] 📁 Раздел #{$index}", [
+                    'section_number' => $sectionData['section_number'],
+                    'name' => substr($sectionData['item_name'] ?? '', 0, 100),
+                    'level' => $sectionData['level'] ?? 0,
+                    'parent_id' => $parentId,
+                    'section_id' => $section->id,
+                    'map_key' => $sectionData['section_number'],
+                ]);
+            }
         }
+        
+        Log::info('[EstimateImport] ✅ Разделы созданы', [
+            'total_created' => count($sectionsMap),
+            'map_keys' => array_keys($sectionsMap),
+        ]);
         
         return $sectionsMap;
     }
@@ -571,19 +592,25 @@ class EstimateImportService
                 }
                 
                 $sectionId = null;
-                if (!empty($item['section_path']) && isset($sectionsMap[$item['section_path']])) {
-                    $sectionId = $sectionsMap[$item['section_path']];
+                $sectionPath = $item['section_path'] ?? null;
+                
+                // ⭐ ПОПЫТКА НАЙТИ РАЗДЕЛ ПО section_path
+                if (!empty($sectionPath) && isset($sectionsMap[$sectionPath])) {
+                    $sectionId = $sectionsMap[$sectionPath];
                 }
                 
                 $itemType = $item['item_type'] ?? 'work';
                 $typeStats[$itemType] = ($typeStats[$itemType] ?? 0) + 1;
                 
-                // 🔍 ЛОГИРУЕМ ПЕРВЫЕ 3 ПОЗИЦИИ ПОЛНОСТЬЮ
-                if ($index < 3) {
+                // 🔍 ЛОГИРУЕМ ПЕРВЫЕ 10 ПОЗИЦИЙ С ПРИВЯЗКОЙ К РАЗДЕЛАМ
+                if ($index < 10) {
                     Log::info("[EstimateImport] 🔍 Позиция #{$index}", [
                         'type' => $itemType,
                         'name' => substr($item['item_name'] ?? '', 0, 100),
                         'code' => $item['code'] ?? null,
+                        'section_path' => $sectionPath,
+                        'section_id' => $sectionId,
+                        'section_found' => $sectionId !== null,
                         'unit' => $item['unit'] ?? null,
                         'quantity' => $item['quantity'] ?? null,
                         'unit_price' => $item['unit_price'] ?? null,
