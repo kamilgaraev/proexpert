@@ -550,7 +550,8 @@ class EstimateImportService
                 $sectionsMap,
                 $matchingConfig,
                 $newWorkTypes,
-                $settings['organization_id']
+                $settings['organization_id'],
+                $jobId
             );
             
             $this->updateProgress($jobId, 85);
@@ -645,7 +646,8 @@ class EstimateImportService
         array $sectionsMap,
         array $matchingConfig,
         array $newWorkTypes,
-        int $organizationId
+        int $organizationId,
+        ?string $jobId = null
     ): array {
         $imported = 0;
         $skipped = 0;
@@ -674,13 +676,18 @@ class EstimateImportService
         
         foreach ($items as $index => $item) {
             try {
-                // 🔍 ЛОГИРУЕМ КАЖДУЮ 50-Ю ПОЗИЦИЮ
+                // 🔍 ЛОГИРУЕМ И ОБНОВЛЯЕМ ПРОГРЕСС КАЖДЫЕ 50 ПОЗИЦИЙ
                 if ($index > 0 && $index % 50 === 0) {
                     Log::info("[EstimateImport] ⏳ Прогресс: {$index}/{$totalItems}", [
                         'imported' => $imported,
                         'skipped' => $skipped,
                         'types' => $typeStats,
                     ]);
+                    
+                    // ⭐ Обновляем прогресс: 50-85% (диапазон для createItems)
+                    $itemsProgress = ($index / $totalItems) * 35; // 35% диапазона (50% начало -> 85% конец)
+                    $currentProgress = 50 + (int)$itemsProgress;
+                    $this->updateProgress($jobId, $currentProgress);
                 }
                 
                 $sectionId = null;
@@ -775,14 +782,14 @@ class EstimateImportService
                                 'parent_work_id' => $currentWorkId,
                                 'is_not_accounted' => $item['is_not_accounted'] ?? false,
                             ]);
-                        } catch (\Exception $e) {
+            } catch (\Exception $e) {
                             Log::error('estimate_import.resource_failed', [
                                 'type' => $itemType,
                                 'code' => $item['code'],
                                 'name' => $item['item_name'],
                                 'error' => $e->getMessage(),
                             ]);
-                        }
+    }
                     }
                     
                     $this->itemService->addItem($itemData, $estimate);
@@ -839,7 +846,7 @@ class EstimateImportService
                         'name' => $item['item_name'],
                         'reason' => 'Name search not implemented yet',
                     ]);
-                }
+            }
                 
                 // Импортируем позицию работы (с нормативом или без)
                 $createdItem = $this->itemService->addItem($itemData, $estimate);
@@ -873,8 +880,8 @@ class EstimateImportService
             'code_matches' => $codeMatches,
             'name_matches' => $nameMatches,
         ];
-    }
-
+        }
+        
     // Метод удален - теперь поиск идет только через NormativeMatchingService
 
     private function findOrCreateUnit(string $unitName, int $organizationId): MeasurementUnit
@@ -1007,8 +1014,14 @@ class EstimateImportService
             return;
         }
 
-        EstimateImportHistory::where('job_id', $jobId)
+        $updated = EstimateImportHistory::where('job_id', $jobId)
             ->update(['progress' => $progress]);
+        
+        Log::info('[EstimateImport] 📊 Прогресс обновлен', [
+            'job_id' => $jobId,
+            'progress' => $progress,
+            'updated_rows' => $updated,
+        ]);
     }
 }
 
