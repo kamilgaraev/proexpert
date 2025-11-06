@@ -623,6 +623,9 @@ class EstimateImportService
                     ]);
                 }
                 
+                // ⭐ Fallback: если unit_price = null, используем current_unit_price
+                $unitPrice = $item['unit_price'] ?? $item['current_unit_price'] ?? 0;
+                
                 $itemData = [
                     'estimate_id' => $estimate->id,
                     'estimate_section_id' => $sectionId,
@@ -633,10 +636,10 @@ class EstimateImportService
                     'quantity' => $item['quantity'],
                     'quantity_coefficient' => $item['quantity_coefficient'] ?? null,
                     'quantity_total' => $item['quantity_total'] ?? null,
-                    'unit_price' => $item['unit_price'],
+                    'unit_price' => $unitPrice, // ⭐ С fallback на current_unit_price
                     'base_unit_price' => $item['base_unit_price'] ?? null,
                     'price_index' => $item['price_index'] ?? null,
-                    'current_unit_price' => $item['current_unit_price'] ?? null,
+                    'current_unit_price' => $item['current_unit_price'] ?? $unitPrice, // ⭐ Обратный fallback
                     'price_coefficient' => $item['price_coefficient'] ?? null,
                     'current_total_amount' => $item['current_total_amount'] ?? null,
                     'code' => $item['code'] ?? null,
