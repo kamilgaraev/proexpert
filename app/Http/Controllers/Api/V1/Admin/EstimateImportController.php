@@ -251,14 +251,26 @@ class EstimateImportController extends Controller
         }
     }
 
-    public function status(Request $request, string $jobId): JsonResponse
+    public function status(Request $request, string $project, string $jobId): JsonResponse
     {
         try {
+            Log::info('[EstimateImport] 🎯 Status endpoint called', [
+                'project' => $project,
+                'job_id' => $jobId,
+                'url' => $request->fullUrl(),
+            ]);
+            
             $status = $this->importService->getImportStatus($jobId);
             
             return response()->json($status);
             
         } catch (\Exception $e) {
+            Log::error('[EstimateImport] ❌ Status endpoint error', [
+                'project' => $project,
+                'job_id' => $jobId,
+                'error' => $e->getMessage(),
+            ]);
+            
             return response()->json([
                 'error' => 'Статус импорта не найден',
                 'message' => $e->getMessage(),
