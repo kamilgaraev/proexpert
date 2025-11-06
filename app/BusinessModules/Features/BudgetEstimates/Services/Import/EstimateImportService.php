@@ -1014,14 +1014,27 @@ class EstimateImportService
             return;
         }
 
-        $updated = EstimateImportHistory::where('job_id', $jobId)
-            ->update(['progress' => $progress]);
-        
-        Log::info('[EstimateImport] 📊 Прогресс обновлен', [
-            'job_id' => $jobId,
-            'progress' => $progress,
-            'updated_rows' => $updated,
-        ]);
+        // ⭐ КРИТИЧНО: Выполняем обновление в отдельной транзакции с немедленным commit
+        // чтобы обновления были видны другим подключениям сразу, даже если основная транзакция еще не завершена
+        try {
+            // Используем отдельное подключение для прогресса
+            DB::connection()->transaction(function () use ($jobId, $progress) {
+                DB::table('estimate_import_history')
+                    ->where('job_id', $jobId)
+                    ->update(['progress' => $progress]);
+            }, attempts: 1);
+            
+            Log::info('[EstimateImport] 📊 Прогресс обновлен', [
+                'job_id' => $jobId,
+                'progress' => $progress,
+            ]);
+        } catch (\Exception $e) {
+            Log::warning('[EstimateImport] ⚠️ Не удалось обновить прогресс', [
+                'job_id' => $jobId,
+                'progress' => $progress,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }
 

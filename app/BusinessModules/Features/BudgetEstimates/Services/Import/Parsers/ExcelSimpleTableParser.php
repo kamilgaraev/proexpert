@@ -839,6 +839,21 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             return false;
         }
         
+        // ⭐ КРИТИЧНО: Если есть код работы (ГЭСН/ФЕР/ТЕР и т.д.), это ВСЕГДА позиция, НЕ секция!
+        $code = $rowData['code'] ?? '';
+        if (!empty($code) && !$this->codeService->isPseudoCode($code)) {
+            // Проверяем, что это код работы, материала, механизма или трудозатрат
+            if ($this->codeService->isValidCode($code)) {
+                Log::debug('[ExcelParser] Код найден - НЕ секция', [
+                    'code' => $code,
+                    'name' => substr($rowData['name'] ?? '', 0, 100),
+                    'has_quantity' => $hasQuantity,
+                    'has_price' => $hasPrice,
+                ]);
+                return false; // Это позиция!
+            }
+        }
+        
         if ($hasQuantity && $hasPrice) {
             return false;
         }
