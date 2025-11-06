@@ -37,8 +37,8 @@ return new class extends Migration
             // Технические характеристики
             $table->string('model')->nullable()->comment('Модель/марка');
             $table->string('manufacturer')->nullable()->comment('Производитель');
-            $table->decimal('power', 10, 2')->nullable()->comment('Мощность (кВт, л.с.)');
-            $table->decimal('capacity', 10, 2')->nullable()->comment('Грузоподъемность/производительность');
+            $table->decimal('power', 10, 2)->nullable()->comment('Мощность (кВт, л.с.)');
+            $table->decimal('capacity', 10, 2)->nullable()->comment('Грузоподъемность/производительность');
             $table->string('specifications')->nullable()->comment('Характеристики');
             
             // Стоимость
@@ -91,8 +91,8 @@ return new class extends Migration
             
             // Стоимость
             $table->decimal('hourly_rate', 15, 2)->nullable()->comment('Стоимость чел.-час');
-            $table->decimal('shift_rate', 15, 2')->nullable()->comment('Стоимость за смену');
-            $table->decimal('daily_rate', 15, 2')->nullable()->comment('Стоимость за день');
+            $table->decimal('shift_rate', 15, 2)->nullable()->comment('Стоимость за смену');
+            $table->decimal('daily_rate', 15, 2)->nullable()->comment('Стоимость за день');
             $table->decimal('monthly_rate', 15, 2)->nullable()->comment('Месячный оклад');
             
             // Коэффициенты
