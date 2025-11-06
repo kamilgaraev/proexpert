@@ -312,8 +312,11 @@ class EstimateImportService
         
         $itemsCount = count($previewData['items']);
         
+        // ⭐ Генерируем job_id для отслеживания статуса
+        $jobId = Str::uuid()->toString();
+        
         if ($itemsCount <= 500) {
-            return $this->syncImport($fileId, $matchingConfig, $estimateSettings);
+            return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId);
         } else {
             return $this->queueImport($fileId, $matchingConfig, $estimateSettings);
         }
@@ -342,18 +345,19 @@ class EstimateImportService
             $processingTime = (microtime(true) - $startTime) * 1000;
             $result->processingTimeMs = (int)$processingTime;
             
-            $this->recordImportHistory($fileData, $result, 'completed');
+            $this->recordImportHistory($fileData, $result, 'completed', null, $jobId); // ⭐ Передаем jobId
             
             $this->cleanup($fileId);
             
             return [
                 'status' => 'completed',
+                'job_id' => $jobId, // ⭐ Возвращаем job_id для отслеживания
                 'estimate_id' => $result->estimateId,
                 'result' => $result->toArray(),
             ];
             
         } catch (\Exception $e) {
-            $this->recordImportHistory($fileData, null, 'failed', $e->getMessage());
+            $this->recordImportHistory($fileData, null, 'failed', $e->getMessage(), $jobId); // ⭐ Передаем jobId
             throw $e;
         }
     }
@@ -848,11 +852,12 @@ class EstimateImportService
         return $data;
     }
 
-    private function recordImportHistory(array $fileData, ?EstimateImportResultDTO $result, string $status, ?string $error = null): void
+    private function recordImportHistory(array $fileData, ?EstimateImportResultDTO $result, string $status, ?string $error = null, ?string $jobId = null): void
     {
         EstimateImportHistory::create([
             'organization_id' => $fileData['organization_id'],
             'user_id' => $fileData['user_id'],
+            'job_id' => $jobId, // ⭐ Сохраняем job_id для отслеживания статуса
             'file_name' => $fileData['file_name'],
             'file_path' => $fileData['file_path'],
             'file_size' => $fileData['file_size'],
