@@ -1,0 +1,12 @@
+fix: исправлен cast event_time в ProjectEvent
+
+Проблема: event_time кастовался как 'datetime:H:i', но в БД это поле
+типа TIME, что приводило к ошибке парсинга:
+"Could not parse '2025-11-06 2025-11-06 10:00:00': Double date specification"
+
+Решение: убран cast для event_time, теперь обрабатывается как string
+(формат "HH:MM:SS" из БД), что корректно для типа TIME.
+
+Accessor getStartDateTimeAttribute() корректно объединяет дату и время:
+Carbon::parse($this->event_date->format('Y-m-d') . ' ' . $this->event_time)
+

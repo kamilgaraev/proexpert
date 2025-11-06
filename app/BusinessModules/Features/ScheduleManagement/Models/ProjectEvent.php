@@ -56,7 +56,7 @@ class ProjectEvent extends Model
     protected $casts = [
         'event_date' => 'date',
         'end_date' => 'date',
-        'event_time' => 'datetime:H:i',
+        // event_time - оставляем как string (TIME в БД), не datetime
         'is_all_day' => 'boolean',
         'is_blocking' => 'boolean',
         'is_recurring' => 'boolean',
