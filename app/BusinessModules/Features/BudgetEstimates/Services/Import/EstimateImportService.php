@@ -11,6 +11,8 @@ use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionService
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelSimpleTableParser;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeMatchingService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeCodeService;
 use App\Models\Estimate;
 use App\Models\EstimateImportHistory;
 use App\Models\WorkType;
@@ -31,9 +33,10 @@ class EstimateImportService
         private EstimateSectionService $sectionService,
         private EstimateItemService $itemService,
         private EstimateCalculationService $calculationService,
-        private WorkTypeMatchingService $matchingService,
         private ImportMappingService $mappingService,
-        private ImportValidationService $validationService
+        private ImportValidationService $validationService,
+        private NormativeMatchingService $normativeMatchingService,
+        private NormativeCodeService $codeService
     ) {}
 
     public function uploadFile(UploadedFile $file, int $userId, int $organizationId): string
@@ -191,10 +194,21 @@ class EstimateImportService
         $matchResults = [];
         $workItems = array_filter($items, fn($item) => ($item['item_type'] ?? 'work') === 'work');
         
+        // НОВАЯ СТАТИСТИКА с учетом кодов
         $summary = [
-            'exact_matches' => 0,
-            'fuzzy_matches' => 0,
+            // Поиск по кодам (новое)
+            'code_exact_matches' => 0,
+            'code_fuzzy_matches' => 0,
+            'code_not_found' => 0,
+            'items_with_codes' => 0,
+            'items_without_codes' => 0,
+            
+            // Старая статистика (fallback по названиям)
+            'name_exact_matches' => 0,
+            'name_fuzzy_matches' => 0,
             'new_work_types_needed' => 0,
+            
+            // Общая статистика
             'total_items' => count($items),
             'works_count' => count($workItems),
             'materials_count' => count(array_filter($items, fn($item) => ($item['item_type'] ?? '') === 'material')),
@@ -205,42 +219,115 @@ class EstimateImportService
         
         foreach ($workItems as $item) {
             $importedText = $item['item_name'];
-            $matches = $this->matchingService->findMatches($importedText, $organizationId);
+            $code = $item['code'] ?? null;
             
-            if ($matches->isEmpty()) {
-                $matchResults[] = new ImportMatchResultDTO(
-                    importedText: $importedText,
-                    matchedWorkType: null,
-                    confidence: 0,
-                    shouldCreate: true
-                );
-                $summary['new_work_types_needed']++;
-            } else {
-                $bestMatch = $matches->first();
-                $matchResults[] = new ImportMatchResultDTO(
-                    importedText: $importedText,
-                    matchedWorkType: $bestMatch['work_type'],
-                    confidence: $bestMatch['confidence'],
-                    alternativeMatches: $matches->slice(1, 3)->toArray(),
-                    shouldCreate: false,
-                    matchMethod: $bestMatch['method']
-                );
+            $matchResult = null;
+            
+            // ПРИОРИТЕТ 1: Поиск по коду норматива
+            if (!empty($code)) {
+                $summary['items_with_codes']++;
                 
-                if ($bestMatch['confidence'] === 100) {
-                    $summary['exact_matches']++;
+                $normativeMatch = $this->normativeMatchingService->findByCode($code);
+                
+                if ($normativeMatch) {
+                    // Найден норматив по коду
+                    if ($normativeMatch['confidence'] === 100) {
+                        $summary['code_exact_matches']++;
+                    } else {
+                        $summary['code_fuzzy_matches']++;
+                    }
+                    
+                    $matchResult = [
+                        'imported_text' => $importedText,
+                        'code' => $code,
+                        'match_type' => 'code',
+                        'matched_normative' => [
+                            'id' => $normativeMatch['normative']->id,
+                            'code' => $normativeMatch['normative']->code,
+                            'name' => $normativeMatch['normative']->name,
+                            'base_price' => (float) $normativeMatch['normative']->base_price,
+                        ],
+                        'confidence' => $normativeMatch['confidence'],
+                        'method' => $normativeMatch['method'],
+                        'should_create' => false,
+                    ];
                 } else {
-                    $summary['fuzzy_matches']++;
+                    // Код не найден в справочнике
+                    $summary['code_not_found']++;
+                    
+                    $matchResult = [
+                        'imported_text' => $importedText,
+                        'code' => $code,
+                        'match_type' => 'code_not_found',
+                        'matched_normative' => null,
+                        'confidence' => 0,
+                        'method' => 'code_search_failed',
+                        'should_create' => true,
+                        'warning' => 'Код не найден в справочнике нормативов',
+                    ];
                 }
+            } else {
+                // Код отсутствует - пытаемся найти по названию через справочник нормативов
+                $summary['items_without_codes']++;
+                
+                $nameMatches = $this->normativeMatchingService->findByName($importedText, 5);
+                
+                if ($nameMatches->isEmpty()) {
+                    $matchResult = [
+                        'imported_text' => $importedText,
+                        'code' => null,
+                        'match_type' => 'name_not_found',
+                        'matched_normative' => null,
+                        'confidence' => 0,
+                        'method' => 'name_search',
+                        'should_create' => true,
+                        'warning' => 'Код отсутствует, норматив не найден по названию',
+                    ];
+                    $summary['new_work_types_needed']++;
+                } else {
+                    $bestMatch = $nameMatches->first();
+                    
+                    if ($bestMatch['confidence'] >= 95) {
+                        $summary['name_exact_matches']++;
+                    } else {
+                        $summary['name_fuzzy_matches']++;
+                    }
+                    
+                    $matchResult = [
+                        'imported_text' => $importedText,
+                        'code' => null,
+                        'match_type' => 'name',
+                        'matched_normative' => [
+                            'id' => $bestMatch['normative']->id,
+                            'code' => $bestMatch['normative']->code,
+                            'name' => $bestMatch['normative']->name,
+                            'base_price' => (float) $bestMatch['normative']->base_price,
+                        ],
+                        'confidence' => $bestMatch['confidence'],
+                        'method' => $bestMatch['method'],
+                        'should_create' => false,
+                        'alternative_matches' => $nameMatches->slice(1, 3)->map(fn($m) => [
+                            'id' => $m['normative']->id,
+                            'code' => $m['normative']->code,
+                            'name' => $m['normative']->name,
+                            'confidence' => $m['confidence'],
+                        ])->toArray(),
+                    ];
+                }
+            }
+            
+            if ($matchResult) {
+                $matchResults[] = $matchResult;
             }
         }
         
         Cache::put("estimate_import_matches:{$fileId}", [
-            'match_results' => array_map(fn($m) => $m->toArray(), $matchResults),
+            'match_results' => $matchResults,
             'summary' => $summary,
         ], now()->addHours(24));
         
         return [
-            'items' => array_map(fn($m) => $m->toArray(), $matchResults),
+            'items' => $matchResults,
             'summary' => $summary,
         ];
     }
@@ -431,36 +518,9 @@ class EstimateImportService
 
     private function createMissingWorkTypes(EstimateImportDTO $importDTO, int $organizationId): array
     {
-        $newWorkTypes = [];
-        $processedNames = [];
-        
-        foreach ($importDTO->items as $item) {
-            $name = $item['item_name'];
-            $normalized = mb_strtolower(trim($name));
-            
-            if (isset($processedNames[$normalized])) {
-                continue;
-            }
-            
-            $matches = $this->matchingService->findMatches($name, $organizationId);
-            
-            if ($matches->isEmpty() || $matches->first()['confidence'] < 85) {
-                $unit = $this->findOrCreateUnit($item['unit'] ?? 'шт', $organizationId);
-                
-                $workType = WorkType::create([
-                    'organization_id' => $organizationId,
-                    'name' => $name,
-                    'code' => $item['code'] ?? null,
-                    'measurement_unit_id' => $unit->id,
-                    'is_active' => true,
-                ]);
-                
-                $newWorkTypes[] = $workType;
-                $processedNames[$normalized] = $workType;
-            }
-        }
-        
-        return $newWorkTypes;
+        // Теперь не создаем WorkType - вместо этого создаем позиции с кодом/названием напрямую
+        // Нормативы ищутся в справочнике, если не найдены - сохраняем как есть
+        return [];
     }
 
     private function createSections(Estimate $estimate, array $sections): array
@@ -502,6 +562,8 @@ class EstimateImportService
     ): array {
         $imported = 0;
         $skipped = 0;
+        $codeMatches = 0;
+        $nameMatches = 0;
         
         foreach ($items as $item) {
             try {
@@ -511,23 +573,11 @@ class EstimateImportService
                 }
                 
                 $itemType = $item['item_type'] ?? 'work';
-                $workType = null;
-                
-                if ($itemType === 'work') {
-                    $workType = $this->findWorkType($item['item_name'], $newWorkTypes, $organizationId);
-                    
-                    if ($workType === null && !($matchingConfig['skip_unmatched'] ?? false)) {
-                        $skipped++;
-                        continue;
-                    }
-                }
-                
-                $this->itemService->addItem([
+                $itemData = [
                     'estimate_id' => $estimate->id,
                     'estimate_section_id' => $sectionId,
                     'item_type' => $itemType,
                     'name' => $item['item_name'],
-                    'work_type_id' => $workType?->id,
                     'unit' => $item['unit'],
                     'quantity' => $item['quantity'],
                     'quantity_coefficient' => $item['quantity_coefficient'] ?? null,
@@ -539,11 +589,82 @@ class EstimateImportService
                     'price_coefficient' => $item['price_coefficient'] ?? null,
                     'current_total_amount' => $item['current_total_amount'] ?? null,
                     'code' => $item['code'] ?? null,
-                ], $estimate);
+                ];
+                
+                // НОВАЯ ЛОГИКА: Приоритет на поиск по коду норматива
+                $normativeFound = false;
+                
+                if (!empty($item['code']) && $itemType === 'work') {
+                    $normativeMatch = $this->normativeMatchingService->findByCode($item['code']);
+                    
+                    if ($normativeMatch) {
+                        // Найден норматив по коду - автоподстановка данных
+                        $itemData = $this->normativeMatchingService->fillFromNormative(
+                            $normativeMatch['normative'],
+                            $itemData
+                        );
+                        
+                        $normativeFound = true;
+                        $codeMatches++;
+                        
+                        Log::info('normative.code_match', [
+                            'code' => $item['code'],
+                            'normative_id' => $normativeMatch['normative']->id,
+                            'confidence' => $normativeMatch['confidence'],
+                            'method' => $normativeMatch['method'],
+                        ]);
+                    } else {
+                        Log::warning('normative.code_not_found', [
+                            'code' => $item['code'],
+                            'name' => $item['item_name'],
+                        ]);
+                    }
+                }
+                
+                // Fallback: поиск по названию в справочнике нормативов (только если по коду не найден)
+                if (!$normativeFound && $itemType === 'work' && !empty($item['item_name'])) {
+                    $nameMatches = $this->normativeMatchingService->findByName($item['item_name'], 1);
+                    
+                    if ($nameMatches->isNotEmpty()) {
+                        $bestMatch = $nameMatches->first();
+                        
+                        // Используем только если уверенность >= 80%
+                        if ($bestMatch['confidence'] >= 80) {
+                            $itemData = $this->normativeMatchingService->fillFromNormative(
+                                $bestMatch['normative'],
+                                $itemData
+                            );
+                            
+                            $nameMatches++;
+                            
+                            Log::info('normative.name_match', [
+                                'name' => $item['item_name'],
+                                'normative_id' => $bestMatch['normative']->id,
+                                'confidence' => $bestMatch['confidence'],
+                            ]);
+                        } else {
+                            // Низкая уверенность - пропускаем если настроено
+                            if (!($matchingConfig['skip_unmatched'] ?? false)) {
+                                $skipped++;
+                                continue;
+                            }
+                        }
+                    } elseif (!($matchingConfig['skip_unmatched'] ?? false)) {
+                        // Норматив не найден ни по коду, ни по названию
+                        $skipped++;
+                        continue;
+                    }
+                }
+                
+                $this->itemService->addItem($itemData, $estimate);
                 
                 $imported++;
                 
             } catch (\Exception $e) {
+                Log::error('estimate_import.create_item.failed', [
+                    'item' => $item,
+                    'error' => $e->getMessage(),
+                ]);
                 $skipped++;
             }
         }
@@ -551,27 +672,12 @@ class EstimateImportService
         return [
             'imported' => $imported,
             'skipped' => $skipped,
+            'code_matches' => $codeMatches,
+            'name_matches' => $nameMatches,
         ];
     }
 
-    private function findWorkType(string $name, array $newWorkTypes, int $organizationId): ?WorkType
-    {
-        $normalized = mb_strtolower(trim($name));
-        
-        foreach ($newWorkTypes as $workType) {
-            if (mb_strtolower($workType->name) === $normalized) {
-                return $workType;
-            }
-        }
-        
-        $matches = $this->matchingService->findMatches($name, $organizationId);
-        
-        if ($matches->isNotEmpty() && $matches->first()['confidence'] >= 85) {
-            return $matches->first()['work_type'];
-        }
-        
-        return null;
-    }
+    // Метод удален - теперь поиск идет только через NormativeMatchingService
 
     private function findOrCreateUnit(string $unitName, int $organizationId): MeasurementUnit
     {

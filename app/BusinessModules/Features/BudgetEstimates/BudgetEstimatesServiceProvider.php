@@ -19,7 +19,8 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Integration\{
 };
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\{
     EstimateImportService,
-    WorkTypeMatchingService,
+    NormativeCodeService,
+    NormativeMatchingService,
 };
 use App\Repositories\{
     EstimateRepository,
@@ -107,7 +108,8 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
 
         // Import сервисы
         $this->app->singleton(EstimateImportService::class);
-        $this->app->singleton(WorkTypeMatchingService::class);
+        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeCodeService::class);
+        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeMatchingService::class);
     }
 
     /**

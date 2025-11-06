@@ -12,6 +12,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection\Detectors\NumericHeaderDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\MergedCellResolver;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateItemTypeDetector;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeCodeService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Cell\Cell;
@@ -20,11 +21,13 @@ use Illuminate\Support\Facades\Log;
 class ExcelSimpleTableParser implements EstimateImportParserInterface
 {
     private EstimateItemTypeDetector $typeDetector;
+    private NormativeCodeService $codeService;
     private array $headerCandidates = [];
     
     public function __construct()
     {
         $this->typeDetector = new EstimateItemTypeDetector();
+        $this->codeService = new NormativeCodeService();
     }
     private array $columnKeywords = [
         'name' => [
@@ -105,8 +108,14 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'гэсн', 
             'фер',
             'тер',
+            'фсбц',
+            'фсбцс',
             'шифр расценки',
-            'шифр нормы'
+            'шифр нормы',
+            'код нормы',
+            'нормативы',
+            'код норматива',
+            'расценка'
         ],
         'section_number' => [
             '№', 
@@ -590,6 +599,65 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 } else {
                     $data[$field] = $value !== null ? trim((string)$value) : null;
                 }
+            }
+        }
+        
+        // Улучшенное извлечение кода норматива
+        $data = $this->enrichWithCode($data);
+        
+        return $data;
+    }
+    
+    /**
+     * Извлечь код норматива из данных строки
+     * 
+     * @param array $data Данные строки
+     * @return array Обогащенные данные
+     */
+    private function enrichWithCode(array $data): array
+    {
+        $originalName = $data['name'] ?? '';
+        $codeFromColumn = $data['code'] ?? '';
+        
+        // Если код уже есть в отдельной колонке - нормализуем его
+        if (!empty($codeFromColumn)) {
+            $extracted = $this->codeService->extractCode($codeFromColumn);
+            
+            if ($extracted) {
+                $data['code'] = $extracted['code'];
+                $data['code_type'] = $extracted['type'];
+                $data['code_normalized'] = $this->codeService->normalizeCode($extracted['code']);
+                
+                return $data;
+            }
+        }
+        
+        // Если кода нет - пытаемся извлечь из названия
+        if (!empty($originalName)) {
+            $extracted = $this->codeService->extractCode($originalName);
+            
+            if ($extracted) {
+                $data['code'] = $extracted['code'];
+                $data['code_type'] = $extracted['type'];
+                $data['code_normalized'] = $this->codeService->normalizeCode($extracted['code']);
+                
+                // Обновляем название - убираем код
+                if (!empty($extracted['clean_text'])) {
+                    $data['name'] = $extracted['clean_text'];
+                }
+                
+                // Сохраняем оригинальное название в metadata
+                $data['metadata'] = array_merge($data['metadata'] ?? [], [
+                    'original_name' => $originalName,
+                    'code_extracted_from_name' => true,
+                ]);
+                
+                Log::debug('[ExcelParser] Code extracted from name', [
+                    'original_name' => $originalName,
+                    'extracted_code' => $data['code'],
+                    'clean_name' => $data['name'],
+                    'code_type' => $data['code_type'],
+                ]);
             }
         }
         
