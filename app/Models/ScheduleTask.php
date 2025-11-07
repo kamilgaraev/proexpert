@@ -21,6 +21,8 @@ class ScheduleTask extends Model
         'schedule_id',
         'organization_id',
         'parent_task_id',
+        'estimate_item_id',
+        'estimate_section_id',
         'work_type_id',
         'assigned_user_id',
         'created_by_user_id',
@@ -32,6 +34,10 @@ class ScheduleTask extends Model
         'planned_end_date',
         'planned_duration_days',
         'planned_work_hours',
+        'quantity',
+        'measurement_unit_id',
+        'labor_hours_from_estimate',
+        'resource_cost',
         'baseline_start_date',
         'baseline_end_date',
         'baseline_duration_days',
@@ -77,6 +83,9 @@ class ScheduleTask extends Model
         'constraint_date' => 'date',
         'planned_work_hours' => 'decimal:2',
         'actual_work_hours' => 'decimal:2',
+        'quantity' => 'decimal:4',
+        'labor_hours_from_estimate' => 'decimal:2',
+        'resource_cost' => 'decimal:2',
         'progress_percent' => 'decimal:2',
         'estimated_cost' => 'decimal:2',
         'actual_cost' => 'decimal:2',
@@ -152,6 +161,21 @@ class ScheduleTask extends Model
     public function completedWorks(): HasMany
     {
         return $this->hasMany(CompletedWork::class, 'schedule_task_id');
+    }
+
+    public function estimateItem(): BelongsTo
+    {
+        return $this->belongsTo(EstimateItem::class);
+    }
+
+    public function estimateSection(): BelongsTo
+    {
+        return $this->belongsTo(EstimateSection::class);
+    }
+
+    public function measurementUnit(): BelongsTo
+    {
+        return $this->belongsTo(MeasurementUnit::class);
     }
 
     // === COMPUTED PROPERTIES ===
@@ -241,6 +265,15 @@ class ScheduleTask extends Model
     public function getDaysUntilDeadlineAttribute(): int
     {
         return now()->diffInDays($this->planned_end_date, false);
+    }
+
+    public function getWorkVolumeAttribute(): ?string
+    {
+        if (!$this->quantity || !$this->measurementUnit) {
+            return null;
+        }
+
+        return $this->quantity . ' ' . $this->measurementUnit->short_name;
     }
 
     // === BUSINESS METHODS ===

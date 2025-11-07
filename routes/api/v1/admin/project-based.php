@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\V1\Admin\Contract\ContractStateEventController;
 // use App\Http\Controllers\Api\V1\Admin\EstimateImportController;
 use App\Http\Controllers\Api\V1\Admin\Schedule\ProjectScheduleController;
 use App\Http\Controllers\Api\V1\Admin\Schedule\ScheduleTaskController;
+use App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController;
 
 /**
  * PROJECT-BASED ROUTES
@@ -134,6 +135,7 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
     Route::prefix('schedules')->group(function () {
         Route::get('/', [ProjectScheduleController::class, 'index']);
         Route::post('/', [ProjectScheduleController::class, 'store']);
+        Route::post('/from-estimate', [ScheduleEstimateController::class, 'createFromEstimate']);
         Route::get('/{schedule}', [ProjectScheduleController::class, 'show']);
         Route::put('/{schedule}', [ProjectScheduleController::class, 'update']);
         Route::delete('/{schedule}', [ProjectScheduleController::class, 'destroy']);
@@ -155,6 +157,12 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         Route::get('/{schedule}/dependencies', [ProjectScheduleController::class, 'dependencies']);
         Route::post('/{schedule}/dependencies', [ProjectScheduleController::class, 'storeDependency']);
         Route::get('/{schedule}/resource-conflicts', [ProjectScheduleController::class, 'resourceConflicts']);
+        
+        // Интеграция со сметой
+        Route::post('/{schedule}/sync-from-estimate', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'syncFromEstimate']);
+        Route::post('/{schedule}/sync-to-estimate', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'syncToEstimate']);
+        Route::get('/{schedule}/estimate-conflicts', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'getConflicts']);
+        Route::get('/{schedule}/estimate-info', [\App\BusinessModules\Features\ScheduleManagement\Http\Controllers\ScheduleEstimateController::class, 'getEstimateInfo']);
     });
     
     // === MATERIAL ANALYTICS (в контексте проекта) ===

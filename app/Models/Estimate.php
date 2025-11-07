@@ -99,6 +99,11 @@ class Estimate extends Model
         return $this->hasMany(EstimateImportHistory::class);
     }
 
+    public function schedules(): HasMany
+    {
+        return $this->hasMany(ProjectSchedule::class, 'estimate_id');
+    }
+
     public function scopeDraft($query)
     {
         return $query->where('status', 'draft');

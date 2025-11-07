@@ -138,6 +138,14 @@ class ScheduleManagementModule implements ModuleInterface, ConfigurableInterface
                 'allow_past_date_scheduling' => false,
                 'auto_reschedule_conflicts' => false,
                 'resource_overallocation_warning' => true
+            ],
+            'estimate_integration' => [
+                'auto_sync_enabled' => false,
+                'sync_frequency_hours' => 24,
+                'auto_calculate_duration' => true,
+                'default_workers_per_task' => 1,
+                'hours_per_work_day' => 8,
+                'include_weekends' => false,
             ]
         ];
     }

@@ -20,6 +20,10 @@ class ProjectSchedule extends Model
         'project_id',
         'organization_id',
         'created_by_user_id',
+        'estimate_id',
+        'sync_with_estimate',
+        'last_synced_at',
+        'sync_status',
         'name',
         'description',
         'planned_start_date',
@@ -54,6 +58,8 @@ class ProjectSchedule extends Model
         'actual_end_date' => 'date',
         'status' => ScheduleStatusEnum::class,
         'is_template' => 'boolean',
+        'sync_with_estimate' => 'boolean',
+        'last_synced_at' => 'datetime',
         'calculation_settings' => 'array',
         'display_settings' => 'array',
         'critical_path_calculated' => 'boolean',
@@ -110,6 +116,11 @@ class ProjectSchedule extends Model
     public function milestones(): HasMany
     {
         return $this->hasMany(TaskMilestone::class, 'schedule_id');
+    }
+
+    public function estimate(): BelongsTo
+    {
+        return $this->belongsTo(Estimate::class);
     }
 
     // === COMPUTED PROPERTIES ===
@@ -266,6 +277,28 @@ class ProjectSchedule extends Model
         $lastUpdate = max($lastTaskUpdate, $lastDependencyUpdate);
         
         return $lastUpdate > $this->critical_path_updated_at;
+    }
+
+    public function needsSync(): bool
+    {
+        if (!$this->estimate_id || !$this->sync_with_estimate) {
+            return false;
+        }
+
+        if ($this->sync_status === 'out_of_sync' || $this->sync_status === 'conflict') {
+            return true;
+        }
+
+        if (!$this->last_synced_at) {
+            return true;
+        }
+
+        // Проверяем, обновлялась ли смета после последней синхронизации
+        if ($this->estimate && $this->estimate->updated_at > $this->last_synced_at) {
+            return true;
+        }
+
+        return false;
     }
 
     // === SCOPES ===

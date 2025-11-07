@@ -26,7 +26,9 @@
     "schedule-management.assign",
     "schedule-management.approve",
     "schedule-management.export",
-    "schedule-management.notifications"
+    "schedule-management.notifications",
+    "schedule-management.import_from_estimate",
+    "schedule-management.sync_with_estimate"
   ],
   
   "features": [
@@ -39,7 +41,12 @@
     "Интеграция с календарными системами",
     "Автоматическое планирование ресурсов",
     "Контроль конфликтов в расписании",
-    "Статистика по выполнению планов"
+    "Статистика по выполнению планов",
+    "Создание графиков работ из смет",
+    "Импорт объемов и ресурсов из сметы",
+    "Двусторонняя синхронизация со сметой",
+    "Автоматический расчет длительности на основе трудозатрат",
+    "Отслеживание прогресса выполнения объемов работ"
   ],
   
   "dependencies": [
@@ -47,6 +54,8 @@
     "users",
     "project-management"
   ],
+  
+  "optional_integrations": ["budget-estimates"],
   
   "conflicts": [],
   
