@@ -317,7 +317,7 @@ class EstimateController extends Controller
         
         // Если статус "утверждено", сохраняем информацию об утвердившем
         if ($newStatus === 'approved') {
-            $estimateModel->approved_by = auth()->id();
+            $estimateModel->approved_by_user_id = auth()->id();
             $estimateModel->approved_at = now();
         }
         
