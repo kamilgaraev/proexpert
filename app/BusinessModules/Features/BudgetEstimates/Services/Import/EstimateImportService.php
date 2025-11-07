@@ -676,6 +676,11 @@ class EstimateImportService
         
         foreach ($items as $index => $item) {
             try {
+                // ⭐ КРИТИЧНО: Извлекаем ВСЕ данные из raw_data!
+                // EstimateImportRowDTO.toArray() не возвращает поля из rawData напрямую
+                $rawData = $item['raw_data'] ?? [];
+                $item = array_merge($item, $rawData); // Объединяем с основным массивом
+                
                 // 🔍 ЛОГИРУЕМ И ОБНОВЛЯЕМ ПРОГРЕСС КАЖДЫЕ 50 ПОЗИЦИЙ
                 if ($index > 0 && $index % 50 === 0) {
                     Log::info("[EstimateImport] ⏳ Прогресс: {$index}/{$totalItems}", [
@@ -719,14 +724,34 @@ class EstimateImportService
                 // ⭐ Fallback: если unit_price = null, используем current_unit_price
                 $unitPrice = $item['unit_price'] ?? $item['current_unit_price'] ?? 0;
                 
+                // ⭐ Поиск/создание единицы измерения
+                $measurementUnitId = null;
+                if (!empty($item['unit'])) {
+                    try {
+                        $measurementUnit = $this->findOrCreateUnit($item['unit'], $organizationId);
+                        $measurementUnitId = $measurementUnit->id;
+                    } catch (\Exception $e) {
+                        Log::warning('[EstimateImport] ⚠️ Не удалось найти/создать ед.изм.', [
+                            'unit' => $item['unit'],
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
+                
+                // ⭐ Расчет direct_costs, total_amount
+                $quantity = $item['quantity'] ?? 0;
+                $directCosts = $quantity * $unitPrice;
+                $totalAmount = $item['current_total_amount'] ?? $directCosts;
+                
                 $itemData = [
                     'estimate_id' => $estimate->id,
                     'estimate_section_id' => $sectionId,
                     'parent_work_id' => null, // ⭐ Будет установлен для подпозиций
                     'item_type' => $itemType,
                     'name' => $item['item_name'],
-                    'unit' => $item['unit'],
-                    'quantity' => $item['quantity'],
+                    'measurement_unit_id' => $measurementUnitId, // ⭐ ID единицы измерения
+                    'normative_rate_code' => $item['code'] ?? null, // ⭐ Код норматива
+                    'quantity' => $quantity,
                     'quantity_coefficient' => $item['quantity_coefficient'] ?? null,
                     'quantity_total' => $item['quantity_total'] ?? null,
                     'unit_price' => $unitPrice, // ⭐ С fallback на current_unit_price
@@ -734,8 +759,9 @@ class EstimateImportService
                     'price_index' => $item['price_index'] ?? null,
                     'current_unit_price' => $item['current_unit_price'] ?? $unitPrice, // ⭐ Обратный fallback
                     'price_coefficient' => $item['price_coefficient'] ?? null,
+                    'direct_costs' => $directCosts, // ⭐ Прямые затраты = quantity * unit_price
+                    'total_amount' => $totalAmount, // ⭐ Общая стоимость
                     'current_total_amount' => $item['current_total_amount'] ?? null,
-                    'code' => $item['code'] ?? null,
                     'is_not_accounted' => $item['is_not_accounted'] ?? false, // ⭐ Флаг "Н"
                 ];
                 
