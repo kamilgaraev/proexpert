@@ -58,6 +58,7 @@ class EstimateScheduleImportService
             $schedule = ProjectSchedule::create([
                 'organization_id' => $estimate->organization_id,
                 'project_id' => $estimate->project_id,
+                'created_by_user_id' => auth()->id(),
                 'estimate_id' => $estimate->id,
                 'sync_with_estimate' => true,
                 'last_synced_at' => now(),
@@ -175,6 +176,7 @@ class EstimateScheduleImportService
         return ScheduleTask::create([
             'schedule_id' => $schedule->id,
             'organization_id' => $schedule->organization_id,
+            'created_by_user_id' => auth()->id(),
             'estimate_section_id' => $section->id,
             'name' => $section->name,
             'description' => $section->description,
@@ -229,6 +231,7 @@ class EstimateScheduleImportService
         return ScheduleTask::create(array_merge($taskData, [
             'schedule_id' => $schedule->id,
             'organization_id' => $schedule->organization_id,
+            'created_by_user_id' => auth()->id(),
             'parent_task_id' => $parentTask->id,
             'estimate_item_id' => $item->id,
             'estimate_section_id' => $section->id,
