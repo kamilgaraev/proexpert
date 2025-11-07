@@ -29,6 +29,9 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
             Route::put('/{estimate}', [EstimateController::class, 'update'])->name('update');
             Route::delete('/{estimate}', [EstimateController::class, 'destroy'])->name('destroy');
             
+            // Изменение статуса сметы
+            Route::put('/{estimate}/status', [EstimateController::class, 'updateStatus'])->name('status.update');
+            
             // Дополнительные операции
             Route::post('/{estimate}/duplicate', [EstimateController::class, 'duplicate'])->name('duplicate');
             Route::post('/{estimate}/recalculate', [EstimateController::class, 'recalculate'])->name('recalculate');

@@ -7,6 +7,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\EstimateService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\Http\Requests\Admin\Estimate\CreateEstimateRequest;
 use App\Http\Requests\Admin\Estimate\UpdateEstimateRequest;
+use App\Http\Requests\Admin\Estimate\UpdateEstimateStatusRequest;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateResource;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateListResource;
 use App\Repositories\EstimateRepository;
@@ -282,6 +283,105 @@ class EstimateController extends Controller
         return response()->json([
             'data' => $sections
         ]);
+    }
+
+    /**
+     * Обновить статус сметы
+     * 
+     * @group Estimates
+     * @authenticated
+     */
+    public function updateStatus(UpdateEstimateStatusRequest $request, $project, int $estimate): JsonResponse
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+        
+        $estimateModel = Estimate::where('id', $estimate)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+        
+        $newStatus = $request->validated()['status'];
+        $comment = $request->validated()['comment'] ?? null;
+        
+        // Проверка прав в зависимости от статуса
+        if ($newStatus === 'approved') {
+            $this->authorize('approve', $estimateModel);
+        } else {
+            $this->authorize('update', $estimateModel);
+        }
+        
+        // Валидация переходов статусов
+        $this->validateStatusTransition($estimateModel, $newStatus);
+        
+        // Обновление статуса
+        $estimateModel->status = $newStatus;
+        
+        // Если статус "утверждено", сохраняем информацию об утвердившем
+        if ($newStatus === 'approved') {
+            $estimateModel->approved_by = auth()->id();
+            $estimateModel->approved_at = now();
+        }
+        
+        $estimateModel->save();
+        
+        \Log::info('estimate.status_updated', [
+            'estimate_id' => $estimateModel->id,
+            'old_status' => $estimateModel->getOriginal('status'),
+            'new_status' => $newStatus,
+            'user_id' => auth()->id(),
+            'comment' => $comment,
+        ]);
+        
+        return response()->json([
+            'data' => new EstimateResource($estimateModel->fresh()),
+            'message' => $this->getStatusChangeMessage($newStatus),
+        ]);
+    }
+
+    /**
+     * Валидация переходов статусов
+     */
+    private function validateStatusTransition(Estimate $estimate, string $newStatus): void
+    {
+        $currentStatus = $estimate->status;
+        
+        // Разрешенные переходы
+        $allowedTransitions = [
+            'draft' => ['in_review', 'cancelled'],
+            'in_review' => ['draft', 'approved', 'cancelled'],
+            'approved' => ['in_review'], // Только для пользователей с правом edit_approved
+            'cancelled' => [], // Отмененную смету нельзя изменить
+        ];
+        
+        // Проверка на отмененный статус
+        if ($currentStatus === 'cancelled') {
+            throw new \DomainException('Нельзя изменить статус отмененной сметы');
+        }
+        
+        // Проверка разрешенных переходов
+        if (!in_array($newStatus, $allowedTransitions[$currentStatus] ?? [])) {
+            throw new \DomainException(
+                "Недопустимый переход статуса из '{$currentStatus}' в '{$newStatus}'"
+            );
+        }
+        
+        // Дополнительная проверка для перехода в "утверждено"
+        if ($newStatus === 'approved' && $currentStatus !== 'in_review') {
+            throw new \DomainException('Утвердить можно только смету со статусом "На проверке"');
+        }
+    }
+
+    /**
+     * Получить сообщение об успешном изменении статуса
+     */
+    private function getStatusChangeMessage(string $status): string
+    {
+        return match ($status) {
+            'draft' => 'Смета возвращена в черновик',
+            'in_review' => 'Смета отправлена на проверку',
+            'approved' => 'Смета успешно утверждена',
+            'cancelled' => 'Смета отменена',
+            default => 'Статус сметы успешно изменен',
+        };
     }
 }
 
