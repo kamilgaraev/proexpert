@@ -30,7 +30,7 @@ class NormativeMatchingService
      * Найти норматив по коду
      * 
      * @param string $code Код норматива из импортируемого файла
-     * @param array $options Опции поиска
+     * @param array $options Опции поиска (fallback_to_name - fallback на поиск по названию, name - название для fallback)
      * @return array|null ['normative' => NormativeRate, 'confidence' => int, 'method' => string]
      */
     public function findByCode(string $code, array $options = []): ?array
@@ -72,9 +72,30 @@ class NormativeMatchingService
             return $result;
         }
 
+        // 4. Fallback на поиск по названию (если включено и название передано)
+        if (!empty($options['fallback_to_name']) && !empty($options['name'])) {
+            $nameResults = $this->findByName($options['name'], 1);
+            
+            if ($nameResults->isNotEmpty()) {
+                $result = $nameResults->first();
+                
+                Log::info('normative.found_by_name_fallback', [
+                    'code' => $code,
+                    'name' => $options['name'],
+                    'found_normative_id' => $result['normative']->id,
+                    'found_normative_code' => $result['normative']->code,
+                    'confidence' => $result['confidence'],
+                ]);
+                
+                Cache::put($cacheKey, $result, self::CACHE_TTL);
+                return $result;
+            }
+        }
+
         Log::info('normative.code_not_found', [
             'code' => $code,
             'variations_tried' => $this->codeService->getCodeVariations($code),
+            'fallback_attempted' => !empty($options['fallback_to_name']),
         ]);
 
         return null;

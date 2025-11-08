@@ -206,6 +206,7 @@ class EstimateImportService
             'items_without_codes' => 0,
             
             // Старая статистика (fallback по названиям)
+            'name_matches' => 0, // Общий счетчик совпадений по названию
             'name_exact_matches' => 0,
             'name_fuzzy_matches' => 0,
             'new_work_types_needed' => 0,
@@ -229,20 +230,26 @@ class EstimateImportService
             if (!empty($code)) {
                 $summary['items_with_codes']++;
                 
-                $normativeMatch = $this->normativeMatchingService->findByCode($code);
+                // Поиск по коду с fallback на название
+                $normativeMatch = $this->normativeMatchingService->findByCode($code, [
+                    'fallback_to_name' => true,
+                    'name' => $importedText,
+                ]);
                 
                 if ($normativeMatch) {
-                    // Найден норматив по коду
+                    // Найден норматив по коду или по названию
                     if ($normativeMatch['confidence'] === 100) {
                         $summary['code_exact_matches']++;
-            } else {
+                    } elseif ($normativeMatch['method'] === 'name_match') {
+                        $summary['name_matches']++;
+                    } else {
                         $summary['code_fuzzy_matches']++;
                     }
                     
                     $matchResult = [
                         'imported_text' => $importedText,
                         'code' => $code,
-                        'match_type' => 'code',
+                        'match_type' => $normativeMatch['method'] === 'name_match' ? 'name' : 'code',
                         'matched_normative' => [
                             'id' => $normativeMatch['normative']->id,
                             'code' => $normativeMatch['normative']->code,
@@ -254,7 +261,7 @@ class EstimateImportService
                         'should_create' => false,
                     ];
                 } else {
-                    // Код не найден в справочнике
+                    // Не найден ни по коду, ни по названию
                     $summary['code_not_found']++;
                     
                     $matchResult = [
@@ -265,26 +272,48 @@ class EstimateImportService
                         'confidence' => 0,
                         'method' => 'code_search_failed',
                         'should_create' => true,
-                        'warning' => 'Код работы не найден в справочнике нормативов',
+                        'warning' => 'Код работы не найден в справочнике нормативов, не найдено совпадений по названию',
                     ];
                 }
             } else {
-                // Код отсутствует - fallback поиск по названию (TODO: реализовать)
+                // Код отсутствует - поиск только по названию
                 $summary['items_without_codes']++;
                 
-                // TODO: реализовать NormativeMatchingService::findByName()
-                $matchResult = [
-                    'imported_text' => $importedText,
-                    'code' => null,
-                    'match_type' => 'name_not_found',
-                    'matched_normative' => null,
-                    'confidence' => 0,
-                    'method' => 'name_search_not_implemented',
-                    'should_create' => true,
-                    'warning' => 'Код отсутствует, поиск по названию пока не реализован',
-                ];
-                $summary['new_work_types_needed']++;
+                $nameResults = $this->normativeMatchingService->findByName($importedText, 1);
+                
+                if ($nameResults->isNotEmpty()) {
+                    $nameMatch = $nameResults->first();
+                    $summary['name_matches']++;
+                    
+                    $matchResult = [
+                        'imported_text' => $importedText,
+                        'code' => null,
+                        'match_type' => 'name',
+                        'matched_normative' => [
+                            'id' => $nameMatch['normative']->id,
+                            'code' => $nameMatch['normative']->code,
+                            'name' => $nameMatch['normative']->name,
+                            'base_price' => (float) $nameMatch['normative']->base_price,
+                        ],
+                        'confidence' => $nameMatch['confidence'],
+                        'method' => $nameMatch['method'],
+                        'should_create' => false,
+                    ];
+                } else {
+                    // Не найдено по названию
+                    $matchResult = [
+                        'imported_text' => $importedText,
+                        'code' => null,
+                        'match_type' => 'name_not_found',
+                        'matched_normative' => null,
+                        'confidence' => 0,
+                        'method' => 'name_search_failed',
+                        'should_create' => true,
+                        'warning' => 'Код отсутствует, не найдено совпадений по названию',
+                    ];
+                    $summary['new_work_types_needed']++;
                 }
+            }
             
             if ($matchResult) {
                 $matchResults[] = $matchResult;
@@ -835,12 +864,15 @@ class EstimateImportService
                 // ⭐ ТОЛЬКО ДЛЯ РАБОТ: ищем в справочнике нормативов
                 $normativeFound = false;
                 
-                // Приоритет 1: Поиск по коду норматива (если есть код)
+                // Приоритет 1: Поиск по коду норматива (если есть код) с fallback на название
                 if (!empty($item['code'])) {
-                    $normativeMatch = $this->normativeMatchingService->findByCode($item['code']);
+                    $normativeMatch = $this->normativeMatchingService->findByCode($item['code'], [
+                        'fallback_to_name' => true,
+                        'name' => $item['item_name'] ?? '',
+                    ]);
                     
                     if ($normativeMatch) {
-                        // Найден норматив по коду - автоподстановка данных
+                        // Найден норматив по коду или по названию - автоподстановка данных
                         $itemData = $this->normativeMatchingService->fillFromNormative(
                             $normativeMatch['normative'],
                             $itemData
@@ -849,30 +881,47 @@ class EstimateImportService
                         $normativeFound = true;
                         $codeMatches++;
                         
-                        Log::info('normative.code_match', [
+                        Log::info('normative.match', [
                             'code' => $item['code'],
                             'normative_id' => $normativeMatch['normative']->id,
                             'confidence' => $normativeMatch['confidence'],
                             'method' => $normativeMatch['method'],
+                            'found_by_name' => $normativeMatch['method'] === 'name_match',
                         ]);
                     } else {
-                        Log::warning('normative.work_code_not_found', [
+                        Log::warning('normative.work_not_found', [
                             'code' => $item['code'],
                             'name' => $item['item_name'],
                         ]);
                     }
+                } else {
+                    // Приоритет 2: Поиск только по названию (если код отсутствует)
+                    if (!empty($item['item_name'])) {
+                        $nameResults = $this->normativeMatchingService->findByName($item['item_name'], 1);
+                        
+                        if ($nameResults->isNotEmpty()) {
+                            $nameMatch = $nameResults->first();
+                            
+                            $itemData = $this->normativeMatchingService->fillFromNormative(
+                                $nameMatch['normative'],
+                                $itemData
+                            );
+                            
+                            $normativeFound = true;
+                            
+                            Log::info('normative.name_match', [
+                                'name' => $item['item_name'],
+                                'normative_id' => $nameMatch['normative']->id,
+                                'confidence' => $nameMatch['confidence'],
+                                'method' => $nameMatch['method'],
+                            ]);
+                        } else {
+                            Log::debug('normative.name_not_found', [
+                                'name' => $item['item_name'],
+                            ]);
+                        }
+                    }
                 }
-                
-                // Приоритет 2: Fallback - поиск по названию (если по коду не найден)
-                if (!$normativeFound && !empty($item['item_name'])) {
-                    // TODO: реализовать поиск по названию в NormativeMatchingService
-                    // Пока просто импортируем как есть
-                    
-                    Log::debug('normative.name_search_skipped', [
-                        'name' => $item['item_name'],
-                        'reason' => 'Name search not implemented yet',
-                    ]);
-            }
                 
                 // Импортируем позицию работы (с нормативом или без)
                 $createdItem = $this->itemService->addItem($itemData, $estimate);

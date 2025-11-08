@@ -65,9 +65,23 @@ class ResourceMatchingService
         string $itemType,
         array $additionalData
     ): array {
+        // 1. Поиск по коду
         $material = $this->findByCode(Material::class, $code, $organizationId);
         
         if ($material) {
+            return ['type' => 'material', 'resource' => $material, 'created' => false];
+        }
+
+        // 2. Fallback на поиск по названию (если код не найден)
+        $material = $this->findByName(Material::class, $name, $organizationId);
+        
+        if ($material) {
+            Log::info('resource.material.found_by_name', [
+                'code' => $code,
+                'name' => $name,
+                'found_material_id' => $material->id,
+                'found_material_code' => $material->code,
+            ]);
             return ['type' => 'material', 'resource' => $material, 'created' => false];
         }
 
@@ -120,9 +134,23 @@ class ResourceMatchingService
         int $organizationId,
         array $additionalData
     ): array {
+        // 1. Поиск по коду
         $machinery = $this->findByCode(Machinery::class, $code, $organizationId);
         
         if ($machinery) {
+            return ['type' => 'machinery', 'resource' => $machinery, 'created' => false];
+        }
+
+        // 2. Fallback на поиск по названию (если код не найден)
+        $machinery = $this->findByName(Machinery::class, $name, $organizationId);
+        
+        if ($machinery) {
+            Log::info('resource.machinery.found_by_name', [
+                'code' => $code,
+                'name' => $name,
+                'found_machinery_id' => $machinery->id,
+                'found_machinery_code' => $machinery->code,
+            ]);
             return ['type' => 'machinery', 'resource' => $machinery, 'created' => false];
         }
 
@@ -174,9 +202,23 @@ class ResourceMatchingService
         int $organizationId,
         array $additionalData
     ): array {
+        // 1. Поиск по коду
         $labor = $this->findByCode(LaborResource::class, $code, $organizationId);
         
         if ($labor) {
+            return ['type' => 'labor', 'resource' => $labor, 'created' => false];
+        }
+
+        // 2. Fallback на поиск по названию (если код не найден)
+        $labor = $this->findByName(LaborResource::class, $name, $organizationId);
+        
+        if ($labor) {
+            Log::info('resource.labor.found_by_name', [
+                'code' => $code,
+                'name' => $name,
+                'found_labor_id' => $labor->id,
+                'found_labor_code' => $labor->code,
+            ]);
             return ['type' => 'labor', 'resource' => $labor, 'created' => false];
         }
 
@@ -242,6 +284,56 @@ class ResourceMatchingService
         foreach ($all as $item) {
             if ($this->codeService->normalizeCode($item->code) === $normalized) {
                 return $item;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Найти ресурс по названию (fallback)
+     * 
+     * @param string $modelClass Класс модели (Material, Machinery, LaborResource)
+     * @param string $name Название ресурса
+     * @param int $organizationId ID организации
+     * @return object|null Найденный ресурс
+     */
+    private function findByName(string $modelClass, string $name, int $organizationId)
+    {
+        $name = trim($name);
+        
+        if (empty($name)) {
+            return null;
+        }
+
+        // 1. Точное совпадение (без учета регистра)
+        $resource = $modelClass::where('organization_id', $organizationId)
+            ->whereRaw('LOWER(name) = ?', [mb_strtolower($name)])
+            ->first();
+
+        if ($resource) {
+            return $resource;
+        }
+
+        // 2. LIKE поиск (содержит)
+        $resource = $modelClass::where('organization_id', $organizationId)
+            ->where('name', 'ILIKE', "%{$name}%")
+            ->orderByRaw('LENGTH(name) ASC') // Сначала более короткие (более релевантные)
+            ->first();
+
+        if ($resource) {
+            return $resource;
+        }
+
+        // 3. Fuzzy поиск через similarity (PostgreSQL)
+        if (config('database.default') === 'pgsql') {
+            $resource = $modelClass::where('organization_id', $organizationId)
+                ->whereRaw('similarity(name, ?) > 0.3', [$name])
+                ->orderByRaw('similarity(name, ?) DESC', [$name])
+                ->first();
+
+            if ($resource) {
+                return $resource;
             }
         }
 
