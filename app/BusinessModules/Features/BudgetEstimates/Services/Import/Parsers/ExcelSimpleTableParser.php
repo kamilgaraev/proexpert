@@ -172,6 +172,12 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             }
         }
         
+        Log::info('[ExcelParser] Parsing completed', [
+            'total_rows_processed' => count($rows),
+            'sections_count' => count($sections),
+            'items_count' => count($items),
+        ]);
+        
         $totals = $this->calculateTotals($items);
         
         return new EstimateImportDTO(
@@ -793,10 +799,10 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         // ЭТАП 1: Если есть код - анализируем его
         // ============================================
         if (!empty($code)) {
-            // Если есть валидный код - НЕ пропускать
+        // Если есть валидный код - НЕ пропускать
             if (!$this->codeService->isPseudoCode($code)) {
-                return false;
-            }
+            return false;
+        }
             // Если код это псевдо-код (ОТ, ЭМ, М) - пропускать
             return true;
         }
@@ -877,42 +883,96 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     {
         $hasQuantity = $rowData['quantity'] !== null && $rowData['quantity'] > 0;
         $hasPrice = $rowData['unit_price'] !== null && $rowData['unit_price'] > 0;
+        $hasUnit = !empty($rowData['unit']);
         $hasName = !empty($rowData['name']);
         
         if (!$hasName) {
-            return false;
+            return false; // Нет названия - не раздел и не позиция
         }
         
-        // ⭐ КРИТИЧНО: Если есть код работы (ГЭСН/ФЕР/ТЕР и т.д.), это ВСЕГДА позиция, НЕ секция!
+        // ============================================
+        // ЖЕСТКИЕ ПРАВИЛА: Это ТОЧНО НЕ РАЗДЕЛ, а позиция
+        // ============================================
+        
+        // 1. Если есть код работы (ГЭСН/ФЕР/ТЕР и т.д.), это ВСЕГДА позиция, НЕ секция!
         $code = $rowData['code'] ?? '';
         if (!empty($code) && !$this->codeService->isPseudoCode($code)) {
-            // Проверяем, что это код работы, материала, механизма или трудозатрат
             if ($this->codeService->isValidCode($code)) {
                 Log::debug('[ExcelParser] Код найден - НЕ секция', [
                     'code' => $code,
                     'name' => substr($rowData['name'] ?? '', 0, 100),
-                    'has_quantity' => $hasQuantity,
-                    'has_price' => $hasPrice,
                 ]);
                 return false; // Это позиция!
             }
         }
         
-        if ($hasQuantity && $hasPrice) {
+        // 2. Если есть количество ИЛИ цена - это точно позиция
+        if ($hasQuantity || $hasPrice) {
             return false;
         }
         
+        // 3. ⭐ КРИТИЧНО: Если есть единица измерения - это ТОЧНО позиция (даже без количества/цены)
+        if ($hasUnit) {
+            Log::debug('[ExcelParser] Единица измерения найдена - НЕ секция', [
+                'unit' => $rowData['unit'],
+                'name' => substr($rowData['name'] ?? '', 0, 100),
+            ]);
+            return false;
+        }
+        
+        // ============================================
+        // ПРАВИЛА ДЛЯ РАЗДЕЛОВ
+        // ============================================
+        
+        // 4. Если есть иерархический номер (1, 1.1, 1.2) - это может быть раздел
         $sectionNumber = $rowData['section_number'] ?? '';
         $hasHierarchicalNumber = preg_match('/^\d+(\.\d+)*\.?$/', $sectionNumber);
         
         if ($hasHierarchicalNumber) {
-            return true;
+            Log::debug('[ExcelParser] Иерархический номер найден - ЭТО РАЗДЕЛ', [
+                'section_number' => $sectionNumber,
+                'name' => substr($rowData['name'] ?? '', 0, 100),
+            ]);
+            return true; // Это раздел
         }
         
-        if (!$hasQuantity && !$hasPrice) {
-            return true;
+        // 5. Проверяем явные признаки раздела в названии
+        $name = mb_strtolower($rowData['name']);
+        $sectionPatterns = [
+            '/^раздел\s+\d+/u',
+            '/^глава\s+\d+/u',
+            '/^этап\s+\d+/u',
+            '/^часть\s+\d+/u',
+        ];
+        
+        foreach ($sectionPatterns as $pattern) {
+            if (preg_match($pattern, $name)) {
+                Log::debug('[ExcelParser] Явный признак раздела в названии - ЭТО РАЗДЕЛ', [
+                    'pattern' => $pattern,
+                    'name' => substr($rowData['name'] ?? '', 0, 100),
+                ]);
+                return true; // Это раздел
+            }
         }
         
+        // 6. Название ПОЛНОСТЬЮ заглавными буквами (часто признак раздела)
+        if (mb_strtoupper($rowData['name']) === $rowData['name'] && mb_strlen($rowData['name']) > 3) {
+            // Но не считаем разделом однобуквенные коды (В, Р, М и т.д.)
+            Log::debug('[ExcelParser] Название заглавными буквами - ЭТО РАЗДЕЛ', [
+                'name' => substr($rowData['name'] ?? '', 0, 100),
+            ]);
+            return true; // Это раздел
+        }
+        
+        // ============================================
+        // ИТОГ: Если ничего из вышеперечисленного не подошло - это НЕ раздел
+        // ============================================
+        Log::debug('[ExcelParser] Ни один признак раздела не подошел - НЕ РАЗДЕЛ', [
+            'name' => substr($rowData['name'] ?? '', 0, 100),
+            'has_unit' => $hasUnit,
+            'has_quantity' => $hasQuantity,
+            'has_price' => $hasPrice,
+        ]);
         return false;
     }
 
