@@ -14,6 +14,9 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelSi
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeMatchingService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeCodeService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ResourceMatchingService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\EstimateTypeDetector;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Adapters\EstimateAdapterFactory;
+use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateTypeDetectionDTO;
 use App\Models\Estimate;
 use App\Models\EstimateImportHistory;
 use App\Models\WorkType;
@@ -93,6 +96,53 @@ class EstimateImportService
         return $fileId;
     }
 
+    /**
+     * Определить тип сметы по содержимому файла
+     * 
+     * @param string $fileId ID загруженного файла
+     * @return EstimateTypeDetectionDTO
+     */
+    public function detectEstimateType(string $fileId): EstimateTypeDetectionDTO
+    {
+        Log::info('[EstimateImport] detectEstimateType started', [
+            'file_id' => $fileId,
+        ]);
+        
+        try {
+            $fileData = $this->getFileData($fileId);
+            $parser = $this->getParser($fileData['file_path']);
+            
+            // Читаем содержимое файла (первые 100 строк для производительности)
+            $content = $parser->readContent($fileData['file_path'], maxRows: 100);
+            
+            // Запускаем детекторы типов смет
+            $detector = new EstimateTypeDetector();
+            $result = $detector->detectAll($content);
+            
+            // Создаем DTO из результата
+            $detectionDTO = EstimateTypeDetectionDTO::fromDetectorResult($result);
+            
+            // Кешируем результат
+            Cache::put("estimate_import_type:{$fileId}", $detectionDTO->toArray(), now()->addHours(24));
+            
+            Log::info('[EstimateImport] detectEstimateType completed', [
+                'file_id' => $fileId,
+                'detected_type' => $detectionDTO->detectedType,
+                'confidence' => $detectionDTO->confidence,
+            ]);
+            
+            return $detectionDTO;
+        } catch (\Exception $e) {
+            Log::error('[EstimateImport] detectEstimateType failed', [
+                'file_id' => $fileId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            throw new \RuntimeException('Не удалось определить тип сметы: ' . $e->getMessage(), 0, $e);
+        }
+    }
+
     public function detectFormat(string $fileId, ?int $suggestedHeaderRow = null): array
     {
         Log::info('[EstimateImport] detectFormat started', [
@@ -165,6 +215,30 @@ class EstimateImportService
         
         Log::debug('[EstimateImport] Parsing file', ['file_path' => $fileData['file_path']]);
         $importDTO = $parser->parse($fileData['file_path']);
+        
+        // Применяем адаптер по типу сметы (если тип определен)
+        $typeData = Cache::get("estimate_import_type:{$fileId}");
+        if ($typeData && isset($typeData['detected_type'])) {
+            Log::info('[EstimateImport] Applying adapter for estimate type', [
+                'file_id' => $fileId,
+                'estimate_type' => $typeData['detected_type'],
+            ]);
+            
+            $adapterFactory = new EstimateAdapterFactory();
+            $adapter = $adapterFactory->create($typeData['detected_type']);
+            
+            // Применяем адаптер
+            $importDTO = $adapter->adapt($importDTO, $importDTO->metadata);
+            
+            // Сохраняем тип в DTO
+            $importDTO->estimateType = $typeData['detected_type'];
+            $importDTO->typeConfidence = $typeData['confidence'];
+            
+            Log::info('[EstimateImport] Adapter applied', [
+                'file_id' => $fileId,
+                'adapter' => get_class($adapter),
+            ]);
+        }
         
         $previewArray = $importDTO->toArray();
         Cache::put("estimate_import_preview:{$fileId}", $previewArray, now()->addHours(24));

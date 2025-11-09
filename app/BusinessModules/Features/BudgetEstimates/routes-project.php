@@ -69,6 +69,7 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
             // Импорт смет
             Route::prefix('import')->name('import.')->group(function () {
                 Route::post('/upload', [EstimateImportController::class, 'upload'])->name('upload');
+                Route::post('/detect-type', [EstimateImportController::class, 'detectType'])->name('detect_type'); // Определение типа сметы
                 Route::post('/detect', [EstimateImportController::class, 'detect'])->name('detect');
                 Route::post('/map', [EstimateImportController::class, 'map'])->name('map');
                 Route::post('/match', [EstimateImportController::class, 'match'])->name('match');

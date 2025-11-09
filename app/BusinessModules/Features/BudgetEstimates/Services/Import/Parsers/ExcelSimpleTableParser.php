@@ -29,6 +29,22 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $this->typeDetector = new EstimateItemTypeDetector();
         $this->codeService = new NormativeCodeService();
     }
+
+    /**
+     * Читать содержимое файла для детекции типа (без полного парсинга)
+     * 
+     * @param string $filePath Путь к файлу
+     * @param int $maxRows Максимальное количество строк для чтения
+     * @return mixed Worksheet для Excel
+     */
+    public function readContent(string $filePath, int $maxRows = 100)
+    {
+        $spreadsheet = IOFactory::load($filePath);
+        $worksheet = $spreadsheet->getActiveSheet();
+        
+        return $worksheet; // Возвращаем Worksheet для детекторов
+    }
+    
     private array $columnKeywords = [
         'name' => [
             'наименование', 

@@ -13,7 +13,9 @@ class EstimateImportDTO
         public array $totals,
         public array $metadata,
         public ?array $detectedColumns = null,
-        public ?array $rawHeaders = null
+        public ?array $rawHeaders = null,
+        public ?string $estimateType = null,        // Тип сметы: 'grandsmeta', 'rik', 'fer', 'smartsmeta', 'custom'
+        public ?float $typeConfidence = null        // Уверенность в определении типа (0-100)
     ) {}
     
     public function toArray(): array
@@ -28,6 +30,8 @@ class EstimateImportDTO
             'metadata' => $this->metadata,
             'detected_columns' => $this->detectedColumns,
             'raw_headers' => $this->rawHeaders,
+            'estimate_type' => $this->estimateType,
+            'type_confidence' => $this->typeConfidence,
         ];
     }
     

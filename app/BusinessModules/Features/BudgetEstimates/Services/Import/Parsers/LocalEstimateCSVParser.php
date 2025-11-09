@@ -142,6 +142,28 @@ class LocalEstimateCSVParser implements EstimateImportParserInterface
     }
 
     /**
+     * Читать содержимое файла для детекции типа
+     */
+    public function readContent(string $filePath, int $maxRows = 100)
+    {
+        $handle = fopen($filePath, 'r');
+        if (!$handle) {
+            throw new \Exception('Cannot open file: ' . $filePath);
+        }
+        
+        $content = '';
+        for ($i = 0; $i < $maxRows && !feof($handle); $i++) {
+            $line = fgets($handle);
+            if ($line !== false) {
+                $content .= $this->convertEncoding($line);
+            }
+        }
+        fclose($handle);
+        
+        return $content;
+    }
+
+    /**
      * Определяет кодировку файла
      */
     private function detectEncoding(string $filePath): string

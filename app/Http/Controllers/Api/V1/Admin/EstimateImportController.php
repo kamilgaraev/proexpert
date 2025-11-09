@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
 use App\Http\Requests\Admin\Estimate\UploadEstimateImportRequest;
+use App\Http\Requests\Admin\Estimate\DetectEstimateTypeRequest;
 use App\Http\Requests\Admin\Estimate\DetectEstimateImportRequest;
 use App\Http\Requests\Admin\Estimate\MapEstimateImportRequest;
 use App\Http\Requests\Admin\Estimate\ExecuteEstimateImportRequest;
@@ -98,6 +99,45 @@ class EstimateImportController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to upload file: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Определить тип сметы по содержимому файла
+     */
+    public function detectType(DetectEstimateTypeRequest $request): JsonResponse
+    {
+        $fileId = $request->input('file_id');
+        
+        try {
+            Log::info('[EstimateImport] detectType called', [
+                'file_id' => $fileId,
+                'user_id' => $request->user()?->id,
+            ]);
+            
+            $detectionDTO = $this->importService->detectEstimateType($fileId);
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'detected_type' => $detectionDTO->detectedType,
+                    'type_description' => $detectionDTO->getTypeDescription(),
+                    'confidence' => $detectionDTO->confidence,
+                    'is_high_confidence' => $detectionDTO->isHighConfidence(),
+                    'indicators' => $detectionDTO->indicators,
+                    'candidates' => $detectionDTO->candidates,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('[EstimateImport] detectType failed', [
+                'file_id' => $fileId,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to detect estimate type: ' . $e->getMessage(),
             ], 500);
         }
     }

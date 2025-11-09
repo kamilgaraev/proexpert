@@ -21,6 +21,7 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
         
         // Получаем метаданные из заголовка
         $metadata = $this->parseMetadata($xml);
+        $metadata['estimate_type'] = 'grandsmeta'; // Автоматически устанавливаем тип
         
         return new EstimateImportDTO(
             fileName: basename($filePath),
@@ -33,7 +34,9 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
                 'total_quantity' => 0,
                 'items_count' => count($items),
             ],
-            metadata: $metadata
+            metadata: $metadata,
+            estimateType: 'grandsmeta', // Устанавливаем тип сметы
+            typeConfidence: 100.0 // Для XML ГрандСметы confidence = 100%
         );
     }
 
@@ -99,6 +102,18 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
     {
         // XML не имеет концепции заголовков - структура фиксирована
         return [];
+    }
+
+    /**
+     * Читать содержимое файла для детекции типа (без полного парсинга)
+     * 
+     * @param string $filePath Путь к файлу
+     * @param int $maxRows Максимальное количество строк для чтения (игнорируется для XML)
+     * @return mixed SimpleXMLElement для XML
+     */
+    public function readContent(string $filePath, int $maxRows = 100)
+    {
+        return $this->loadXML($filePath);
     }
 
     public function detectStructureFromRow(string $filePath, int $headerRow): array
