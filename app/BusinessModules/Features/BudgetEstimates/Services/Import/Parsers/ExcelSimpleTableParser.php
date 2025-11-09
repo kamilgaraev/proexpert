@@ -785,18 +785,33 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     {
         $name = trim($rowData['name'] ?? '');
         $code = trim($rowData['code'] ?? '');
+        $quantity = $rowData['quantity'] ?? null;
+        $unitPrice = $rowData['unit_price'] ?? null;
+        $unit = trim($rowData['unit'] ?? '');
         
-        // Если есть валидный код - НЕ пропускать
-        if (!empty($code) && !$this->codeService->isPseudoCode($code)) {
-            return false;
-        }
-        
-        // Если название - псевдо-код (заголовок группы)
-        if ($this->codeService->isPseudoCode($name)) {
+        // ============================================
+        // ЭТАП 1: Если есть код - анализируем его
+        // ============================================
+        if (!empty($code)) {
+            // Если есть валидный код - НЕ пропускать
+            if (!$this->codeService->isPseudoCode($code)) {
+                return false;
+            }
+            // Если код это псевдо-код (ОТ, ЭМ, М) - пропускать
             return true;
         }
         
-        // Дополнительные пояснения (часто идут после основной позиции)
+        // ============================================
+        // ЭТАП 2: Нет кода - проверяем наличие данных
+        // ============================================
+        // Если есть количество ИЛИ цена ИЛИ единица измерения - это ДАННЫЕ, не пропускать
+        if ($quantity !== null || $unitPrice !== null || !empty($unit)) {
+            return false;
+        }
+        
+        // ============================================
+        // ЭТАП 3: Проверка на явные служебные строки
+        // ============================================
         $skipPatterns = [
             '/^Объем\s*=/ui',
             '/^Тех\.?\s*часть/ui',
@@ -805,6 +820,8 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             '/^ВСЕГО\s+по/ui',
             '/^В том числе/ui',
             '/^Из них/ui',
+            '/^Сумма\s+за/ui',
+            '/^\s*$/u', // Пустые строки
         ];
         
         foreach ($skipPatterns as $pattern) {
@@ -813,6 +830,17 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             }
         }
         
+        // ============================================
+        // ЭТАП 4: Анализ названия (только если нет данных)
+        // ============================================
+        // Если название - псевдо-код (заголовок группы типа ОТ, ЭМ, М)
+        if ($this->codeService->isPseudoCode($name)) {
+            return true;
+        }
+        
+        // ============================================
+        // ИТОГ: Не пропускаем
+        // ============================================
         return false;
     }
 
@@ -1028,4 +1056,5 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         return $issues;
     }
 }
+
 

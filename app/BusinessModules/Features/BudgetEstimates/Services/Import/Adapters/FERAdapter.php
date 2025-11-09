@@ -38,6 +38,24 @@ class FERAdapter implements EstimateAdapterInterface
         $processedItems = [];
         
         foreach ($dto->items as $item) {
+            // Если item - это массив, преобразуем в EstimateImportRowDTO
+            if (is_array($item)) {
+                $item = new EstimateImportRowDTO(
+                    rowNumber: $item['row_number'] ?? 0,
+                    sectionNumber: $item['section_number'] ?? null,
+                    itemName: $item['item_name'] ?? '',
+                    unit: $item['unit'] ?? null,
+                    quantity: $item['quantity'] ?? null,
+                    unitPrice: $item['unit_price'] ?? null,
+                    code: $item['code'] ?? null,
+                    isSection: $item['is_section'] ?? false,
+                    itemType: $item['item_type'] ?? 'work',
+                    level: $item['level'] ?? 0,
+                    sectionPath: $item['section_path'] ?? null,
+                    rawData: $item['raw_data'] ?? null
+                );
+            }
+            
             $rawData = $item->rawData ?? [];
             
             // 1. Нормализуем код норматива

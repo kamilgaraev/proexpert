@@ -20,12 +20,20 @@ class EstimateImportDTO
     
     public function toArray(): array
     {
+        // Преобразуем items из объектов EstimateImportRowDTO в массивы
+        $itemsArray = array_map(function($item) {
+            if ($item instanceof EstimateImportRowDTO) {
+                return $item->toArray();
+            }
+            return $item; // Уже массив
+        }, $this->items);
+        
         return [
             'file_name' => $this->fileName,
             'file_size' => $this->fileSize,
             'file_format' => $this->fileFormat,
             'sections' => $this->sections,
-            'items' => $this->items,
+            'items' => $itemsArray,
             'totals' => $this->totals,
             'metadata' => $this->metadata,
             'detected_columns' => $this->detectedColumns,
