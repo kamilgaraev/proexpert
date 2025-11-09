@@ -1115,7 +1115,14 @@ class EstimateImportService
 
     private function getParser(string $filePath): EstimateImportParserInterface
     {
-        return new ExcelSimpleTableParser();
+        $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        
+        return match ($extension) {
+            'xml' => new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\GrandSmetaXMLParser(),
+            'csv' => new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\LocalEstimateCSVParser(),
+            'txt', 'rik' => new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\RIKParser(),
+            default => new ExcelSimpleTableParser(), // xlsx, xls
+        };
     }
 
     private function getFileData(string $fileId): array

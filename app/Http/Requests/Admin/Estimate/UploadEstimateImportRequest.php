@@ -17,7 +17,7 @@ class UploadEstimateImportRequest extends FormRequest
             'file' => [
                 'required',
                 'file',
-                'mimes:xlsx,xls',
+                'mimes:xlsx,xls,xml,csv,txt',
                 'max:10240',
             ],
         ];
@@ -27,7 +27,7 @@ class UploadEstimateImportRequest extends FormRequest
     {
         return [
             'file.required' => 'Необходимо выбрать файл для загрузки',
-            'file.mimes' => 'Файл должен быть в формате Excel (.xlsx или .xls)',
+            'file.mimes' => 'Поддерживаемые форматы: Excel (.xlsx, .xls), XML (.xml), CSV (.csv), текст (.txt)',
             'file.max' => 'Размер файла не должен превышать 10 МБ',
         ];
     }
