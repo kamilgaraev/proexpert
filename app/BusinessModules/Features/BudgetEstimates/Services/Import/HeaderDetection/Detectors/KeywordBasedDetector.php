@@ -57,6 +57,15 @@ class KeywordBasedDetector extends AbstractHeaderDetector
         $rawValues = $candidate['raw_values'] ?? [];
         
         // ============================================
+        // ЭТАП 0: СУПЕР-БЫСТРАЯ ПРОВЕРКА НА ЯВНЫЕ ЗАГОЛОВКИ
+        // ============================================
+        $superHeaderCount = $this->countSuperHeaderTerms($rawValues);
+        if ($superHeaderCount >= 2) {
+            // Если 2+ СУПЕР-явных терминов - это 100% заголовки
+            return 0.99;
+        }
+        
+        // ============================================
         // ЭТАП 1: ЖЕСТКАЯ ФИЛЬТРАЦИЯ СТРОК ДАННЫХ
         // ============================================
         $isDefinitelyData = $this->isDefinitelyDataRow($rawValues);
@@ -90,6 +99,47 @@ class KeywordBasedDetector extends AbstractHeaderDetector
         return min($score, 1.0);
     }
 
+    /**
+     * СУПЕР-БЫСТРАЯ проверка на явные заголовочные термины
+     * 
+     * Ищет ТОЛЬКО самые очевидные заголовочные термины
+     * с агрессивной нормализацией (убирает пробелы, точки, регистр)
+     */
+    private function countSuperHeaderTerms(array $rowValues): int
+    {
+        $superTerms = [
+            'наименованиеработ',
+            'наименование',
+            'едизм',
+            'единицаизмерения',
+            'количество',
+            'колво',
+            'цена',
+            'ценазаед',
+            'стоимость',
+            'обоснование',
+            'шифр',
+        ];
+        
+        $matchedCount = 0;
+        
+        foreach ($rowValues as $value) {
+            // АГРЕССИВНАЯ нормализация: убираем ВСЕ пробелы, точки, тире, запятые
+            $normalized = mb_strtolower(trim($value));
+            $normalized = str_replace([' ', '.', '-', '_', ',', ':', ';'], '', $normalized);
+            
+            // Проверяем точное совпадение ИЛИ вхождение
+            foreach ($superTerms as $term) {
+                if ($normalized === $term || str_contains($normalized, $term)) {
+                    $matchedCount++;
+                    break; // Один термин на колонку
+                }
+            }
+        }
+        
+        return $matchedCount;
+    }
+    
     /**
      * Подсчитывает совпадения с ключевыми словами
      *
@@ -139,7 +189,7 @@ class KeywordBasedDetector extends AbstractHeaderDetector
      */
     private function isDefinitelyDataRow(array $rowValues): bool
     {
-        if (count($rowValues) < 3) {
+        if (count($rowValues) < 2) {
             return false; // Слишком мало колонок
         }
         
@@ -148,23 +198,23 @@ class KeywordBasedDetector extends AbstractHeaderDetector
         // Преобразуем ассоциативный массив ['A' => val, 'B' => val] в индексированный [0 => val, 1 => val]
         $values = array_values($rowValues);
         
-        // СИГНАЛ 1: Первая колонка - это номер строки (1, 2, 3, 1.1, 2.5 и т.д.)
+        // СИГНАЛ 1: Первая колонка - это номер строки (1, 2, 3, 10, 11 и т.д.)
         $firstCol = trim($values[0] ?? '');
         if (preg_match('/^\d+(\.\d+)?$/', $firstCol)) {
-            $signals += 3; // Очень сильный сигнал
+            $signals += 4; // СУПЕР-сильный сигнал
         }
         
-        // СИГНАЛ 2: Вторая или третья колонка - короткий код (В, Р, О, М, - и т.д.)
+        // СИГНАЛ 2: Вторая или третья колонка - короткий код (В, Р, О, М, -, Б и т.д.)
         $secondCol = mb_strtolower(trim($values[1] ?? ''));
         $thirdCol = mb_strtolower(trim($values[2] ?? ''));
         
-        if (in_array($secondCol, ['в', 'р', 'о', 'м', '-', 'вр', 'мр']) || 
-            (mb_strlen($secondCol) <= 2 && !empty($secondCol))) {
-            $signals += 2;
+        if (in_array($secondCol, ['в', 'р', 'о', 'м', '-', 'б', 'вр', 'мр']) || 
+            (mb_strlen($secondCol) <= 2 && !empty($secondCol) && !$this->isHeaderTerm($secondCol))) {
+            $signals += 3; // Сильный сигнал
         }
         
-        if (in_array($thirdCol, ['в', 'р', 'о', 'м', '-', 'вр', 'мр']) || 
-            (mb_strlen($thirdCol) <= 2 && !empty($thirdCol))) {
+        if (in_array($thirdCol, ['в', 'р', 'о', 'м', '-', 'б', 'вр', 'мр']) || 
+            (mb_strlen($thirdCol) <= 2 && !empty($thirdCol) && !$this->isHeaderTerm($thirdCol))) {
             $signals += 2;
         }
         
@@ -293,6 +343,22 @@ class KeywordBasedDetector extends AbstractHeaderDetector
         } else {
             return $totalScore * 0.5; // Слабое совпадение
         }
+    }
+    
+    /**
+     * Проверяет, является ли значение заголовочным термином
+     * (чтобы не считать короткие заголовки как коды)
+     */
+    private function isHeaderTerm(string $value): bool
+    {
+        $normalized = mb_strtolower(trim($value));
+        
+        $headerTerms = [
+            '№', 'no', '#',
+            'ед', 'кол', 'qty',
+        ];
+        
+        return in_array($normalized, $headerTerms);
     }
 }
 
