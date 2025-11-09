@@ -133,7 +133,7 @@ class KeywordBasedDetector extends AbstractHeaderDetector
      * 
      * Признаки строки данных:
      * 1. Начинается с номера (1, 2, 3...) в первой колонке
-     * 2. Содержит короткие коды во второй колонке (В, Р, О, М, -)
+     * 2. Содержит короткие коды во второй/третьей колонке (В, Р, О, М, -)
      * 3. Содержит длинное описание работы (5+ слов с глаголами действия)
      * 4. Содержит конкретные числа с единицами измерения внутри текста
      */
@@ -145,16 +145,26 @@ class KeywordBasedDetector extends AbstractHeaderDetector
         
         $signals = 0;
         
+        // Преобразуем ассоциативный массив ['A' => val, 'B' => val] в индексированный [0 => val, 1 => val]
+        $values = array_values($rowValues);
+        
         // СИГНАЛ 1: Первая колонка - это номер строки (1, 2, 3, 1.1, 2.5 и т.д.)
-        $firstCol = trim($rowValues[0] ?? '');
+        $firstCol = trim($values[0] ?? '');
         if (preg_match('/^\d+(\.\d+)?$/', $firstCol)) {
             $signals += 3; // Очень сильный сигнал
         }
         
-        // СИГНАЛ 2: Вторая колонка - короткий код (В, Р, О, М, - и т.д.)
-        $secondCol = mb_strtolower(trim($rowValues[1] ?? ''));
+        // СИГНАЛ 2: Вторая или третья колонка - короткий код (В, Р, О, М, - и т.д.)
+        $secondCol = mb_strtolower(trim($values[1] ?? ''));
+        $thirdCol = mb_strtolower(trim($values[2] ?? ''));
+        
         if (in_array($secondCol, ['в', 'р', 'о', 'м', '-', 'вр', 'мр']) || 
             (mb_strlen($secondCol) <= 2 && !empty($secondCol))) {
+            $signals += 2;
+        }
+        
+        if (in_array($thirdCol, ['в', 'р', 'о', 'м', '-', 'вр', 'мр']) || 
+            (mb_strlen($thirdCol) <= 2 && !empty($thirdCol))) {
             $signals += 2;
         }
         
@@ -163,7 +173,7 @@ class KeywordBasedDetector extends AbstractHeaderDetector
                         'разборка', 'снятие', 'окраска', 'штукатурка', 'облицовка',
                         'изоляция', 'прокладка', 'сверление', 'резка', 'крепление'];
         
-        foreach ($rowValues as $value) {
+        foreach ($values as $value) {
             $normalized = mb_strtolower(trim($value));
             $wordCount = count(array_filter(explode(' ', $normalized), fn($w) => mb_strlen($w) > 2));
             
@@ -178,7 +188,7 @@ class KeywordBasedDetector extends AbstractHeaderDetector
         }
         
         // СИГНАЛ 4: Содержит числа с единицами измерения в тексте
-        foreach ($rowValues as $value) {
+        foreach ($values as $value) {
             $normalized = mb_strtolower(trim($value));
             if (preg_match('/\d+\s*(до|от)?\s*\d*\s*(см|мм|м|кг|т|л)/u', $normalized)) {
                 $signals += 2;
@@ -187,8 +197,8 @@ class KeywordBasedDetector extends AbstractHeaderDetector
         }
         
         // СИГНАЛ 5: Последняя колонка - короткая единица измерения (м², шт, м3)
-        $lastCol = mb_strtolower(trim($rowValues[count($rowValues) - 1] ?? ''));
-        $units = ['м²', 'м2', 'м³', 'м3', 'шт', 'кг', 'т', 'л', 'м', 'п.м', 'кв.м', 'куб.м'];
+        $lastCol = mb_strtolower(trim($values[count($values) - 1] ?? ''));
+        $units = ['м²', 'м2', 'м³', 'м3', 'шт', 'кг', 'т', 'л', 'м', 'п.м', 'кв.м', 'куб.м', 'мп', 'м.п'];
         foreach ($units as $unit) {
             if ($lastCol === $unit || str_contains($lastCol, $unit)) {
                 $signals += 1;
