@@ -54,6 +54,15 @@ class KeywordBasedDetector extends AbstractHeaderDetector
 
     public function scoreCandidate(array $candidate, array $context = []): float
     {
+        $rawValues = $candidate['raw_values'] ?? [];
+        
+        // 0. КРИТИЧНО: Проверка на явные заголовочные термины (0-0.5)
+        $hasStrongHeaderTerms = $this->hasStrongHeaderTerms($rawValues);
+        if ($hasStrongHeaderTerms) {
+            // Если есть явные заголовочные термины - сразу высокий score
+            return 0.95; // Практически гарантированно на первом месте
+        }
+        
         $score = 0.0;
 
         // 1. Базовый балл за keyword matches (0-0.4)
@@ -75,7 +84,7 @@ class KeywordBasedDetector extends AbstractHeaderDetector
         }
         
         // 5. КРИТИЧНО: Проверка на "заголовочность" vs "данные" (0 to -0.5)
-        $isLikelyData = $this->isLikelyDataRow($candidate['raw_values'] ?? []);
+        $isLikelyData = $this->isLikelyDataRow($rawValues);
         if ($isLikelyData) {
             $score -= 0.5; // Большой штраф если похоже на данные, а не заголовки
         }
@@ -119,6 +128,60 @@ class KeywordBasedDetector extends AbstractHeaderDetector
             'unique' => $uniqueKeywords,
             'keywords' => $matchedKeywords,
         ];
+    }
+    
+    /**
+     * Проверяет наличие явных заголовочных терминов
+     * 
+     * Если строка содержит 3+ явных заголовочных термина из списка ниже,
+     * это практически гарантированно заголовки таблицы.
+     */
+    private function hasStrongHeaderTerms(array $rowValues): bool
+    {
+        // Явные заголовочные термины - точные фразы
+        $strongHeaderTerms = [
+            'наименование работ',
+            'наименование работ и затрат',
+            'единица измерения',
+            'ед.изм',
+            'ед. изм',
+            'ед.изм.',
+            'количество',
+            'кол-во',
+            'кол.во',
+            'кол.',
+            'цена за ед',
+            'цена за единицу',
+            'стоимость единицы',
+            'сумма',
+            'стоимость',
+            'обоснование',
+            'шифр',
+            'код работ',
+            'номер',
+        ];
+        
+        $matchedTerms = 0;
+        
+        foreach ($rowValues as $value) {
+            $normalized = mb_strtolower(trim($value));
+            
+            // Пропускаем пустые
+            if (empty($normalized)) {
+                continue;
+            }
+            
+            // Проверяем точное совпадение или вхождение
+            foreach ($strongHeaderTerms as $term) {
+                if ($normalized === $term || str_contains($normalized, $term)) {
+                    $matchedTerms++;
+                    break; // Переходим к следующей ячейке
+                }
+            }
+        }
+        
+        // Если найдено 3 или больше явных терминов - это точно заголовки
+        return $matchedTerms >= 3;
     }
     
     /**
