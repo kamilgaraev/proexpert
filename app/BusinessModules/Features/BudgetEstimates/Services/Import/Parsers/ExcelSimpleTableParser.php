@@ -1029,29 +1029,23 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     {
         $issues = [];
         
-        // Проверка на объединенные ячейки
+        // Проверка на объединенные ячейки (информационно, не критично)
         if ($candidate['has_merged_cells'] ?? false) {
             $issues[] = 'merged_cells_detected';
         }
         
         // Проверка на малое количество колонок
         $filledColumns = $candidate['filled_columns'] ?? 0;
-        if ($filledColumns < 5) {
+        if ($filledColumns < 3) { // Снизили порог с 5 до 3
             $issues[] = 'few_columns';
         }
         
-        // Проверка на многострочность
+        // Проверка на многострочность (информационно, не критично)
         if ($candidate['is_multiline'] ?? false) {
             $issues[] = 'multiline_header';
         }
         
-        // Проверка позиции
-        $row = $candidate['row'] ?? 0;
-        if ($row < 10) {
-            $issues[] = 'early_position';
-        } elseif ($row > 50) {
-            $issues[] = 'late_position';
-        }
+        // Проверка позиции УДАЛЕНА - она не нужна, мы используем content-based detection
         
         return $issues;
     }

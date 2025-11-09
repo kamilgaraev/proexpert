@@ -75,6 +75,7 @@ class CompositeHeaderDetector implements HeaderDetectorInterface
     {
         $totalScore = 0.0;
         $totalWeight = 0.0;
+        $maxScore = 0.0; // Максимальный score среди всех детекторов
 
         // Вычисляем взвешенную сумму оценок от всех детекторов
         foreach ($this->detectors as $detector) {
@@ -88,18 +89,30 @@ class CompositeHeaderDetector implements HeaderDetectorInterface
                 
                 $totalScore += $score * $weight;
                 $totalWeight += $weight;
+                
+                // Отслеживаем максимальный score
+                $maxScore = max($maxScore, $score);
             }
         }
 
-        // Нормализуем score
-        $finalScore = $totalWeight > 0 ? $totalScore / $totalWeight : 0.0;
-
         // Бонус если кандидат обнаружен несколькими детекторами
         $detectorCount = count($candidate['detectors'] ?? []);
+        $consensusBonus = 0.0;
         if ($detectorCount > 1) {
-            $consensusBonus = min(($detectorCount - 1) * 0.1, 0.3);
-            $finalScore += $consensusBonus;
+            $consensusBonus = min(($detectorCount - 1) * 0.05, 0.15); // Уменьшили бонус
         }
+
+        // ============================================
+        // ПРИОРИТЕТ ВЫСОКОЙ УВЕРЕННОСТИ
+        // ============================================
+        // Если хотя бы один детектор уверен на 95%+, не усредняем!
+        if ($maxScore >= 0.95) {
+            return min($maxScore + $consensusBonus, 1.0);
+        }
+
+        // Обычное усреднение для менее уверенных кандидатов
+        $finalScore = $totalWeight > 0 ? $totalScore / $totalWeight : 0.0;
+        $finalScore += $consensusBonus;
 
         return min($finalScore, 1.0);
     }
