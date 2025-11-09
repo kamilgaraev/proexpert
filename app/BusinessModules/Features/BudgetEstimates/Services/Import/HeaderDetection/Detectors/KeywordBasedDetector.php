@@ -68,12 +68,16 @@ class KeywordBasedDetector extends AbstractHeaderDetector
         $filledColumns = $candidate['filled_columns'] ?? 0;
         $score += min($filledColumns / 20, 0.2);
 
-        // 4. Бонус за позицию (0-0.1)
+        // 4. Небольшой бонус за разумную позицию (0-0.1)
         $row = $candidate['row'] ?? 0;
-        if ($row >= 20 && $row <= 40) {
-            $score += 0.1;
-        } elseif ($row >= 10 && $row < 20) {
-            $score += 0.05;
+        if ($row >= 5 && $row <= 50) {
+            $score += 0.05; // Заголовки обычно в пределах первых 50 строк
+        }
+        
+        // 5. КРИТИЧНО: Проверка на "заголовочность" vs "данные" (0 to -0.5)
+        $isLikelyData = $this->isLikelyDataRow($candidate['raw_values'] ?? []);
+        if ($isLikelyData) {
+            $score -= 0.5; // Большой штраф если похоже на данные, а не заголовки
         }
 
         return min($score, 1.0);
@@ -115,6 +119,70 @@ class KeywordBasedDetector extends AbstractHeaderDetector
             'unique' => $uniqueKeywords,
             'keywords' => $matchedKeywords,
         ];
+    }
+    
+    /**
+     * Определяет, похожа ли строка на данные (а не на заголовки)
+     * 
+     * Признаки данных:
+     * - Длинные конкретные описания (5+ слов)
+     * - Содержит специфичные термины (демонтаж, монтаж с конкретными материалами)
+     * - Содержит числа внутри текста ("до 5 см", "толщиной 10 мм")
+     * 
+     * Признаки заголовков:
+     * - Короткие обобщающие термины (1-4 слова)
+     * - Без конкретных деталей
+     */
+    private function isLikelyDataRow(array $rowValues): bool
+    {
+        $dataSignals = 0;
+        $headerSignals = 0;
+        
+        foreach ($rowValues as $value) {
+            $normalized = mb_strtolower(trim($value));
+            $wordCount = count(explode(' ', $normalized));
+            
+            // Пропускаем пустые значения
+            if (empty($normalized)) {
+                continue;
+            }
+            
+            // Признак данных: длинный текст (5+ слов)
+            if ($wordCount >= 5) {
+                $dataSignals++;
+            }
+            
+            // Признак заголовка: короткий текст (1-3 слова)
+            if ($wordCount >= 1 && $wordCount <= 3) {
+                $headerSignals++;
+            }
+            
+            // Признак данных: числа внутри текста ("до 5 см", "толщиной 100 мм")
+            if (preg_match('/\d+\s*(см|мм|м|кг|т|шт)/u', $normalized)) {
+                $dataSignals += 2; // Сильный сигнал
+            }
+            
+            // Признак данных: конкретные глаголы действия
+            $actionVerbs = ['демонтаж', 'монтаж', 'устройство', 'укладка', 'установка', 'разборка', 'снятие'];
+            foreach ($actionVerbs as $verb) {
+                if (str_contains($normalized, $verb) && $wordCount > 3) {
+                    $dataSignals++; // Глагол + длинное описание = данные
+                    break;
+                }
+            }
+            
+            // Признак заголовка: точное совпадение с общими терминами
+            $headerTerms = ['наименование работ', 'единица измерения', 'количество', 'цена', 'стоимость', 'обоснование', 'ед.изм', 'кол-во'];
+            foreach ($headerTerms as $term) {
+                if ($normalized === $term || str_contains($normalized, $term)) {
+                    $headerSignals += 2; // Сильный сигнал заголовка
+                    break;
+                }
+            }
+        }
+        
+        // Если больше признаков данных, чем заголовков - это строка с данными
+        return $dataSignals > $headerSignals;
     }
 }
 

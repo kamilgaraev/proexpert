@@ -67,12 +67,10 @@ class MergedCellsAwareDetector extends AbstractHeaderDetector
             $score -= $penalty;
         }
 
-        // 3. Бонус за позицию (0-0.1)
+        // 3. Небольшой бонус за разумную позицию (0-0.1)
         $row = $candidate['row'] ?? 0;
-        if ($row >= 20 && $row <= 40) {
-            $score += 0.1;
-        } elseif ($row >= 10 && $row < 20) {
-            $score += 0.05;
+        if ($row >= 5 && $row <= 50) {
+            $score += 0.1; // Заголовки обычно в пределах первых 50 строк
         }
 
         // 4. Бонус за большое количество колонок (0-0.2)
