@@ -56,38 +56,36 @@ class KeywordBasedDetector extends AbstractHeaderDetector
     {
         $rawValues = $candidate['raw_values'] ?? [];
         
-        // 0. КРИТИЧНО: Проверка на явные заголовочные термины (0-0.5)
-        $hasStrongHeaderTerms = $this->hasStrongHeaderTerms($rawValues);
-        if ($hasStrongHeaderTerms) {
-            // Если есть явные заголовочные термины - сразу высокий score
-            return 0.95; // Практически гарантированно на первом месте
+        // ============================================
+        // ЭТАП 1: ЖЕСТКАЯ ФИЛЬТРАЦИЯ СТРОК ДАННЫХ
+        // ============================================
+        $isDefinitelyData = $this->isDefinitelyDataRow($rawValues);
+        if ($isDefinitelyData) {
+            // Это точно НЕ заголовок - возвращаем минимальный score
+            return 0.01;
         }
         
-        $score = 0.0;
+        // ============================================
+        // ЭТАП 2: ПОИСК ЯВНЫХ ЗАГОЛОВОЧНЫХ ТЕРМИНОВ
+        // ============================================
+        $headerScore = $this->calculateHeaderScore($rawValues);
+        if ($headerScore >= 0.85) {
+            // Явные заголовки - сразу возвращаем высокий score
+            return $headerScore;
+        }
+        
+        // ============================================
+        // ЭТАП 3: ОБЩИЙ РАСЧЕТ SCORE
+        // ============================================
+        $score = $headerScore; // Начинаем с header score (0-0.85)
 
-        // 1. Базовый балл за keyword matches (0-0.4)
+        // Бонус за keyword matches
         $keywordMatches = $candidate['keyword_matches'] ?? 0;
-        $score += min($keywordMatches / 10, 0.4);
+        $score += min($keywordMatches / 40, 0.1);
 
-        // 2. Бонус за уникальность keywords (0-0.3)
-        $uniqueKeywords = count($candidate['unique_keywords'] ?? []);
-        $score += min($uniqueKeywords / 10, 0.3);
-
-        // 3. Бонус за количество колонок (0-0.2)
+        // Бонус за количество заполненных колонок
         $filledColumns = $candidate['filled_columns'] ?? 0;
-        $score += min($filledColumns / 20, 0.2);
-
-        // 4. Небольшой бонус за разумную позицию (0-0.1)
-        $row = $candidate['row'] ?? 0;
-        if ($row >= 5 && $row <= 50) {
-            $score += 0.05; // Заголовки обычно в пределах первых 50 строк
-        }
-        
-        // 5. КРИТИЧНО: Проверка на "заголовочность" vs "данные" (0 to -0.5)
-        $isLikelyData = $this->isLikelyDataRow($rawValues);
-        if ($isLikelyData) {
-            $score -= 0.5; // Большой штраф если похоже на данные, а не заголовки
-        }
+        $score += min($filledColumns / 30, 0.05);
 
         return min($score, 1.0);
     }
@@ -131,37 +129,126 @@ class KeywordBasedDetector extends AbstractHeaderDetector
     }
     
     /**
-     * Проверяет наличие явных заголовочных терминов
+     * ЖЕСТКАЯ проверка: это точно строка ДАННЫХ (а не заголовков)
      * 
-     * Если строка содержит 3+ явных заголовочных термина из списка ниже,
-     * это практически гарантированно заголовки таблицы.
+     * Признаки строки данных:
+     * 1. Начинается с номера (1, 2, 3...) в первой колонке
+     * 2. Содержит короткие коды во второй колонке (В, Р, О, М, -)
+     * 3. Содержит длинное описание работы (5+ слов с глаголами действия)
+     * 4. Содержит конкретные числа с единицами измерения внутри текста
      */
-    private function hasStrongHeaderTerms(array $rowValues): bool
+    private function isDefinitelyDataRow(array $rowValues): bool
     {
-        // Явные заголовочные термины - точные фразы
-        $strongHeaderTerms = [
-            'наименование работ',
-            'наименование работ и затрат',
-            'единица измерения',
-            'ед.изм',
-            'ед. изм',
-            'ед.изм.',
-            'количество',
-            'кол-во',
-            'кол.во',
-            'кол.',
-            'цена за ед',
-            'цена за единицу',
-            'стоимость единицы',
-            'сумма',
-            'стоимость',
-            'обоснование',
-            'шифр',
-            'код работ',
-            'номер',
+        if (count($rowValues) < 3) {
+            return false; // Слишком мало колонок
+        }
+        
+        $signals = 0;
+        
+        // СИГНАЛ 1: Первая колонка - это номер строки (1, 2, 3, 1.1, 2.5 и т.д.)
+        $firstCol = trim($rowValues[0] ?? '');
+        if (preg_match('/^\d+(\.\d+)?$/', $firstCol)) {
+            $signals += 3; // Очень сильный сигнал
+        }
+        
+        // СИГНАЛ 2: Вторая колонка - короткий код (В, Р, О, М, - и т.д.)
+        $secondCol = mb_strtolower(trim($rowValues[1] ?? ''));
+        if (in_array($secondCol, ['в', 'р', 'о', 'м', '-', 'вр', 'мр']) || 
+            (mb_strlen($secondCol) <= 2 && !empty($secondCol))) {
+            $signals += 2;
+        }
+        
+        // СИГНАЛ 3: Есть колонка с длинным описанием работы (5+ слов с глаголами действия)
+        $actionVerbs = ['демонтаж', 'монтаж', 'устройство', 'укладка', 'установка', 
+                        'разборка', 'снятие', 'окраска', 'штукатурка', 'облицовка',
+                        'изоляция', 'прокладка', 'сверление', 'резка', 'крепление'];
+        
+        foreach ($rowValues as $value) {
+            $normalized = mb_strtolower(trim($value));
+            $wordCount = count(array_filter(explode(' ', $normalized), fn($w) => mb_strlen($w) > 2));
+            
+            if ($wordCount >= 5) {
+                foreach ($actionVerbs as $verb) {
+                    if (str_contains($normalized, $verb)) {
+                        $signals += 3; // Очень сильный сигнал
+                        break 2; // Выходим из обоих циклов
+                    }
+                }
+            }
+        }
+        
+        // СИГНАЛ 4: Содержит числа с единицами измерения в тексте
+        foreach ($rowValues as $value) {
+            $normalized = mb_strtolower(trim($value));
+            if (preg_match('/\d+\s*(до|от)?\s*\d*\s*(см|мм|м|кг|т|л)/u', $normalized)) {
+                $signals += 2;
+                break;
+            }
+        }
+        
+        // СИГНАЛ 5: Последняя колонка - короткая единица измерения (м², шт, м3)
+        $lastCol = mb_strtolower(trim($rowValues[count($rowValues) - 1] ?? ''));
+        $units = ['м²', 'м2', 'м³', 'м3', 'шт', 'кг', 'т', 'л', 'м', 'п.м', 'кв.м', 'куб.м'];
+        foreach ($units as $unit) {
+            if ($lastCol === $unit || str_contains($lastCol, $unit)) {
+                $signals += 1;
+                break;
+            }
+        }
+        
+        // Если набрано 5+ сигналов - это точно данные
+        return $signals >= 5;
+    }
+    
+    /**
+     * Рассчитать score заголовочности строки
+     * 
+     * Возвращает значение от 0 до 1, где:
+     * - 0.95+ = явные заголовки (4+ точных термина)
+     * - 0.85+ = вероятные заголовки (3 термина)
+     * - 0.70+ = возможные заголовки (2 термина)
+     * - < 0.70 = слабые совпадения
+     */
+    private function calculateHeaderScore(array $rowValues): float
+    {
+        // Явные заголовочные термины с весами
+        $headerTerms = [
+            // Суперсильные термины (вес 1.0)
+            'наименование работ' => 1.0,
+            'наименование работ и затрат' => 1.0,
+            'наименование' => 0.9,
+            
+            // Сильные термины (вес 0.8-0.9)
+            'единица измерения' => 0.9,
+            'ед.изм' => 0.9,
+            'ед. изм' => 0.9,
+            'ед.изм.' => 0.9,
+            'ед изм' => 0.9,
+            
+            'количество' => 0.9,
+            'кол-во' => 0.9,
+            'кол.во' => 0.9,
+            'кол.' => 0.8,
+            'кол-во' => 0.9,
+            
+            'цена за ед' => 0.9,
+            'цена за единицу' => 0.9,
+            'цена' => 0.8,
+            
+            'стоимость единицы' => 0.9,
+            'стоимость' => 0.8,
+            'сумма' => 0.8,
+            
+            // Средние термины (вес 0.6-0.7)
+            'обоснование' => 0.7,
+            'шифр' => 0.7,
+            'код' => 0.6,
+            'номер' => 0.6,
+            '№' => 0.6,
         ];
         
-        $matchedTerms = 0;
+        $totalScore = 0.0;
+        $matchedCount = 0;
         
         foreach ($rowValues as $value) {
             $normalized = mb_strtolower(trim($value));
@@ -171,81 +258,31 @@ class KeywordBasedDetector extends AbstractHeaderDetector
                 continue;
             }
             
-            // Проверяем точное совпадение или вхождение
-            foreach ($strongHeaderTerms as $term) {
+            // Нормализуем пробелы и точки
+            $normalized = preg_replace('/\s+/', ' ', $normalized);
+            $normalized = str_replace(['..', '. .'], '.', $normalized);
+            
+            // Проверяем каждый термин
+            foreach ($headerTerms as $term => $weight) {
+                // Точное совпадение или вхождение
                 if ($normalized === $term || str_contains($normalized, $term)) {
-                    $matchedTerms++;
-                    break; // Переходим к следующей ячейке
+                    $totalScore += $weight;
+                    $matchedCount++;
+                    break; // Один термин на колонку
                 }
             }
         }
         
-        // Если найдено 3 или больше явных терминов - это точно заголовки
-        return $matchedTerms >= 3;
-    }
-    
-    /**
-     * Определяет, похожа ли строка на данные (а не на заголовки)
-     * 
-     * Признаки данных:
-     * - Длинные конкретные описания (5+ слов)
-     * - Содержит специфичные термины (демонтаж, монтаж с конкретными материалами)
-     * - Содержит числа внутри текста ("до 5 см", "толщиной 10 мм")
-     * 
-     * Признаки заголовков:
-     * - Короткие обобщающие термины (1-4 слова)
-     * - Без конкретных деталей
-     */
-    private function isLikelyDataRow(array $rowValues): bool
-    {
-        $dataSignals = 0;
-        $headerSignals = 0;
-        
-        foreach ($rowValues as $value) {
-            $normalized = mb_strtolower(trim($value));
-            $wordCount = count(explode(' ', $normalized));
-            
-            // Пропускаем пустые значения
-            if (empty($normalized)) {
-                continue;
-            }
-            
-            // Признак данных: длинный текст (5+ слов)
-            if ($wordCount >= 5) {
-                $dataSignals++;
-            }
-            
-            // Признак заголовка: короткий текст (1-3 слова)
-            if ($wordCount >= 1 && $wordCount <= 3) {
-                $headerSignals++;
-            }
-            
-            // Признак данных: числа внутри текста ("до 5 см", "толщиной 100 мм")
-            if (preg_match('/\d+\s*(см|мм|м|кг|т|шт)/u', $normalized)) {
-                $dataSignals += 2; // Сильный сигнал
-            }
-            
-            // Признак данных: конкретные глаголы действия
-            $actionVerbs = ['демонтаж', 'монтаж', 'устройство', 'укладка', 'установка', 'разборка', 'снятие'];
-            foreach ($actionVerbs as $verb) {
-                if (str_contains($normalized, $verb) && $wordCount > 3) {
-                    $dataSignals++; // Глагол + длинное описание = данные
-                    break;
-                }
-            }
-            
-            // Признак заголовка: точное совпадение с общими терминами
-            $headerTerms = ['наименование работ', 'единица измерения', 'количество', 'цена', 'стоимость', 'обоснование', 'ед.изм', 'кол-во'];
-            foreach ($headerTerms as $term) {
-                if ($normalized === $term || str_contains($normalized, $term)) {
-                    $headerSignals += 2; // Сильный сигнал заголовка
-                    break;
-                }
-            }
+        // Нормализуем score
+        if ($matchedCount >= 4) {
+            return min(0.95 + ($matchedCount - 4) * 0.01, 0.99);
+        } elseif ($matchedCount >= 3) {
+            return 0.85 + $totalScore * 0.05;
+        } elseif ($matchedCount >= 2) {
+            return 0.70 + $totalScore * 0.08;
+        } else {
+            return $totalScore * 0.5; // Слабое совпадение
         }
-        
-        // Если больше признаков данных, чем заголовков - это строка с данными
-        return $dataSignals > $headerSignals;
     }
 }
 
