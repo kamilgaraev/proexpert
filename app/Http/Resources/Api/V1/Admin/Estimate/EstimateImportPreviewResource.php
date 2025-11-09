@@ -15,15 +15,30 @@ class EstimateImportPreviewResource extends JsonResource
             'file_format' => $this->fileFormat,
             'sections' => $this->sections,
             'items' => array_map(function($item) {
+                // Поддержка как объектов DTO, так и массивов
+                if (is_array($item)) {
+                    return [
+                        'row_number' => $item['row_number'],
+                        'section_path' => $item['section_path'] ?? null,
+                        'name' => $item['item_name'],
+                        'unit' => $item['unit'],
+                        'quantity' => $item['quantity'],
+                        'unit_price' => $item['unit_price'],
+                        'total' => ($item['quantity'] ?? 0) * ($item['unit_price'] ?? 0),
+                        'code' => $item['code'] ?? null,
+                    ];
+                }
+                
+                // Объект EstimateImportRowDTO
                 return [
-                    'row_number' => $item['row_number'],
-                    'section_path' => $item['section_path'] ?? null,
-                    'name' => $item['item_name'],
-                    'unit' => $item['unit'],
-                    'quantity' => $item['quantity'],
-                    'unit_price' => $item['unit_price'],
-                    'total' => ($item['quantity'] ?? 0) * ($item['unit_price'] ?? 0),
-                    'code' => $item['code'] ?? null,
+                    'row_number' => $item->rowNumber,
+                    'section_path' => $item->sectionPath ?? null,
+                    'name' => $item->itemName,
+                    'unit' => $item->unit,
+                    'quantity' => $item->quantity,
+                    'unit_price' => $item->unitPrice,
+                    'total' => ($item->quantity ?? 0) * ($item->unitPrice ?? 0),
+                    'code' => $item->code ?? null,
                 ];
             }, array_slice($this->items, 0, 10)),
             'totals' => [
