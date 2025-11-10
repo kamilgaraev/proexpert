@@ -106,6 +106,14 @@ class BalanceController extends Controller
     }
 
     /**
+     * МЕТОД ОТКЛЮЧЕН - Mock платежи вырезаны
+     * 
+     * При подключении реального платежного шлюза (ЮKassa, CloudPayments и т.д.):
+     * 1. Раскомментировать этот метод
+     * 2. Заменить MockPaymentGateway на реальный gateway
+     * 3. Реализовать webhook обработчик для асинхронной обработки платежей
+     * 4. НЕ зачислять баланс сразу - только после подтверждения от шлюза через webhook
+     * 
      * @OA\Post(
      *     path="/api/billing/balance/top-up",
      *     summary="Инициировать пополнение баланса организации",
@@ -129,24 +137,8 @@ class BalanceController extends Controller
      *     @OA\Response(response=401, description="Не авторизован"),
      *     @OA\Response(response=422, description="Ошибка валидации")
      * )
-     * 
-     * ВАЖНО: Текущая реализация работает ТОЛЬКО с MockPaymentGateway!
-     * 
-     * При переходе на реальный платежный шлюз (Stripe, ЮKassa, и т.д.):
-     * 1. НЕ зачислять баланс сразу после createCharge() - платеж может быть асинхронным
-     * 2. Создавать Payment со статусом PENDING
-     * 3. Вернуть пользователю redirect_url для оплаты
-     * 4. Реализовать webhook endpoint для обработки уведомлений от шлюза
-     * 5. В webhook обработчике:
-     *    - Проверить подпись webhook (security!)
-     *    - Обновить статус Payment
-     *    - Зачислить баланс только при status=succeeded
-     *    - Обработать неуспешные платежи (failed, canceled)
-     * 
-     * TODO: Создать PaymentWebhookController для обработки webhook от реального шлюза
-     * TODO: Добавить проверку дублирования платежей по payment_gateway_payment_id
-     * TODO: Добавить обработку различных статусов платежей
      */
+    /*
     public function topUp(Request $request)
     {
         $request->validate([
@@ -232,4 +224,5 @@ class BalanceController extends Controller
             return response()->json(['message' => 'An unexpected error occurred during balance top-up.'], 500);
         }
     }
+    */
 } 

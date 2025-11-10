@@ -40,8 +40,8 @@ Route::middleware(['auth:api_landing', 'authorize:billing.manage', 'interface:lk
         Route::get('balance', [BalanceController::class, 'show'])->name('balance.show');
         // GET /api/v1/landing/billing/balance/transactions
         Route::get('balance/transactions', [BalanceController::class, 'getTransactions'])->name('balance.transactions');
-        // POST /api/v1/landing/billing/balance/top-up
-        Route::post('balance/top-up', [BalanceController::class, 'topUp'])->name('balance.top-up');
+        // POST /api/v1/landing/billing/balance/top-up - ОТКЛЮЧЕНО (mock платежи вырезаны)
+        // Route::post('balance/top-up', [BalanceController::class, 'topUp'])->name('balance.top-up');
 
         // --- Дашборд ---
         Route::get('dashboard', [OrganizationDashboardController::class, 'index'])->name('dashboard.index');
