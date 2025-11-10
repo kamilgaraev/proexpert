@@ -13,7 +13,7 @@ class BalanceTransaction extends Model
     protected $fillable = [
         'organization_balance_id',
         'payment_id', // Ссылка на платеж (если это пополнение)
-        'user_subscription_id', // Ссылка на подписку (если это списание за подписку)
+        'organization_subscription_id', // Ссылка на подписку (если это списание за подписку)
         'type', // credit (пополнение), debit (списание)
         'amount', // Сумма транзакции в минорных единицах (копейках)
         'balance_before', // Баланс до транзакции
@@ -42,9 +42,9 @@ class BalanceTransaction extends Model
         return $this->belongsTo(Payment::class)->withDefault(); // withDefault если платеж может отсутствовать
     }
 
-    public function userSubscription(): BelongsTo
+    public function organizationSubscription(): BelongsTo
     {
-        return $this->belongsTo(UserSubscription::class)->withDefault(); // withDefault если подписка может отсутствовать
+        return $this->belongsTo(OrganizationSubscription::class)->withDefault(); // withDefault если подписка может отсутствовать
     }
 
     /**

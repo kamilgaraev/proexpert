@@ -1095,7 +1095,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'auto_generated_sections' => true, // Флаг для метаданных
         ];
     }
-    
+
     private function calculateSectionLevel(?string $sectionNumber): int
     {
         if (empty($sectionNumber)) {

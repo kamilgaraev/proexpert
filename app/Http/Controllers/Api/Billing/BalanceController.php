@@ -129,6 +129,23 @@ class BalanceController extends Controller
      *     @OA\Response(response=401, description="Не авторизован"),
      *     @OA\Response(response=422, description="Ошибка валидации")
      * )
+     * 
+     * ВАЖНО: Текущая реализация работает ТОЛЬКО с MockPaymentGateway!
+     * 
+     * При переходе на реальный платежный шлюз (Stripe, ЮKassa, и т.д.):
+     * 1. НЕ зачислять баланс сразу после createCharge() - платеж может быть асинхронным
+     * 2. Создавать Payment со статусом PENDING
+     * 3. Вернуть пользователю redirect_url для оплаты
+     * 4. Реализовать webhook endpoint для обработки уведомлений от шлюза
+     * 5. В webhook обработчике:
+     *    - Проверить подпись webhook (security!)
+     *    - Обновить статус Payment
+     *    - Зачислить баланс только при status=succeeded
+     *    - Обработать неуспешные платежи (failed, canceled)
+     * 
+     * TODO: Создать PaymentWebhookController для обработки webhook от реального шлюза
+     * TODO: Добавить проверку дублирования платежей по payment_gateway_payment_id
+     * TODO: Добавить обработку различных статусов платежей
      */
     public function topUp(Request $request)
     {
@@ -167,20 +184,34 @@ class BalanceController extends Controller
             
             $payment = null;
             if ($chargeResponse->success && $chargeResponse->chargeId) {
-                 // Создаем платеж сразу как УСПЕШНЫЙ для тестовых целей
-                 $payment = Payment::create([
+                // ⚠️ ТОЛЬКО ДЛЯ MOCK GATEWAY: зачисляем баланс сразу
+                // В production с реальным шлюзом это должно происходить в webhook обработчике!
+                
+                // Проверяем дублирование платежа
+                if (Payment::existsByGatewayId($chargeResponse->chargeId)) {
+                    Log::warning('Attempt to create duplicate payment', [
+                        'gateway_payment_id' => $chargeResponse->chargeId,
+                        'organization_id' => $organization->id,
+                    ]);
+                    return response()->json([
+                        'message' => 'Платеж с таким ID уже существует',
+                    ], 409);
+                }
+                
+                // Создаем платеж сразу как УСПЕШНЫЙ для тестовых целей
+                $payment = Payment::create([
                     'user_id' => $user->id,
                     'payment_gateway_payment_id' => $chargeResponse->chargeId,
                     'amount' => $request->input('amount'),
                     'currency' => $currency,
-                    'status' => Payment::STATUS_SUCCEEDED, // Сразу успешный
+                    'status' => Payment::STATUS_SUCCEEDED, // ⚠️ Mock: сразу успешный
                     'description' => "Balance top-up successful for {$organization->name}",
-                    'paid_at' => now(), // Проставляем время оплаты
+                    'paid_at' => now(), // ⚠️ Mock: сразу проставляем время
                     'gateway_response' => $chargeResponse->gatewaySpecificResponse,
                 ]);
 
-                // Непосредственно пополняем баланс для тестовых целей
-                // Сумма для balanceService должна быть в центах/копейках
+                // ⚠️ Mock: непосредственно пополняем баланс
+                // Production: это должно происходить в webhook!
                 $this->balanceService->creditBalance(
                     $organization,
                     $amountInCents,

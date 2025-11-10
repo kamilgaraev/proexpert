@@ -9,6 +9,7 @@ use App\Repositories\Interfaces\OrganizationRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Services\LogService;
 use App\Services\PerformanceMonitor;
+use App\Interfaces\Billing\BalanceServiceInterface;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Http\Request;
@@ -24,19 +25,23 @@ class JwtAuthService
 {
     protected UserRepositoryInterface $userRepository;
     protected OrganizationRepositoryInterface $organizationRepository;
+    protected BalanceServiceInterface $balanceService;
 
     /**
      * Конструктор сервиса аутентификации.
      *
      * @param UserRepositoryInterface $userRepository
      * @param OrganizationRepositoryInterface $organizationRepository
+     * @param BalanceServiceInterface $balanceService
      */
     public function __construct(
         UserRepositoryInterface $userRepository,
-        OrganizationRepositoryInterface $organizationRepository
+        OrganizationRepositoryInterface $organizationRepository,
+        BalanceServiceInterface $balanceService
     ) {
         $this->userRepository = $userRepository;
         $this->organizationRepository = $organizationRepository;
+        $this->balanceService = $balanceService;
     }
 
     /**
@@ -542,6 +547,9 @@ class JwtAuthService
                         'role_slug' => 'organization_owner'
                     ]);
 
+                    // Выдача тестового баланса при регистрации (если включен тестовый режим)
+                    $this->grantTestingBalanceIfEnabled($organization, $user);
+
                 } catch (\Exception $e) {
                     Log::error('[JwtAuthService] Failed to create organization', [
                         'error' => $e->getMessage(),
@@ -733,6 +741,82 @@ class JwtAuthService
                 'message' => 'Ошибка при регистрации пользователя: ' . $e->getMessage(), 
                 'status_code' => 500
             ];
+        }
+    }
+
+    /**
+     * Выдача тестового баланса при регистрации (если включен тестовый режим)
+     * 
+     * @param \App\Models\Organization $organization
+     * @param User $user
+     * @return void
+     */
+    protected function grantTestingBalanceIfEnabled(\App\Models\Organization $organization, User $user): void
+    {
+        // Проверяем, включен ли тестовый режим
+        if (!config('billing.testing.enabled', false)) {
+            Log::debug('[JwtAuthService] Testing mode is disabled, skipping initial balance grant', [
+                'organization_id' => $organization->id,
+            ]);
+            return;
+        }
+
+        try {
+            $initialBalance = config('billing.testing.initial_balance', 0);
+            $description = config('billing.testing.description', 'Тестовый баланс при регистрации');
+            $meta = array_merge(
+                config('billing.testing.meta', []),
+                [
+                    'granted_at_registration' => true,
+                    'user_id' => $user->id,
+                    'environment' => app()->environment(),
+                ]
+            );
+
+            if ($initialBalance <= 0) {
+                Log::warning('[JwtAuthService] Testing mode enabled but initial balance is 0 or negative', [
+                    'organization_id' => $organization->id,
+                    'initial_balance' => $initialBalance,
+                ]);
+                return;
+            }
+
+            // Выдаем баланс через BalanceService
+            $orgBalance = $this->balanceService->creditBalance(
+                $organization,
+                $initialBalance,
+                $description,
+                null, // payment = null (это не пополнение через платеж)
+                $meta
+            );
+
+            Log::channel('business')->info('billing.testing.initial_balance_granted', [
+                'organization_id' => $organization->id,
+                'organization_name' => $organization->name,
+                'user_id' => $user->id,
+                'user_email' => $user->email,
+                'amount_cents' => $initialBalance,
+                'amount_rubles' => round($initialBalance / 100, 2),
+                'balance_after_cents' => $orgBalance->balance,
+                'balance_after_rubles' => round($orgBalance->balance / 100, 2),
+                'testing_mode' => true,
+                'environment' => app()->environment(),
+            ]);
+
+            Log::info('[JwtAuthService] ✅ Testing balance granted successfully', [
+                'organization_id' => $organization->id,
+                'amount_rubles' => round($initialBalance / 100, 2),
+                'balance_after_rubles' => round($orgBalance->balance / 100, 2),
+            ]);
+
+        } catch (\Exception $e) {
+            // Не прерываем регистрацию, если не удалось выдать тестовый баланс
+            Log::error('[JwtAuthService] Failed to grant testing balance', [
+                'organization_id' => $organization->id,
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
         }
     }
 } 

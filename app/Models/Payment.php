@@ -12,7 +12,7 @@ class Payment extends Model
 
     protected $fillable = [
         'user_id',
-        'user_subscription_id',
+        'organization_subscription_id',
         'payment_gateway_payment_id',
         'payment_gateway_charge_id', // Может быть отдельное поле для ID операции в шлюзе
         'amount',
@@ -45,8 +45,24 @@ class Payment extends Model
         return $this->belongsTo(User::class);
     }
 
-    public function subscription(): BelongsTo
+    public function organizationSubscription(): BelongsTo
     {
-        return $this->belongsTo(UserSubscription::class, 'user_subscription_id');
+        return $this->belongsTo(OrganizationSubscription::class, 'organization_subscription_id');
+    }
+
+    /**
+     * Проверка дублирования платежа по gateway ID
+     */
+    public static function existsByGatewayId(string $gatewayPaymentId): bool
+    {
+        return self::where('payment_gateway_payment_id', $gatewayPaymentId)->exists();
+    }
+
+    /**
+     * Получить платеж по gateway ID
+     */
+    public static function findByGatewayId(string $gatewayPaymentId): ?self
+    {
+        return self::where('payment_gateway_payment_id', $gatewayPaymentId)->first();
     }
 } 
