@@ -51,7 +51,7 @@ class DashboardService
     public function getSummary(int $organizationId, int $projectId): array
     {
         // Участники проекта
-        $usersCount = \DB::table('user_projects')
+        $usersCount = \DB::table('project_user')
             ->where('project_id', $projectId)
             ->distinct('user_id')
             ->count('user_id');
