@@ -106,8 +106,14 @@ class EstimateScheduleImportService
         Estimate $estimate,
         array $options = []
     ): void {
+        // Загружаем разделы с фильтрацией: только работы (item_type = 'work')
         $sections = $estimate->sections()
-            ->with(['items.workType', 'items.measurementUnit'])
+            ->with([
+                'items' => function ($query) {
+                    $query->works() // Только работы, без материалов, оборудования и т.д.
+                        ->with(['workType', 'measurementUnit']);
+                }
+            ])
             ->orderBy('sort_order')
             ->get();
 
@@ -115,6 +121,27 @@ class EstimateScheduleImportService
         $sortOrder = 0;
 
         foreach ($sections as $section) {
+            // Фильтруем работы (дополнительная проверка на случай кеша)
+            $works = $section->items->filter(fn($item) => $item->isWork());
+            
+            // Логируем для отладки
+            \Log::info('schedule.import.section_processing', [
+                'section_id' => $section->id,
+                'section_name' => $section->name,
+                'total_items' => $section->items->count(),
+                'work_items' => $works->count(),
+                'filtered_out' => $section->items->count() - $works->count(),
+            ]);
+            
+            // Пропускаем разделы без работ
+            if ($works->isEmpty()) {
+                \Log::info('schedule.import.section_skipped', [
+                    'section_id' => $section->id,
+                    'reason' => 'Нет работ в разделе',
+                ]);
+                continue;
+            }
+
             // Создаем группу задач для раздела
             $sectionTask = $this->createTaskFromSection(
                 $schedule,
@@ -124,34 +151,32 @@ class EstimateScheduleImportService
                 $options
             );
 
-            // Импортируем позиции раздела как задачи
-            if ($section->items && $section->items->count() > 0) {
-                $taskStartDate = $currentDate->copy();
-                
-                foreach ($section->items as $item) {
-                    $task = $this->createTaskFromItem(
-                        $schedule,
-                        $item,
-                        $section,
-                        $sectionTask,
-                        $taskStartDate,
-                        $sortOrder++,
-                        $options
-                    );
+            // Импортируем только работы раздела как задачи
+            $taskStartDate = $currentDate->copy();
+            
+            foreach ($works as $item) {
+                $task = $this->createTaskFromItem(
+                    $schedule,
+                    $item,
+                    $section,
+                    $sectionTask,
+                    $taskStartDate,
+                    $sortOrder++,
+                    $options
+                );
 
-                    // Следующая задача начинается после текущей (последовательное выполнение)
-                    if ($options['auto_calculate_dates'] ?? true) {
-                        $taskStartDate = Carbon::parse($task->planned_end_date)->addDay();
-                    }
-                }
-
-                // Обновляем даты группы задач на основе дочерних
-                $this->updateSectionTaskDates($sectionTask);
-                
-                // Следующий раздел начинается после завершения текущего
+                // Следующая задача начинается после текущей (последовательное выполнение)
                 if ($options['auto_calculate_dates'] ?? true) {
-                    $currentDate = Carbon::parse($sectionTask->planned_end_date)->addDay();
+                    $taskStartDate = Carbon::parse($task->planned_end_date)->addDay();
                 }
+            }
+
+            // Обновляем даты группы задач на основе дочерних
+            $this->updateSectionTaskDates($sectionTask);
+            
+            // Следующий раздел начинается после завершения текущего
+            if ($options['auto_calculate_dates'] ?? true) {
+                $currentDate = Carbon::parse($sectionTask->planned_end_date)->addDay();
             }
         }
     }
@@ -195,14 +220,18 @@ class EstimateScheduleImportService
     /**
      * Создать задачу из позиции сметы
      * 
+     * ВАЖНО: Этот метод должен вызываться только для работ (item_type = 'work'),
+     * а не для материалов, оборудования, труда или итоговых строк
+     * 
      * @param ProjectSchedule $schedule График
-     * @param EstimateItem $item Позиция сметы
+     * @param EstimateItem $item Позиция сметы (только работы!)
      * @param EstimateSection $section Раздел сметы
      * @param ScheduleTask $parentTask Родительская задача
      * @param Carbon $startDate Дата начала
      * @param int $sortOrder Порядок сортировки
      * @param array $options Опции
      * @return ScheduleTask Созданная задача
+     * @throws \InvalidArgumentException Если передана не работа
      */
     private function createTaskFromItem(
         ProjectSchedule $schedule,
@@ -213,6 +242,14 @@ class EstimateScheduleImportService
         int $sortOrder,
         array $options
     ): ScheduleTask {
+        // Проверяем, что это именно работа, а не материал/оборудование/труд
+        if (!$item->isWork()) {
+            throw new \InvalidArgumentException(
+                "Невозможно создать задачу из позиции типа '{$item->item_type}'. " .
+                "Ожидается item_type = 'work'. Позиция ID: {$item->id}"
+            );
+        }
+
         // Рассчитываем длительность на основе трудозатрат
         $durationDays = $this->calculateTaskDuration($item, $options);
         
