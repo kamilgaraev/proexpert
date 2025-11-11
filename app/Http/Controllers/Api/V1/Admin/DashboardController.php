@@ -48,18 +48,6 @@ class DashboardController extends Controller
         
         $projectId = (int)$request->input('project_id');
 
-        // Проверяем, что проект принадлежит организации
-        $project = Project::where('id', $projectId)
-            ->where('organization_id', $organizationId)
-            ->first();
-            
-        if (!$project) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Проект не найден или не принадлежит вашей организации'
-            ], 404);
-        }
-
         $summary = $this->dashboardService->getSummary($organizationId, $projectId);
         return response()->json(['success' => true, 'data' => $summary]);
     }
