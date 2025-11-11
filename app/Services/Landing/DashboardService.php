@@ -17,27 +17,30 @@ class DashboardService
     }
 
     /**
-     * Получить агрегированные данные дашборда по организации.
+     * Получить агрегированные данные дашборда по проекту
+     * @param int $organizationId ID организации
+     * @param int $projectId ID проекта (обязательно)
      */
-    public function getDashboardData(int $organizationId): array
+    public function getDashboardData(int $organizationId, int $projectId): array
     {
         $startTime = microtime(true);
         
         $this->logging->business('dashboard.data.requested', [
-            'organization_id' => $organizationId
+            'organization_id' => $organizationId,
+            'project_id' => $projectId
         ]);
 
         $data = [];
         
-        // ДИАГНОСТИКА: Измеряем время каждой операции дашборда
+        // ДИАГНОСТИКА: Измеряем время каждой операции дашборда по проекту
         $operations = [
-            'financial' => fn() => $this->repository->getFinancialSummary($organizationId),
-            'projects' => fn() => $this->repository->getProjectSummary($organizationId),
-            'contracts' => fn() => $this->repository->getContractSummary($organizationId),
-            'works_materials' => fn() => $this->repository->getWorkMaterialSummary($organizationId),
-            'acts' => fn() => $this->repository->getActSummary($organizationId),
-            'team' => fn() => $this->repository->getTeamSummary($organizationId),
-            'team_details' => fn() => $this->repository->getTeamDetails($organizationId)
+            'financial' => fn() => $this->repository->getFinancialSummary($organizationId, $projectId),
+            'projects' => fn() => $this->repository->getProjectSummary($organizationId, $projectId),
+            'contracts' => fn() => $this->repository->getContractSummary($organizationId, $projectId),
+            'works_materials' => fn() => $this->repository->getWorkMaterialSummary($organizationId, $projectId),
+            'acts' => fn() => $this->repository->getActSummary($organizationId, $projectId),
+            'team' => fn() => $this->repository->getTeamSummary($organizationId, $projectId),
+            'team_details' => fn() => $this->repository->getTeamDetails($organizationId, $projectId)
         ];
         
         foreach ($operations as $operationName => $operation) {
@@ -77,12 +80,12 @@ class DashboardService
         $chartsStart = microtime(true);
         $charts = [];
         $chartOperations = [
-            'projects_monthly' => fn() => $this->repository->getTimeseries('projects', 'month', $organizationId),
-            'contracts_monthly' => fn() => $this->repository->getTimeseries('contracts', 'month', $organizationId),
-            'completed_works_monthly' => fn() => $this->repository->getTimeseries('completed_works', 'month', $organizationId),
-            'balance_monthly' => fn() => $this->repository->getMonthlyBalance($organizationId),
-            'projects_status' => fn() => $this->repository->getStatusDistribution('projects', $organizationId),
-            'contracts_status' => fn() => $this->repository->getStatusDistribution('contracts', $organizationId)
+            'projects_monthly' => fn() => $this->repository->getTimeseries('projects', 'month', $organizationId, $projectId),
+            'contracts_monthly' => fn() => $this->repository->getTimeseries('contracts', 'month', $organizationId, $projectId),
+            'completed_works_monthly' => fn() => $this->repository->getTimeseries('completed_works', 'month', $organizationId, $projectId),
+            'balance_monthly' => fn() => $this->repository->getMonthlyBalance($organizationId, 6, $projectId),
+            'projects_status' => fn() => $this->repository->getStatusDistribution('projects', $organizationId, $projectId),
+            'contracts_status' => fn() => $this->repository->getStatusDistribution('contracts', $organizationId, $projectId)
         ];
         
         foreach ($chartOperations as $chartName => $chartOperation) {
