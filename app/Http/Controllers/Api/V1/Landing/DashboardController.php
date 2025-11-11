@@ -36,6 +36,18 @@ class DashboardController extends Controller
         
         $projectId = (int)$request->query('project_id');
 
+        // Проверяем, что проект принадлежит текущей организации
+        $project = \App\Models\Project::where('id', $projectId)
+            ->where('organization_id', $organizationId)
+            ->first();
+            
+        if (!$project) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Проект не найден или не принадлежит вашей организации',
+            ], 404);
+        }
+
         // Кешируем данные дашборда проекта на 2 минуты
         $cacheKey = "dashboard_data_{$organizationId}_project_{$projectId}";
             
