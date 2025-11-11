@@ -59,9 +59,7 @@ class DashboardService
         return [
             'users_count' => $usersCount,
             'projects_count' => 1, // Один конкретный проект
-            'materials_count' => Material::where('organization_id', $organizationId)
-                ->where('project_id', $projectId)
-                ->count(),
+            'materials_count' => Material::where('organization_id', $organizationId)->count(), // Материалы общие для организации
             'suppliers_count' => Supplier::where('organization_id', $organizationId)->count(), // Поставщики общие
             'contracts_count' => Contract::where('organization_id', $organizationId)
                 ->where('project_id', $projectId)
