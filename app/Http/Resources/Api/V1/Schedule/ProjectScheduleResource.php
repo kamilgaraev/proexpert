@@ -87,10 +87,16 @@ class ProjectScheduleResource extends JsonResource
                 $this->tasks->map(function ($task) {
                     return [
                         'id' => $task->id,
+                        'parent_task_id' => $task->parent_task_id,
                         'name' => $task->name,
+                        'task_type' => $task->task_type,
                         'status' => $task->status,
                         'progress_percent' => $task->progress_percent,
+                        'level' => $task->level,
                         'is_critical' => $task->is_critical,
+                        // Связь со сметой
+                        'estimate_item_id' => $task->estimate_item_id,
+                        'estimate_section_id' => $task->estimate_section_id,
                     ];
                 })
             ),
