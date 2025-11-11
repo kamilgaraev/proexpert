@@ -13,7 +13,7 @@ use App\Models\Material;
 
 class EloquentOrganizationDashboardRepository implements OrganizationDashboardRepositoryInterface
 {
-    public function getFinancialSummary(int $organizationId, int $projectId): array
+    public function getFinancialSummary(int $organizationId): array
     {
         // ОПТИМИЗАЦИЯ: Используем JOIN вместо whereHas для лучшей производительности
         $organizationBalanceId = DB::table('organization_balances')
@@ -24,17 +24,15 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
             return ['balance' => 0, 'credits_this_month' => 0, 'debits_this_month' => 0];
         }
 
-        // Баланс — последнее значение balance_after из транзакций по проекту
+        // Баланс — последнее значение balance_after из транзакций
         $lastTx = BalanceTransaction::where('organization_balance_id', $organizationBalanceId)
-            ->where('project_id', $projectId)
             ->orderByDesc('id')
             ->first();
         $balance = $lastTx?->balance_after ?? 0;
 
-        // Пополнения и списания за текущий месяц по проекту
+        // Пополнения и списания за текущий месяц в одном запросе
         $startOfMonth = now()->startOfMonth();
         $monthlyData = BalanceTransaction::where('organization_balance_id', $organizationBalanceId)
-            ->where('project_id', $projectId)
             ->whereDate('created_at', '>=', $startOfMonth)
             ->selectRaw("
                 SUM(CASE WHEN type = ? THEN amount ELSE 0 END) as credits,
@@ -49,23 +47,26 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
         ];
     }
 
-    public function getProjectSummary(int $organizationId, int $projectId): array
+    public function getProjectSummary(int $organizationId): array
     {
         try {
-            // Получаем данные конкретного проекта
-            $project = Project::where('organization_id', $organizationId)
-                ->where('id', $projectId)
+            // БЕЗОПАСНЫЙ ПОДХОД: Получаем все проекты и считаем в коде
+            $projects = Project::where('organization_id', $organizationId)
                 ->select('status')
-                ->first();
+                ->get();
 
-            if (!$project) {
-                return ['total' => 0, 'active' => 0, 'completed' => 0];
-            }
+            $total = $projects->count();
+            $active = $projects->filter(function ($project) {
+                return in_array($project->status, ['active']);
+            })->count();
+            $completed = $projects->filter(function ($project) {
+                return in_array($project->status, ['completed']);
+            })->count();
 
             return [
-                'total' => 1,
-                'active' => in_array($project->status, ['active']) ? 1 : 0,
-                'completed' => in_array($project->status, ['completed']) ? 1 : 0,
+                'total' => $total,
+                'active' => $active,
+                'completed' => $completed,
             ];
         } catch (\Exception $e) {
             Log::error('Error in getProjectSummary: ' . $e->getMessage());
@@ -73,12 +74,11 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
         }
     }
 
-    public function getContractSummary(int $organizationId, int $projectId): array
+    public function getContractSummary(int $organizationId): array
     {
         try {
-            // Получаем контракты конкретного проекта
+            // БЕЗОПАСНЫЙ ПОДХОД: Получаем все контракты и считаем в коде
             $contracts = Contract::where('organization_id', $organizationId)
-                ->where('project_id', $projectId)
                 ->select('status', 'total_amount')
                 ->get();
 
@@ -107,20 +107,15 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
         }
     }
 
-    public function getWorkMaterialSummary(int $organizationId, int $projectId): array
+    public function getWorkMaterialSummary(int $organizationId): array
     {
-        // CompletedWorks по проекту
-        $worksQuery = CompletedWork::where('organization_id', $organizationId)
-            ->where('project_id', $projectId);
-        
-        $worksTotal = (clone $worksQuery)->count();
-        $worksConfirmed = (clone $worksQuery)->where('status', 'confirmed')->count();
-        $worksAmount = (clone $worksQuery)->where('status', 'confirmed')->sum('total_amount');
+        // CompletedWorks
+        $worksTotal = CompletedWork::where('organization_id', $organizationId)->count();
+        $worksConfirmed = CompletedWork::where('organization_id', $organizationId)->where('status', 'confirmed')->count();
+        $worksAmount = CompletedWork::where('organization_id', $organizationId)->where('status', 'confirmed')->sum('total_amount');
 
-        // Materials по проекту
-        $materialsTotal = Material::where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->count();
+        // Materials (расход)
+        $materialsTotal = Material::where('organization_id', $organizationId)->count();
 
         return [
             'works' => [
@@ -134,18 +129,15 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
         ];
     }
 
-    public function getActSummary(int $organizationId, int $projectId): array
+    public function getActSummary(int $organizationId): array
     {
-        // Акты контрактов по проекту
-        $actsQuery = ContractPerformanceAct::whereHas('contract', function ($q) use ($organizationId, $projectId) {
-            $q->where('organization_id', $organizationId)
-              ->where('project_id', $projectId);
+        // Акт относится к контракту, поэтому связываем через контракт
+        $actsQuery = ContractPerformanceAct::whereHas('contract', function ($q) use ($organizationId) {
+            $q->where('organization_id', $organizationId);
         });
-        
         $total = $actsQuery->count();
         $approved = (clone $actsQuery)->where('is_approved', true)->count();
         $totalAmount = (clone $actsQuery)->sum('amount');
-        
         return [
             'total' => $total,
             'approved' => $approved,
@@ -153,18 +145,8 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
         ];
     }
 
-    public function getTeamSummary(int $organizationId, int $projectId): array
+    public function getTeamSummary(int $organizationId): array
     {
-        // Получаем участников проекта
-        $projectUsers = DB::table('user_projects')
-            ->where('project_id', $projectId)
-            ->pluck('user_id')
-            ->toArray();
-            
-        if (empty($projectUsers)) {
-            return ['total' => 0, 'by_roles' => []];
-        }
-        
         // Используем новую систему авторизации с user_role_assignments
         $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
         
@@ -172,7 +154,6 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
             ->join('user_role_assignments', 'users.id', '=', 'user_role_assignments.user_id')
             ->where('user_role_assignments.context_id', $context->id)
             ->where('user_role_assignments.is_active', true)
-            ->whereIn('users.id', $projectUsers)
             ->whereNull('users.deleted_at');
 
         $rolesCount = $usersQuery->select('user_role_assignments.role_slug', DB::raw('COUNT(*) as cnt'))
@@ -189,15 +170,12 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
     }
 
     /**
-     * Получить детальный список участников команды проекта с ролями
+     * Получить детальный список участников команды с ролями.
      */
-    public function getTeamDetails(int $organizationId, int $projectId): array
+    public function getTeamDetails(int $organizationId): array
     {
-        // Кеш для конкретного проекта
-        $cacheKey = "team_details_{$organizationId}_project_{$projectId}";
-            
         // ОПТИМИЗАЦИЯ: Кэшируем результат детальной информации о команде на 10 минут
-        return cache()->remember($cacheKey, 600, function() use ($organizationId, $projectId) {
+        return cache()->remember("team_details_{$organizationId}", 600, function() use ($organizationId) {
             try {
                 // ОПТИМИЗАЦИЯ: Используем JOIN вместо whereHas для лучшей производительности
                 $contextId = DB::table('authorization_contexts')
@@ -211,7 +189,6 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
 
                 $users = DB::table('users')
                     ->join('organization_user', 'users.id', '=', 'organization_user.user_id')
-                    ->join('user_projects', 'users.id', '=', 'user_projects.user_id')
                     ->leftJoin('user_role_assignments', function($join) use ($contextId) {
                         $join->on('users.id', '=', 'user_role_assignments.user_id')
                              ->where('user_role_assignments.context_id', '=', $contextId)
@@ -219,7 +196,6 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
                     })
                     ->where('organization_user.organization_id', $organizationId)
                     ->where('organization_user.is_active', true)
-                    ->where('user_projects.project_id', $projectId)
                     ->whereNull('users.deleted_at')
                     ->select([
                         'users.id',
@@ -243,7 +219,6 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
             } catch (\Exception $e) {
                 Log::error('Error in getTeamDetails: ' . $e->getMessage(), [
                     'organization_id' => $organizationId,
-                    'project_id' => $projectId,
                     'trace' => $e->getTraceAsString()
                 ]);
                 return [];
@@ -251,9 +226,9 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
         });
     }
 
-    public function getTimeseries(string $metric, string $period, int $organizationId, int $projectId): array
+    public function getTimeseries(string $metric, string $period, int $organizationId): array
     {
-        // Поддерживаем metric = projects/contracts/completed_works, period = month
+        // На данный момент поддерживаем metric = projects/contracts, period = month
         $model = match ($metric) {
             'projects' => Project::class,
             'contracts' => Contract::class,
@@ -263,16 +238,8 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
         if (!$model) {
             return ['labels' => [], 'values' => []];
         }
-        
         $dateField = 'created_at';
         $query = $model::where('organization_id', $organizationId);
-        
-        // Фильтрация по проекту (обязательно)
-        if ($metric === 'projects') {
-            $query->where('id', $projectId);
-        } else {
-            $query->where('project_id', $projectId);
-        }
 
         $months = collect(range(0, 5))->map(fn ($i) => now()->subMonths($i)->startOfMonth())->sort();
         $labels = [];
@@ -285,31 +252,23 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
     }
 
     /**
-     * Распределение статусов по проекту
+     * Распределение статусов.
      */
-    public function getStatusDistribution(string $entity, int $organizationId, int $projectId): array
+    public function getStatusDistribution(string $entity, int $organizationId): array
     {
         return match ($entity) {
-            'projects' => $this->distribution(Project::class, $organizationId, 'status', $projectId),
-            'contracts' => $this->distribution(Contract::class, $organizationId, 'status', $projectId),
+            'projects' => $this->distribution(Project::class, $organizationId, 'status'),
+            'contracts' => $this->distribution(Contract::class, $organizationId, 'status'),
             default => [],
         };
     }
 
-    private function distribution(string $modelClass, int $orgId, string $field, int $projectId): array
+    private function distribution(string $modelClass, int $orgId, string $field): array
     {
-        // БЕЗОПАСНЫЙ ПОДХОД: Получаем данные по проекту в коде для избежания SQL ошибок
-        $query = $modelClass::where('organization_id', $orgId);
-        
-        // Фильтрация по проекту (обязательно)
-        if ($modelClass === Project::class) {
-            $query->where('id', $projectId);
-        } else {
-            // Для контрактов и других сущностей
-            $query->where('project_id', $projectId);
-        }
-        
-        $items = $query->select($field)->get();
+        // БЕЗОПАСНЫЙ ПОДХОД: Получаем данные в коде для избежания SQL ошибок
+        $items = $modelClass::where('organization_id', $orgId)
+            ->select($field)
+            ->get();
             
         return $items->groupBy($field)->map(function ($group) {
             return $group->count();
@@ -317,9 +276,9 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
     }
 
     /**
-     * Баланс проекта на конец каждого месяца
+     * Баланс на конец каждого месяца.
      */
-    public function getMonthlyBalance(int $organizationId, int $months, int $projectId): array
+    public function getMonthlyBalance(int $organizationId, int $months = 6): array
     {
         $labels = [];
         $values = [];
@@ -330,14 +289,12 @@ class EloquentOrganizationDashboardRepository implements OrganizationDashboardRe
             $lastTx = BalanceTransaction::whereHas('organizationBalance', function ($q) use ($organizationId) {
                     $q->where('organization_id', $organizationId);
                 })
-                ->where('project_id', $projectId)
                 ->whereDate('created_at', '<=', $date)
                 ->orderByDesc('created_at')
                 ->first();
-            
             $values[] = $lastTx ? $lastTx->balance_after / 100 : 0;
         }
 
         return compact('labels', 'values');
     }
-} 
+}

@@ -4,21 +4,22 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\DashboardController;
 use App\Http\Controllers\Api\V1\Admin\DashboardSettingsController;
 
-Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard.index');
+// PROJECT BASED DASHBOARD - все эндпоинты требуют project_id
+Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard.index'); // ?project_id=123
 Route::get('/dashboard/timeseries', [DashboardController::class, 'timeseries'])->name('dashboard.timeseries');
 Route::get('/dashboard/top-entities', [DashboardController::class, 'topEntities'])->name('dashboard.top-entities');
 Route::get('/dashboard/history', [DashboardController::class, 'history'])->name('dashboard.history');
 Route::get('/dashboard/limits', [DashboardController::class, 'limits'])->name('dashboard.limits');
 
-// Новые endpoints для контрактов
+// Endpoints для контрактов проекта (требуют project_id)
 Route::get('/dashboard/contracts/requiring-attention', [DashboardController::class, 'contractsRequiringAttention'])
-    ->name('dashboard.contracts.requiring-attention');
+    ->name('dashboard.contracts.requiring-attention'); // ?project_id=123
 Route::get('/dashboard/contracts/statistics', [DashboardController::class, 'contractsStatistics'])
-    ->name('dashboard.contracts.statistics');
+    ->name('dashboard.contracts.statistics'); // ?project_id=123
 Route::get('/dashboard/contracts/top', [DashboardController::class, 'topContracts'])
-    ->name('dashboard.contracts.top');
+    ->name('dashboard.contracts.top'); // ?project_id=123
 Route::get('/dashboard/recent-activity', [DashboardController::class, 'recentActivity'])
-    ->name('dashboard.recent-activity');
+    ->name('dashboard.recent-activity'); // ?project_id=123
 
 // Статистика по заявкам (включая заявки на персонал)
 Route::get('/dashboard/site-requests/statistics', [DashboardController::class, 'siteRequestsStatistics'])

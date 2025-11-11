@@ -46,20 +46,29 @@ class DashboardService
     }
 
     /**
-     * Получить сводную информацию по всей системе
+     * Получить сводную информацию по проекту
      */
-    public function getSummary(int $organizationId): array
+    public function getSummary(int $organizationId, int $projectId): array
     {
-        // Пользователей определяем по текущей организации пользователя (current_organization_id)
-        $usersCount = User::where('current_organization_id', $organizationId)->count();
+        // Участники проекта
+        $usersCount = \DB::table('user_projects')
+            ->where('project_id', $projectId)
+            ->distinct('user_id')
+            ->count('user_id');
 
         return [
             'users_count' => $usersCount,
-            'projects_count' => Project::where('organization_id', $organizationId)->count(),
-            'materials_count' => Material::where('organization_id', $organizationId)->count(),
-            'suppliers_count' => Supplier::where('organization_id', $organizationId)->count(),
-            'contracts_count' => Contract::where('organization_id', $organizationId)->count(),
-            'completed_works_count' => CompletedWork::where('organization_id', $organizationId)->count(),
+            'projects_count' => 1, // Один конкретный проект
+            'materials_count' => Material::where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->count(),
+            'suppliers_count' => Supplier::where('organization_id', $organizationId)->count(), // Поставщики общие
+            'contracts_count' => Contract::where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->count(),
+            'completed_works_count' => CompletedWork::where('organization_id', $organizationId)
+                ->where('project_id', $projectId)
+                ->count(),
         ];
     }
 

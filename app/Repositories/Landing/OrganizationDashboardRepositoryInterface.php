@@ -4,77 +4,32 @@ namespace App\Repositories\Landing;
 
 interface OrganizationDashboardRepositoryInterface
 {
-    /**
-     * Финансовая сводка по проекту
-     * @param int $organizationId ID организации
-     * @param int $projectId ID проекта (обязательно)
-     */
-    public function getFinancialSummary(int $organizationId, int $projectId): array;
+    public function getFinancialSummary(int $organizationId): array;
+
+    public function getProjectSummary(int $organizationId): array;
+
+    public function getContractSummary(int $organizationId): array;
+
+    public function getWorkMaterialSummary(int $organizationId): array;
+
+    public function getActSummary(int $organizationId): array;
+
+    public function getTeamSummary(int $organizationId): array;
 
     /**
-     * Сводка по конкретному проекту
-     * @param int $organizationId ID организации
-     * @param int $projectId ID проекта (обязательно)
+     * Подробный список участников команды с ролями и аватаром.
      */
-    public function getProjectSummary(int $organizationId, int $projectId): array;
+    public function getTeamDetails(int $organizationId): array;
 
     /**
-     * Сводка по контрактам проекта
-     * @param int $organizationId ID организации
-     * @param int $projectId ID проекта (обязательно)
+     * Распределение статусов (projects|contracts).
      */
-    public function getContractSummary(int $organizationId, int $projectId): array;
+    public function getStatusDistribution(string $entity, int $organizationId): array;
 
     /**
-     * Сводка по работам и материалам проекта
-     * @param int $organizationId ID организации
-     * @param int $projectId ID проекта (обязательно)
+     * Баланс на конец каждого месяца за N=6 месяцев.
      */
-    public function getWorkMaterialSummary(int $organizationId, int $projectId): array;
+    public function getMonthlyBalance(int $organizationId, int $months = 6): array;
 
-    /**
-     * Сводка по актам проекта
-     * @param int $organizationId ID организации
-     * @param int $projectId ID проекта (обязательно)
-     */
-    public function getActSummary(int $organizationId, int $projectId): array;
-
-    /**
-     * Сводка по команде проекта
-     * @param int $organizationId ID организации
-     * @param int $projectId ID проекта (обязательно)
-     */
-    public function getTeamSummary(int $organizationId, int $projectId): array;
-
-    /**
-     * Подробный список участников команды проекта с ролями и аватаром
-     * @param int $organizationId ID организации
-     * @param int $projectId ID проекта (обязательно)
-     */
-    public function getTeamDetails(int $organizationId, int $projectId): array;
-
-    /**
-     * Распределение статусов по проекту (projects|contracts)
-     * @param string $entity Тип сущности (projects|contracts)
-     * @param int $organizationId ID организации
-     * @param int $projectId ID проекта (обязательно)
-     */
-    public function getStatusDistribution(string $entity, int $organizationId, int $projectId): array;
-
-    /**
-     * Баланс проекта на конец каждого месяца за N месяцев
-     * @param int $organizationId ID организации
-     * @param int $months Количество месяцев
-     * @param int $projectId ID проекта (обязательно)
-     */
-    public function getMonthlyBalance(int $organizationId, int $months, int $projectId): array;
-
-    /**
-     * Временные ряды (timeseries) для метрик проекта
-     * @param string $metric Метрика (projects|contracts|completed_works)
-     * @param string $period Период (month)
-     * @param int $organizationId ID организации
-     * @param int $projectId ID проекта (обязательно)
-     */
-    public function getTimeseries(string $metric, string $period, int $organizationId, int $projectId): array;
+    public function getTimeseries(string $metric, string $period, int $organizationId): array;
 } 

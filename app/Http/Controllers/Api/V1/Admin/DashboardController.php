@@ -28,7 +28,7 @@ class DashboardController extends Controller
     }
 
     /**
-     * Получить сводную информацию для дашборда админки
+     * Получить сводную информацию для дашборда админки по проекту
      */
     public function index(Request $request): JsonResponse
     {
@@ -41,7 +41,26 @@ class DashboardController extends Controller
             ], 400);
         }
 
-        $summary = $this->dashboardService->getSummary($organizationId);
+        // Валидация обязательного параметра project_id
+        $request->validate([
+            'project_id' => 'required|integer|min:1',
+        ]);
+        
+        $projectId = (int)$request->input('project_id');
+
+        // Проверяем, что проект принадлежит организации
+        $project = Project::where('id', $projectId)
+            ->where('organization_id', $organizationId)
+            ->first();
+            
+        if (!$project) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Проект не найден или не принадлежит вашей организации'
+            ], 404);
+        }
+
+        $summary = $this->dashboardService->getSummary($organizationId, $projectId);
         return response()->json(['success' => true, 'data' => $summary]);
     }
 
@@ -93,13 +112,18 @@ class DashboardController extends Controller
     }
 
     /**
-     * Получить контракты требующие внимания
+     * Получить контракты проекта требующие внимания
      */
     public function contractsRequiringAttention(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
         
+        // Валидация project_id
+        $request->validate(['project_id' => 'required|integer|min:1']);
+        $projectId = (int)$request->input('project_id');
+        
         $contracts = Contract::where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
             ->with(['project:id,name', 'contractor:id,name'])
             ->leftJoin(DB::raw('(SELECT contract_id, COALESCE(SUM(total_amount), 0) as completed_amount 
                                FROM completed_works 
@@ -169,14 +193,19 @@ class DashboardController extends Controller
     }
 
     /**
-     * Получить общую статистику по контрактам
+     * Получить общую статистику по контрактам проекта
      */
     public function contractsStatistics(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
         
+        // Валидация project_id
+        $request->validate(['project_id' => 'required|integer|min:1']);
+        $projectId = (int)$request->input('project_id');
+        
         $stats = DB::table('contracts')
             ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
             ->whereNull('deleted_at')
             ->selectRaw('
                 COUNT(*) as total_contracts,
@@ -192,9 +221,10 @@ class DashboardController extends Controller
             ])
             ->first();
 
-        // Статистика по выполненным работам
+        // Статистика по выполненным работам проекта
         $worksStats = DB::table('completed_works')
             ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
             ->whereNull('deleted_at')
             ->selectRaw('
                 COUNT(*) as total_works,
@@ -203,8 +233,9 @@ class DashboardController extends Controller
             ', ['confirmed', 'confirmed'])
             ->first();
 
-        // Контракты требующие внимания
+        // Контракты проекта требующие внимания
         $contractsNeedingAttention = Contract::where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
             ->get()
             ->filter(function ($contract) {
                 return $contract->isNearingLimit() || 
@@ -235,14 +266,20 @@ class DashboardController extends Controller
     }
 
     /**
-     * Получить топ контрактов по объему
+     * Получить топ контрактов проекта по объему
      */
     public function topContracts(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
+        
+        // Валидация project_id
+        $request->validate(['project_id' => 'required|integer|min:1']);
+        $projectId = (int)$request->input('project_id');
+        
         $limit = $request->query('limit', 5);
 
         $contracts = Contract::where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
             ->with(['project:id,name', 'contractor:id,name'])
             ->orderBy('total_amount', 'desc')
             ->limit($limit)
@@ -267,14 +304,20 @@ class DashboardController extends Controller
     }
 
     /**
-     * Получить активность по выполненным работам (последние 30 дней)
+     * Получить активность по выполненным работам проекта (последние 30 дней)
      */
     public function recentActivity(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
+        
+        // Валидация project_id
+        $request->validate(['project_id' => 'required|integer|min:1']);
+        $projectId = (int)$request->input('project_id');
+        
         $days = $request->query('days', 30);
 
         $activity = CompletedWork::where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
             ->where('created_at', '>=', Carbon::now()->subDays($days)->toDateTimeString())
             ->with(['project:id,name', 'workType:id,name', 'user:id,name', 'contract:id,number'])
             ->orderBy('created_at', 'desc')
