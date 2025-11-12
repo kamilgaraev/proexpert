@@ -162,15 +162,35 @@ class RouteServiceProvider extends ServiceProvider
      */
     protected function configureRateLimiting()
     {
+        // Основной API rate limiter - увеличен для аутентифицированных пользователей
         RateLimiter::for('api', function (Request $request) {
-            return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
+            // Для аутентифицированных пользователей - 180 запросов в минуту
+            if ($request->user()) {
+                return Limit::perMinute(180)->by($request->user()->id);
+            }
+            
+            // Для неаутентифицированных (по IP) - 60 запросов в минуту
+            return Limit::perMinute(60)->by($request->ip());
         });
-
-        // Добавьте другие ограничители, если необходимо (например, для web)
-        /*
-        RateLimiter::for('web', function (Request $request) {
-            return Limit::perMinute(60)->by($request->session()->get('id') ?: $request->ip());
+        
+        // Dashboard rate limiter - более щадящий, т.к. делает много параллельных запросов
+        RateLimiter::for('dashboard', function (Request $request) {
+            // Dashboard делает ~12 запросов при загрузке, разрешаем 300 в минуту
+            if ($request->user()) {
+                return Limit::perMinute(300)->by($request->user()->id);
+            }
+            
+            return Limit::perMinute(100)->by($request->ip());
         });
-        */
+        
+        // Публичные эндпоинты (более строгий лимит)
+        RateLimiter::for('public', function (Request $request) {
+            return Limit::perMinute(30)->by($request->ip());
+        });
+        
+        // Auth endpoints (защита от брутфорса)
+        RateLimiter::for('auth', function (Request $request) {
+            return Limit::perMinute(10)->by($request->ip());
+        });
     }
 }
