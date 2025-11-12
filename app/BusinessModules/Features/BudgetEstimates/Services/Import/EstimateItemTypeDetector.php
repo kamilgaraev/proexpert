@@ -312,12 +312,12 @@ class EstimateItemTypeDetector
         'общей',
     ];
 
-    public function detectType(?string $justification, string $name, ?string $code = null): string
+    public function detectType(?string $justification, ?string $name, ?string $code = null): string
     {
         $justificationUpper = mb_strtoupper($justification ?? '');
-        $nameUpper = mb_strtoupper($name);
+        $nameUpper = mb_strtoupper($name ?? '');
         $codeValue = $code ?? $justification ?? '';
-        $combinedText = trim($codeValue . ' ' . $name);
+        $combinedText = trim($codeValue . ' ' . ($name ?? ''));
         
         // ⭐ ПРИОРИТЕТ 1: Определение по формату кода (САМОЕ ТОЧНОЕ)
         $typeByCode = $this->detectTypeByCode($codeValue);
