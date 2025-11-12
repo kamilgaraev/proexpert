@@ -63,8 +63,8 @@ class ApiPerformanceWidgetProvider extends AbstractWidgetProvider
             ->join('projects', 'completed_works.project_id', '=', 'projects.id')
             ->where('projects.organization_id', $organizationId)
             ->where('completed_works.created_at', '>=', $weekAgo)
-            ->select(DB::raw('HOUR(completed_works.created_at) as hour'), DB::raw('COUNT(*) as count'))
-            ->groupBy(DB::raw('HOUR(completed_works.created_at)'))
+            ->select(DB::raw('EXTRACT(HOUR FROM completed_works.created_at) as hour'), DB::raw('COUNT(*) as count'))
+            ->groupBy(DB::raw('EXTRACT(HOUR FROM completed_works.created_at)'))
             ->orderByDesc('count')
             ->limit(3)
             ->get();

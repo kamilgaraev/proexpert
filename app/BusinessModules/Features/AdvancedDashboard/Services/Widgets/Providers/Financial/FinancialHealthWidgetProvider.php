@@ -143,9 +143,9 @@ class FinancialHealthWidgetProvider extends AbstractWidgetProvider
             ->whereIn('contract_id', $contracts)
             ->sum(DB::raw('quantity * price'));
 
+        // NOTE: contract_payments не имеет колонки status
         $paidAmount = DB::table('contract_payments')
             ->whereIn('contract_id', $contracts)
-            ->where('status', 'completed')
             ->sum('amount');
 
         return (float)($completedAmount - $paidAmount);

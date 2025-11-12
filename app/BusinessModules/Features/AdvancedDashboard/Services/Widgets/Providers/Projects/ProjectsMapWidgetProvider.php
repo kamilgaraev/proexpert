@@ -19,8 +19,9 @@ class ProjectsMapWidgetProvider extends AbstractWidgetProvider
     protected function fetchData(WidgetDataRequest $request): array
     {
         $projects = Project::with(['contracts' => function ($query) {
-                $query->whereNull('parent_contract_id')
-                      ->with('contractor');
+                // NOTE: parent_contract_id колонка не существует в contracts
+                // Берем первый контракт как основной
+                $query->with('contractor');
             }])
             ->where('organization_id', $request->organizationId)
             ->whereNotNull('address')
