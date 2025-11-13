@@ -8,10 +8,11 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use App\Traits\HasOnboardingDemo;
 
 class Material extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, HasOnboardingDemo;
 
     protected $fillable = [
         'organization_id',
@@ -30,6 +31,7 @@ class Material extends Model
         'use_in_accounting_reports',
         'accounting_account',
         'consumption_rates',
+        'is_onboarding_demo',
     ];
 
     protected $casts = [
@@ -39,6 +41,7 @@ class Material extends Model
         'accounting_data' => 'array',
         'use_in_accounting_reports' => 'boolean',
         'consumption_rates' => 'array',
+        'is_onboarding_demo' => 'boolean',
     ];
 
     /**

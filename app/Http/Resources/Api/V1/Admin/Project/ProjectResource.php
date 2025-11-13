@@ -34,6 +34,7 @@ class ProjectResource extends JsonResource
             'start_date' => $this->resource->start_date?->toDateString(), // Форматируем дату
             'end_date' => $this->resource->end_date?->toDateString(), // Форматируем дату
             'is_archived' => (bool) $this->resource->is_archived,
+            'is_onboarding_demo' => (bool) $this->resource->is_onboarding_demo,
             'additional_info' => $this->resource->additional_info,
             'external_code' => $this->resource->external_code,
             'cost_category_id' => $this->resource->cost_category_id,

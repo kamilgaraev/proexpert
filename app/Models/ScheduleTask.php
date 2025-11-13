@@ -12,10 +12,11 @@ use App\Enums\Schedule\TaskStatusEnum;
 use App\Enums\Schedule\TaskTypeEnum;
 use App\Enums\Schedule\PriorityEnum;
 use Carbon\Carbon;
+use App\Traits\HasOnboardingDemo;
 
 class ScheduleTask extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, HasOnboardingDemo;
 
     protected $fillable = [
         'schedule_id',
@@ -67,6 +68,7 @@ class ScheduleTask extends Model
         'tags',
         'level',
         'sort_order',
+        'is_onboarding_demo',
     ];
 
     protected $casts = [
@@ -98,6 +100,7 @@ class ScheduleTask extends Model
         'required_resources' => 'array',
         'custom_fields' => 'array',
         'tags' => 'array',
+        'is_onboarding_demo' => 'boolean',
     ];
 
     // === RELATIONSHIPS ===

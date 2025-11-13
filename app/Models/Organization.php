@@ -14,10 +14,11 @@ use App\Models\OrganizationAccessPermission;
 use App\Domain\Authorization\Models\OrganizationCustomRole;
 use App\Domain\Authorization\Models\AuthorizationContext;
 use App\Domain\Authorization\Models\UserRoleAssignment;
+use App\Traits\HasOnboardingDemo;
 
 class Organization extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, HasOnboardingDemo;
 
     /**
      * Атрибуты, которые можно массово назначать.
@@ -40,6 +41,7 @@ class Organization extends Model
         'is_active',
         'subscription_expires_at',
         'is_verified',
+        'is_onboarding_demo',
         'verified_at',
         'verification_data',
         'verification_status',
@@ -70,6 +72,7 @@ class Organization extends Model
         'is_active' => 'boolean',
         'subscription_expires_at' => 'datetime',
         'is_verified' => 'boolean',
+        'is_onboarding_demo' => 'boolean',
         'verified_at' => 'datetime',
         'verification_data' => 'array',
         'multi_org_settings' => 'array',

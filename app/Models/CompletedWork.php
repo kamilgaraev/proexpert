@@ -6,10 +6,11 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use App\Traits\HasOnboardingDemo;
 
 class CompletedWork extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, HasOnboardingDemo;
 
     protected $fillable = [
         'organization_id',
@@ -25,6 +26,7 @@ class CompletedWork extends Model
         'notes',
         'status',
         'additional_info',
+        'is_onboarding_demo',
     ];
 
     protected $casts = [
@@ -33,6 +35,7 @@ class CompletedWork extends Model
         'total_amount' => 'decimal:2',
         'completion_date' => 'date',
         'additional_info' => 'array',
+        'is_onboarding_demo' => 'boolean',
     ];
 
     /**

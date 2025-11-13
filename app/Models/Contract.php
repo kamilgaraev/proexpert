@@ -13,10 +13,11 @@ use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
 use Carbon\Carbon;
+use App\Traits\HasOnboardingDemo;
 
 class Contract extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, HasOnboardingDemo;
 
     protected $fillable = [
         'organization_id',
@@ -38,6 +39,7 @@ class Contract extends Model
         'start_date',
         'end_date',
         'notes',
+        'is_onboarding_demo',
     ];
 
     protected $casts = [
@@ -53,6 +55,7 @@ class Contract extends Model
         'end_date' => 'date',
         'status' => ContractStatusEnum::class,
         'work_type_category' => ContractWorkTypeCategoryEnum::class,
+        'is_onboarding_demo' => 'boolean',
     ];
 
     public function organization(): BelongsTo

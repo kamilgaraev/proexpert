@@ -13,10 +13,11 @@ use App\Models\User;
 use App\Models\ProjectSchedule;
 use App\Models\ScheduleTask;
 use Carbon\Carbon;
+use App\Traits\HasOnboardingDemo;
 
 class ProjectEvent extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, HasOnboardingDemo;
 
     protected $fillable = [
         'project_id',
@@ -51,6 +52,7 @@ class ProjectEvent extends Model
         'custom_fields',
         'color',
         'icon',
+        'is_onboarding_demo',
     ];
 
     protected $casts = [
@@ -68,6 +70,7 @@ class ProjectEvent extends Model
         'attachments' => 'array',
         'custom_fields' => 'array',
         'recurrence_config' => 'array',
+        'is_onboarding_demo' => 'boolean',
     ];
 
     // ============================================

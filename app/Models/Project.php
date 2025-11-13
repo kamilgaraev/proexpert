@@ -9,10 +9,11 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use App\Models\WorkType;
+use App\Traits\HasOnboardingDemo;
 
 class Project extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, HasOnboardingDemo;
     
     /**
      * Boot метод - события модели
@@ -56,6 +57,7 @@ class Project extends Model
         'status',
         'additional_info',
         'is_archived',
+        'is_onboarding_demo',
         'is_head',
         'external_code',
         'cost_category_id',
@@ -72,6 +74,7 @@ class Project extends Model
         'end_date' => 'date',
         'additional_info' => 'array',
         'is_archived' => 'boolean',
+        'is_onboarding_demo' => 'boolean',
         'is_head' => 'boolean',
         'accounting_data' => 'array',
         'use_in_accounting_reports' => 'boolean',

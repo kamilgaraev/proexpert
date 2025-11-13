@@ -7,10 +7,11 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use App\Traits\HasOnboardingDemo;
 
 class Estimate extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, HasOnboardingDemo;
 
     protected $fillable = [
         'organization_id',
@@ -37,6 +38,7 @@ class Estimate extends Model
         'approved_at',
         'approved_by_user_id',
         'metadata',
+        'is_onboarding_demo',
     ];
 
     protected $casts = [
@@ -52,6 +54,7 @@ class Estimate extends Model
         'profit_rate' => 'decimal:2',
         'approved_at' => 'datetime',
         'metadata' => 'array',
+        'is_onboarding_demo' => 'boolean',
     ];
 
     public function organization(): BelongsTo

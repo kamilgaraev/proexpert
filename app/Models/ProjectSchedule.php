@@ -11,10 +11,11 @@ use App\Enums\Schedule\ScheduleStatusEnum;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
+use App\Traits\HasOnboardingDemo;
 
 class ProjectSchedule extends Model
 {
-    use HasFactory, SoftDeletes;
+    use HasFactory, SoftDeletes, HasOnboardingDemo;
 
     protected $fillable = [
         'project_id',
@@ -46,6 +47,7 @@ class ProjectSchedule extends Model
         'total_estimated_cost',
         'total_actual_cost',
         'overall_progress_percent',
+        'is_onboarding_demo',
     ];
 
     protected $casts = [
@@ -67,6 +69,7 @@ class ProjectSchedule extends Model
         'total_estimated_cost' => 'decimal:2',
         'total_actual_cost' => 'decimal:2',
         'overall_progress_percent' => 'decimal:2',
+        'is_onboarding_demo' => 'boolean',
     ];
 
     // === RELATIONSHIPS ===
