@@ -24,6 +24,7 @@ class UserResource extends JsonResource
             'is_active' => $this->is_active,
             // 'user_type' => $this->user_type, // Удалена в новой системе авторизации
             'current_organization_id' => $this->current_organization_id,
+            'has_completed_onboarding' => $this->has_completed_onboarding,
             'last_login_at' => $this->last_login_at?->toIso8601String(),
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),

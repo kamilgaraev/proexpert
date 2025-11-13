@@ -44,6 +44,7 @@ class User extends Authenticatable implements JWTSubject
         'settings',
         'last_login_at',
         'last_login_ip',
+        'has_completed_onboarding',
     ];
 
     /**
@@ -75,6 +76,7 @@ class User extends Authenticatable implements JWTSubject
             'settings' => 'json',
             'last_login_at' => 'datetime',
             'last_transaction_at' => 'datetime',
+            'has_completed_onboarding' => 'boolean',
         ];
     }
 

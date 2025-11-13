@@ -10,6 +10,7 @@ Route::middleware(['auth:api_admin', 'auth.jwt:api_admin', 'organization.context
         Route::get('/', [ProfileController::class, 'show'])->name('show');
         Route::patch('/', [ProfileController::class, 'update'])->name('update');
         Route::put('/', [ProfileController::class, 'update'])->name('update.put');
+        Route::patch('/onboarding', [ProfileController::class, 'updateOnboarding'])->name('update.onboarding');
     });
 
 // Альтернативный роут для совместимости с фронтендом

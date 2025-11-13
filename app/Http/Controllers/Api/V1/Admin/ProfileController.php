@@ -92,4 +92,49 @@ class ProfileController extends Controller
             ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
+
+    /**
+     * Обновление статуса прохождения обучения (onboarding)
+     */
+    public function updateOnboarding(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'has_completed_onboarding' => 'required|boolean',
+            ]);
+
+            /** @var \App\Models\User $user */
+            $user = Auth::user();
+            $user->has_completed_onboarding = $validated['has_completed_onboarding'];
+            $user->save();
+
+            Log::info('Admin onboarding status updated', [
+                'user_id' => $user->id,
+                'has_completed_onboarding' => $validated['has_completed_onboarding'],
+            ]);
+
+            return response()->json([
+                'success' => true,
+            ]);
+
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации.',
+                'errors' => $e->errors(),
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+
+        } catch (\Exception $e) {
+            Log::error('Error updating onboarding status', [
+                'user_id' => Auth::id(),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Произошла ошибка при обновлении статуса обучения.'
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
 } 
