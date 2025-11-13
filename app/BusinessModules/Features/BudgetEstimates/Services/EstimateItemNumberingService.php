@@ -58,8 +58,14 @@ class EstimateItemNumberingService
      */
     protected function generateGlobalNumber(int $estimateId): string
     {
+        // PostgreSQL не поддерживает UNSIGNED, используем INTEGER
+        $driver = config('database.default');
+        $connection = config("database.connections.{$driver}.driver");
+        
+        $castType = ($connection === 'pgsql') ? 'INTEGER' : 'UNSIGNED';
+        
         $maxNumber = EstimateItem::where('estimate_id', $estimateId)
-            ->selectRaw('MAX(CAST(position_number AS UNSIGNED)) as max_num')
+            ->selectRaw("MAX(CAST(position_number AS {$castType})) as max_num")
             ->value('max_num');
 
         return (string) (($maxNumber ?? 0) + 1);
@@ -70,17 +76,23 @@ class EstimateItemNumberingService
      */
     protected function generateSectionNumber(int $estimateId, ?int $sectionId): string
     {
+        // PostgreSQL не поддерживает UNSIGNED, используем INTEGER
+        $driver = config('database.default');
+        $connection = config("database.connections.{$driver}.driver");
+        
+        $castType = ($connection === 'pgsql') ? 'INTEGER' : 'UNSIGNED';
+        
         if ($sectionId === null) {
             // Позиции без секции - нумеруем отдельно
             $maxNumber = EstimateItem::where('estimate_id', $estimateId)
                 ->whereNull('estimate_section_id')
-                ->selectRaw('MAX(CAST(position_number AS UNSIGNED)) as max_num')
+                ->selectRaw("MAX(CAST(position_number AS {$castType})) as max_num")
                 ->value('max_num');
         } else {
             // Позиции в рамках секции
             $maxNumber = EstimateItem::where('estimate_id', $estimateId)
                 ->where('estimate_section_id', $sectionId)
-                ->selectRaw('MAX(CAST(position_number AS UNSIGNED)) as max_num')
+                ->selectRaw("MAX(CAST(position_number AS {$castType})) as max_num")
                 ->value('max_num');
         }
 

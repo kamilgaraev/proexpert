@@ -44,9 +44,15 @@ class EstimateSectionNumberingService
      */
     protected function getNextRootSectionNumber(int $estimateId): string
     {
+        // PostgreSQL не поддерживает UNSIGNED, используем INTEGER
+        $driver = config('database.default');
+        $connection = config("database.connections.{$driver}.driver");
+        
+        $castType = ($connection === 'pgsql') ? 'INTEGER' : 'UNSIGNED';
+        
         $maxNumber = EstimateSection::where('estimate_id', $estimateId)
             ->whereNull('parent_section_id')
-            ->selectRaw('MAX(CAST(section_number AS UNSIGNED)) as max_num')
+            ->selectRaw("MAX(CAST(section_number AS {$castType})) as max_num")
             ->value('max_num');
 
         return (string) (($maxNumber ?? 0) + 1);
