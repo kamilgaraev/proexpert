@@ -73,6 +73,7 @@
   "auto_activate": false,
   "is_system_module": false,
   "can_deactivate": true,
+  "development_status": "development",
   "icon": "credit-card",
   "display_order": 20
 }

@@ -72,6 +72,7 @@
     "max_reservations": 1000,
     "max_auto_reorder_rules": 100
   },
+  "development_status": "development",
   "settings": {
     "enable_multiple_warehouses": true,
     "enable_zones": true,

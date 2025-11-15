@@ -65,6 +65,7 @@
   "auto_activate": false,
   "is_system_module": false,
   "can_deactivate": true,
+  "development_status": "alpha",
   "icon": "clock",
   "display_order": 22
 }

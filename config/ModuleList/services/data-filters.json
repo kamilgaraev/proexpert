@@ -57,6 +57,7 @@
   "auto_activate": true,
   "is_system_module": false,
   "can_deactivate": true,
+  "development_status": "development",
   "icon": "filter",
   "display_order": 41
 }

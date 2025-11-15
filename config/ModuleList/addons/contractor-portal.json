@@ -64,6 +64,7 @@
   "auto_activate": false,
   "is_system_module": false,
   "can_deactivate": true,
+  "development_status": "development",
   "icon": "users-cog",
   "display_order": 30
 }

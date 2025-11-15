@@ -68,6 +68,7 @@
   "auto_activate": false,
   "is_system_module": false,
   "can_deactivate": true,
+  "development_status": "beta",
   "icon": "calculator",
   "display_order": 30
 }

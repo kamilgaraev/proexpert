@@ -54,6 +54,8 @@
   
   "auto_activate": false,
   "is_system_module": false,
+  "can_deactivate": true,
+  "development_status": "coming_soon",
   "icon": "link",
   "display_order": 100
 }

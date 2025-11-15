@@ -54,6 +54,7 @@
     "analytics": false,
     "max_inventory_acts_per_month": 10
   },
+  "development_status": "alpha",
   "settings": {
     "enable_stock_alerts": true,
     "low_stock_threshold": 10,
