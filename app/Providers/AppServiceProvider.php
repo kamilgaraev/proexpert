@@ -156,6 +156,9 @@ class AppServiceProvider extends ServiceProvider
         TaskDependency::observe(TaskDependencyObserver::class);
         TaskResource::observe(TaskResourceObserver::class);
         
+        // Estimate Position Catalog Observer
+        \App\Models\EstimatePositionCatalog::observe(\App\Observers\EstimatePositionCatalogObserver::class);
+        
         // Project-Based RBAC Events
         Event::listen(ProjectOrganizationAdded::class, [LogProjectOrganizationActivity::class, 'handleAdded']);
         Event::listen(ProjectOrganizationAdded::class, [InvalidateProjectContextCache::class, 'handleAdded']);

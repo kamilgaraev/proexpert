@@ -15,6 +15,7 @@ class EstimateItem extends Model
     protected $fillable = [
         'estimate_id',
         'estimate_section_id',
+        'catalog_item_id', // ID позиции из справочника
         'parent_work_id', // ⭐ ID родительской работы ГЭСН
         'normative_rate_id',
         'normative_rate_code',
@@ -134,6 +135,11 @@ class EstimateItem extends Model
     public function normativeRate(): BelongsTo
     {
         return $this->belongsTo(NormativeRate::class, 'normative_rate_id');
+    }
+
+    public function catalogItem(): BelongsTo
+    {
+        return $this->belongsTo(EstimatePositionCatalog::class, 'catalog_item_id');
     }
 
     public function resources(): HasMany

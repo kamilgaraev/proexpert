@@ -262,6 +262,57 @@ class EstimateConstructorController extends Controller
         ]);
     }
 
+    public function addItemsFromCatalog(Request $request, int $estimateId): JsonResponse
+    {
+        $request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.catalog_item_id' => 'required|exists:estimate_position_catalog,id',
+            'items.*.quantity' => 'required|numeric|min:0',
+            'items.*.section_id' => 'nullable|exists:estimate_sections,id',
+        ]);
+
+        $estimate = Estimate::findOrFail($estimateId);
+        $addedItems = [];
+
+        DB::transaction(function () use ($request, $estimate, &$addedItems) {
+            foreach ($request->input('items') as $itemData) {
+                $catalogItem = \App\Models\EstimatePositionCatalog::findOrFail($itemData['catalog_item_id']);
+
+                $item = EstimateItem::create([
+                    'estimate_id' => $estimate->id,
+                    'estimate_section_id' => $itemData['section_id'] ?? null,
+                    'catalog_item_id' => $catalogItem->id,
+                    'item_type' => $catalogItem->item_type,
+                    'position_number' => $this->getNextPositionNumber($estimate->id, $itemData['section_id'] ?? null),
+                    'name' => $catalogItem->name,
+                    'description' => $catalogItem->description,
+                    'measurement_unit_id' => $catalogItem->measurement_unit_id,
+                    'work_type_id' => $catalogItem->work_type_id,
+                    'quantity' => $itemData['quantity'],
+                    'unit_price' => $catalogItem->unit_price,
+                    'direct_costs' => $catalogItem->direct_costs ?? ($catalogItem->unit_price * $itemData['quantity']),
+                    'total_amount' => $catalogItem->unit_price * $itemData['quantity'],
+                    'is_manual' => true,
+                    'metadata' => [
+                        'source' => 'catalog',
+                        'catalog_item_id' => $catalogItem->id,
+                    ],
+                ]);
+
+                // Увеличить счетчик использований
+                $catalogItem->incrementUsage();
+
+                $addedItems[] = $item->fresh(['measurementUnit', 'workType', 'catalogItem', 'section']);
+            }
+        });
+
+        return response()->json([
+            'message' => 'Позиции из справочника добавлены успешно',
+            'added_count' => count($addedItems),
+            'items' => $addedItems,
+        ], 201);
+    }
+
     public function recalculateEstimate(int $estimateId): JsonResponse
     {
         $estimate = Estimate::findOrFail($estimateId);

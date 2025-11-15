@@ -69,3 +69,8 @@ Route::prefix('work-types/{work_type}')->name('work-types.')->group(function () 
         require __DIR__ . '/work_type_materials.php';
     }
 });
+
+// Подключаем маршруты для справочника позиций сметы
+if (file_exists(__DIR__ . '/estimate_positions.php')) {
+    require __DIR__ . '/estimate_positions.php';
+}
