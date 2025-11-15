@@ -58,6 +58,13 @@ Route::middleware(['auth:api_landing', 'jwt.auth', 'organization.context'])
                 
                 Route::post('/bulk-activate', [ModuleController::class, 'bulkActivate'])
                     ->name('bulk-activate');
+                
+                // Управление автопродлением
+                Route::patch('/{moduleSlug}/auto-renew', [ModuleController::class, 'toggleAutoRenew'])
+                    ->name('toggle-auto-renew');
+                
+                Route::post('/auto-renew/bulk', [ModuleController::class, 'bulkToggleAutoRenew'])
+                    ->name('bulk-toggle-auto-renew');
             });
         
         // Биллинг информация (доступна владельцам и бухгалтерам)

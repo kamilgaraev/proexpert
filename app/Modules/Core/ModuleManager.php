@@ -867,4 +867,107 @@ class ModuleManager
             'cleared_user_caches' => isset($userIds) ? count($userIds) : 0
         ]);
     }
+    
+    /**
+     * Включить/выключить автопродление модуля
+     */
+    public function toggleAutoRenew(int $organizationId, string $moduleSlug, bool $enabled): array
+    {
+        $module = $this->registry->getModule($moduleSlug);
+        
+        if (!$module) {
+            return [
+                'success' => false,
+                'message' => 'Модуль не найден',
+                'code' => 'MODULE_NOT_FOUND'
+            ];
+        }
+        
+        $activation = OrganizationModuleActivation::where('organization_id', $organizationId)
+            ->where('module_id', $module->id)
+            ->where('status', 'active')
+            ->first();
+        
+        if (!$activation) {
+            return [
+                'success' => false,
+                'message' => 'Модуль не активирован',
+                'code' => 'MODULE_NOT_ACTIVE'
+            ];
+        }
+        
+        // Бесплатные модули не требуют продления
+        if ($module->billing_model === 'free') {
+            return [
+                'success' => false,
+                'message' => 'Бесплатные модули не требуют продления',
+                'code' => 'FREE_MODULE_NO_RENEWAL'
+            ];
+        }
+        
+        // Модули в составе подписки нельзя отдельно управлять
+        if ($activation->is_bundled_with_plan) {
+            return [
+                'success' => false,
+                'message' => 'Модуль входит в подписку, управляйте автопродлением подписки',
+                'code' => 'BUNDLED_MODULE_NO_CONTROL'
+            ];
+        }
+        
+        $activation->update(['is_auto_renew_enabled' => $enabled]);
+        
+        $this->logging->business('module.auto_renew.toggled', [
+            'organization_id' => $organizationId,
+            'module_slug' => $moduleSlug,
+            'enabled' => $enabled
+        ]);
+        
+        return [
+            'success' => true,
+            'message' => $enabled ? 'Автопродление включено' : 'Автопродление выключено',
+            'is_auto_renew_enabled' => $enabled
+        ];
+    }
+    
+    /**
+     * Массовое включение/выключение автопродления
+     */
+    public function bulkToggleAutoRenew(int $organizationId, bool $enabled): array
+    {
+        $activations = OrganizationModuleActivation::where('organization_id', $organizationId)
+            ->where('status', 'active')
+            ->where('is_bundled_with_plan', false)
+            ->whereHas('module', function($query) {
+                $query->where('billing_model', '!=', 'free');
+            })
+            ->get();
+        
+        if ($activations->isEmpty()) {
+            return [
+                'success' => false,
+                'message' => 'Нет модулей для изменения автопродления',
+                'code' => 'NO_MODULES_TO_UPDATE'
+            ];
+        }
+        
+        $updated = 0;
+        foreach ($activations as $activation) {
+            $activation->update(['is_auto_renew_enabled' => $enabled]);
+            $updated++;
+        }
+        
+        $this->logging->business('module.auto_renew.bulk_toggled', [
+            'organization_id' => $organizationId,
+            'enabled' => $enabled,
+            'updated_count' => $updated
+        ]);
+        
+        return [
+            'success' => true,
+            'message' => $enabled 
+                ? "Автопродление включено для {$updated} модулей"
+                : "Автопродление выключено для {$updated} модулей",
+            'updated_count' => $updated
+        ];
+    }
 }

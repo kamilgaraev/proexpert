@@ -27,6 +27,7 @@ class OrganizationModuleActivation extends Model
         'usage_stats',
         'cancelled_at',
         'cancellation_reason',
+        'is_auto_renew_enabled',
     ];
 
     protected $casts = [
@@ -41,6 +42,7 @@ class OrganizationModuleActivation extends Model
         'usage_stats' => 'array',
         'paid_amount' => 'decimal:2',
         'is_bundled_with_plan' => 'boolean',
+        'is_auto_renew_enabled' => 'boolean',
     ];
 
     public function organization(): BelongsTo

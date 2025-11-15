@@ -90,7 +90,9 @@ class ModuleController extends Controller
                         'activated_at' => $activation->activated_at,
                         'expires_at' => $activation->expires_at,
                         'status' => $activation->status,
-                        'days_until_expiration' => $activation->getDaysUntilExpiration()
+                        'days_until_expiration' => $activation->getDaysUntilExpiration(),
+                        'is_auto_renew_enabled' => $activation->is_auto_renew_enabled ?? true,
+                        'is_bundled_with_plan' => $activation->is_bundled_with_plan ?? false
                     ] : null
                 ];
             })->groupBy('category');
@@ -520,6 +522,67 @@ class ModuleController extends Controller
         
         app(\App\Modules\Core\AccessController::class)->clearAccessCache($organizationId);
         
+        return (new SuccessResponse($result))->toResponse($request);
+    }
+
+    /**
+     * Включить/выключить автопродление модуля
+     */
+    public function toggleAutoRenew(Request $request, string $moduleSlug): JsonResponse
+    {
+        $request->validate([
+            'enabled' => 'required|boolean'
+        ]);
+
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        }
+
+        $result = $this->moduleManager->toggleAutoRenew(
+            $organizationId, 
+            $moduleSlug, 
+            $request->input('enabled')
+        );
+
+        if (!$result['success']) {
+            return (new ErrorResponse($result['message'], 400, [
+                'code' => $result['code']
+            ]))->toResponse($request);
+        }
+
+        return (new SuccessResponse($result))->toResponse($request);
+    }
+
+    /**
+     * Массовое включение/выключение автопродления
+     */
+    public function bulkToggleAutoRenew(Request $request): JsonResponse
+    {
+        $request->validate([
+            'enabled' => 'required|boolean'
+        ]);
+
+        $user = Auth::user();
+        $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
+        
+        if (!$organizationId) {
+            return (new ErrorResponse('Организация не найдена', 404))->toResponse($request);
+        }
+
+        $result = $this->moduleManager->bulkToggleAutoRenew(
+            $organizationId, 
+            $request->input('enabled')
+        );
+
+        if (!$result['success']) {
+            return (new ErrorResponse($result['message'], 400, [
+                'code' => $result['code']
+            ]))->toResponse($request);
+        }
+
         return (new SuccessResponse($result))->toResponse($request);
     }
 }

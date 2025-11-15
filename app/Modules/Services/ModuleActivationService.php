@@ -101,6 +101,15 @@ class ModuleActivationService
             ];
         }
         
+        // Проверка автопродления (только для автоматического продления)
+        if (!$activation->is_auto_renew_enabled) {
+            return [
+                'success' => false,
+                'message' => 'Автопродление отключено',
+                'code' => 'AUTO_RENEW_DISABLED'
+            ];
+        }
+        
         try {
             $newExpirationDate = ($activation->expires_at && $activation->expires_at->isFuture())
                 ? $activation->expires_at->addDays($additionalDays)
