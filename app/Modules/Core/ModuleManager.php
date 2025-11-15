@@ -125,6 +125,27 @@ class ModuleManager
             ];
         }
         
+        // Проверка статуса разработки
+        if (!$module->canBeActivatedByStatus()) {
+            $statusInfo = $module->getDevelopmentStatusInfo();
+            
+            $this->logging->business('module.activation.failed', [
+                'organization_id' => $organizationId,
+                'module_slug' => $moduleSlug,
+                'module_id' => $module->id,
+                'reason' => 'MODULE_STATUS_NOT_READY',
+                'development_status' => $statusInfo['status'],
+                'duration_ms' => (microtime(true) - $startTime) * 1000
+            ]);
+            
+            return [
+                'success' => false,
+                'message' => "Модуль недоступен для активации: {$statusInfo['description']}",
+                'code' => 'MODULE_STATUS_NOT_READY',
+                'development_status' => $statusInfo
+            ];
+        }
+        
         // ДИАГНОСТИКА: Проверяем, не активирован ли уже
         $accessCheckStart = microtime(true);
         $hasAccess = $this->accessController->hasModuleAccess($organizationId, $moduleSlug);
@@ -491,6 +512,17 @@ class ModuleManager
                 'success' => false,
                 'message' => 'Модуль недоступен для активации',
                 'code' => 'MODULE_INACTIVE'
+            ];
+        }
+        
+        // Проверка статуса разработки
+        if (!$module->canBeActivatedByStatus()) {
+            $statusInfo = $module->getDevelopmentStatusInfo();
+            return [
+                'success' => false,
+                'message' => "Модуль недоступен для активации: {$statusInfo['description']}",
+                'code' => 'MODULE_STATUS_NOT_READY',
+                'development_status' => $statusInfo
             ];
         }
         
