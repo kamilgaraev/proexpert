@@ -12,6 +12,7 @@ use Throwable;
 use Symfony\Component\Routing\Exception\RouteNotFoundException;
 use App\Services\Monitoring\PrometheusService;
 use App\Services\Logging\LoggingService;
+use App\Services\ErrorTracking\ErrorTrackingService;
 use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Exceptions\BusinessLogicException;
 
@@ -196,6 +197,44 @@ class Handler extends ExceptionHandler
             $this->logStructuredException($exception, $logging);
         }
 
+        // Error Tracking - сохранение ошибок в БД для анализа
+        if ($this->shouldReport($exception) && config('error-tracking.enabled', true)) {
+            try {
+                $mode = config('error-tracking.mode', 'async');
+                
+                // Проверить, не в списке игнорируемых ли
+                $ignoredExceptions = config('error-tracking.ignored_exceptions', []);
+                $shouldIgnore = false;
+                foreach ($ignoredExceptions as $ignoredException) {
+                    if ($exception instanceof $ignoredException) {
+                        $shouldIgnore = true;
+                        break;
+                    }
+                }
+                
+                if (!$shouldIgnore) {
+                    if ($mode === 'async' && app()->bound(\App\Services\ErrorTracking\ErrorTrackingServiceAsync::class)) {
+                        // Async режим - через очередь
+                        $errorTracking = app(\App\Services\ErrorTracking\ErrorTrackingServiceAsync::class);
+                    } else {
+                        // Sync режим - напрямую в БД
+                        $errorTracking = app(ErrorTrackingService::class);
+                    }
+                    
+                    $errorTracking->track($exception, [
+                        'organization_id' => request()->attributes->get('current_organization_id'),
+                        'user_id' => auth()->id(),
+                        'module' => $this->detectModuleFromRequest(),
+                    ]);
+                }
+            } catch (\Exception $e) {
+                // Не ломаем приложение если error tracking упал
+                \Log::error('error_tracking.integration_failed', [
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
         parent::report($exception);
     }
 
@@ -329,6 +368,26 @@ class Handler extends ExceptionHandler
     protected function extractModelFromException(\Illuminate\Database\Eloquent\ModelNotFoundException $exception): ?string
     {
         return $exception->getModel();
+    }
+
+    /**
+     * Определить модуль из текущего запроса
+     */
+    protected function detectModuleFromRequest(): string
+    {
+        $path = request()->path();
+        
+        // Попытка определить из URL (api/v1/admin/{module}/...)
+        if (preg_match('#api/v1/admin/([^/]+)#', $path, $matches)) {
+            return $matches[1];
+        }
+        
+        // Попытка определить из URL (api/v1/lk/{module}/...)
+        if (preg_match('#api/v1/lk/([^/]+)#', $path, $matches)) {
+            return $matches[1];
+        }
+        
+        return 'unknown';
     }
 
     public function render($request, Throwable $e)

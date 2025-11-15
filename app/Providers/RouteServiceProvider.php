@@ -143,6 +143,9 @@ class RouteServiceProvider extends ServiceProvider
                     if (file_exists(base_path('routes/api/v1/admin/reports.php'))) {
                         require base_path('routes/api/v1/admin/reports.php');
                     }
+                    if (file_exists(base_path('routes/api/v1/admin/error-tracking.php'))) {
+                        require base_path('routes/api/v1/admin/error-tracking.php');
+                    }
                     
                     if (file_exists(base_path('routes/api/estimates-enterprise.php'))) {
                         require base_path('routes/api/estimates-enterprise.php');
