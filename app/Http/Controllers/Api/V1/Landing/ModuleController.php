@@ -85,6 +85,7 @@ class ModuleController extends Controller
                     'icon' => $module->icon,
                     'can_deactivate' => $module->can_deactivate,
                     'is_active' => $isActive,
+                    'development_status' => $module->getDevelopmentStatusInfo(),
                     'activation' => $activation ? [
                         'activated_at' => $activation->activated_at,
                         'expires_at' => $activation->expires_at,

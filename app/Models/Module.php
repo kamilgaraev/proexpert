@@ -31,6 +31,7 @@ class Module extends Model
         'is_active',
         'is_system_module',
         'can_deactivate',
+        'development_status',
         'last_scanned_at',
     ];
 
@@ -44,6 +45,7 @@ class Module extends Model
         'is_active' => 'boolean',
         'is_system_module' => 'boolean',
         'can_deactivate' => 'boolean',
+        'development_status' => \App\Enums\ModuleDevelopmentStatus::class,
         'last_scanned_at' => 'datetime',
         'display_order' => 'integer',
     ];
@@ -162,6 +164,65 @@ class Module extends Model
     }
 
     /**
+     * Scope для статуса разработки
+     */
+    public function scopeByDevelopmentStatus($query, string $status)
+    {
+        return $query->where('development_status', $status);
+    }
+
+    /**
+     * Scope для стабильных модулей
+     */
+    public function scopeStable($query)
+    {
+        return $query->where('development_status', 'stable');
+    }
+
+    /**
+     * Получить объект enum статуса разработки
+     */
+    public function getDevelopmentStatusEnum(): \App\Enums\ModuleDevelopmentStatus
+    {
+        return $this->development_status ?? \App\Enums\ModuleDevelopmentStatus::STABLE;
+    }
+
+    /**
+     * Проверить, является ли модуль стабильным
+     */
+    public function isStable(): bool
+    {
+        return $this->getDevelopmentStatusEnum() === \App\Enums\ModuleDevelopmentStatus::STABLE;
+    }
+
+    /**
+     * Проверить, можно ли активировать модуль в текущем статусе
+     */
+    public function canBeActivatedByStatus(): bool
+    {
+        return $this->getDevelopmentStatusEnum()->canBeActivated();
+    }
+
+    /**
+     * Получить информацию о статусе разработки для фронтенда
+     */
+    public function getDevelopmentStatusInfo(): array
+    {
+        $status = $this->getDevelopmentStatusEnum();
+        
+        return [
+            'status' => $status->value,
+            'label' => $status->getLabel(),
+            'description' => $status->getDescription(),
+            'color' => $status->getColor(),
+            'icon' => $status->getIcon(),
+            'can_be_activated' => $status->canBeActivated(),
+            'should_show_warning' => $status->shouldShowWarning(),
+            'warning_message' => $status->getWarningMessage(),
+        ];
+    }
+
+    /**
      * Получить публичные данные модуля для фронтенда (без внутренних полей)
      */
     public function toPublicArray(): array
@@ -186,6 +247,7 @@ class Module extends Model
             'is_active' => $this->is_active,
             'is_system_module' => $this->is_system_module,
             'can_deactivate' => $this->can_deactivate,
+            'development_status' => $this->getDevelopmentStatusInfo(),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

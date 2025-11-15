@@ -71,6 +71,7 @@
   "auto_activate": false,
   "is_system_module": false,
   "can_deactivate": true,
+  "development_status": "development",
   "icon": "calendar-alt",
   "display_order": 25
 }

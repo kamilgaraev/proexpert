@@ -12,7 +12,7 @@ alwaysApply: true
 ### Backend
 - **PHP**: 8.2+
 - **Laravel**: 11.x
-- **Database**: PostgreSQL / MySQL
+- **Database**: PostgreSQL 
 - **Cache**: Redis
 - **Queue**: Redis / Horizon
 - **WebSocket**: Laravel Reverb
@@ -21,7 +21,7 @@ alwaysApply: true
 - **S3**: Yandex Object Storage / AWS S3
 - **PDF**: DomPDF
 - **Excel**: PhpSpreadsheet
-- **AI**: OpenAI GPT / YandexGPT
+- **AI**:  YandexGPT
 - **Monitoring**: Prometheus + Grafana + Loki
 
 ## Стандарты кодирования (PSR)
