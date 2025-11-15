@@ -1,0 +1,670 @@
+{
+  "title": "Error Tracking & Analysis",
+  "tags": ["errors", "tracking", "debugging", "exceptions"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "organization",
+        "type": "query",
+        "datasource": "PostgreSQL",
+        "query": "SELECT DISTINCT organization_id FROM application_errors WHERE organization_id IS NOT NULL ORDER BY organization_id",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*"
+      },
+      {
+        "name": "module",
+        "type": "query",
+        "datasource": "PostgreSQL",
+        "query": "SELECT DISTINCT module FROM application_errors WHERE module IS NOT NULL ORDER BY module",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*"
+      },
+      {
+        "name": "severity",
+        "type": "query",
+        "datasource": "PostgreSQL",
+        "query": "SELECT DISTINCT severity FROM application_errors ORDER BY severity",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "🔴 Critical Errors (Unresolved)",
+      "type": "stat",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) FROM application_errors WHERE severity = 'critical' AND status = 'unresolved' AND last_seen_at > NOW() - INTERVAL '24 hours'",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {"value": 0, "color": "green"},
+              {"value": 1, "color": "orange"},
+              {"value": 5, "color": "red"}
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4}
+    },
+    {
+      "id": 2,
+      "title": "⚠️ Unresolved Errors (24h)",
+      "type": "stat",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) FROM application_errors WHERE status = 'unresolved' AND last_seen_at > NOW() - INTERVAL '24 hours'",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {"value": 0, "color": "green"},
+              {"value": 10, "color": "yellow"},
+              {"value": 50, "color": "red"}
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4}
+    },
+    {
+      "id": 3,
+      "title": "📊 Total Occurrences (24h)",
+      "type": "stat",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT SUM(occurrences) FROM application_errors WHERE last_seen_at > NOW() - INTERVAL '24 hours'",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4}
+    },
+    {
+      "id": 4,
+      "title": "✅ Resolved Today",
+      "type": "stat",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) FROM application_errors WHERE status = 'resolved' AND updated_at > NOW() - INTERVAL '24 hours'",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "green"
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"x": 12, "y": 0, "w": 4, "h": 4}
+    },
+    {
+      "id": 5,
+      "title": "🎯 Error Rate (errors/hour)",
+      "type": "stat",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) / 24.0 as rate FROM application_errors WHERE last_seen_at > NOW() - INTERVAL '24 hours'",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {"value": 0, "color": "green"},
+              {"value": 5, "color": "yellow"},
+              {"value": 20, "color": "red"}
+            ]
+          },
+          "unit": "short",
+          "decimals": 1
+        }
+      },
+      "gridPos": {"x": 16, "y": 0, "w": 4, "h": 4}
+    },
+    {
+      "id": 6,
+      "title": "🔥 Most Frequent Error",
+      "type": "stat",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT LEFT(error_group, 50) as error, occurrences FROM application_errors WHERE status = 'unresolved' ORDER BY occurrences DESC LIMIT 1",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"x": 20, "y": 0, "w": 4, "h": 4}
+    },
+    {
+      "id": 7,
+      "title": "📈 Errors Timeline (Hourly)",
+      "type": "timeseries",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT DATE_TRUNC('hour', last_seen_at) as time, COUNT(DISTINCT error_hash) as unique_errors, SUM(occurrences) as total_occurrences FROM application_errors WHERE last_seen_at BETWEEN $__timeFrom() AND $__timeTo() GROUP BY time ORDER BY time",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 20
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "unique_errors"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "blue"}},
+              {"id": "displayName", "value": "Unique Errors"}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "total_occurrences"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}},
+              {"id": "displayName", "value": "Total Occurrences"}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"x": 0, "y": 4, "w": 24, "h": 8}
+    },
+    {
+      "id": 8,
+      "title": "🎨 Errors by Severity",
+      "type": "piechart",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT severity, COUNT(*) as count FROM application_errors WHERE status = 'unresolved' AND last_seen_at > NOW() - INTERVAL '24 hours' GROUP BY severity",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "critical"},
+            "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "error"},
+            "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "orange"}}]
+          },
+          {
+            "matcher": {"id": "byName", "options": "warning"},
+            "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "yellow"}}]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "values": ["value", "percent"]
+        },
+        "pieType": "donut"
+      },
+      "gridPos": {"x": 0, "y": 12, "w": 8, "h": 8}
+    },
+    {
+      "id": 9,
+      "title": "📦 Errors by Module",
+      "type": "barchart",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT module, SUM(occurrences) as total FROM application_errors WHERE status = 'unresolved' AND last_seen_at > NOW() - INTERVAL '7 days' AND module IS NOT NULL GROUP BY module ORDER BY total DESC LIMIT 10",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "xTickLabelRotation": 0,
+        "showValue": "always"
+      },
+      "gridPos": {"x": 8, "y": 12, "w": 8, "h": 8}
+    },
+    {
+      "id": 10,
+      "title": "🏢 Errors by Organization",
+      "type": "barchart",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT o.name as organization, COUNT(ae.id) as errors FROM application_errors ae LEFT JOIN organizations o ON ae.organization_id = o.id WHERE ae.status = 'unresolved' AND ae.last_seen_at > NOW() - INTERVAL '24 hours' GROUP BY o.name ORDER BY errors DESC LIMIT 10",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "always"
+      },
+      "gridPos": {"x": 16, "y": 12, "w": 8, "h": 8}
+    },
+    {
+      "id": 11,
+      "title": "🔝 Top 20 Errors by Occurrences",
+      "type": "table",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT id, error_group, exception_class, LEFT(message, 80) as message, module, occurrences, severity, EXTRACT(EPOCH FROM (NOW() - last_seen_at))/60 as minutes_ago FROM application_errors WHERE status = 'unresolved' ORDER BY occurrences DESC LIMIT 20",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "occurrences"},
+            "properties": [
+              {"id": "custom.displayMode", "value": "color-background"},
+              {"id": "color", "value": {"mode": "continuous-GrYlRd"}},
+              {"id": "custom.width", "value": 100}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "severity"},
+            "properties": [
+              {"id": "custom.displayMode", "value": "color-text"},
+              {"id": "mappings", "value": [
+                {"options": {"critical": {"color": "red", "index": 0}}, "type": "value"},
+                {"options": {"error": {"color": "orange", "index": 1}}, "type": "value"},
+                {"options": {"warning": {"color": "yellow", "index": 2}}, "type": "value"}
+              ]},
+              {"id": "custom.width", "value": 100}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "minutes_ago"},
+            "properties": [
+              {"id": "displayName", "value": "Last seen"},
+              {"id": "unit", "value": "m"},
+              {"id": "decimals", "value": 0},
+              {"id": "custom.width", "value": 100}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "id"},
+            "properties": [
+              {"id": "custom.width", "value": 80},
+              {"id": "links", "value": [
+                {
+                  "title": "View Details",
+                  "url": "/d/error-details?var-error_id=${__value.raw}"
+                }
+              ]}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "occurrences",
+            "desc": true
+          }
+        ]
+      },
+      "gridPos": {"x": 0, "y": 20, "w": 24, "h": 10}
+    },
+    {
+      "id": 12,
+      "title": "🆕 Recent Errors (Last 50)",
+      "type": "table",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT id, error_group, exception_class, LEFT(message, 100) as message, module, occurrences, severity, status, last_seen_at FROM application_errors WHERE status = 'unresolved' ORDER BY last_seen_at DESC LIMIT 50",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "left",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "severity"},
+            "properties": [
+              {"id": "custom.displayMode", "value": "color-background-solid"},
+              {"id": "mappings", "value": [
+                {"options": {"critical": {"color": "dark-red", "index": 0}}, "type": "value"},
+                {"options": {"error": {"color": "dark-orange", "index": 1}}, "type": "value"},
+                {"options": {"warning": {"color": "dark-yellow", "index": 2}}, "type": "value"}
+              ]},
+              {"id": "custom.width", "value": 100}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "status"},
+            "properties": [
+              {"id": "custom.displayMode", "value": "color-text"},
+              {"id": "mappings", "value": [
+                {"options": {"unresolved": {"color": "red", "index": 0}}, "type": "value"},
+                {"options": {"resolved": {"color": "green", "index": 1}}, "type": "value"},
+                {"options": {"ignored": {"color": "gray", "index": 2}}, "type": "value"}
+              ]},
+              {"id": "custom.width", "value": 100}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "last_seen_at"},
+            "properties": [
+              {"id": "custom.width", "value": 180}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "id"},
+            "properties": [
+              {"id": "custom.width", "value": 70}
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "last_seen_at",
+            "desc": true
+          }
+        ]
+      },
+      "gridPos": {"x": 0, "y": 30, "w": 24, "h": 12}
+    },
+    {
+      "id": 13,
+      "title": "📊 Exception Types Distribution",
+      "type": "barchart",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT exception_class, COUNT(*) as count FROM application_errors WHERE status = 'unresolved' AND last_seen_at > NOW() - INTERVAL '7 days' GROUP BY exception_class ORDER BY count DESC LIMIT 15",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "always",
+        "xTickLabelRotation": 0
+      },
+      "gridPos": {"x": 0, "y": 42, "w": 12, "h": 8}
+    },
+    {
+      "id": 14,
+      "title": "⏰ Error Activity Heatmap (24h)",
+      "type": "heatmap",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT DATE_TRUNC('hour', last_seen_at) as time, COUNT(*) as value FROM application_errors WHERE last_seen_at > NOW() - INTERVAL '24 hours' GROUP BY time ORDER BY time",
+          "format": "time_series"
+        }
+      ],
+      "options": {
+        "calculate": false,
+        "yAxis": {
+          "unit": "short"
+        },
+        "cellGap": 2,
+        "color": {
+          "mode": "spectrum",
+          "scheme": "Oranges"
+        }
+      },
+      "gridPos": {"x": 12, "y": 42, "w": 12, "h": 8}
+    },
+    {
+      "id": 15,
+      "title": "🔍 Error Resolution Rate",
+      "type": "timeseries",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT DATE_TRUNC('day', updated_at) as time, COUNT(*) FILTER (WHERE status = 'resolved') as resolved, COUNT(*) FILTER (WHERE status = 'unresolved') as unresolved FROM application_errors WHERE updated_at > NOW() - INTERVAL '30 days' GROUP BY time ORDER BY time",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {"mode": "normal"}
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "resolved"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}},
+              {"id": "displayName", "value": "Resolved"}
+            ]
+          },
+          {
+            "matcher": {"id": "byName", "options": "unresolved"},
+            "properties": [
+              {"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}},
+              {"id": "displayName", "value": "Unresolved"}
+            ]
+          }
+        ]
+      },
+      "gridPos": {"x": 0, "y": 50, "w": 24, "h": 8}
+    },
+    {
+      "id": 16,
+      "title": "🎯 Mean Time To Resolution (MTTR)",
+      "type": "stat",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT EXTRACT(EPOCH FROM AVG(updated_at - first_seen_at))/3600 as hours FROM application_errors WHERE status = 'resolved' AND updated_at > NOW() - INTERVAL '30 days'",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {"value": 0, "color": "green"},
+              {"value": 24, "color": "yellow"},
+              {"value": 72, "color": "red"}
+            ]
+          },
+          "unit": "h",
+          "decimals": 1
+        }
+      },
+      "gridPos": {"x": 0, "y": 58, "w": 6, "h": 4}
+    },
+    {
+      "id": 17,
+      "title": "🔄 Recurring Errors (>10 occurrences)",
+      "type": "stat",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(*) FROM application_errors WHERE occurrences > 10 AND status = 'unresolved'",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {"value": 0, "color": "green"},
+              {"value": 5, "color": "yellow"},
+              {"value": 20, "color": "red"}
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"x": 6, "y": 58, "w": 6, "h": 4}
+    },
+    {
+      "id": 18,
+      "title": "📉 Error Trend (vs Yesterday)",
+      "type": "stat",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT (SELECT COUNT(*) FROM application_errors WHERE last_seen_at > NOW() - INTERVAL '24 hours') - (SELECT COUNT(*) FROM application_errors WHERE last_seen_at BETWEEN NOW() - INTERVAL '48 hours' AND NOW() - INTERVAL '24 hours') as change",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {"value": null, "color": "red"},
+              {"value": 0, "color": "green"}
+            ]
+          },
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {"text": "N/A"}
+              }
+            }
+          ]
+        }
+      },
+      "gridPos": {"x": 12, "y": 58, "w": 6, "h": 4}
+    },
+    {
+      "id": 19,
+      "title": "🎪 Unique Error Types",
+      "type": "stat",
+      "datasource": "PostgreSQL",
+      "targets": [
+        {
+          "rawSql": "SELECT COUNT(DISTINCT error_hash) FROM application_errors WHERE status = 'unresolved' AND last_seen_at > NOW() - INTERVAL '24 hours'",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {"x": 18, "y": 58, "w": 6, "h": 4}
+    }
+  ]
+}
+
