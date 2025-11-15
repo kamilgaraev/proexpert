@@ -8,7 +8,7 @@ use App\Http\Controllers\Api\Estimates\NormativeImportController;
 use App\Http\Controllers\Api\Estimates\OfficialFormsExportController;
 use App\Http\Controllers\Api\Estimates\EstimateConstructorController;
 
-Route::prefix('estimates')->middleware(['auth:sanctum'])->group(function () {
+Route::prefix('estimates')->group(function () {
     
     Route::prefix('normative-rates')->group(function () {
         Route::get('/', [NormativeRateController::class, 'index']);
