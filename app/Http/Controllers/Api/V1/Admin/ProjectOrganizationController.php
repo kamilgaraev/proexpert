@@ -32,16 +32,67 @@ class ProjectOrganizationController extends Controller
     }
 
     /**
+     * Получить проект и проверить доступ к нему
+     */
+    private function getProjectWithAccess(Request $request, int $projectId): array
+    {
+        $project = Project::findOrFail($projectId);
+        $user = $request->user();
+        
+        if (!$user) {
+            throw new \RuntimeException('Unauthorized', 401);
+        }
+
+        $currentOrg = Organization::find($user->current_organization_id);
+        if (!$currentOrg) {
+            throw new \RuntimeException('Organization not found', 404);
+        }
+
+        if (!$this->projectContextService->canOrganizationAccessProject($project, $currentOrg)) {
+            throw new \RuntimeException('Access denied', 403);
+        }
+
+        $projectContext = $this->projectContextService->getContext($project, $currentOrg);
+
+        return [$project, $currentOrg, $projectContext];
+    }
+
+    /**
      * Получить список участников проекта
      * 
-     * GET /api/v1/admin/projects/{project}/participants
+     * GET /api/v1/admin/projects/{id}/organizations
      */
     public function index(Request $request): JsonResponse
     {
         try {
-            $project = ProjectContextMiddleware::getProject($request);
-            $projectContext = ProjectContextMiddleware::getProjectContext($request);
+            $projectId = (int) $request->route('id');
+            $project = Project::findOrFail($projectId);
             
+            $user = $request->user();
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized',
+                ], 401);
+            }
+
+            $currentOrg = Organization::find($user->current_organization_id);
+            if (!$currentOrg) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not found',
+                ], 404);
+            }
+
+            // Проверяем доступ к проекту
+            if (!$this->projectContextService->canOrganizationAccessProject($project, $currentOrg)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Access denied',
+                ], 403);
+            }
+
+            $projectContext = $this->projectContextService->getContext($project, $currentOrg);
             $participants = $this->projectContextService->getAllProjectParticipants($project);
             
             return response()->json([
@@ -68,8 +119,9 @@ class ProjectOrganizationController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to get project participants', [
-                'project_id' => $request->route('project'),
+                'project_id' => $request->route('id'),
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
             
             return response()->json([
@@ -82,38 +134,55 @@ class ProjectOrganizationController extends Controller
     /**
      * Добавить участника в проект
      * 
-     * POST /api/v1/admin/projects/{project}/participants
+     * POST /api/v1/admin/projects/{id}/organizations
      */
     public function store(Request $request): JsonResponse
     {
-        $projectContext = ProjectContextMiddleware::getProjectContext($request);
-        
-        if (!$projectContext->roleConfig->canInviteParticipants) {
-            return response()->json([
-                'success' => false,
-                'message' => 'У вас нет прав для приглашения участников в проект',
-            ], 403);
-        }
-        
-        $validator = Validator::make($request->all(), [
-            'organization_id' => 'required|integer|exists:organizations,id',
-            'role' => 'required|string|in:' . implode(',', array_map(fn($r) => $r->value, ProjectOrganizationRole::cases())),
-        ]);
-        
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
-        }
-        
         try {
+            $projectId = (int) $request->route('id');
+            $project = Project::findOrFail($projectId);
+            
+            $user = $request->user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            }
+
+            $currentOrg = Organization::find($user->current_organization_id);
+            if (!$currentOrg) {
+                return response()->json(['success' => false, 'message' => 'Organization not found'], 404);
+            }
+
+            if (!$this->projectContextService->canOrganizationAccessProject($project, $currentOrg)) {
+                return response()->json(['success' => false, 'message' => 'Access denied'], 403);
+            }
+
+            $projectContext = $this->projectContextService->getContext($project, $currentOrg);
+            
+            if (!$projectContext->roleConfig->canInviteParticipants) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'У вас нет прав для приглашения участников в проект',
+                ], 403);
+            }
+            
+            $validator = Validator::make($request->all(), [
+                'organization_id' => 'required|integer|exists:organizations,id',
+                'role' => 'required|string|in:' . implode(',', array_map(fn($r) => $r->value, ProjectOrganizationRole::cases())),
+            ]);
+            
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+            
             $organizationId = $request->input('organization_id');
             $role = ProjectOrganizationRole::from($request->input('role'));
             
             $this->projectService->addOrganizationToProject(
-                (int) $request->route('project'),
+                $projectId,
                 $organizationId,
                 $role,
                 $request
@@ -125,7 +194,7 @@ class ProjectOrganizationController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to add participant to project', [
-                'project_id' => $request->route('project'),
+                'project_id' => $request->route('id'),
                 'organization_id' => $request->input('organization_id'),
                 'error' => $e->getMessage(),
             ]);
@@ -140,12 +209,27 @@ class ProjectOrganizationController extends Controller
     /**
      * Получить информацию об участнике
      * 
-     * GET /api/v1/admin/projects/{project}/participants/{organization}
+     * GET /api/v1/admin/projects/{id}/organizations/{organization}
      */
-    public function show(Request $request, int $project, int $organization): JsonResponse
+    public function show(Request $request, int $id, int $organization): JsonResponse
     {
         try {
-            $projectModel = ProjectContextMiddleware::getProject($request);
+            $projectModel = Project::findOrFail($id);
+            $user = $request->user();
+            
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            }
+
+            $currentOrg = Organization::find($user->current_organization_id);
+            if (!$currentOrg) {
+                return response()->json(['success' => false, 'message' => 'Organization not found'], 404);
+            }
+
+            if (!$this->projectContextService->canOrganizationAccessProject($projectModel, $currentOrg)) {
+                return response()->json(['success' => false, 'message' => 'Access denied'], 403);
+            }
+
             $org = Organization::findOrFail($organization);
             
             $role = $this->projectContextService->getOrganizationRole($projectModel, $org);
@@ -185,7 +269,7 @@ class ProjectOrganizationController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to get participant details', [
-                'project_id' => $project,
+                'project_id' => $id,
                 'organization_id' => $organization,
                 'error' => $e->getMessage(),
             ]);
@@ -200,36 +284,36 @@ class ProjectOrganizationController extends Controller
     /**
      * Обновить роль участника
      * 
-     * PATCH /api/v1/admin/projects/{project}/participants/{organization}/role
+     * PATCH /api/v1/admin/projects/{id}/organizations/{organization}/role
      */
-    public function updateRole(Request $request, int $project, int $organization): JsonResponse
+    public function updateRole(Request $request, int $id, int $organization): JsonResponse
     {
-        $projectContext = ProjectContextMiddleware::getProjectContext($request);
-        
-        if (!$projectContext->roleConfig->canInviteParticipants) {
-            return response()->json([
-                'success' => false,
-                'message' => 'У вас нет прав для изменения ролей участников',
-            ], 403);
-        }
-        
-        $validator = Validator::make($request->all(), [
-            'role' => 'required|string|in:' . implode(',', array_map(fn($r) => $r->value, ProjectOrganizationRole::cases())),
-        ]);
-        
-        if ($validator->fails()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors(),
-            ], 422);
-        }
-        
         try {
+            [$project, $currentOrg, $projectContext] = $this->getProjectWithAccess($request, $id);
+            
+            if (!$projectContext->roleConfig->canInviteParticipants) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'У вас нет прав для изменения ролей участников',
+                ], 403);
+            }
+            
+            $validator = Validator::make($request->all(), [
+                'role' => 'required|string|in:' . implode(',', array_map(fn($r) => $r->value, ProjectOrganizationRole::cases())),
+            ]);
+            
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+            
             $role = ProjectOrganizationRole::from($request->input('role'));
             
             $this->projectService->updateOrganizationRole(
-                $project,
+                $id,
                 $organization,
                 $role,
                 $request
@@ -239,9 +323,11 @@ class ProjectOrganizationController extends Controller
                 'success' => true,
                 'message' => 'Роль участника успешно обновлена',
             ]);
+        } catch (\RuntimeException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], (int)$e->getCode() ?: 500);
         } catch (\Exception $e) {
             Log::error('Failed to update participant role', [
-                'project_id' => $project,
+                'project_id' => $id,
                 'organization_id' => $organization,
                 'error' => $e->getMessage(),
             ]);
@@ -256,22 +342,22 @@ class ProjectOrganizationController extends Controller
     /**
      * Удалить участника из проекта
      * 
-     * DELETE /api/v1/admin/projects/{project}/participants/{organization}
+     * DELETE /api/v1/admin/projects/{id}/organizations/{organization}
      */
-    public function destroy(Request $request, int $project, int $organization): JsonResponse
+    public function destroy(Request $request, int $id, int $organization): JsonResponse
     {
-        $projectContext = ProjectContextMiddleware::getProjectContext($request);
-        
-        if (!$projectContext->roleConfig->canInviteParticipants) {
-            return response()->json([
-                'success' => false,
-                'message' => 'У вас нет прав для удаления участников из проекта',
-            ], 403);
-        }
-        
         try {
+            [$project, $currentOrg, $projectContext] = $this->getProjectWithAccess($request, $id);
+            
+            if (!$projectContext->roleConfig->canInviteParticipants) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'У вас нет прав для удаления участников из проекта',
+                ], 403);
+            }
+            
             $this->projectService->removeOrganizationFromProject(
-                $project,
+                $id,
                 $organization,
                 $request
             );
@@ -280,9 +366,11 @@ class ProjectOrganizationController extends Controller
                 'success' => true,
                 'message' => 'Участник успешно удален из проекта',
             ]);
+        } catch (\RuntimeException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], (int)$e->getCode() ?: 500);
         } catch (\Exception $e) {
             Log::error('Failed to remove participant from project', [
-                'project_id' => $project,
+                'project_id' => $id,
                 'organization_id' => $organization,
                 'error' => $e->getMessage(),
             ]);
@@ -297,21 +385,20 @@ class ProjectOrganizationController extends Controller
     /**
      * Активировать участника
      * 
-     * POST /api/v1/admin/projects/{project}/participants/{organization}/activate
+     * POST /api/v1/admin/projects/{id}/organizations/{organization}/activate
      */
-    public function activate(Request $request, int $project, int $organization): JsonResponse
+    public function activate(Request $request, int $id, int $organization): JsonResponse
     {
-        $projectContext = ProjectContextMiddleware::getProjectContext($request);
-        
-        if (!$projectContext->roleConfig->canInviteParticipants) {
-            return response()->json([
-                'success' => false,
-                'message' => 'У вас нет прав для управления статусом участников',
-            ], 403);
-        }
-        
         try {
-            $projectModel = ProjectContextMiddleware::getProject($request);
+            [$projectModel, $currentOrg, $projectContext] = $this->getProjectWithAccess($request, $id);
+            
+            if (!$projectContext->roleConfig->canInviteParticipants) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'У вас нет прав для управления статусом участников',
+                ], 403);
+            }
+            
             $projectModel->organizations()->updateExistingPivot($organization, [
                 'is_active' => true,
                 'updated_at' => now(),
@@ -321,9 +408,11 @@ class ProjectOrganizationController extends Controller
                 'success' => true,
                 'message' => 'Участник активирован',
             ]);
+        } catch (\RuntimeException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], (int)$e->getCode() ?: 500);
         } catch (\Exception $e) {
             Log::error('Failed to activate participant', [
-                'project_id' => $project,
+                'project_id' => $id,
                 'organization_id' => $organization,
                 'error' => $e->getMessage(),
             ]);
@@ -338,21 +427,20 @@ class ProjectOrganizationController extends Controller
     /**
      * Деактивировать участника
      * 
-     * POST /api/v1/admin/projects/{project}/participants/{organization}/deactivate
+     * POST /api/v1/admin/projects/{id}/organizations/{organization}/deactivate
      */
-    public function deactivate(Request $request, int $project, int $organization): JsonResponse
+    public function deactivate(Request $request, int $id, int $organization): JsonResponse
     {
-        $projectContext = ProjectContextMiddleware::getProjectContext($request);
-        
-        if (!$projectContext->roleConfig->canInviteParticipants) {
-            return response()->json([
-                'success' => false,
-                'message' => 'У вас нет прав для управления статусом участников',
-            ], 403);
-        }
-        
         try {
-            $projectModel = ProjectContextMiddleware::getProject($request);
+            [$projectModel, $currentOrg, $projectContext] = $this->getProjectWithAccess($request, $id);
+            
+            if (!$projectContext->roleConfig->canInviteParticipants) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'У вас нет прав для управления статусом участников',
+                ], 403);
+            }
+            
             $projectModel->organizations()->updateExistingPivot($organization, [
                 'is_active' => false,
                 'updated_at' => now(),
@@ -362,9 +450,11 @@ class ProjectOrganizationController extends Controller
                 'success' => true,
                 'message' => 'Участник деактивирован',
             ]);
+        } catch (\RuntimeException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], (int)$e->getCode() ?: 500);
         } catch (\Exception $e) {
             Log::error('Failed to deactivate participant', [
-                'project_id' => $project,
+                'project_id' => $id,
                 'organization_id' => $organization,
                 'error' => $e->getMessage(),
             ]);
