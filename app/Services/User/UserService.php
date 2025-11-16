@@ -44,6 +44,15 @@ class UserService
     // --- Helper Methods ---
 
     /**
+     * Получить ID контекста авторизации для организации
+     */
+    protected function getOrganizationContextId(int $organizationId): ?int
+    {
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+        return $context ? $context->id : null;
+    }
+
+    /**
      * Ensures the requesting user is the owner of the current organization.
      * Throws an exception if not.
      *
@@ -55,8 +64,9 @@ class UserService
         /** @var User $user */
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id');
+        $contextId = $organizationId ? $this->getOrganizationContextId($organizationId) : null;
 
-        if (!$user || !$organizationId || !$this->authorizationService->hasRole($user, 'organization_owner', $organizationId)) {
+        if (!$user || !$organizationId || !$this->authorizationService->hasRole($user, 'organization_owner', $contextId)) {
             throw new BusinessLogicException('Действие доступно только владельцу организации.', 403);
         }
     }
@@ -81,12 +91,15 @@ class UserService
             throw new BusinessLogicException('Действие доступно только авторизованному пользователю в контексте организации.', 403);
         }
 
+        // Получаем ID контекста авторизации для организации
+        $contextId = $this->getOrganizationContextId($organizationId);
+
         // Проверяем права через новую систему авторизации
         $canManage = $this->authorizationService->can($user, 'organization.manage', ['organization_id' => $organizationId]);
         $isSystemAdmin = $this->authorizationService->hasRole($user, 'system_admin');
-        $isOrgOwner = $this->authorizationService->hasRole($user, 'organization_owner', $organizationId);
-        $isOrgAdmin = $this->authorizationService->hasRole($user, 'organization_admin', $organizationId);
-        $isWebAdmin = $this->authorizationService->hasRole($user, 'web_admin', $organizationId);
+        $isOrgOwner = $this->authorizationService->hasRole($user, 'organization_owner', $contextId);
+        $isOrgAdmin = $this->authorizationService->hasRole($user, 'organization_admin', $contextId);
+        $isWebAdmin = $this->authorizationService->hasRole($user, 'web_admin', $contextId);
         
         \Illuminate\Support\Facades\Log::info('[UserService::ensureUserIsAdmin] Checking permissions', [
             'user_id' => $user->id,
@@ -588,7 +601,8 @@ class UserService
 
         if ($existingUser) {
             // If user exists, check if they are already a foreman in this org
-            if ($this->authorizationService->hasRole($existingUser, $foremanRoleSlug, $organizationId)) {
+            $contextId = $this->getOrganizationContextId($organizationId);
+            if ($this->authorizationService->hasRole($existingUser, $foremanRoleSlug, $contextId)) {
                  throw new BusinessLogicException('Пользователь с таким email уже является прорабом в этой организации.', 409);
             }
             // If user exists but not foreman, add them to the org with the foreman role

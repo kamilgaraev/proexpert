@@ -283,9 +283,14 @@ class ProjectService
         }
 
         $user = $this->userRepository->find($userId);
+        
+        // Получаем ID контекста авторизации для организации
+        $authContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+        $contextId = $authContext ? $authContext->id : null;
+        
         if (!$user 
             || !$user->is_active 
-            || !app(\App\Domain\Authorization\Services\AuthorizationService::class)->hasRole($user, 'foreman', $organizationId) // Обновлено для новой системы авторизации
+            || !app(\App\Domain\Authorization\Services\AuthorizationService::class)->hasRole($user, 'foreman', $contextId) 
             || !$user->organizations()->where('organization_user.organization_id', $organizationId)->exists()
            ) { 
             throw new BusinessLogicException('Пользователь не найден, неактивен или не является прорабом в вашей организации.', 404);

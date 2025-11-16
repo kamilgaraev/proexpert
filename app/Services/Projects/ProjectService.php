@@ -47,9 +47,12 @@ class ProjectService
 
                 // Для системного админа или администратора организации возвращаем все проекты
                 $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+                $authContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+                $contextId = $authContext ? $authContext->id : null;
+                
                 $isAdmin = $authService->hasRole($user, 'system_admin') ||
-                          $authService->hasRole($user, 'organization_admin', $organizationId) ||
-                          $authService->hasRole($user, 'organization_owner', $organizationId);
+                          $authService->hasRole($user, 'organization_admin', $contextId) ||
+                          $authService->hasRole($user, 'organization_owner', $contextId);
                 
                 if ($isAdmin) {
                     $projects = $this->projectRepository->getProjectsForOrganization($organizationId);
@@ -181,9 +184,12 @@ class ProjectService
 
                 // Проверяем, имеет ли пользователь право создавать проекты
                 $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+                $authContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+                $contextId = $authContext ? $authContext->id : null;
+                
                 $canCreateProjects = $authService->hasRole($user, 'system_admin') ||
-                                   $authService->hasRole($user, 'organization_admin', $organizationId) ||
-                                   $authService->hasRole($user, 'organization_owner', $organizationId) ||
+                                   $authService->hasRole($user, 'organization_admin', $contextId) ||
+                                   $authService->hasRole($user, 'organization_owner', $contextId) ||
                                    $authService->can($user, 'projects.create', ['context_type' => 'organization', 'context_id' => $organizationId]);
                 
                 if (!$canCreateProjects) {

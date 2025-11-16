@@ -22,11 +22,15 @@ class UpdateAdminPanelUserRequest extends FormRequest
             return false;
         }
 
+        // Получаем ID контекста авторизации для организации
+        $authContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+        $contextId = $authContext ? $authContext->id : null;
+
         // Проверяем права через новую систему авторизации
         $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
         return $authService->can($user, 'organization.manage', ['context_type' => 'organization', 'context_id' => $organizationId]) ||
-               $authService->hasRole($user, 'organization_owner', $organizationId) ||
-               $authService->hasRole($user, 'organization_admin', $organizationId);
+               $authService->hasRole($user, 'organization_owner', $contextId) ||
+               $authService->hasRole($user, 'organization_admin', $contextId);
     }
 
     /**
