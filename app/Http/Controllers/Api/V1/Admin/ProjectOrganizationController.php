@@ -10,6 +10,7 @@ use App\Services\Project\ProjectContextService;
 use App\Services\Organization\OrganizationProfileService;
 use App\Http\Middleware\ProjectContextMiddleware;
 use App\Models\Organization;
+use App\Models\Project;
 use App\Enums\ProjectOrganizationRole;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
@@ -371,6 +372,81 @@ class ProjectOrganizationController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to deactivate participant',
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить список доступных организаций для добавления в проект
+     * 
+     * GET /api/v1/admin/projects/{id}/available-organizations
+     */
+    public function available(Request $request, int $id): JsonResponse
+    {
+        try {
+            $project = Project::findOrFail($id);
+            $user = $request->user();
+            
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized',
+                ], 401);
+            }
+
+            $currentOrg = Organization::find($user->current_organization_id);
+            
+            if (!$currentOrg) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not found',
+                ], 404);
+            }
+
+            // Проверяем доступ к проекту
+            if (!$this->projectContextService->canOrganizationAccessProject($project, $currentOrg)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Access denied',
+                ], 403);
+            }
+
+            // Получаем ID уже добавленных организаций
+            $existingOrgIds = $project->organizations()
+                ->pluck('organizations.id')
+                ->merge([$project->organization_id]) // Добавляем owner организацию
+                ->unique()
+                ->toArray();
+
+            // Получаем доступные организации (связанные с текущей организацией)
+            $availableOrgs = Organization::query()
+                ->where('is_active', true)
+                ->whereNotIn('id', $existingOrgIds)
+                ->get()
+                ->map(function ($org) {
+                    return [
+                        'id' => $org->id,
+                        'name' => $org->name,
+                        'inn' => $org->inn,
+                        'address' => $org->address,
+                        'phone' => $org->phone,
+                    ];
+                });
+
+            return response()->json([
+                'success' => true,
+                'data' => $availableOrgs,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to get available organizations', [
+                'project_id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Internal Server Error',
             ], 500);
         }
     }

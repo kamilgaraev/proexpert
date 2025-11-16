@@ -6,13 +6,17 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use App\Services\Project\CrossOrgWorkReadService;
+use App\Services\Project\ProjectContextService;
 use App\Models\Project;
+use App\Models\Organization;
 use Illuminate\Support\Facades\Log;
 
 class ProjectChildWorksController extends Controller
 {
-    public function __construct(private readonly CrossOrgWorkReadService $service)
-    {
+    public function __construct(
+        private readonly CrossOrgWorkReadService $service,
+        private readonly ProjectContextService $projectContextService
+    ) {
         // Авторизация настроена на уровне роутов через middleware стек
     }
 
@@ -41,19 +45,28 @@ class ProjectChildWorksController extends Controller
             }
 
             $currentOrgId = $user->current_organization_id;
+            $organization = Organization::find($currentOrgId);
+            
+            if (!$organization) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Organization not found',
+                ], 404);
+            }
 
-            if ($project->organization_id !== $currentOrgId) {
+            // Проверяем доступ: владелец проекта ИЛИ участник (подрядчик/субподрядчик)
+            if (!$this->projectContextService->canOrganizationAccessProject($project, $organization)) {
                 Log::warning('[ProjectChildWorksController] Access denied', [
                     'user_id' => $user->id,
                     'project_id' => $projectId,
                     'project_org_id' => $project->organization_id,
                     'user_current_org_id' => $currentOrgId,
-                    'reason' => 'Project does not belong to user current organization',
+                    'reason' => 'Organization is not project owner or participant',
                 ]);
                 
                 return response()->json([
                     'success' => false,
-                    'message' => 'Access denied. Project does not belong to your current organization.',
+                    'message' => 'Access denied. You are not a participant of this project.',
                 ], 403);
             }
 
