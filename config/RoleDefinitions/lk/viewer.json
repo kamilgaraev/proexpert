@@ -78,6 +78,10 @@
     ],
     "budget-estimates": [
       "budget-estimates.view"
+    ],
+    "payments": [
+      "payments.invoice.view",
+      "payments.transaction.view"
     ]
   },
   

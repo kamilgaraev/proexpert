@@ -108,6 +108,13 @@
       "budget-estimates.import",
       "budget-estimates.export",
       "budget-estimates.templates.manage"
+    ],
+    "payments": [
+      "payments.dashboard.view",
+      "payments.invoice.view",
+      "payments.invoice.create",
+      "payments.transaction.view",
+      "payments.reports.view"
     ]
   },
   

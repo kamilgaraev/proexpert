@@ -64,6 +64,10 @@
     ],
     "schedule-management": [
       "schedule.view"
+    ],
+    "payments": [
+      "payments.invoice.view",
+      "payments.transaction.view"
     ]
   },
   

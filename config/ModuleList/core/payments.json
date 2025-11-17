@@ -11,14 +11,140 @@
   "service_provider": "App\\BusinessModules\\Core\\Payments\\PaymentsServiceProvider",
   
   "permissions": [
-    "payments.view",
+    "payments.dashboard.view",
+    
+    "payments.invoice.view",
+    "payments.invoice.view_all",
     "payments.invoice.create",
     "payments.invoice.edit",
+    "payments.invoice.delete",
     "payments.invoice.cancel",
+    "payments.invoice.issue",
+    "payments.invoice.export",
+    
+    "payments.transaction.view",
+    "payments.transaction.view_all",
     "payments.transaction.register",
+    "payments.transaction.edit",
+    "payments.transaction.delete",
     "payments.transaction.approve",
-    "payments.reports.view"
+    "payments.transaction.reject",
+    "payments.transaction.refund",
+    
+    "payments.schedule.view",
+    "payments.schedule.create",
+    "payments.schedule.edit",
+    "payments.schedule.delete",
+    
+    "payments.counterparty_account.view",
+    "payments.counterparty_account.manage",
+    "payments.counterparty_account.reconcile",
+    
+    "payments.reconciliation.view",
+    "payments.reconciliation.perform",
+    "payments.reconciliation.approve",
+    
+    "payments.reports.view",
+    "payments.reports.export",
+    "payments.reports.financial_analytics",
+    
+    "payments.settings.view",
+    "payments.settings.manage"
   ],
+  
+  "permission_roles": {
+    "Финансовый директор": [
+      "payments.dashboard.view",
+      "payments.invoice.view_all",
+      "payments.invoice.create",
+      "payments.invoice.edit",
+      "payments.invoice.delete",
+      "payments.invoice.cancel",
+      "payments.invoice.issue",
+      "payments.invoice.export",
+      "payments.transaction.view_all",
+      "payments.transaction.register",
+      "payments.transaction.edit",
+      "payments.transaction.delete",
+      "payments.transaction.approve",
+      "payments.transaction.reject",
+      "payments.transaction.refund",
+      "payments.schedule.view",
+      "payments.schedule.create",
+      "payments.schedule.edit",
+      "payments.schedule.delete",
+      "payments.counterparty_account.view",
+      "payments.counterparty_account.manage",
+      "payments.counterparty_account.reconcile",
+      "payments.reconciliation.view",
+      "payments.reconciliation.perform",
+      "payments.reconciliation.approve",
+      "payments.reports.view",
+      "payments.reports.export",
+      "payments.reports.financial_analytics",
+      "payments.settings.view",
+      "payments.settings.manage"
+    ],
+    "Главный бухгалтер": [
+      "payments.dashboard.view",
+      "payments.invoice.view_all",
+      "payments.invoice.create",
+      "payments.invoice.edit",
+      "payments.invoice.cancel",
+      "payments.invoice.issue",
+      "payments.invoice.export",
+      "payments.transaction.view_all",
+      "payments.transaction.register",
+      "payments.transaction.edit",
+      "payments.transaction.approve",
+      "payments.transaction.refund",
+      "payments.schedule.view",
+      "payments.schedule.create",
+      "payments.schedule.edit",
+      "payments.counterparty_account.view",
+      "payments.counterparty_account.manage",
+      "payments.counterparty_account.reconcile",
+      "payments.reconciliation.view",
+      "payments.reconciliation.perform",
+      "payments.reports.view",
+      "payments.reports.export",
+      "payments.reports.financial_analytics",
+      "payments.settings.view"
+    ],
+    "Бухгалтер": [
+      "payments.dashboard.view",
+      "payments.invoice.view",
+      "payments.invoice.create",
+      "payments.invoice.edit",
+      "payments.invoice.export",
+      "payments.transaction.view",
+      "payments.transaction.register",
+      "payments.transaction.edit",
+      "payments.schedule.view",
+      "payments.schedule.create",
+      "payments.counterparty_account.view",
+      "payments.reconciliation.view",
+      "payments.reports.view",
+      "payments.reports.export"
+    ],
+    "Менеджер проекта": [
+      "payments.dashboard.view",
+      "payments.invoice.view",
+      "payments.invoice.create",
+      "payments.transaction.view",
+      "payments.reports.view"
+    ],
+    "Руководитель отдела": [
+      "payments.dashboard.view",
+      "payments.invoice.view",
+      "payments.transaction.view",
+      "payments.reports.view"
+    ],
+    "Исполнитель": [
+      "payments.invoice.view",
+      "payments.transaction.view"
+    ]
+  },
   
   "features": [
     "Управление счетами (invoices)",

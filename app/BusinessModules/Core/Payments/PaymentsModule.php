@@ -84,14 +84,76 @@ class PaymentsModule implements ModuleInterface
     public function getPermissions(): array
     {
         return [
-            'payments.view',
-            'payments.invoice.create',
-            'payments.invoice.edit',
-            'payments.invoice.cancel',
-            'payments.transaction.register',
-            'payments.transaction.approve',
-            'payments.reports.view',
+            // Дашборд
+            'payments.dashboard.view' => 'Просмотр финансового дашборда',
+            
+            // Счета (Invoices)
+            'payments.invoice.view' => 'Просмотр счетов своих проектов',
+            'payments.invoice.view_all' => 'Просмотр всех счетов организации',
+            'payments.invoice.create' => 'Создание счетов',
+            'payments.invoice.edit' => 'Редактирование счетов',
+            'payments.invoice.delete' => 'Удаление счетов',
+            'payments.invoice.cancel' => 'Отмена счетов',
+            'payments.invoice.issue' => 'Выставление счетов (draft → issued)',
+            'payments.invoice.export' => 'Экспорт счетов',
+            
+            // Транзакции (Payment Transactions)
+            'payments.transaction.view' => 'Просмотр платежных транзакций',
+            'payments.transaction.view_all' => 'Просмотр всех транзакций организации',
+            'payments.transaction.register' => 'Регистрация платежей',
+            'payments.transaction.edit' => 'Редактирование транзакций',
+            'payments.transaction.delete' => 'Удаление транзакций',
+            'payments.transaction.approve' => 'Утверждение платежей',
+            'payments.transaction.reject' => 'Отклонение платежей',
+            'payments.transaction.refund' => 'Возврат платежей',
+            
+            // Графики платежей (Payment Schedules)
+            'payments.schedule.view' => 'Просмотр графиков платежей',
+            'payments.schedule.create' => 'Создание графиков платежей',
+            'payments.schedule.edit' => 'Редактирование графиков',
+            'payments.schedule.delete' => 'Удаление графиков',
+            
+            // Счета контрагентов (Counterparty Accounts)
+            'payments.counterparty_account.view' => 'Просмотр счетов контрагентов',
+            'payments.counterparty_account.manage' => 'Управление счетами контрагентов',
+            'payments.counterparty_account.reconcile' => 'Проведение взаиморасчетов',
+            
+            // Сверка (Reconciliation)
+            'payments.reconciliation.view' => 'Просмотр актов сверки',
+            'payments.reconciliation.perform' => 'Выполнение сверки',
+            'payments.reconciliation.approve' => 'Утверждение сверки',
+            
+            // Отчеты
+            'payments.reports.view' => 'Просмотр финансовых отчетов',
+            'payments.reports.export' => 'Экспорт отчетов',
+            'payments.reports.financial_analytics' => 'Финансовая аналитика и прогнозы',
+            
+            // Настройки
+            'payments.settings.view' => 'Просмотр настроек модуля',
+            'payments.settings.manage' => 'Управление настройками модуля',
         ];
+    }
+    
+    /**
+     * Получить права для конкретной роли
+     */
+    public function getPermissionsForRole(string $role): array
+    {
+        $manifest = $this->getManifest();
+        $rolePermissions = $manifest['permission_roles'] ?? [];
+        
+        return $rolePermissions[$role] ?? [];
+    }
+    
+    /**
+     * Получить все доступные роли
+     */
+    public function getAvailableRoles(): array
+    {
+        $manifest = $this->getManifest();
+        $rolePermissions = $manifest['permission_roles'] ?? [];
+        
+        return array_keys($rolePermissions);
     }
 
     public function getFeatures(): array

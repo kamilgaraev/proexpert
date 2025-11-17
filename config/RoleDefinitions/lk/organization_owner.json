@@ -54,7 +54,8 @@
     "ai-assistant": ["*"],
     "basic-warehouse": ["*"],
     "advanced-warehouse": ["*"],
-    "budget-estimates": ["*"]
+    "budget-estimates": ["*"],
+    "payments": ["*"]
   },
   
   "interface_access": ["lk", "admin", "mobile"],

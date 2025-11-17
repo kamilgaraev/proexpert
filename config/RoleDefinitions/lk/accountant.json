@@ -99,6 +99,22 @@
       "budget-estimates.view_all",
       "budget-estimates.export",
       "budget-estimates.versions.compare"
+    ],
+    "payments": [
+      "payments.dashboard.view",
+      "payments.invoice.view",
+      "payments.invoice.create",
+      "payments.invoice.edit",
+      "payments.invoice.export",
+      "payments.transaction.view",
+      "payments.transaction.register",
+      "payments.transaction.edit",
+      "payments.schedule.view",
+      "payments.schedule.create",
+      "payments.counterparty_account.view",
+      "payments.reconciliation.view",
+      "payments.reports.view",
+      "payments.reports.export"
     ]
   },
   
