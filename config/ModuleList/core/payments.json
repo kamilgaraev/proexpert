@@ -1,0 +1,43 @@
+{
+  "name": "Платежи и взаиморасчеты",
+  "slug": "payments",
+  "version": "1.0.0",
+  "type": "core",
+  "billing_model": "free",
+  "category": "financial",
+  "description": "Базовая система управления счетами, платежами и взаиморасчетами",
+  
+  "class_name": "App\\BusinessModules\\Core\\Payments\\PaymentsModule",
+  "service_provider": "App\\BusinessModules\\Core\\Payments\\PaymentsServiceProvider",
+  
+  "permissions": [
+    "payments.view",
+    "payments.invoice.create",
+    "payments.invoice.edit",
+    "payments.invoice.cancel",
+    "payments.transaction.register",
+    "payments.transaction.approve",
+    "payments.reports.view"
+  ],
+  
+  "features": [
+    "Управление счетами (invoices)",
+    "Регистрация платежей",
+    "Частичные оплаты",
+    "Графики платежей",
+    "Взаиморасчеты в холдинге",
+    "Дебиторская/кредиторская задолженность",
+    "Автоматическая просрочка",
+    "Уведомления о платежах"
+  ],
+  
+  "dependencies": ["organizations", "users"],
+  "conflicts": [],
+  
+  "auto_activate": true,
+  "is_system_module": true,
+  "can_deactivate": false,
+  "icon": "payments",
+  "display_order": 5
+}
+

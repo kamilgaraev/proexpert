@@ -1,6 +1,7 @@
 <?php
 
 return [
+    App\BusinessModules\Core\Payments\PaymentsServiceProvider::class,
     App\BusinessModules\Features\AdvancedDashboard\AdvancedDashboardServiceProvider::class,
     App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider::class,
     App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesServiceProvider::class,
