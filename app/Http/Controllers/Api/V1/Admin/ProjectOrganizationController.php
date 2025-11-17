@@ -60,12 +60,12 @@ class ProjectOrganizationController extends Controller
     /**
      * Получить список участников проекта
      * 
-     * GET /api/v1/admin/projects/{id}/organizations
+     * GET /api/v1/admin/projects/{project}/organizations
      */
     public function index(Request $request): JsonResponse
     {
         try {
-            $projectId = (int) $request->route('id');
+            $projectId = (int) $request->route('project');
             $project = Project::findOrFail($projectId);
             
             $user = $request->user();
@@ -119,7 +119,7 @@ class ProjectOrganizationController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to get project participants', [
-                'project_id' => $request->route('id'),
+                'project_id' => $request->route('project'),
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
@@ -134,12 +134,12 @@ class ProjectOrganizationController extends Controller
     /**
      * Добавить участника в проект
      * 
-     * POST /api/v1/admin/projects/{id}/organizations
+     * POST /api/v1/admin/projects/{project}/organizations
      */
     public function store(Request $request): JsonResponse
     {
         try {
-            $projectId = (int) $request->route('id');
+            $projectId = (int) $request->route('project');
             $project = Project::findOrFail($projectId);
             
             $user = $request->user();
@@ -194,7 +194,7 @@ class ProjectOrganizationController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to add participant to project', [
-                'project_id' => $request->route('id'),
+                'project_id' => $request->route('project'),
                 'organization_id' => $request->input('organization_id'),
                 'error' => $e->getMessage(),
             ]);
