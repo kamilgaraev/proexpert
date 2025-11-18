@@ -919,7 +919,7 @@ class ContractService
         $financialData = (clone $query)->select(
             DB::raw('SUM(COALESCE(total_amount, 0)) as total_amount'),
             DB::raw('SUM(CASE 
-                WHEN gp_calculation_type = \'coefficient\' THEN COALESCE(base_amount, COALESCE(total_amount, 0)) + (COALESCE(base_amount, COALESCE(total_amount, 0)) * COALESCE(gp_coefficient, 0))
+                WHEN gp_calculation_type = \'coefficient\' THEN COALESCE(base_amount, COALESCE(total_amount, 0)) + (COALESCE(base_amount, COALESCE(total_amount, 0)) * (COALESCE(gp_coefficient, 1) - 1))
                 ELSE COALESCE(base_amount, COALESCE(total_amount, 0)) + (COALESCE(base_amount, COALESCE(total_amount, 0)) * COALESCE(gp_percentage, 0) / 100)
             END) as total_amount_with_gp'),
             DB::raw('SUM(COALESCE(planned_advance_amount, 0)) as total_planned_advance'),

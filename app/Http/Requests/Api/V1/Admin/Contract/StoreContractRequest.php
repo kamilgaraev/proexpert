@@ -50,7 +50,7 @@ class StoreContractRequest extends FormRequest
             'total_amount' => ['required', 'numeric', 'min:0'],
             'gp_percentage' => ['nullable', 'numeric', 'min:-100', 'max:100'],
             'gp_calculation_type' => ['nullable', new Enum(GpCalculationTypeEnum::class)],
-            'gp_coefficient' => ['nullable', 'numeric'],
+            'gp_coefficient' => ['nullable', 'numeric', 'min:0'],
             'subcontract_amount' => ['nullable', 'numeric', 'min:0'],
             'planned_advance_amount' => ['nullable', 'numeric', 'min:0'],
             'actual_advance_amount' => ['nullable', 'numeric', 'min:0'],

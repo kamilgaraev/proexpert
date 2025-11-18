@@ -165,13 +165,17 @@ class Contract extends Model
         
         if ($calculationType === GpCalculationTypeEnum::COEFFICIENT) {
             $coefficient = $this->gp_coefficient ?? 0;
-            return round($baseAmount * $coefficient, 2);
+            // Формула: gp_amount = base_amount × (coefficient - 1)
+            // Коэффициент 1.0 → изменение 0
+            // Коэффициент 0.944 → изменение -5.6% от базы
+            // Коэффициент 1.1 → изменение +10% от базы
+            return round($baseAmount * ($coefficient - 1), 2);
         }
         
         $percentage = $this->gp_percentage ?? 0;
         if ($percentage != 0 && $baseAmount > 0) {
             // Расчет: base_amount * (gp_percentage / 100)
-            // Например: 7961111.72 * (-0.94 / 100) = -74834.45
+            // Например: 7961111.72 * (-0.944 / 100) = -75152.89
             return round(($baseAmount * $percentage) / 100, 2);
         }
         
