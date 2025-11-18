@@ -72,10 +72,18 @@ class ContractPerformanceActService
 
         $contract = $this->getContractOrFail($contractId, $organizationId, $projectId);
 
-        // Создаем акт со значением суммы по умолчанию (будет пересчитана на основе работ)
+        // Создаем акт
         $actData = $actDTO->toArray();
         $actData['contract_id'] = $contract->id;
-        $actData['amount'] = 0; // Временная сумма, будет пересчитана
+        
+        // ИСПРАВЛЕНИЕ: Если нет работ, используем amount из DTO, иначе пересчитаем из работ
+        if (empty($actDTO->completed_works)) {
+            // Если работ нет - используем переданную сумму (или 0 по умолчанию)
+            $actData['amount'] = $actDTO->amount;
+        } else {
+            // Если есть работы - временно 0, будет пересчитано из работ
+            $actData['amount'] = 0;
+        }
 
         $act = $this->actRepository->create($actData);
 
@@ -185,10 +193,13 @@ class ContractPerformanceActService
         // Синхронизируем выполненные работы если они переданы
         if (isset($actDTO->completed_works) && !empty($actDTO->completed_works)) {
             $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
+            // Пересчитываем сумму только если были переданы работы
+            $act->recalculateAmount();
+        } elseif ($act->completedWorks()->count() > 0) {
+            // Если работы уже есть в акте - пересчитываем
+            $act->recalculateAmount();
         }
-
-        // Всегда пересчитываем сумму акта на основе включенных работ
-        $act->recalculateAmount();
+        // Иначе сохраняем amount из DTO (уже обновлён в строке 178)
 
         // Загружаем связи для возврата полных данных
         $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
