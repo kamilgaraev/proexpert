@@ -126,25 +126,12 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             payment_terms: array_key_exists('payment_terms', $validatedData) 
                 ? $validatedData['payment_terms'] 
                 : $contract->payment_terms,
-            total_amount: (function() use ($validatedData, $contract, $contractId) {
-                $result = isset($validatedData['base_amount']) 
-                    ? (float) $validatedData['base_amount'] 
-                    : (isset($validatedData['total_amount']) 
-                        ? (float) $validatedData['total_amount'] 
-                        : (float) $contract->total_amount);
-                
-                Log::info('UpdateContractRequest::toDto - TOTAL_AMOUNT CALCULATION', [
-                    'contract_id' => $contractId,
-                    'has_base_amount' => isset($validatedData['base_amount']),
-                    'base_amount_value' => $validatedData['base_amount'] ?? 'NOT SET',
-                    'has_total_amount' => isset($validatedData['total_amount']),
-                    'total_amount_value' => $validatedData['total_amount'] ?? 'NOT SET',
-                    'current_contract_total_amount' => $contract->total_amount,
-                    'result_total_amount' => $result
-                ]);
-                
-                return $result;
-            })(),
+            base_amount: array_key_exists('base_amount', $validatedData)
+                ? ($validatedData['base_amount'] !== null ? (float) $validatedData['base_amount'] : null)
+                : $contract->base_amount,
+            total_amount: array_key_exists('total_amount', $validatedData)
+                ? (float) $validatedData['total_amount']
+                : (float) $contract->total_amount,
             gp_percentage: array_key_exists('gp_percentage', $validatedData)
                 ? ($validatedData['gp_percentage'] !== null ? (float) $validatedData['gp_percentage'] : null)
                 : $contract->gp_percentage,

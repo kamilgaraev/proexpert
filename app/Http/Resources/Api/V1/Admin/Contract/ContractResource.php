@@ -152,10 +152,14 @@ class ContractResource extends JsonResource
             $effectiveTotalAmount = $baseTotalAmount + $agreementsDelta;
         }
 
-        // Рассчитываем сумму с GP для использования в total_amount и других расчетах
-        $totalAmountWithGp = ($this->gp_percentage && $this->gp_percentage > 0)
-            ? round($effectiveTotalAmount * (1 + (float) $this->gp_percentage / 100), 2)
-            : ($effectiveTotalAmount + (float) ($this->gp_amount ?? 0));
+        // Получаем base_amount из модели (если есть) или используем total_amount для legacy
+        $modelBaseAmount = (float) ($this->base_amount ?? $this->total_amount ?? 0);
+        
+        // Рассчитываем сумму ГП от base_amount (НЕ от effectiveTotalAmount!)
+        $gpAmount = $this->gp_amount; // Используем accessor модели для правильного расчета
+        
+        // total_amount (итоговая сумма) = base_amount + gp_amount
+        $totalAmountCalculated = round($modelBaseAmount + $gpAmount, 2);
 
         return [
             'id' => $this->id,
@@ -170,14 +174,11 @@ class ContractResource extends JsonResource
             'work_type_category' => $this->work_type_category?->value,
             'work_type_category_label' => $this->work_type_category?->label(),
             'payment_terms' => $this->payment_terms,
-            'base_amount' => $baseTotalAmount,
-            // total_amount должен включать GP
-            'total_amount' => $totalAmountWithGp,
+            'base_amount' => $modelBaseAmount,
+            'total_amount' => $totalAmountCalculated,
             'gp_percentage' => (float) ($this->gp_percentage ?? 0),
-            'gp_amount' => ($this->gp_percentage && $this->gp_percentage > 0) 
-                ? round($effectiveTotalAmount * (float) $this->gp_percentage / 100, 2) 
-                : (float) ($this->gp_amount ?? 0),
-            'total_amount_with_gp' => $totalAmountWithGp,
+            'gp_amount' => (float) $gpAmount,
+            'total_amount_with_gp' => $totalAmountCalculated,
             'planned_advance_amount' => (float) ($this->planned_advance_amount ?? 0),
             'actual_advance_amount' => (float) ($this->actual_advance_amount ?? 0),
             'remaining_advance_amount' => (float) ($this->remaining_advance_amount ?? 0),
@@ -366,12 +367,8 @@ class ContractResource extends JsonResource
                     'percentage' => (float) ($this->gp_percentage ?? 0),
                     'coefficient' => (float) ($this->gp_coefficient ?? 0),
                     'calculation_type' => $this->gp_calculation_type?->value,
-                    'gp_amount' => ($this->gp_percentage && $this->gp_percentage > 0)
-                        ? round($effectiveTotalAmount * (float) $this->gp_percentage / 100, 2)
-                        : (float) ($this->gp_amount ?? 0),
-                    'total_with_gp' => ($this->gp_percentage && $this->gp_percentage > 0)
-                        ? round($effectiveTotalAmount * (1 + (float) $this->gp_percentage / 100), 2)
-                        : ($effectiveTotalAmount + (float) ($this->gp_amount ?? 0)),
+                    'gp_amount' => (float) $gpAmount,
+                    'total_with_gp' => $totalAmountCalculated,
                 ] : null,
                 
                 // Субподряд

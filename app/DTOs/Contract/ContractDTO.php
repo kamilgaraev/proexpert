@@ -18,7 +18,8 @@ class ContractDTO
         public readonly ?string $subject,
         public readonly ?ContractWorkTypeCategoryEnum $work_type_category,
         public readonly ?string $payment_terms,
-        public readonly float $total_amount,
+        public readonly ?float $base_amount, // Базовая сумма ДО учета ГП
+        public readonly float $total_amount, // Итоговая сумма (может быть с учетом ГП)
         public readonly ?float $gp_percentage,
         public readonly ?GpCalculationTypeEnum $gp_calculation_type,
         public readonly ?float $gp_coefficient,
@@ -43,6 +44,7 @@ class ContractDTO
             'subject' => $this->subject,
             'work_type_category' => $this->work_type_category?->value,
             'payment_terms' => $this->payment_terms,
+            'base_amount' => $this->base_amount,
             'total_amount' => $this->total_amount,
             'gp_percentage' => $this->gp_percentage,
             'gp_calculation_type' => $this->gp_calculation_type?->value,

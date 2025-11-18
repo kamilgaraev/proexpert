@@ -69,6 +69,15 @@ class StoreContractRequest extends FormRequest
 
     public function toDto(): ContractDTO
     {
+        // Логика для base_amount и total_amount:
+        // Если передан base_amount - используем его как базовую сумму
+        // Иначе используем total_amount как базовую (для legacy совместимости)
+        $baseAmount = $this->validated('base_amount');
+        $totalAmount = $this->validated('total_amount');
+        
+        // Приоритет: base_amount > total_amount
+        $finalBaseAmount = $baseAmount !== null ? (float) $baseAmount : (float) $totalAmount;
+        
         return new ContractDTO(
             project_id: $this->validated('project_id'),
             contractor_id: $this->validated('contractor_id'),
@@ -78,7 +87,8 @@ class StoreContractRequest extends FormRequest
             subject: $this->validated('subject'),
             work_type_category: $this->validated('work_type_category') ? ContractWorkTypeCategoryEnum::from($this->validated('work_type_category')) : null,
             payment_terms: $this->validated('payment_terms'),
-            total_amount: (float) ($this->validated('base_amount') ?? $this->validated('total_amount')),
+            base_amount: $finalBaseAmount,
+            total_amount: (float) $totalAmount,
             gp_percentage: $this->validated('gp_percentage') !== null ? (float) $this->validated('gp_percentage') : null,
             gp_calculation_type: $this->validated('gp_calculation_type') ? GpCalculationTypeEnum::from($this->validated('gp_calculation_type')) : null,
             gp_coefficient: $this->validated('gp_coefficient') !== null ? (float) $this->validated('gp_coefficient') : null,

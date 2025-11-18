@@ -28,6 +28,7 @@ class Contract extends Model
         'subject',
         'work_type_category',
         'payment_terms',
+        'base_amount',
         'total_amount',
         'gp_percentage',
         'gp_calculation_type',
@@ -44,8 +45,9 @@ class Contract extends Model
 
     protected $casts = [
         'date' => 'date',
+        'base_amount' => 'decimal:2',
         'total_amount' => 'decimal:2',
-        'gp_percentage' => 'decimal:2',
+        'gp_percentage' => 'decimal:3',
         'gp_calculation_type' => GpCalculationTypeEnum::class,
         'gp_coefficient' => 'decimal:4',
         'subcontract_amount' => 'decimal:2',
@@ -137,33 +139,54 @@ class Contract extends Model
         return $this->stateEvents()->exists();
     }
 
-    // Accessor for calculated GP Amount
+    /**
+     * Получить базовую сумму контракта (без ГП)
+     * Если base_amount не задан, возвращаем total_amount (для legacy контрактов)
+     */
+    public function getBaseAmountAttribute($value): float
+    {
+        // Если base_amount явно установлен в БД, возвращаем его
+        if ($value !== null) {
+            return (float) $value;
+        }
+        
+        // Legacy: для старых контрактов без base_amount используем total_amount
+        return (float) ($this->attributes['total_amount'] ?? 0);
+    }
+
+    /**
+     * Рассчитать сумму ГП (генподрядного процента)
+     * ВАЖНО: ГП рассчитывается от base_amount (базовой суммы), а не от total_amount!
+     */
     public function getGpAmountAttribute(): float
     {
-        $amount = $this->total_amount ?? 0;
+        $baseAmount = $this->base_amount ?? 0;
         $calculationType = $this->gp_calculation_type ?? GpCalculationTypeEnum::PERCENTAGE;
         
         if ($calculationType === GpCalculationTypeEnum::COEFFICIENT) {
             $coefficient = $this->gp_coefficient ?? 0;
-            return round($amount * $coefficient, 2);
+            return round($baseAmount * $coefficient, 2);
         }
         
         $percentage = $this->gp_percentage ?? 0;
-        if ($percentage != 0 && $amount > 0) {
-            return round(($amount * $percentage) / 100, 2);
+        if ($percentage != 0 && $baseAmount > 0) {
+            // Расчет: base_amount * (gp_percentage / 100)
+            // Например: 7961111.72 * (-0.94 / 100) = -74834.45
+            return round(($baseAmount * $percentage) / 100, 2);
         }
         
         return 0.00;
     }
 
     /**
-     * Получить сумму контракта с учетом генподрядного процента
+     * Получить итоговую сумму контракта с учетом генподрядного процента
+     * total_amount_with_gp = base_amount + gp_amount
      */
     public function getTotalAmountWithGpAttribute(): float
     {
-        $totalAmount = $this->total_amount ?? 0;
+        $baseAmount = $this->base_amount ?? 0;
         $gpAmount = $this->gp_amount ?? 0;
-        return $totalAmount + $gpAmount;
+        return round($baseAmount + $gpAmount, 2);
     }
 
     /**

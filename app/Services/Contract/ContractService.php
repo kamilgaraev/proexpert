@@ -670,10 +670,10 @@ class ContractService
         // Итоговая «стоимость контракта» с учётом доп. соглашений, дочерних контрактов и спецификаций
         $aggregatedContractAmount = (float) $contract->total_amount + (float) $agreementsDelta + (float) $childContractsTotal + (float) $specificationsTotal;
 
-        // Пересчитываем GP и связанную сумму
+        // Расчет ГП: используем accessor модели для правильного расчета от base_amount
         $gpPercentage = (float) $contract->gp_percentage;
-        $gpAmountAgg = $gpPercentage > 0 ? round(($aggregatedContractAmount * $gpPercentage) / 100, 2) : 0.0;
-        $totalWithGpAgg = $aggregatedContractAmount + $gpAmountAgg;
+        $gpAmountAgg = (float) $contract->gp_amount; // Accessor рассчитывает от base_amount
+        $totalWithGpAgg = (float) $contract->total_amount_with_gp; // base_amount + gp_amount
 
         // Новый расчёт суммы актов на основе включённых работ
         $totalPerformedAmount = $this->calculateActualPerformedAmount($approvedActs);
@@ -919,8 +919,8 @@ class ContractService
         $financialData = (clone $query)->select(
             DB::raw('SUM(COALESCE(total_amount, 0)) as total_amount'),
             DB::raw('SUM(CASE 
-                WHEN gp_calculation_type = \'coefficient\' THEN COALESCE(total_amount, 0) + (COALESCE(total_amount, 0) * COALESCE(gp_coefficient, 0))
-                ELSE COALESCE(total_amount, 0) + (COALESCE(total_amount, 0) * COALESCE(gp_percentage, 0) / 100)
+                WHEN gp_calculation_type = \'coefficient\' THEN COALESCE(base_amount, COALESCE(total_amount, 0)) + (COALESCE(base_amount, COALESCE(total_amount, 0)) * COALESCE(gp_coefficient, 0))
+                ELSE COALESCE(base_amount, COALESCE(total_amount, 0)) + (COALESCE(base_amount, COALESCE(total_amount, 0)) * COALESCE(gp_percentage, 0) / 100)
             END) as total_amount_with_gp'),
             DB::raw('SUM(COALESCE(planned_advance_amount, 0)) as total_planned_advance'),
             DB::raw('SUM(COALESCE(actual_advance_amount, 0)) as total_actual_advance')
