@@ -39,7 +39,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'total_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'gp_percentage' => ['sometimes', 'nullable', 'numeric', 'min:-100', 'max:100'],
             'gp_calculation_type' => ['sometimes', 'nullable', new Enum(GpCalculationTypeEnum::class)],
-            'gp_coefficient' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'gp_coefficient' => ['sometimes', 'nullable', 'numeric'],
             'subcontract_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'planned_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'actual_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
