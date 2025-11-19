@@ -202,10 +202,10 @@ Schedule::job(new SendUpcomingPaymentNotificationsJob())
 // CONTRACT EVENT SOURCING - Автоматическая синхронизация
 // ============================================
 
-// Синхронизация total_amount контрактов с Event Sourcing (каждый час для автоисправления)
+// Синхронизация total_amount контрактов с Event Sourcing (каждую минуту для мгновенного исправления)
 Schedule::command('contracts:sync-event-sourcing')
-    ->hourly()
-    ->withoutOverlapping(30)
+    ->everyMinute()
+    ->withoutOverlapping(55)
     ->runInBackground()
     ->onFailure(function () {
         Log::channel('stderr')->error('Scheduled contracts:sync-event-sourcing command failed.');
