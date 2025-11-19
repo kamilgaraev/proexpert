@@ -157,7 +157,7 @@ class DashboardController extends Controller
             )
             ->groupBy('status')
             ->get()
-            ->keyBy('status')
+            ->keyBy(fn($item) => is_object($item->status) ? $item->status->value : $item->status)
             ->map(fn($item) => [
                 'count' => $item->count,
                 'total_sum' => (float) $item->total_sum,
@@ -183,7 +183,7 @@ class DashboardController extends Controller
             )
             ->groupBy('invoice_type')
             ->get()
-            ->keyBy('invoice_type')
+            ->keyBy(fn($item) => is_object($item->invoice_type) ? $item->invoice_type->value : $item->invoice_type)
             ->map(fn($item) => [
                 'count' => $item->count,
                 'total_sum' => (float) $item->total_sum,
@@ -210,8 +210,8 @@ class DashboardController extends Controller
                 return [
                     'id' => $invoice->id,
                     'invoice_number' => $invoice->invoice_number,
-                    'invoice_type' => $invoice->invoice_type,
-                    'direction' => $invoice->direction,
+                    'invoice_type' => is_object($invoice->invoice_type) ? $invoice->invoice_type->value : $invoice->invoice_type,
+                    'direction' => is_object($invoice->direction) ? $invoice->direction->value : $invoice->direction,
                     'total_amount' => (float) $invoice->total_amount,
                     'remaining_amount' => (float) $invoice->remaining_amount,
                     'due_date' => $invoice->due_date,
@@ -239,8 +239,8 @@ class DashboardController extends Controller
                 return [
                     'id' => $invoice->id,
                     'invoice_number' => $invoice->invoice_number,
-                    'invoice_type' => $invoice->invoice_type,
-                    'direction' => $invoice->direction,
+                    'invoice_type' => is_object($invoice->invoice_type) ? $invoice->invoice_type->value : $invoice->invoice_type,
+                    'direction' => is_object($invoice->direction) ? $invoice->direction->value : $invoice->direction,
                     'total_amount' => (float) $invoice->total_amount,
                     'remaining_amount' => (float) $invoice->remaining_amount,
                     'due_date' => $invoice->due_date,
