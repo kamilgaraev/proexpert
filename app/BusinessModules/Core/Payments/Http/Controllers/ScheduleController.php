@@ -133,7 +133,7 @@ class ScheduleController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $days = $request->input('days', 30);
+            $days = (int) $request->input('days', 30);
             
             $schedules = PaymentSchedule::with(['invoice', 'invoice.project', 'invoice.contractor'])
                 ->whereHas('invoice', function ($query) use ($organizationId) {
