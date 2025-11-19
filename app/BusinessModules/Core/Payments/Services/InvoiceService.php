@@ -12,6 +12,7 @@ use App\Models\ContractPerformanceAct;
 use App\Models\Estimate;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class InvoiceService
 {
@@ -52,32 +53,97 @@ class InvoiceService
             );
         }
 
-        // Генерация номера если не указан
-        if (!isset($data['invoice_number'])) {
-            $data['invoice_number'] = $this->generateInvoiceNumber($data['organization_id']);
-        }
-
         // Автоматический расчёт remaining_amount
         $data['remaining_amount'] = $data['total_amount'] - ($data['paid_amount'] ?? 0);
 
-        return DB::transaction(function () use ($data) {
-            $invoice = Invoice::create($data);
+        // Вызываем метод создания с retry механизмом
+        return $this->createInvoiceWithRetry($data);
+    }
 
-            // Обновить баланс counterparty account если указан контрагент
-            if ($invoice->counterparty_organization_id) {
-                $this->counterpartyService->updateBalanceFromInvoice($invoice);
+    /**
+     * Создать счёт с retry механизмом для обработки race conditions
+     * 
+     * Используется три уровня защиты от race condition:
+     * 1. lockForUpdate() - блокировка записи на уровне БД
+     * 2. Генерация номера внутри транзакции
+     * 3. Retry механизм с экспоненциальной задержкой
+     * 
+     * @param array<string, mixed> $data Данные для создания счёта
+     * @return Invoice
+     * @throws \RuntimeException Если не удалось создать уникальный номер после всех попыток
+     * 
+     * @SuppressWarnings(PHPMD)
+     */
+    private function createInvoiceWithRetry(array $data): Invoice
+    {
+        /** @var int $maxRetries Maximum retry attempts */
+        $maxRetries = 3;
+        /** @var int $attempt Current attempt counter */
+        $attempt = 0;
+        
+        while ($attempt < $maxRetries) {
+            try {
+                return DB::transaction(function () use (&$data) {
+                    // Генерация номера внутри транзакции если не указан
+                    if (!isset($data['invoice_number'])) {
+                        $data['invoice_number'] = $this->generateInvoiceNumberWithLock($data['organization_id']);
+                    }
+
+                    $invoice = Invoice::create($data);
+
+                    // Обновить баланс counterparty account если указан контрагент
+                    if ($invoice->counterparty_organization_id) {
+                        $this->counterpartyService->updateBalanceFromInvoice($invoice);
+                    }
+
+                    Log::info('payments.invoice.created', [
+                        'invoice_id' => $invoice->id,
+                        'organization_id' => $invoice->organization_id,
+                        'amount' => $invoice->total_amount,
+                        'counterparty_organization_id' => $invoice->counterparty_organization_id,
+                        'template_id' => $data['template_id'] ?? null,
+                    ]);
+
+                    return $invoice;
+                });
+            } catch (\Illuminate\Database\QueryException $e) {
+                // Проверяем, что это ошибка дублирования номера
+                $isDuplicateError = $e->getCode() === '23505' && 
+                                   str_contains($e->getMessage(), 'invoice_number_unique');
+                
+                if ($isDuplicateError && $attempt < $maxRetries - 1) {
+                    $attempt++;
+                    
+                    // Удалить закешированный номер и повторить попытку
+                    unset($data['invoice_number']);
+                    
+                    Log::warning('payments.invoice.create.retry', [
+                        'organization_id' => $data['organization_id'],
+                        'attempt' => $attempt,
+                    ]);
+                    
+                    // Экспоненциальная задержка перед повторной попыткой
+                    usleep(100000 * $attempt); // 100ms, 200ms, 300ms
+                    continue;
+                }
+                
+                if ($isDuplicateError) {
+                    Log::error('payments.invoice.create.max_retries_exceeded', [
+                        'organization_id' => $data['organization_id'],
+                        'attempts' => $attempt + 1,
+                        'error' => $e->getMessage(),
+                    ]);
+                    throw new \RuntimeException('Не удалось создать уникальный номер счёта после нескольких попыток');
+                }
+                
+                // Другие ошибки пробрасываем дальше
+                throw $e;
             }
+            
+            $attempt++;
+        }
 
-            \Log::info('payments.invoice.created', [
-                'invoice_id' => $invoice->id,
-                'organization_id' => $invoice->organization_id,
-                'amount' => $invoice->total_amount,
-                'counterparty_organization_id' => $invoice->counterparty_organization_id,
-                'template_id' => $data['template_id'] ?? null,
-            ]);
-
-            return $invoice;
-        });
+        throw new \RuntimeException('Неожиданная ошибка при создании счёта');
     }
 
     /**
@@ -149,7 +215,7 @@ class InvoiceService
                 'issued_at' => now(),
             ]);
 
-            \Log::info('payments.invoice.issued', [
+            Log::info('payments.invoice.issued', [
                 'invoice_id' => $invoice->id,
                 'invoice_number' => $invoice->invoice_number,
             ]);
@@ -199,7 +265,7 @@ class InvoiceService
                 $this->counterpartyService->updateBalanceFromInvoice($invoice);
             }
 
-            \Log::info('payments.invoice.paid', [
+            Log::info('payments.invoice.paid', [
                 'invoice_id' => $invoice->id,
                 'transaction_id' => $transaction->id,
                 'amount' => $transaction->amount,
@@ -323,19 +389,24 @@ class InvoiceService
     }
 
     /**
-     * Генерация уникального номера счёта
+     * Генерация уникального номера счёта с блокировкой
+     * ВНИМАНИЕ: Должен вызываться только внутри DB::transaction()
      */
-    private function generateInvoiceNumber(int $organizationId): string
+    private function generateInvoiceNumberWithLock(int $organizationId): string
     {
         $year = date('Y');
         $prefix = "INV-{$year}-";
         
+        // Используем lockForUpdate() для блокировки последней записи
+        // Это предотвращает race condition при параллельных запросах
         $lastInvoice = Invoice::where('organization_id', $organizationId)
             ->where('invoice_number', 'like', "{$prefix}%")
-            ->orderBy('id', 'desc')
+            ->orderBy('invoice_number', 'desc')
+            ->lockForUpdate()
             ->first();
 
         if ($lastInvoice) {
+            // Извлекаем числовую часть из номера
             $lastNumber = (int) str_replace($prefix, '', $lastInvoice->invoice_number);
             $newNumber = $lastNumber + 1;
         } else {
@@ -343,6 +414,15 @@ class InvoiceService
         }
 
         return $prefix . str_pad($newNumber, 6, '0', STR_PAD_LEFT);
+    }
+
+    /**
+     * Генерация уникального номера счёта (legacy метод, оставлен для обратной совместимости)
+     * @deprecated Используйте generateInvoiceNumberWithLock() внутри транзакции
+     */
+    private function generateInvoiceNumber(int $organizationId): string
+    {
+        return $this->generateInvoiceNumberWithLock($organizationId);
     }
 }
 
