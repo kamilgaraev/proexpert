@@ -30,6 +30,15 @@ class InvoiceService
             throw new \DomainException('Нет прав на создание счёта');
         }
 
+        // Автоматический расчет суммы по шаблону
+        if (isset($data['template_id']) && !isset($data['total_amount'])) {
+            $data['total_amount'] = $this->calculateAmountFromTemplate(
+                $data['template_id'],
+                $data['invoiceable_type'] ?? null,
+                $data['invoiceable_id'] ?? null
+            );
+        }
+
         // Генерация номера если не указан
         if (!isset($data['invoice_number'])) {
             $data['invoice_number'] = $this->generateInvoiceNumber($data['organization_id']);
@@ -50,6 +59,7 @@ class InvoiceService
                 'invoice_id' => $invoice->id,
                 'organization_id' => $invoice->organization_id,
                 'amount' => $invoice->total_amount,
+                'template_id' => $data['template_id'] ?? null,
             ]);
 
             return $invoice;
@@ -237,6 +247,43 @@ class InvoiceService
         }
 
         return $query->orderBy('due_date')->get();
+    }
+
+    /**
+     * Рассчитать сумму по шаблону
+     */
+    private function calculateAmountFromTemplate(
+        string $templateId,
+        ?string $invoiceableType = null,
+        ?int $invoiceableId = null
+    ): float {
+        // Проверка, что указан контракт для шаблонных платежей
+        if ($invoiceableType !== 'App\\Models\\Contract' || !$invoiceableId) {
+            throw new \DomainException('Для использования шаблонов необходимо указать контракт');
+        }
+
+        // Получить сумму контракта
+        $contract = DB::table('contracts')
+            ->where('id', $invoiceableId)
+            ->first(['total_amount']);
+
+        if (!$contract) {
+            throw new \DomainException('Контракт не найден');
+        }
+
+        // Маппинг шаблонов к процентам
+        $percentageMap = [
+            'advance_30' => 30,
+            'advance_50' => 50,
+            'advance_70' => 70,
+        ];
+
+        if (!isset($percentageMap[$templateId])) {
+            throw new \DomainException("Неизвестный шаблон: {$templateId}");
+        }
+
+        $percentage = $percentageMap[$templateId];
+        return round(($contract->total_amount * $percentage) / 100, 2);
     }
 
     /**

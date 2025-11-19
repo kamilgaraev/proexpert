@@ -14,6 +14,7 @@ use App\BusinessModules\Core\Payments\Http\Controllers\PaymentRequestController;
 use App\BusinessModules\Core\Payments\Http\Controllers\PaymentReportsController;
 use App\BusinessModules\Core\Payments\Http\Controllers\OffsetController;
 use App\BusinessModules\Core\Payments\Http\Controllers\ExportController;
+use App\BusinessModules\Core\Payments\Http\Controllers\PaymentTemplatesController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -35,6 +36,12 @@ Route::prefix('api/v1/admin/payments')
         // Dashboard (Дашборд)
         // ============================================
         Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+        
+        // ============================================
+        // Templates (Шаблоны платежей)
+        // ============================================
+        Route::get('/templates', [PaymentTemplatesController::class, 'index'])->name('templates.index');
+        Route::post('/calculate', [PaymentTemplatesController::class, 'calculate'])->name('calculate');
         
         // ============================================
         // Invoices (Счета)
