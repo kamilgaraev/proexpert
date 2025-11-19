@@ -17,6 +17,7 @@ class StoreInvoiceRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'organization_id' => 'required|exists:organizations,id',
             'project_id' => 'nullable|exists:projects,id',
             'counterparty_organization_id' => 'nullable|exists:organizations,id',
             'contractor_id' => 'nullable|exists:contractors,id',
