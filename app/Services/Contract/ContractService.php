@@ -348,8 +348,8 @@ class ContractService
             'agreements',                     // Дополнительные соглашения
             'specifications',                 // Спецификации
             'performanceActs',
-            'performanceActs.completedWorks',
-            'payments'
+            'performanceActs.completedWorks'
+            // 'payments' - УДАЛЕНО: платежи теперь в модуле Payments (invoices)
         ]);
     }
 
@@ -502,6 +502,13 @@ class ContractService
         }
 
         // SECURITY: Попытка удаления договора - критично для аудита
+        // Получаем количество платежей из новой таблицы invoices
+        $paymentsCount = DB::table('invoices')
+            ->where('invoiceable_type', 'App\\Models\\Contract')
+            ->where('invoiceable_id', $contractId)
+            ->whereNull('deleted_at')
+            ->count();
+
         $this->logging->security('contract.deletion.attempt', [
             'organization_id' => $organizationId,
             'contract_id' => $contractId,
@@ -509,7 +516,7 @@ class ContractService
             'contract_amount' => $contract->total_amount,
             'contract_status' => $contract->status->value ?? $contract->status,
             'has_performance_acts' => $contract->performanceActs->count() > 0,
-            'has_payments' => $contract->payments->count() > 0,
+            'has_payments' => $paymentsCount > 0,
             'user_id' => Auth::id(),
             'user_ip' => request()->ip()
         ], 'warning');
@@ -521,7 +528,7 @@ class ContractService
             'contract_number' => $contract->number,
             'contract_amount' => $contract->total_amount,
             'related_acts_count' => $contract->performanceActs->count(),
-            'related_payments_count' => $contract->payments->count(),
+            'related_payments_count' => $paymentsCount,
             'user_id' => Auth::id()
         ]);
 
@@ -593,7 +600,7 @@ class ContractService
             'performanceActs.completedWorks:id,work_type_id,user_id,quantity,total_amount,status,completion_date',
             'performanceActs.completedWorks.workType:id,name',
             'performanceActs.completedWorks.user:id,name',
-            'payments:id,contract_id,payment_date,amount,payment_type,reference_document_number,description',
+            // 'payments' - УДАЛЕНО: платежи теперь в модуле Payments (invoices)
             'completedWorks:id,contract_id,work_type_id,user_id,quantity,total_amount,status,completion_date',
             'completedWorks.workType:id,name',
             'completedWorks.user:id,name',
@@ -660,7 +667,15 @@ class ContractService
         $approvedActs = $contract->performanceActs->where('is_approved', true);
         
         $completedWorksAmount = $confirmedWorks->sum('total_amount');
-        $totalPaidAmount = $contract->payments->sum('amount');
+        
+        // Получаем оплаченную сумму и количество платежей из новой таблицы invoices
+        $invoicesQuery = DB::table('invoices')
+            ->where('invoiceable_type', 'App\\Models\\Contract')
+            ->where('invoiceable_id', $contract->id)
+            ->whereNull('deleted_at');
+        
+        $totalPaidAmount = $invoicesQuery->sum('paid_amount');
+        $paymentsCount = $invoicesQuery->count();
 
         // --- Расширяем стоимость контракта ---
         $agreementsDelta = $contract->relationLoaded('agreements') ? $contract->agreements->sum('change_amount') : 0;
@@ -713,7 +728,7 @@ class ContractService
                 'pending_works' => $pendingWorks->count(),
                 'performance_acts' => $contract->performanceActs->count(),
                 'approved_acts' => $approvedActs->count(),
-                'payments_count' => $contract->payments->count(),
+                'payments_count' => $paymentsCount,
                 'child_contracts' => $contract->childContracts->count(),
                 'agreements_count' => $contract->agreements->count(),
                 'specifications_count' => $contract->specifications->count(),
