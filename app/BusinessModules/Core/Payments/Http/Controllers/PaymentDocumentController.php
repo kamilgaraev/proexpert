@@ -28,6 +28,7 @@ class PaymentDocumentController extends Controller
                 'document_type' => $request->input('document_type'),
                 'status' => $request->input('status'),
                 'project_id' => $request->input('project_id'),
+                'contract_id' => $request->input('contract_id'),
                 'date_from' => $request->input('date_from'),
                 'date_to' => $request->input('date_to'),
                 'amount_from' => $request->input('amount_from'),

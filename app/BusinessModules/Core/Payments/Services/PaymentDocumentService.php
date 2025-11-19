@@ -314,6 +314,11 @@ class PaymentDocumentService
             $query->forProject($filters['project_id']);
         }
 
+        if (isset($filters['contract_id'])) {
+            $query->where('source_type', 'App\\Models\\Contract')
+                  ->where('source_id', $filters['contract_id']);
+        }
+
         if (isset($filters['date_from'])) {
             $query->where('document_date', '>=', $filters['date_from']);
         }
