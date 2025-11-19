@@ -46,8 +46,8 @@ class StoreContractRequest extends FormRequest
             'subject' => ['nullable', 'string'],
             'work_type_category' => ['nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'payment_terms' => ['nullable', 'string'],
-            'base_amount' => ['nullable', 'numeric', 'min:0'],
-            'total_amount' => ['required', 'numeric', 'min:0'],
+            'base_amount' => ['required', 'numeric', 'min:0'],
+            'total_amount' => ['nullable', 'numeric', 'min:0'],
             'gp_percentage' => ['nullable', 'numeric', 'min:-100', 'max:100'],
             'gp_calculation_type' => ['nullable', new Enum(GpCalculationTypeEnum::class)],
             'gp_coefficient' => ['nullable', 'numeric', 'min:0'],
@@ -69,14 +69,12 @@ class StoreContractRequest extends FormRequest
 
     public function toDto(): ContractDTO
     {
-        // Логика для base_amount и total_amount:
-        // Если передан base_amount - используем его как базовую сумму
-        // Иначе используем total_amount как базовую (для legacy совместимости)
-        $baseAmount = $this->validated('base_amount');
-        $totalAmount = $this->validated('total_amount');
+        // Логика: base_amount обязателен, total_amount рассчитывается на бэкенде
+        $baseAmount = (float) $this->validated('base_amount');
         
-        // Приоритет: base_amount > total_amount
-        $finalBaseAmount = $baseAmount !== null ? (float) $baseAmount : (float) $totalAmount;
+        // total_amount опционален (для обратной совместимости при редактировании)
+        // но при создании рассчитается автоматически в сервисе
+        $totalAmount = $this->validated('total_amount');
         
         return new ContractDTO(
             project_id: $this->validated('project_id'),
@@ -87,8 +85,8 @@ class StoreContractRequest extends FormRequest
             subject: $this->validated('subject'),
             work_type_category: $this->validated('work_type_category') ? ContractWorkTypeCategoryEnum::from($this->validated('work_type_category')) : null,
             payment_terms: $this->validated('payment_terms'),
-            base_amount: $finalBaseAmount,
-            total_amount: (float) $totalAmount,
+            base_amount: $baseAmount,
+            total_amount: $totalAmount ? (float) $totalAmount : $baseAmount,
             gp_percentage: $this->validated('gp_percentage') !== null ? (float) $this->validated('gp_percentage') : null,
             gp_calculation_type: $this->validated('gp_calculation_type') ? GpCalculationTypeEnum::from($this->validated('gp_calculation_type')) : null,
             gp_coefficient: $this->validated('gp_coefficient') !== null ? (float) $this->validated('gp_coefficient') : null,
