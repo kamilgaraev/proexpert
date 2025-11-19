@@ -13,6 +13,7 @@ use App\BusinessModules\Core\Payments\Http\Controllers\PaymentApprovalController
 use App\BusinessModules\Core\Payments\Http\Controllers\PaymentRequestController;
 use App\BusinessModules\Core\Payments\Http\Controllers\PaymentReportsController;
 use App\BusinessModules\Core\Payments\Http\Controllers\OffsetController;
+use App\BusinessModules\Core\Payments\Http\Controllers\ExportController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -67,6 +68,9 @@ Route::prefix('api/v1/admin/payments')
         Route::prefix('schedules')->name('schedules.')->group(function () {
             Route::get('/', [ScheduleController::class, 'index'])->name('index');
             Route::post('/', [ScheduleController::class, 'store'])->name('store');
+            Route::get('/templates', [ScheduleController::class, 'templates'])->name('templates');
+            Route::get('/upcoming', [ScheduleController::class, 'upcoming'])->name('upcoming');
+            Route::get('/overdue', [ScheduleController::class, 'overdue'])->name('overdue');
         });
         
         // ============================================
@@ -153,6 +157,15 @@ Route::prefix('api/v1/admin/payments')
             Route::get('/opportunities', [OffsetController::class, 'opportunities'])->name('opportunities');
             Route::post('/perform', [OffsetController::class, 'perform'])->name('perform');
             Route::post('/auto', [OffsetController::class, 'auto'])->name('auto');
+        });
+        
+        // ============================================
+        // Export (Экспорт)
+        // ============================================
+        Route::prefix('export')->name('export.')->group(function () {
+            Route::post('/excel', [ExportController::class, 'excel'])->name('excel');
+            Route::post('/pdf/{documentId}', [ExportController::class, 'pdf'])->name('pdf');
+            Route::post('/1c', [ExportController::class, 'onec'])->name('1c');
         });
     });
 

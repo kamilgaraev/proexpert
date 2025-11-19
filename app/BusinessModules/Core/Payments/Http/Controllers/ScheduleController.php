@@ -123,5 +123,224 @@ class ScheduleController extends Controller
             ], 500);
         }
     }
+    
+    /**
+     * Получить предстоящие платежи по графику
+     * 
+     * GET /api/v1/admin/payments/schedules/upcoming?days=30
+     */
+    public function upcoming(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            $days = $request->input('days', 30);
+            
+            $schedules = PaymentSchedule::with(['invoice', 'invoice.project', 'invoice.contractor'])
+                ->whereHas('invoice', function ($query) use ($organizationId) {
+                    $query->where('organization_id', $organizationId);
+                })
+                ->where('status', 'pending')
+                ->whereBetween('due_date', [now(), now()->addDays($days)])
+                ->orderBy('due_date', 'asc')
+                ->get()
+                ->map(function ($schedule) {
+                    return [
+                        'id' => $schedule->id,
+                        'invoice_id' => $schedule->invoice_id,
+                        'invoice_number' => $schedule->invoice->invoice_number,
+                        'invoice_type' => $schedule->invoice->invoice_type,
+                        'direction' => $schedule->invoice->direction,
+                        'installment_number' => $schedule->installment_number,
+                        'due_date' => $schedule->due_date,
+                        'amount' => (float) $schedule->amount,
+                        'days_until_due' => now()->diffInDays($schedule->due_date, false),
+                        'project_name' => $schedule->invoice->project?->name ?? 'Без проекта',
+                        'counterparty' => $schedule->invoice->counterpartyOrganization?->name ?? $schedule->invoice->contractor?->name ?? 'Не указано',
+                        'notes' => $schedule->notes,
+                    ];
+                });
+            
+            return response()->json([
+                'success' => true,
+                'data' => $schedules,
+                'meta' => [
+                    'period_days' => $days,
+                    'total_count' => $schedules->count(),
+                    'total_amount' => $schedules->sum('amount'),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('payments.schedules.upcoming.error', [
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось загрузить предстоящие платежи',
+            ], 500);
+        }
+    }
+    
+    /**
+     * Получить шаблоны графиков платежей
+     * 
+     * GET /api/v1/admin/payments/schedules/templates
+     */
+    public function templates(Request $request): JsonResponse
+    {
+        try {
+            $templates = [
+                [
+                    'id' => 'equal_2',
+                    'name' => 'Равными платежами (2 платежа)',
+                    'description' => 'График из 2 равных платежей каждые 30 дней',
+                    'config' => [
+                        'schedule_type' => 'equal_installments',
+                        'installments_count' => 2,
+                        'interval_days' => 30,
+                    ],
+                ],
+                [
+                    'id' => 'equal_3',
+                    'name' => 'Равными платежами (3 платежа)',
+                    'description' => 'График из 3 равных платежей каждые 30 дней',
+                    'config' => [
+                        'schedule_type' => 'equal_installments',
+                        'installments_count' => 3,
+                        'interval_days' => 30,
+                    ],
+                ],
+                [
+                    'id' => 'equal_4',
+                    'name' => 'Равными платежами (4 платежа)',
+                    'description' => 'График из 4 равных платежей каждые 30 дней',
+                    'config' => [
+                        'schedule_type' => 'equal_installments',
+                        'installments_count' => 4,
+                        'interval_days' => 30,
+                    ],
+                ],
+                [
+                    'id' => 'advance_30',
+                    'name' => 'Аванс 30%',
+                    'description' => 'Аванс 30%, промежуточный 50%, финальный 20%',
+                    'config' => [
+                        'schedule_type' => 'percentage_based',
+                        'percentages' => [30, 50, 20],
+                        'interval_days' => 30,
+                    ],
+                ],
+                [
+                    'id' => 'advance_50',
+                    'name' => 'Аванс 50%',
+                    'description' => 'Аванс 50%, финальный 50%',
+                    'config' => [
+                        'schedule_type' => 'percentage_based',
+                        'percentages' => [50, 50],
+                        'interval_days' => 30,
+                    ],
+                ],
+                [
+                    'id' => 'advance_30_fact',
+                    'name' => 'Аванс 30% + по факту',
+                    'description' => 'Аванс 30%, остальное по актам выполненных работ',
+                    'config' => [
+                        'schedule_type' => 'advance_and_fact',
+                        'advance_percentage' => 30,
+                        'fact_based' => true,
+                    ],
+                ],
+                [
+                    'id' => 'monthly',
+                    'name' => 'Ежемесячно равными платежами',
+                    'description' => 'График ежемесячных равных платежей',
+                    'config' => [
+                        'schedule_type' => 'equal_installments',
+                        'installments_count' => 12,
+                        'interval_days' => 30,
+                    ],
+                ],
+                [
+                    'id' => 'quarterly',
+                    'name' => 'Ежеквартально',
+                    'description' => 'График поквартальных равных платежей',
+                    'config' => [
+                        'schedule_type' => 'equal_installments',
+                        'installments_count' => 4,
+                        'interval_days' => 90,
+                    ],
+                ],
+            ];
+            
+            return response()->json([
+                'success' => true,
+                'data' => $templates,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('payments.schedules.templates.error', [
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось загрузить шаблоны',
+            ], 500);
+        }
+    }
+    
+    /**
+     * Получить просроченные платежи по графику
+     * 
+     * GET /api/v1/admin/payments/schedules/overdue
+     */
+    public function overdue(Request $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            
+            $schedules = PaymentSchedule::with(['invoice', 'invoice.project', 'invoice.contractor'])
+                ->whereHas('invoice', function ($query) use ($organizationId) {
+                    $query->where('organization_id', $organizationId);
+                })
+                ->where('status', 'pending')
+                ->where('due_date', '<', now())
+                ->orderBy('due_date', 'asc')
+                ->get()
+                ->map(function ($schedule) {
+                    return [
+                        'id' => $schedule->id,
+                        'invoice_id' => $schedule->invoice_id,
+                        'invoice_number' => $schedule->invoice->invoice_number,
+                        'invoice_type' => $schedule->invoice->invoice_type,
+                        'direction' => $schedule->invoice->direction,
+                        'installment_number' => $schedule->installment_number,
+                        'due_date' => $schedule->due_date,
+                        'amount' => (float) $schedule->amount,
+                        'days_overdue' => now()->diffInDays($schedule->due_date),
+                        'project_name' => $schedule->invoice->project?->name ?? 'Без проекта',
+                        'counterparty' => $schedule->invoice->counterpartyOrganization?->name ?? $schedule->invoice->contractor?->name ?? 'Не указано',
+                        'notes' => $schedule->notes,
+                    ];
+                });
+            
+            return response()->json([
+                'success' => true,
+                'data' => $schedules,
+                'meta' => [
+                    'total_count' => $schedules->count(),
+                    'total_amount' => $schedules->sum('amount'),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            Log::error('payments.schedules.overdue.error', [
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось загрузить просроченные платежи',
+            ], 500);
+        }
+    }
 }
 
