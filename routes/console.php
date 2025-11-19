@@ -4,6 +4,9 @@ use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Facades\Log;
+use App\BusinessModules\Core\Payments\Jobs\ProcessOverduePaymentsJob;
+use App\BusinessModules\Core\Payments\Jobs\SendPaymentRemindersJob;
+use App\BusinessModules\Core\Payments\Jobs\SendUpcomingPaymentNotificationsJob;
 
 /*
 |--------------------------------------------------------------------------
@@ -163,6 +166,37 @@ Schedule::command('restrictions:lift-expired')
         Log::channel('stderr')->error('Scheduled restrictions:lift-expired command failed.');
     })
     ->appendOutputTo(storage_path('logs/schedule-restrictions-lift.log'));
+
+// ============================================
+// PAYMENTS MODULE - Автоматизация платежей
+// ============================================
+
+// Обработка просроченных платежей (каждый день в 09:00)
+Schedule::job(new ProcessOverduePaymentsJob())
+    ->dailyAt('09:00')
+    ->withoutOverlapping(60)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled ProcessOverduePaymentsJob failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-payments-overdue.log'));
+
+// Отправка напоминаний об утверждении платежей (каждый день в 10:00)
+Schedule::job(new SendPaymentRemindersJob())
+    ->dailyAt('10:00')
+    ->withoutOverlapping(60)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled SendPaymentRemindersJob failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-payments-reminders.log'));
+
+// Уведомления о предстоящих платежах (каждый день в 09:30)
+Schedule::job(new SendUpcomingPaymentNotificationsJob())
+    ->dailyAt('09:30')
+    ->withoutOverlapping(60)
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled SendUpcomingPaymentNotificationsJob failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-payments-upcoming.log'));
 
 Artisan::command('projects:geocode-help', function () {
     $this->info('Available geocoding command:');

@@ -8,6 +8,11 @@ use App\BusinessModules\Core\Payments\Http\Controllers\CounterpartyAccountContro
 use App\BusinessModules\Core\Payments\Http\Controllers\ReconciliationController;
 use App\BusinessModules\Core\Payments\Http\Controllers\ReportController;
 use App\BusinessModules\Core\Payments\Http\Controllers\SettingsController;
+use App\BusinessModules\Core\Payments\Http\Controllers\PaymentDocumentController;
+use App\BusinessModules\Core\Payments\Http\Controllers\PaymentApprovalController;
+use App\BusinessModules\Core\Payments\Http\Controllers\PaymentRequestController;
+use App\BusinessModules\Core\Payments\Http\Controllers\PaymentReportsController;
+use App\BusinessModules\Core\Payments\Http\Controllers\OffsetController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -77,11 +82,16 @@ Route::prefix('api/v1/admin/payments')
             ->name('reconciliation.store');
         
         // ============================================
-        // Reports (Отчёты)
+        // Reports (Отчёты) - Старые
         // ============================================
         Route::prefix('reports')->name('reports.')->group(function () {
             Route::get('/financial', [ReportController::class, 'financial'])->name('financial');
             Route::post('/export', [ReportController::class, 'export'])->name('export');
+            
+            // Новые отчеты
+            Route::get('/cash-flow', [PaymentReportsController::class, 'cashFlow'])->name('cash_flow');
+            Route::get('/aging-analysis', [PaymentReportsController::class, 'agingAnalysis'])->name('aging_analysis');
+            Route::get('/critical-contractors', [PaymentReportsController::class, 'criticalContractors'])->name('critical_contractors');
         });
         
         // ============================================
@@ -90,6 +100,59 @@ Route::prefix('api/v1/admin/payments')
         Route::prefix('settings')->name('settings.')->group(function () {
             Route::get('/', [SettingsController::class, 'show'])->name('show');
             Route::put('/', [SettingsController::class, 'update'])->name('update');
+        });
+        
+        // ============================================
+        // Payment Documents (Платежные документы - новая архитектура)
+        // ============================================
+        Route::prefix('documents')->name('documents.')->group(function () {
+            Route::get('/', [PaymentDocumentController::class, 'index'])->name('index');
+            Route::post('/', [PaymentDocumentController::class, 'store'])->name('store');
+            Route::get('/overdue', [PaymentDocumentController::class, 'overdue'])->name('overdue');
+            Route::get('/upcoming', [PaymentDocumentController::class, 'upcoming'])->name('upcoming');
+            Route::get('/statistics', [PaymentDocumentController::class, 'statistics'])->name('statistics');
+            Route::get('/{id}', [PaymentDocumentController::class, 'show'])->name('show');
+            Route::put('/{id}', [PaymentDocumentController::class, 'update'])->name('update');
+            Route::delete('/{id}', [PaymentDocumentController::class, 'destroy'])->name('destroy');
+            
+            // Действия над документом
+            Route::post('/{id}/submit', [PaymentDocumentController::class, 'submit'])->name('submit');
+            Route::post('/{id}/schedule', [PaymentDocumentController::class, 'schedule'])->name('schedule');
+            Route::post('/{id}/register-payment', [PaymentDocumentController::class, 'registerPayment'])->name('register_payment');
+            Route::post('/{id}/cancel', [PaymentDocumentController::class, 'cancel'])->name('cancel');
+        });
+        
+        // ============================================
+        // Payment Approvals (Утверждения платежей)
+        // ============================================
+        Route::prefix('approvals')->name('approvals.')->group(function () {
+            Route::get('/my', [PaymentApprovalController::class, 'myApprovals'])->name('my');
+            Route::post('/documents/{documentId}/approve', [PaymentApprovalController::class, 'approve'])->name('approve');
+            Route::post('/documents/{documentId}/reject', [PaymentApprovalController::class, 'reject'])->name('reject');
+            Route::get('/documents/{documentId}/history', [PaymentApprovalController::class, 'history'])->name('history');
+            Route::get('/documents/{documentId}/status', [PaymentApprovalController::class, 'status'])->name('status');
+            Route::post('/documents/{documentId}/send-reminders', [PaymentApprovalController::class, 'sendReminders'])->name('send_reminders');
+        });
+        
+        // ============================================
+        // Payment Requests (Платежные требования)
+        // ============================================
+        Route::prefix('requests')->name('requests.')->group(function () {
+            Route::get('/incoming', [PaymentRequestController::class, 'incoming'])->name('incoming');
+            Route::post('/', [PaymentRequestController::class, 'store'])->name('store');
+            Route::post('/{id}/accept', [PaymentRequestController::class, 'accept'])->name('accept');
+            Route::post('/{id}/reject', [PaymentRequestController::class, 'reject'])->name('reject');
+            Route::get('/contractors/{contractorId}', [PaymentRequestController::class, 'fromContractor'])->name('from_contractor');
+            Route::get('/statistics', [PaymentRequestController::class, 'statistics'])->name('statistics');
+        });
+
+        // ============================================
+        // Offsets (Взаимозачеты)
+        // ============================================
+        Route::prefix('offsets')->name('offsets.')->group(function () {
+            Route::get('/opportunities', [OffsetController::class, 'opportunities'])->name('opportunities');
+            Route::post('/perform', [OffsetController::class, 'perform'])->name('perform');
+            Route::post('/auto', [OffsetController::class, 'auto'])->name('auto');
         });
     });
 

@@ -12,6 +12,15 @@ use App\Services\Contract\ContractStateEventService;
 use Illuminate\Support\Collection;
 use Exception;
 
+/**
+ * @deprecated Этот сервис устарел. Используйте App\BusinessModules\Core\Payments\Services\InvoiceService
+ * Будет удален в версии 2.0
+ * 
+ * Для миграции:
+ * - Авансовые платежи теперь в модуле Payments как Invoice с типом ADVANCE
+ * - Используйте InvoiceService для создания/обновления
+ * - Или временно используйте LegacyPaymentAdapter для совместимости
+ */
 class ContractPaymentService
 {
     protected ContractPaymentRepositoryInterface $paymentRepository;
