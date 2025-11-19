@@ -407,52 +407,30 @@ class InvoiceService
     }
 
     /**
-     * Генерация уникального номера счёта с блокировкой
+     * Генерация уникального номера счёта используя PostgreSQL SEQUENCE
      * ВНИМАНИЕ: Должен вызываться только внутри DB::transaction()
      * 
-     * Использует PostgreSQL Advisory Lock для предотвращения race condition.
-     * Advisory lock блокирует на уровне организации + год, гарантируя уникальность.
+     * Использует PostgreSQL SEQUENCE для атомарной генерации номеров.
+     * SEQUENCE гарантирует уникальность даже при параллельных запросах.
      */
     private function generateInvoiceNumberWithLock(int $organizationId): string
     {
         $year = date('Y');
-        $prefix = "INV-{$year}-";
         
-        // Генерируем уникальный ID для advisory lock (organization_id + год)
-        // Используем хеш для получения integer ID в пределах bigint
-        $lockId = crc32("invoice_number_{$organizationId}_{$year}");
+        // Используем PostgreSQL функцию для атомарной генерации номера
+        // Функция создана в миграции 2025_11_19_175500_create_invoice_number_sequences.php
+        $result = DB::selectOne(
+            'SELECT get_next_invoice_number(?, ?) as invoice_number',
+            [$organizationId, $year]
+        );
         
-        // Получаем PostgreSQL Advisory Lock
-        // Это блокирует НА УРОВНЕ БД для данной комбинации organization + year
-        // Даже если нет строк в таблице, блокировка работает
-        DB::select('SELECT pg_advisory_xact_lock(?)', [$lockId]);
-        
-        // Теперь ищем последний номер (уже защищены advisory lock)
-        // ВАЖНО: lockForUpdate() для дополнительной защиты на уровне строк
-        // Используем RAW SQL для правильной числовой сортировки
-        $lastInvoice = Invoice::where('organization_id', $organizationId)
-            ->where('invoice_number', 'like', "{$prefix}%")
-            ->orderByRaw("CAST(SUBSTRING(invoice_number FROM '[0-9]+$') AS INTEGER) DESC")
-            ->lockForUpdate()
-            ->first();
-
-        if ($lastInvoice) {
-            // Извлекаем числовую часть из номера
-            preg_match('/(\d+)$/', $lastInvoice->invoice_number, $matches);
-            $lastNumber = isset($matches[1]) ? (int)$matches[1] : 0;
-            $newNumber = $lastNumber + 1;
-        } else {
-            $newNumber = 1;
-        }
-
-        $generatedNumber = $prefix . str_pad($newNumber, 6, '0', STR_PAD_LEFT);
+        $generatedNumber = $result->invoice_number;
         
         Log::debug('payments.invoice.number_generated', [
             'organization_id' => $organizationId,
-            'last_invoice_number' => $lastInvoice?->invoice_number,
-            'last_number' => $lastNumber ?? null,
-            'new_number' => $newNumber,
+            'year' => $year,
             'generated_number' => $generatedNumber,
+            'method' => 'postgresql_sequence',
         ]);
 
         return $generatedNumber;
