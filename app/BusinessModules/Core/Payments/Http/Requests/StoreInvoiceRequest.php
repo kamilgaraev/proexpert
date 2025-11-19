@@ -38,7 +38,7 @@ class StoreInvoiceRequest extends FormRequest
     public function prepareForValidation(): void
     {
         $this->merge([
-            'organization_id' => $this->attributes->get('current_organization_id'),
+            'organization_id' => request()->attributes->get('current_organization_id'),
         ]);
     }
 }
