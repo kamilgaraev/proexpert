@@ -391,18 +391,28 @@ class InvoiceService
     /**
      * Генерация уникального номера счёта с блокировкой
      * ВНИМАНИЕ: Должен вызываться только внутри DB::transaction()
+     * 
+     * Использует PostgreSQL Advisory Lock для предотвращения race condition.
+     * Advisory lock блокирует на уровне организации + год, гарантируя уникальность.
      */
     private function generateInvoiceNumberWithLock(int $organizationId): string
     {
         $year = date('Y');
         $prefix = "INV-{$year}-";
         
-        // Используем lockForUpdate() для блокировки последней записи
-        // Это предотвращает race condition при параллельных запросах
+        // Генерируем уникальный ID для advisory lock (organization_id + год)
+        // Используем хеш для получения integer ID в пределах bigint
+        $lockId = crc32("invoice_number_{$organizationId}_{$year}");
+        
+        // Получаем PostgreSQL Advisory Lock
+        // Это блокирует НА УРОВНЕ БД для данной комбинации organization + year
+        // Даже если нет строк в таблице, блокировка работает
+        DB::select('SELECT pg_advisory_xact_lock(?)', [$lockId]);
+        
+        // Теперь ищем последний номер (уже защищены advisory lock)
         $lastInvoice = Invoice::where('organization_id', $organizationId)
             ->where('invoice_number', 'like', "{$prefix}%")
             ->orderBy('invoice_number', 'desc')
-            ->lockForUpdate()
             ->first();
 
         if ($lastInvoice) {
