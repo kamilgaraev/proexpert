@@ -2,7 +2,7 @@
 
 namespace App\BusinessModules\Core\Payments\Services;
 
-use App\BusinessModules\Core/Payments\Models\PaymentAuditLog;
+use App\BusinessModules\Core\Payments\Models\PaymentAuditLog;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Auth;

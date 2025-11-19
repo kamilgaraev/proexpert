@@ -4,7 +4,7 @@ namespace App\BusinessModules\Core\Payments\Jobs;
 
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentOverdue;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
-use App\BusinessModules\Core\Payments\Notifications/PaymentOverdueNotification;
+use App\BusinessModules\Core\Payments\Notifications\PaymentOverdueNotification;
 use App\Models\User;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
