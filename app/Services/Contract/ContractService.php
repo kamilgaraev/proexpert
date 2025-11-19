@@ -124,6 +124,7 @@ class ContractService
                     subject: $contractDTO->subject,
                     work_type_category: $contractDTO->work_type_category,
                     payment_terms: $contractDTO->payment_terms,
+                    base_amount: $contractDTO->base_amount,
                     total_amount: $contractDTO->total_amount,
                     gp_percentage: $contractDTO->gp_percentage,
                     gp_calculation_type: $contractDTO->gp_calculation_type,
@@ -145,27 +146,10 @@ class ContractService
                 ]);
             }
 
-            // Валидация: contractor должен быть участником проекта (только для генподрядчика)
-            if ($contractDTO->contractor_id && !in_array($projectContext->roleConfig->role->value, ['contractor', 'subcontractor'])) {
-                $project = Project::find($contractDTO->project_id);
-                
-                if (!$project) {
-                    throw new Exception('Проект не найден');
-                }
-                
-                // Получаем source_organization_id из Contractor
-                $contractor = \App\Models\Contractor::find($contractDTO->contractor_id);
-                if ($contractor && $contractor->source_organization_id) {
-                    $contractorInProject = $project->hasOrganization($contractor->source_organization_id);
-                    
-                    if (!$contractorInProject) {
-                        throw new Exception(
-                            'Организация-подрядчик не является участником проекта. ' .
-                            'Сначала добавьте её в список участников.'
-                        );
-                    }
-                }
-            }
+            // УДАЛЕНА НЕВЕРНАЯ ВАЛИДАЦИЯ:
+            // Подрядчик НЕ обязан быть участником проекта!
+            // Подрядчик может быть внешним контрагентом (не зарегистрирован как организация)
+            // Проверка доступности подрядчика происходит ниже через ContractorSharing
         }
         
         // Финальная проверка: contractor_id обязателен
