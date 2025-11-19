@@ -89,24 +89,6 @@ class InvoiceService
                         $data['invoice_number'] = $this->generateInvoiceNumberWithLock($data['organization_id']);
                     }
 
-                    // Финальная проверка перед созданием
-                    $exists = Invoice::where('invoice_number', $data['invoice_number'])
-                        ->lockForUpdate()
-                        ->exists();
-                    
-                    if ($exists) {
-                        Log::warning('payments.invoice.number_collision', [
-                            'organization_id' => $data['organization_id'],
-                            'invoice_number' => $data['invoice_number'],
-                        ]);
-                        throw new \Illuminate\Database\QueryException(
-                            'duplicate',
-                            'INSERT',
-                            [],
-                            new \Exception('invoice_number_unique')
-                        );
-                    }
-
                     $invoice = Invoice::create($data);
 
                     // Обновить баланс counterparty account если указан контрагент

@@ -23,6 +23,8 @@ use App\BusinessModules\Core\Payments\Services\OffsetService;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Observers\PaymentDocumentObserver;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Event;
 
 class PaymentsServiceProvider extends ServiceProvider
 {
@@ -76,7 +78,7 @@ class PaymentsServiceProvider extends ServiceProvider
         // Регистрация команд для scheduler
         if ($this->app->runningInConsole()) {
             $this->commands([
-                // Здесь можно добавить Artisan команды если нужно
+                \App\BusinessModules\Core\Payments\Console\Commands\ResetInvoiceNumberSequences::class,
             ]);
         }
 
@@ -89,7 +91,7 @@ class PaymentsServiceProvider extends ServiceProvider
         // $schedule->job(new SendPaymentRemindersJob())->daily();
         // $schedule->job(new SendUpcomingPaymentNotificationsJob())->dailyAt('09:00');
         
-        \Log::info('PaymentsServiceProvider booted');
+        Log::info('PaymentsServiceProvider booted');
     }
     
     /**
@@ -97,12 +99,12 @@ class PaymentsServiceProvider extends ServiceProvider
      */
     protected function registerEventListeners(): void
     {
-        \Event::subscribe(\App\BusinessModules\Core\Payments\Listeners\SendPaymentNotifications::class);
+        Event::subscribe(\App\BusinessModules\Core\Payments\Listeners\SendPaymentNotifications::class);
         
         // Автосоздание счетов из актов (проверит настройку внутри)
         // Нужно зарегистрировать слушание события создания/обновления актов
         // Если у вас есть события ActCreated или ActSigned, добавьте их:
-        // \Event::listen(ActSigned::class, [AutoCreateInvoiceFromAct::class, 'handle']);
+        // Event::listen(ActSigned::class, [AutoCreateInvoiceFromAct::class, 'handle']);
     }
     
     /**

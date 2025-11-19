@@ -17,6 +17,7 @@ return new class extends Migration
             DECLARE
                 sequence_name TEXT;
                 next_num INTEGER;
+                max_existing_num INTEGER;
                 result TEXT;
             BEGIN
                 -- Имя последовательности для организации и года
@@ -28,8 +29,18 @@ return new class extends Migration
                     WHERE relname = sequence_name 
                     AND relkind = 'S'
                 ) THEN
-                    -- Создаем новую последовательность
-                    EXECUTE 'CREATE SEQUENCE ' || quote_ident(sequence_name) || ' START 1';
+                    -- Находим максимальный существующий номер для этой организации и года
+                    SELECT COALESCE(
+                        MAX(CAST(SUBSTRING(invoice_number FROM '[0-9]+$') AS INTEGER)),
+                        0
+                    )
+                    INTO max_existing_num
+                    FROM invoices
+                    WHERE organization_id = org_id
+                    AND invoice_number LIKE 'INV-' || year_val || '-%';
+                    
+                    -- Создаем новую последовательность начиная со следующего номера после максимального
+                    EXECUTE 'CREATE SEQUENCE ' || quote_ident(sequence_name) || ' START ' || (max_existing_num + 1);
                 END IF;
                 
                 -- Получаем следующее значение
