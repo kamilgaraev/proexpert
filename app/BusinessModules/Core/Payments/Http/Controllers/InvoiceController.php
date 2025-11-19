@@ -95,6 +95,7 @@ class InvoiceController extends Controller
                 'organization',
                 'counterpartyOrganization',
                 'contractor',
+                'invoiceable',
                 'transactions',
                 'schedules',
             ])->findOrFail($id);
@@ -233,6 +234,47 @@ class InvoiceController extends Controller
             return response()->json([
                 'success' => false,
                 'error' => 'Не удалось удалить счёт',
+            ], 500);
+        }
+    }
+
+    /**
+     * Выставить счёт (draft -> issued)
+     */
+    public function issue(Request $request, int $id): JsonResponse
+    {
+        try {
+            $orgId = $request->attributes->get('current_organization_id');
+            $invoice = Invoice::findOrFail($id);
+            
+            if (!$this->accessControl->canUpdateInvoice($orgId, $invoice)) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Нет прав на выставление счёта',
+                ], 403);
+            }
+            
+            $this->invoiceService->issueInvoice($invoice);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Счёт успешно выставлен',
+                'data' => $invoice->fresh(),
+            ]);
+        } catch (\DomainException $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 422);
+        } catch (\Exception $e) {
+            \Log::error('payments.invoices.issue.error', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось выставить счёт',
             ], 500);
         }
     }

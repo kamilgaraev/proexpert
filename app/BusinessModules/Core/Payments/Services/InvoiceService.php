@@ -30,6 +30,19 @@ class InvoiceService
             throw new \DomainException('Нет прав на создание счёта');
         }
 
+        // Автоматическая привязка к организации-контрагенту
+        if (isset($data['contractor_id']) && !isset($data['counterparty_organization_id'])) {
+            $contractor = DB::table('contractors')
+                ->where('id', $data['contractor_id'])
+                ->first(['contractor_type', 'source_organization_id']);
+            
+            if ($contractor && 
+                $contractor->contractor_type === 'invited_organization' && 
+                $contractor->source_organization_id) {
+                $data['counterparty_organization_id'] = $contractor->source_organization_id;
+            }
+        }
+
         // Автоматический расчет суммы по шаблону
         if (isset($data['template_id']) && !isset($data['total_amount'])) {
             $data['total_amount'] = $this->calculateAmountFromTemplate(
@@ -59,6 +72,7 @@ class InvoiceService
                 'invoice_id' => $invoice->id,
                 'organization_id' => $invoice->organization_id,
                 'amount' => $invoice->total_amount,
+                'counterparty_organization_id' => $invoice->counterparty_organization_id,
                 'template_id' => $data['template_id'] ?? null,
             ]);
 
@@ -118,6 +132,28 @@ class InvoiceService
         ], $additionalData);
 
         return $this->createInvoice($data);
+    }
+
+    /**
+     * Выставить счёт (перевести из draft в issued)
+     */
+    public function issueInvoice(Invoice $invoice): void
+    {
+        if ($invoice->status !== InvoiceStatus::DRAFT) {
+            throw new \DomainException('Выставить можно только счёт в статусе "Черновик"');
+        }
+
+        DB::transaction(function () use ($invoice) {
+            $invoice->update([
+                'status' => InvoiceStatus::ISSUED,
+                'issued_at' => now(),
+            ]);
+
+            \Log::info('payments.invoice.issued', [
+                'invoice_id' => $invoice->id,
+                'invoice_number' => $invoice->invoice_number,
+            ]);
+        });
     }
 
     /**

@@ -54,6 +54,7 @@ Route::prefix('api/v1/admin/payments')
             Route::delete('/{id}', [InvoiceController::class, 'destroy'])->name('destroy');
             
             // Действия над счётом
+            Route::post('/{id}/issue', [InvoiceController::class, 'issue'])->name('issue');
             Route::post('/{id}/pay', [InvoiceController::class, 'pay'])->name('pay');
             Route::post('/{id}/cancel', [InvoiceController::class, 'cancel'])->name('cancel');
         });
