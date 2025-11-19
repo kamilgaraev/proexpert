@@ -10,7 +10,7 @@ use App\Http\Controllers\Api\V1\Admin\SpecificationController;
 use App\Http\Controllers\Api\V1\Admin\AgreementController;
 use App\Http\Controllers\Api\V1\Admin\ProjectContextController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
-use App\Http\Controllers\Api\V1\Admin\Contract\ContractPaymentController;
+// ContractPaymentController удален - используйте модуль Payments
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractSpecificationController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractStateEventController;
 // Estimate controllers moved to BudgetEstimatesServiceProvider
@@ -72,14 +72,10 @@ Route::prefix('projects/{project}')->middleware(['project.context'])->group(func
         
         Route::get('/{contract}/available-works-for-acts', [ContractPerformanceActController::class, 'availableWorks']);
         
-        // Contract Payments
-        Route::prefix('{contract}/payments')->group(function () {
-            Route::get('/', [ContractPaymentController::class, 'index']);
-            Route::post('/', [ContractPaymentController::class, 'store']);
-            Route::get('/{payment}', [ContractPaymentController::class, 'show']);
-            Route::put('/{payment}', [ContractPaymentController::class, 'update']);
-            Route::delete('/{payment}', [ContractPaymentController::class, 'destroy']);
-        });
+        // УСТАРЕВШИЕ МАРШРУТЫ - УДАЛЕНЫ
+        // Contract Payments теперь управляются через модуль Payments
+        // Используйте: /api/v1/admin/payments/invoices
+        // Старые маршруты projects/{project}/contracts/{contract}/payments больше не поддерживаются
         
         // Contract Specifications
         Route::prefix('{contract}/specifications')->group(function () {

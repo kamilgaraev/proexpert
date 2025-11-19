@@ -64,10 +64,12 @@ class ReceivablesPayablesWidgetProvider extends AbstractWidgetProvider
                     ->where('contract_id', $contract->id)
                     ->sum(DB::raw('quantity * price'));
 
-                // NOTE: contract_payments не имеет колонки status
-                $paidAmount = DB::table('contract_payments')
-                    ->where('contract_id', $contract->id)
-                    ->sum('amount');
+                // Используем новую таблицу invoices для расчета оплаченной суммы
+                $paidAmount = DB::table('invoices')
+                    ->where('invoiceable_type', 'App\\Models\\Contract')
+                    ->where('invoiceable_id', $contract->id)
+                    ->whereNull('deleted_at')
+                    ->sum('paid_amount');
 
                 $outstanding = (float)($completedAmount - $paidAmount);
 

@@ -805,7 +805,8 @@ class ReportService
                 'contracts.actual_advance_amount',
                 'contractors.name as contractor_name',
                 'projects.name as project_name',
-                DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_payments WHERE contract_id = contracts.id) as paid_amount'),
+                // Используем новую таблицу invoices
+                DB::raw('(SELECT COALESCE(SUM(paid_amount), 0) FROM invoices WHERE invoiceable_type = \'App\\\\Models\\\\Contract\' AND invoiceable_id = contracts.id AND deleted_at IS NULL) as paid_amount'),
                 DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE contract_id = contracts.id AND is_approved = true) as completed_amount')
             );
 
@@ -925,7 +926,8 @@ class ReportService
                 DB::raw('COUNT(DISTINCT contracts.id) as contracts_count'),
                 DB::raw('COALESCE(SUM(contracts.total_amount), 0) as total_contract_amount'),
                 DB::raw('COALESCE(SUM((SELECT SUM(amount) FROM contract_performance_acts WHERE contract_id = contracts.id AND is_approved = true)), 0) as total_completed'),
-                DB::raw('COALESCE(SUM((SELECT SUM(amount) FROM contract_payments WHERE contract_id = contracts.id)), 0) as total_paid')
+                // Используем новую таблицу invoices
+                DB::raw('COALESCE(SUM((SELECT SUM(paid_amount) FROM invoices WHERE invoiceable_type = \'App\\\\Models\\\\Contract\' AND invoiceable_id = contracts.id AND deleted_at IS NULL)), 0) as total_paid')
             )
             ->leftJoin('contracts', 'contractors.id', '=', 'contracts.contractor_id')
             ->groupBy('contractors.id', 'contractors.name', 'contractors.inn', 'contractors.contact_person', 'contractors.phone');

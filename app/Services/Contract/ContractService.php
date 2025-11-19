@@ -947,15 +947,20 @@ class ContractService
             ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']))
             ->sum('contract_performance_acts.amount') ?: 0;
 
-        $totalPaidAmount = (float) DB::table('contract_payments')
-            ->join('contracts', 'contract_payments.contract_id', '=', 'contracts.id')
+        // Используем новую таблицу invoices вместо устаревшей contract_payments
+        $totalPaidAmount = (float) DB::table('invoices')
+            ->join('contracts', function($join) {
+                $join->on('invoices.invoiceable_id', '=', 'contracts.id')
+                     ->where('invoices.invoiceable_type', '=', 'App\\Models\\Contract');
+            })
             ->when(empty($filters['contractor_context']), fn($q) => $q->where('contracts.organization_id', $organizationId))
             ->whereNull('contracts.deleted_at')
+            ->whereNull('invoices.deleted_at')
             ->when(!empty($filters['project_id']), fn($q) => $q->where('contracts.project_id', $filters['project_id']))
             ->when(!empty($filters['contractor_id']), fn($q) => $q->where('contracts.contractor_id', $filters['contractor_id']))
             ->when(!empty($filters['status']), fn($q) => $q->where('contracts.status', $filters['status']))
             ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']))
-            ->sum('contract_payments.amount') ?: 0;
+            ->sum('invoices.paid_amount') ?: 0;
 
         $overdueContracts = (clone $query)
             ->where('status', 'active')

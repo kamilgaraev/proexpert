@@ -50,7 +50,8 @@ class StoreSupplementaryAgreementRequest extends FormRequest
             'subcontract_changes' => ['nullable', 'array'],
             'gp_changes' => ['nullable', 'array'],
             'advance_changes' => ['nullable', 'array'],
-            'advance_changes.*.payment_id' => ['required', 'integer', 'exists:contract_payments,id'],
+            // Используем новую таблицу invoices
+            'advance_changes.*.payment_id' => ['required', 'integer', 'exists:invoices,id'],
             'advance_changes.*.new_amount' => ['required', 'numeric', 'min:0'],
         ];
     }

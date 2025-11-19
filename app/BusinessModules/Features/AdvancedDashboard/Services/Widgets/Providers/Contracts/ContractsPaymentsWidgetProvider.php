@@ -27,8 +27,13 @@ class ContractsPaymentsWidgetProvider extends AbstractWidgetProvider
         $totalReceived = 0;
 
         foreach ($contracts as $contract) {
-            // NOTE: contract_payments не имеет колонки status, суммируем все платежи
-            $paid = DB::table('contract_payments')->where('contract_id', $contract->id)->sum('amount');
+            // Используем новую таблицу invoices для расчета оплаченной суммы
+            $paid = DB::table('invoices')
+                ->where('invoiceable_type', 'App\\Models\\Contract')
+                ->where('invoiceable_id', $contract->id)
+                ->whereNull('deleted_at')
+                ->sum('paid_amount');
+            
             $expected = (float)$contract->total_amount;
             $received = (float)$paid;
             

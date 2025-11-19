@@ -3,7 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractPerformanceActController;
-use App\Http\Controllers\Api\V1\Admin\Contract\ContractPaymentController;
+// ContractPaymentController удален - используйте модуль Payments
 use App\Http\Controllers\Api\V1\Admin\Contract\ContractSpecificationController;
 
 // Маршруты для Контрактов
@@ -42,10 +42,10 @@ Route::group(['prefix' => 'contracts/{contract}/performance-acts'], function () 
 Route::get('performance-acts/{performance_act}/files', [ContractPerformanceActController::class, 'getFiles'])
     ->name('performance-acts.files');
 
-// Вложенные маршруты для Платежей по Контрактам
-Route::apiResource('contracts.payments', ContractPaymentController::class)
-    ->shallow()
-    ->parameters(['payments' => 'payment']);
+// УСТАРЕВШИЕ МАРШРУТЫ - УДАЛЕНЫ
+// Платежи по контрактам теперь управляются через модуль Payments
+// Используйте: /api/v1/admin/payments/invoices
+// Старые маршруты contracts.payments больше не поддерживаются
 
 // ПРИМЕЧАНИЕ: Маршруты для спецификаций и state-events перенесены в project-based.php
 // Используйте маршруты: /api/v1/admin/projects/{project}/contracts/{contract}/...

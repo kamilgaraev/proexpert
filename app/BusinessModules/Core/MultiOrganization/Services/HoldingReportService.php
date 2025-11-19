@@ -355,9 +355,12 @@ class HoldingReportService
         $contracts = $query->with('agreements')->get();
         $contractIds = $contracts->pluck('id');
 
-        $totalPaid = DB::table('contract_payments')
-            ->whereIn('contract_id', $contractIds)
-            ->sum('amount');
+        // Используем новую таблицу invoices
+        $totalPaid = DB::table('invoices')
+            ->where('invoiceable_type', 'App\\Models\\Contract')
+            ->whereIn('invoiceable_id', $contractIds)
+            ->whereNull('deleted_at')
+            ->sum('paid_amount');
 
         $totalActs = DB::table('contract_performance_acts')
             ->whereIn('contract_id', $contractIds)
@@ -443,9 +446,12 @@ class HoldingReportService
             $ownerContracts = $ownerQuery->with('agreements')->get();
             $ownerContractIds = $ownerContracts->pluck('id');
 
-            $ownerPaid = DB::table('contract_payments')
-                ->whereIn('contract_id', $ownerContractIds)
-                ->sum('amount');
+            // Используем новую таблицу invoices
+            $ownerPaid = DB::table('invoices')
+                ->where('invoiceable_type', 'App\\Models\\Contract')
+                ->whereIn('invoiceable_id', $ownerContractIds)
+                ->whereNull('deleted_at')
+                ->sum('paid_amount');
 
             $ownerActs = DB::table('contract_performance_acts')
                 ->whereIn('contract_id', $ownerContractIds)
@@ -463,9 +469,12 @@ class HoldingReportService
             $contractorContracts = $contractorQuery->with('agreements')->get();
             $contractorContractIds = $contractorContracts->pluck('id');
 
-            $contractorPaid = DB::table('contract_payments')
-                ->whereIn('contract_id', $contractorContractIds)
-                ->sum('amount');
+            // Используем новую таблицу invoices
+            $contractorPaid = DB::table('invoices')
+                ->where('invoiceable_type', 'App\\Models\\Contract')
+                ->whereIn('invoiceable_id', $contractorContractIds)
+                ->whereNull('deleted_at')
+                ->sum('paid_amount');
 
             $contractorActs = DB::table('contract_performance_acts')
                 ->whereIn('contract_id', $contractorContractIds)
@@ -579,9 +588,12 @@ class HoldingReportService
                 continue;
             }
 
-            $totalPaid = DB::table('contract_payments')
-                ->whereIn('contract_id', $contractIds)
-                ->sum('amount');
+            // Используем новую таблицу invoices
+            $totalPaid = DB::table('invoices')
+                ->where('invoiceable_type', 'App\\Models\\Contract')
+                ->whereIn('invoiceable_id', $contractIds)
+                ->whereNull('deleted_at')
+                ->sum('paid_amount');
 
             $totalActs = DB::table('contract_performance_acts')
                 ->whereIn('contract_id', $contractIds)
@@ -751,9 +763,12 @@ class HoldingReportService
                 ->get();
 
             $totalHeadAmount = $this->calculateTotalContractAmount($projectContracts);
-            $totalHeadPaid = DB::table('contract_payments')
-                ->whereIn('contract_id', $projectContracts->pluck('id'))
-                ->sum('amount');
+            // Используем новую таблицу invoices
+            $totalHeadPaid = DB::table('invoices')
+                ->where('invoiceable_type', 'App\\Models\\Contract')
+                ->whereIn('invoiceable_id', $projectContracts->pluck('id'))
+                ->whereNull('deleted_at')
+                ->sum('paid_amount');
 
             $childOrganizationsData = [];
             
@@ -781,9 +796,12 @@ class HoldingReportService
                     ->get();
 
                 $totalSubAmount = $this->calculateTotalContractAmount($subcontracts);
-                $totalSubPaid = DB::table('contract_payments')
-                    ->whereIn('contract_id', $subcontracts->pluck('id'))
-                    ->sum('amount');
+                // Используем новую таблицу invoices
+                $totalSubPaid = DB::table('invoices')
+                    ->where('invoiceable_type', 'App\\Models\\Contract')
+                    ->whereIn('invoiceable_id', $subcontracts->pluck('id'))
+                    ->whereNull('deleted_at')
+                    ->sum('paid_amount');
 
                 $existingIndex = array_search($childOrg->id, array_column($childOrganizationsData, 'organization_id'));
                 
@@ -811,9 +829,12 @@ class HoldingReportService
                             ? round((($contractEffectiveAmount - $totalSubAmount) / $contractEffectiveAmount) * 100, 2) 
                             : 0,
                         'subcontracts' => $subcontracts->map(function ($sub) {
-                            $paid = DB::table('contract_payments')
-                                ->where('contract_id', $sub->id)
-                                ->sum('amount');
+                            // Используем новую таблицу invoices
+                            $paid = DB::table('invoices')
+                                ->where('invoiceable_type', 'App\\Models\\Contract')
+                                ->where('invoiceable_id', $sub->id)
+                                ->whereNull('deleted_at')
+                                ->sum('paid_amount');
                             
                             $subEffectiveAmount = (float)$sub->total_amount + ($sub->agreements->sum('change_amount') ?? 0);
 
