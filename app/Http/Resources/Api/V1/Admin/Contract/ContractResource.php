@@ -41,52 +41,45 @@ class ContractResource extends JsonResource
                 $allEvents = $stateEventService->getTimeline($this->resource);
                 $activeEventsOnly = $allEvents->filter(fn($e) => $e->isActive())->values();
                 
-                // НАХОДИМ ПЕРВОЕ СОБЫТИЕ ОТ ДС (для определения базовой суммы)
-                // События от ДС: triggered_by_type === SupplementaryAgreement::class
-                // Ищем по created_at (события упорядочены по времени создания)
-                $firstAgreementEvent = $activeEventsOnly
-                    ->where('triggered_by_type', \App\Models\SupplementaryAgreement::class)
-                    ->sortBy('created_at')
-                    ->first();
+                // БАЗОВАЯ СУММА - используем поле base_amount из БД (источник истины)
+                // Это поле устанавливается при создании контракта и обновляется только при изменении базы (не ДС)
+                $baseTotalAmount = (float) ($this->base_amount ?? 0);
                 
-                // БАЗОВАЯ СУММА = сумма всех активных событий ДО первого события от ДС
-                // Включаем: CREATED, AMENDED не от ДС
-                // Исключаем: PAYMENT_CREATED, события от ДС
-                if ($firstAgreementEvent) {
-                    // Получаем время первого события от ДС
-                    $firstAgreementTime = $firstAgreementEvent->created_at;
+                // Если base_amount пустой (старые контракты) - вычисляем из событий
+                if ($baseTotalAmount == 0) {
+                    // НАХОДИМ ПЕРВОЕ СОБЫТИЕ ОТ ДС (для определения базовой суммы)
+                    $firstAgreementEvent = $activeEventsOnly
+                        ->where('triggered_by_type', \App\Models\SupplementaryAgreement::class)
+                        ->sortBy('created_at')
+                        ->first();
                     
-                    // Суммируем все события, созданные ДО первого события от ДС
-                    $baseEvents = $activeEventsOnly->filter(function($event) use ($firstAgreementTime) {
-                        // Исключаем события от ДС
-                        if ($event->triggered_by_type === \App\Models\SupplementaryAgreement::class) {
-                            return false;
-                        }
+                    if ($firstAgreementEvent) {
+                        $firstAgreementTime = $firstAgreementEvent->created_at;
                         
-                        // Исключаем платежи
-                        if ($event->event_type === \App\Enums\Contract\ContractStateEventTypeEnum::PAYMENT_CREATED) {
-                            return false;
-                        }
-                        
-                        // Включаем только события, созданные до первого события от ДС
-                        return $event->created_at < $firstAgreementTime;
-                    });
-                    
-                    $baseTotalAmount = $baseEvents->sum('amount_delta');
-                } else {
-                    // Если нет событий от ДС - базовая сумма = сумма всех событий кроме платежей и событий от ДС
-                    $baseTotalAmount = $activeEventsOnly
-                        ->filter(function($event) {
-                            // Исключаем платежи и события от ДС
-                            if ($event->event_type === \App\Enums\Contract\ContractStateEventTypeEnum::PAYMENT_CREATED) {
-                                return false;
-                            }
+                        $baseEvents = $activeEventsOnly->filter(function($event) use ($firstAgreementTime) {
                             if ($event->triggered_by_type === \App\Models\SupplementaryAgreement::class) {
                                 return false;
                             }
-                            return true;
-                        })
-                        ->sum('amount_delta');
+                            if ($event->event_type === \App\Enums\Contract\ContractStateEventTypeEnum::PAYMENT_CREATED) {
+                                return false;
+                            }
+                            return $event->created_at < $firstAgreementTime;
+                        });
+                        
+                        $baseTotalAmount = $baseEvents->sum('amount_delta');
+                    } else {
+                        $baseTotalAmount = $activeEventsOnly
+                            ->filter(function($event) {
+                                if ($event->event_type === \App\Enums\Contract\ContractStateEventTypeEnum::PAYMENT_CREATED) {
+                                    return false;
+                                }
+                                if ($event->triggered_by_type === \App\Models\SupplementaryAgreement::class) {
+                                    return false;
+                                }
+                                return true;
+                            })
+                            ->sum('amount_delta');
+                    }
                 }
                 
                 // ДЕЛЬТА ДС = сумма только РЕАЛЬНЫХ активных событий от ДС
@@ -152,8 +145,11 @@ class ContractResource extends JsonResource
             $effectiveTotalAmount = $baseTotalAmount + $agreementsDelta;
         }
 
-        // Получаем base_amount из модели (если есть) или используем total_amount для legacy
-        $modelBaseAmount = (float) ($this->base_amount ?? $this->total_amount ?? 0);
+        // Используем baseTotalAmount который уже вычислен выше (для Event Sourcing контрактов)
+        // Или берем из модели для legacy контрактов
+        $modelBaseAmount = isset($baseTotalAmount) 
+            ? $baseTotalAmount 
+            : (float) ($this->base_amount ?? $this->total_amount ?? 0);
         
         // Рассчитываем сумму ГП от base_amount (НЕ от effectiveTotalAmount!)
         $gpAmount = $this->gp_amount; // Используем accessor модели для правильного расчета
@@ -175,10 +171,10 @@ class ContractResource extends JsonResource
             'work_type_category_label' => $this->work_type_category?->label(),
             'payment_terms' => $this->payment_terms,
             'base_amount' => $modelBaseAmount,
-            'total_amount' => $totalAmountCalculated,
+            'total_amount' => (float) ($this->total_amount ?? 0), // Из БД (источник истины, уже включает ДС)
             'gp_percentage' => (float) ($this->gp_percentage ?? 0),
             'gp_amount' => (float) $gpAmount,
-            'total_amount_with_gp' => $totalAmountCalculated,
+            'total_amount_with_gp' => (float) ($this->total_amount ?? 0) + $gpAmount,
             'planned_advance_amount' => (float) ($this->planned_advance_amount ?? 0),
             'actual_advance_amount' => (float) ($this->actual_advance_amount ?? 0),
             'remaining_advance_amount' => (float) ($this->remaining_advance_amount ?? 0),
