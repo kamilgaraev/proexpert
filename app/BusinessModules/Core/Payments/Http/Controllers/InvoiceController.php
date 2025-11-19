@@ -48,6 +48,11 @@ class InvoiceController extends Controller
                 $query->where('direction', $direction);
             }
             
+            if ($contractId = $request->input('contract_id')) {
+                $query->where('invoiceable_type', 'App\\Models\\Contract')
+                      ->where('invoiceable_id', $contractId);
+            }
+            
             // Пагинация
             $perPage = min($request->input('per_page', 15), 100);
             $invoices = $query->with(['project', 'organization', 'counterpartyOrganization', 'contractor'])
