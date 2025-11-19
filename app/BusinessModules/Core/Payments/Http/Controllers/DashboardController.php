@@ -259,7 +259,7 @@ class DashboardController extends Controller
         $startDate = now()->subDays($days)->startOfDay();
         
         // Входящие платежи
-        $incoming = PaymentTransaction::where('organization_id', $organizationId)
+        $incoming = PaymentTransaction::where('payment_transactions.organization_id', $organizationId)
             ->join('invoices', 'payment_transactions.invoice_id', '=', 'invoices.id')
             ->where('invoices.direction', 'incoming')
             ->where('payment_transactions.status', 'completed')
@@ -267,7 +267,7 @@ class DashboardController extends Controller
             ->sum('payment_transactions.amount');
         
         // Исходящие платежи
-        $outgoing = PaymentTransaction::where('organization_id', $organizationId)
+        $outgoing = PaymentTransaction::where('payment_transactions.organization_id', $organizationId)
             ->join('invoices', 'payment_transactions.invoice_id', '=', 'invoices.id')
             ->where('invoices.direction', 'outgoing')
             ->where('payment_transactions.status', 'completed')
