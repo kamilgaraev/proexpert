@@ -198,6 +198,20 @@ Schedule::job(new SendUpcomingPaymentNotificationsJob())
     })
     ->appendOutputTo(storage_path('logs/schedule-payments-upcoming.log'));
 
+// ============================================
+// CONTRACT EVENT SOURCING - Автоматическая синхронизация
+// ============================================
+
+// Синхронизация total_amount контрактов с Event Sourcing (каждый час для автоисправления)
+Schedule::command('contracts:sync-event-sourcing')
+    ->hourly()
+    ->withoutOverlapping(30)
+    ->runInBackground()
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled contracts:sync-event-sourcing command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-contracts-sync.log'));
+
 Artisan::command('projects:geocode-help', function () {
     $this->info('Available geocoding command:');
     $this->info('  php artisan projects:geocode [options]');

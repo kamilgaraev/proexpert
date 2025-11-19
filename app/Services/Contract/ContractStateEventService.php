@@ -346,17 +346,18 @@ class ContractStateEventService
             })
             ->sum('amount_delta');
         
-        // ИСПОЛЬЗУЕМ ТЕКУЩУЮ СУММУ КОНТРАКТА КАК ИСТОЧНИК ИСТИНЫ
-        // Это гарантирует точность финансовых данных
-        $totalAmount = (float) ($contract->total_amount ?? 0);
+        // ИСПОЛЬЗУЕМ РАССЧИТАННОЕ ЗНАЧЕНИЕ ИЗ СОБЫТИЙ КАК ИСТОЧНИК ИСТИНЫ
+        // Event Sourcing: состояние восстанавливается из событий
+        $totalAmount = (float) $calculatedAmount;
         
-        // Проверяем согласованность и логируем расхождения для аудита
-        if (abs($calculatedAmount - $totalAmount) > 0.01) {
+        // Проверяем согласованность с БД и логируем расхождения для аудита
+        $dbTotalAmount = (float) ($contract->total_amount ?? 0);
+        if (abs($calculatedAmount - $dbTotalAmount) > 0.01) {
             \Illuminate\Support\Facades\Log::warning('Contract state amount mismatch detected', [
                 'contract_id' => $contract->id,
-                'contract_total_amount' => $totalAmount,
+                'db_total_amount' => $dbTotalAmount,
                 'calculated_from_events' => $calculatedAmount,
-                'difference' => $totalAmount - $calculatedAmount,
+                'difference' => $calculatedAmount - $dbTotalAmount,
                 'active_events_count' => $activeEvents->count(),
             ]);
         }

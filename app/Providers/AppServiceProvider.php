@@ -150,6 +150,7 @@ class AppServiceProvider extends ServiceProvider
         Organization::observe(OrganizationObserver::class);
         ProjectOrganization::observe(ProjectOrganizationObserver::class);
         \App\Models\OrganizationModuleActivation::observe(\App\Observers\OrganizationModuleActivationObserver::class);
+        \App\Models\Contract::observe(\App\Observers\ContractObserver::class);
         
         // Schedule observers
         ScheduleTask::observe(ScheduleTaskObserver::class);

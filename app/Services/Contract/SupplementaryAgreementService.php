@@ -101,12 +101,17 @@ class SupplementaryAgreementService
                 }
                 // Если только supersede_agreement_ids без change_amount - события уже созданы выше
             } catch (Exception $e) {
-                // Не критично, если событие не создалось - логируем и продолжаем
-                \Illuminate\Support\Facades\Log::warning('Failed to create supplementary agreement events', [
+                // КРИТИЧЕСКАЯ ОШИБКА - откатываем транзакцию и пробрасываем исключение
+                \Illuminate\Support\Facades\Log::error('Failed to create supplementary agreement events', [
                     'agreement_id' => $agreement->id,
                     'contract_id' => $contract->id,
-                    'error' => $e->getMessage()
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
                 ]);
+                
+                throw new \RuntimeException(
+                    "Не удалось создать события для дополнительного соглашения: {$e->getMessage()}"
+                );
             }
         } elseif ($contract) {
             // Для legacy контрактов (без Event Sourcing) также обновляем total_amount
@@ -128,7 +133,63 @@ class SupplementaryAgreementService
 
     public function update(int $id, SupplementaryAgreementDTO $dto): bool
     {
-        return $this->repository->update($id, $dto->toArray());
+        $agreement = $this->getById($id);
+        if (!$agreement) {
+            return false;
+        }
+        
+        $contract = $agreement->contract;
+        $oldChangeAmount = $agreement->change_amount;
+        
+        // Обновляем ДС
+        $updated = $this->repository->update($id, $dto->toArray());
+        
+        if (!$updated) {
+            return false;
+        }
+        
+        // Если контракт использует Event Sourcing и изменилась сумма - пересчитываем
+        if ($contract && $contract->usesEventSourcing()) {
+            $newChangeAmount = $dto->change_amount;
+            
+            // Проверяем, изменилась ли сумма
+            if ($oldChangeAmount != $newChangeAmount) {
+                try {
+                    // Пересчитываем состояние контракта
+                    $this->getStateCalculatorService()->recalculateContractState($contract);
+                    $contract->refresh();
+                    $currentState = $this->getStateEventService()->getCurrentState($contract);
+                    $calculatedAmount = $currentState['total_amount'];
+                    $contract->total_amount = $calculatedAmount;
+                    $contract->save();
+                    
+                    // BUSINESS: Логирование изменения ДС
+                    $this->logging->business('agreement.updated', [
+                        'agreement_id' => $id,
+                        'agreement_number' => $agreement->number,
+                        'contract_id' => $contract->id,
+                        'old_change_amount' => $oldChangeAmount,
+                        'new_change_amount' => $newChangeAmount,
+                        'new_contract_amount' => $calculatedAmount,
+                        'user_id' => Auth::id(),
+                    ]);
+                } catch (Exception $e) {
+                    // КРИТИЧЕСКАЯ ОШИБКА
+                    \Illuminate\Support\Facades\Log::error('Failed to update contract state after agreement update', [
+                        'agreement_id' => $id,
+                        'contract_id' => $contract->id,
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    
+                    throw new \RuntimeException(
+                        "Не удалось пересчитать состояние контракта после обновления ДС: {$e->getMessage()}"
+                    );
+                }
+            }
+        }
+        
+        return true;
     }
 
     public function delete(int $id): bool
@@ -197,12 +258,17 @@ class SupplementaryAgreementService
                     ]);
                 }
             } catch (Exception $e) {
-                // Не критично, если событие не создалось - логируем и продолжаем
-                \Illuminate\Support\Facades\Log::warning('Failed to create deletion events for agreement', [
+                // КРИТИЧЕСКАЯ ОШИБКА - не удаляем ДС если не удалось обновить события
+                \Illuminate\Support\Facades\Log::error('Failed to create deletion events for agreement', [
                     'agreement_id' => $id,
                     'contract_id' => $contract->id,
-                    'error' => $e->getMessage()
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
                 ]);
+                
+                throw new \RuntimeException(
+                    "Не удалось удалить события дополнительного соглашения: {$e->getMessage()}"
+                );
             }
         }
         
