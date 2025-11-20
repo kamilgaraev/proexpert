@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Carbon;
@@ -104,6 +105,25 @@ class Invoice extends Model
     public function schedules(): HasMany
     {
         return $this->hasMany(PaymentSchedule::class);
+    }
+
+    /**
+     * PaymentDocuments созданные из этого счета
+     */
+    public function paymentDocuments(): HasMany
+    {
+        return $this->hasMany(PaymentDocument::class, 'source_id')
+            ->where('source_type', self::class);
+    }
+
+    /**
+     * Получить основной PaymentDocument для этого счета
+     */
+    public function primaryPaymentDocument()
+    {
+        return $this->hasOne(PaymentDocument::class, 'source_id')
+            ->where('source_type', self::class)
+            ->latest();
     }
 
     // ==========================================

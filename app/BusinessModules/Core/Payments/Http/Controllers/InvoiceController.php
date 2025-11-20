@@ -9,6 +9,7 @@ use App\BusinessModules\Core\Payments\Models\Invoice;
 use App\BusinessModules\Core\Payments\Services\InvoiceService;
 use App\BusinessModules\Core\Payments\Services\PaymentAccessControl;
 use App\BusinessModules\Core\Payments\Services\PaymentTransactionService;
+use App\BusinessModules\Core\Payments\Services\LegacyPaymentAdapter;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,6 +20,7 @@ class InvoiceController extends Controller
         private readonly InvoiceService $invoiceService,
         private readonly PaymentTransactionService $transactionService,
         private readonly PaymentAccessControl $accessControl,
+        private readonly LegacyPaymentAdapter $legacyAdapter,
     ) {}
 
     /**
@@ -371,6 +373,141 @@ class InvoiceController extends Controller
             return response()->json([
                 'success' => false,
                 'error' => 'Не удалось отменить счёт',
+            ], 500);
+        }
+    }
+
+    /**
+     * Отправить счёт на утверждение
+     * 
+     * @group Payments - Invoices
+     * @authenticated
+     */
+    public function submitForApproval(Request $request, int $id): JsonResponse
+    {
+        try {
+            $orgId = $request->attributes->get('current_organization_id');
+            
+            $query = Invoice::query();
+            $query = $this->accessControl->applyAccessScope($query, $orgId);
+            $invoice = $query->findOrFail($id);
+            
+            // Проверка прав
+            if (!$this->accessControl->canUpdateInvoice($orgId, $invoice)) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Нет прав на отправку счёта на утверждение',
+                ], 403);
+            }
+
+            // Отправляем на утверждение через адаптер
+            $paymentDocument = $this->legacyAdapter->submitInvoiceForApproval($invoice);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Счёт отправлен на утверждение',
+                'data' => [
+                    'invoice' => $invoice->fresh(),
+                    'payment_document' => [
+                        'id' => $paymentDocument->id,
+                        'document_number' => $paymentDocument->document_number,
+                        'status' => $paymentDocument->status->value,
+                        'status_label' => $paymentDocument->status->label(),
+                    ],
+                ],
+            ]);
+        } catch (\DomainException $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 422);
+        } catch (\Exception $e) {
+            \Log::error('payments.invoices.submit_for_approval.error', [
+                'invoice_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось отправить счёт на утверждение',
+            ], 500);
+        }
+    }
+
+    /**
+     * Получить статус утверждения счёта
+     * 
+     * @group Payments - Invoices
+     * @authenticated
+     */
+    public function getApprovalStatus(Request $request, int $id): JsonResponse
+    {
+        try {
+            $orgId = $request->attributes->get('current_organization_id');
+            
+            $query = Invoice::query();
+            $query = $this->accessControl->applyAccessScope($query, $orgId);
+            $invoice = $query->findOrFail($id);
+            
+            // Получаем PaymentDocument
+            $paymentDocument = $invoice->primaryPaymentDocument;
+            
+            if (!$paymentDocument) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'has_payment_document' => false,
+                        'message' => 'Счёт не отправлен на утверждение',
+                    ],
+                ]);
+            }
+            
+            // Загружаем апрувалы
+            $approvals = $paymentDocument->approvals()
+                ->with(['approver'])
+                ->orderBy('approval_level')
+                ->orderBy('approval_order')
+                ->get();
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'has_payment_document' => true,
+                    'payment_document_id' => $paymentDocument->id,
+                    'document_number' => $paymentDocument->document_number,
+                    'status' => $paymentDocument->status->value,
+                    'status_label' => $paymentDocument->status->label(),
+                    'approvals' => $approvals->map(fn($a) => [
+                        'id' => $a->id,
+                        'role' => $a->approval_role,
+                        'role_label' => $a->getRoleLabel(),
+                        'approver' => $a->approver ? [
+                            'id' => $a->approver->id,
+                            'name' => $a->approver->name,
+                        ] : null,
+                        'level' => $a->approval_level,
+                        'order' => $a->approval_order,
+                        'status' => $a->status,
+                        'status_label' => $a->getStatusLabel(),
+                        'comment' => $a->decision_comment,
+                        'decided_at' => $a->decided_at?->toDateTimeString(),
+                        'created_at' => $a->created_at->toDateTimeString(),
+                    ]),
+                    'total' => $approvals->count(),
+                    'approved' => $approvals->where('status', 'approved')->count(),
+                    'rejected' => $approvals->where('status', 'rejected')->count(),
+                    'pending' => $approvals->where('status', 'pending')->count(),
+                ],
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('payments.invoices.approval_status.error', [
+                'invoice_id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось загрузить статус утверждения',
             ], 500);
         }
     }

@@ -21,7 +21,9 @@ use App\BusinessModules\Core\Payments\Services\Reports\CashFlowReportService;
 use App\BusinessModules\Core\Payments\Services\Reports\AgingAnalysisReportService;
 use App\BusinessModules\Core\Payments\Services\OffsetService;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Models\Invoice;
 use App\BusinessModules\Core\Payments\Observers\PaymentDocumentObserver;
+use App\BusinessModules\Core\Payments\Observers\InvoiceObserver;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Event;
@@ -79,6 +81,7 @@ class PaymentsServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 \App\BusinessModules\Core\Payments\Console\Commands\ResetInvoiceNumberSequences::class,
+                \App\BusinessModules\Core\Payments\Console\Commands\MigrateInvoicesToPaymentDocuments::class,
             ]);
         }
 
@@ -113,6 +116,7 @@ class PaymentsServiceProvider extends ServiceProvider
     protected function registerObservers(): void
     {
         PaymentDocument::observe(PaymentDocumentObserver::class);
+        Invoice::observe(InvoiceObserver::class);
     }
 }
 

@@ -57,6 +57,10 @@ Route::prefix('api/v1/admin/payments')
             Route::post('/{id}/issue', [InvoiceController::class, 'issue'])->name('issue');
             Route::post('/{id}/pay', [InvoiceController::class, 'pay'])->name('pay');
             Route::post('/{id}/cancel', [InvoiceController::class, 'cancel'])->name('cancel');
+            
+            // Апрувалы
+            Route::post('/{id}/submit-for-approval', [InvoiceController::class, 'submitForApproval'])->name('submit_for_approval');
+            Route::get('/{id}/approval-status', [InvoiceController::class, 'getApprovalStatus'])->name('approval_status');
         });
         
         // ============================================
