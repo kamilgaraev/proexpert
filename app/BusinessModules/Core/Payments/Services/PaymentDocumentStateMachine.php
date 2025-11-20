@@ -16,15 +16,15 @@ class PaymentDocumentStateMachine
      * Разрешенные переходы между статусами
      */
     private const ALLOWED_TRANSITIONS = [
-        'draft' => ['submitted', 'cancelled'],
-        'submitted' => ['pending_approval', 'approved', 'rejected', 'cancelled'],
-        'pending_approval' => ['approved', 'rejected', 'submitted'],
-        'approved' => ['scheduled', 'paid', 'cancelled'],
-        'scheduled' => ['paid', 'partially_paid', 'cancelled'],
-        'partially_paid' => ['paid', 'scheduled'],
-        'paid' => [], // финальный статус
-        'rejected' => ['draft'], // можно переделать
-        'cancelled' => [], // финальный статус
+        'draft' => ['submitted', 'cancelled'], // Черновик → Отправлен или Отменён
+        'submitted' => ['pending_approval', 'approved', 'rejected', 'cancelled'], // Отправлен → На согласование/Утверждён/Отклонён
+        'pending_approval' => ['approved', 'rejected', 'submitted'], // На согласовании → Утверждён/Отклонён/Возврат
+        'approved' => ['scheduled', 'paid', 'cancelled'], // Утверждён → Запланирован/Оплачен/Отменён
+        'scheduled' => ['paid', 'partially_paid', 'cancelled'], // Запланирован → Оплачен/Частично оплачен/Отменён
+        'partially_paid' => ['paid', 'scheduled'], // Частично оплачен → Полностью оплачен/Запланирован
+        'paid' => [], // Оплачен - финальный статус
+        'rejected' => ['draft'], // Отклонён → можно вернуть в черновик для исправления
+        'cancelled' => [], // Отменён - финальный статус
     ];
 
     /**

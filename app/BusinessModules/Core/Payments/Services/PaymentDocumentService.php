@@ -130,7 +130,10 @@ class PaymentDocumentService
             // Финальная валидация перед отправкой
             $this->validator->validateBeforeSubmission($document);
 
-            // Инициируем процесс утверждения
+            // Шаг 1: Переводим в статус "submitted" (отправлен на рассмотрение)
+            $this->stateMachine->submit($document);
+
+            // Шаг 2: Инициируем процесс утверждения (submitted → pending_approval)
             $this->approvalWorkflow->initiateApproval($document);
 
             Log::info('payment_document.submitted', [

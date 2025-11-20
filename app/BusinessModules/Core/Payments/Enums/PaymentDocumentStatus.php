@@ -53,6 +53,8 @@ enum PaymentDocumentStatus: string
             self::DRAFT,
             self::SUBMITTED,
             self::PENDING_APPROVAL,
+            self::APPROVED,
+            self::SCHEDULED,
         ]);
     }
 
