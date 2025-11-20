@@ -249,13 +249,21 @@ class LegacyPaymentAdapter
     }
 
     /**
+     * Получить PaymentDocument для Invoice (без создания)
+     */
+    public function getPaymentDocumentForInvoice(Invoice $invoice): ?PaymentDocument
+    {
+        return PaymentDocument::where('source_type', Invoice::class)
+            ->where('source_id', $invoice->id)
+            ->first();
+    }
+
+    /**
      * Получить или создать PaymentDocument для Invoice
      */
     public function getOrCreatePaymentDocument(Invoice $invoice): PaymentDocument
     {
-        $document = PaymentDocument::where('source_type', Invoice::class)
-            ->where('source_id', $invoice->id)
-            ->first();
+        $document = $this->getPaymentDocumentForInvoice($invoice);
 
         if (!$document) {
             $document = $this->createPaymentDocumentFromInvoice($invoice);
@@ -269,9 +277,7 @@ class LegacyPaymentAdapter
      */
     public function syncInvoiceToPaymentDocument(Invoice $invoice): ?PaymentDocument
     {
-        $document = PaymentDocument::where('source_type', Invoice::class)
-            ->where('source_id', $invoice->id)
-            ->first();
+        $document = $this->getPaymentDocumentForInvoice($invoice);
 
         if (!$document) {
             return null;
