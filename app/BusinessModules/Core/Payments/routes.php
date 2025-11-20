@@ -83,6 +83,9 @@ Route::prefix('api/v1/admin/payments')
             Route::get('/templates', [ScheduleController::class, 'templates'])->name('templates');
             Route::get('/upcoming', [ScheduleController::class, 'upcoming'])->name('upcoming');
             Route::get('/overdue', [ScheduleController::class, 'overdue'])->name('overdue');
+            
+            // Алиас для получения PaymentDocument через schedules (перенаправление на documents)
+            Route::get('/documents/{id}', [PaymentDocumentController::class, 'show'])->name('documents.show');
         });
         
         // ============================================
