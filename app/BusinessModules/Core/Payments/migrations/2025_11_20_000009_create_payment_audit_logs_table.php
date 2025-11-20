@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('payment_audit_logs')) {
+            return; // Таблица уже существует, пропускаем
+        }
+        
         Schema::create('payment_audit_logs', function (Blueprint $table) {
             $table->id();
             

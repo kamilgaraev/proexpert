@@ -11,6 +11,10 @@ return new class extends Migration
      */
     public function up(): void
     {
+        if (Schema::hasTable('payment_approval_rules')) {
+            return; // Таблица уже существует, пропускаем
+        }
+        
         Schema::create('payment_approval_rules', function (Blueprint $table) {
             $table->id();
             
