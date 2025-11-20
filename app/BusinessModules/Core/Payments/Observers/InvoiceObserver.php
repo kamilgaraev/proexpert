@@ -15,22 +15,19 @@ class InvoiceObserver
     /**
      * Handle the Invoice "created" event.
      * 
-     * Автоматически создаем PaymentDocument для новых счетов (кроме draft)
+     * Автоматически создаем PaymentDocument для всех новых счетов
      */
     public function created(Invoice $invoice): void
     {
         try {
-            // Создаем PaymentDocument только если счет не в draft
-            // Draft счета будут создавать PaymentDocument при переходе в issued
-            if ($invoice->status->value !== 'draft') {
-                $this->adapter->createPaymentDocumentFromInvoice($invoice);
-                
-                Log::info('invoice.payment_document_auto_created', [
-                    'invoice_id' => $invoice->id,
-                    'invoice_number' => $invoice->invoice_number,
-                    'status' => $invoice->status->value,
-                ]);
-            }
+            // Создаем PaymentDocument для всех новых счетов (включая draft)
+            $this->adapter->createPaymentDocumentFromInvoice($invoice);
+            
+            Log::info('invoice.payment_document_auto_created', [
+                'invoice_id' => $invoice->id,
+                'invoice_number' => $invoice->invoice_number,
+                'status' => $invoice->status->value,
+            ]);
         } catch (\Exception $e) {
             Log::error('invoice.payment_document_auto_create_failed', [
                 'invoice_id' => $invoice->id,
@@ -47,25 +44,26 @@ class InvoiceObserver
     public function updated(Invoice $invoice): void
     {
         try {
-            // Проверяем, изменился ли статус на issued или paid
-            if ($invoice->wasChanged('status')) {
-                $oldStatus = $invoice->getOriginal('status');
-                $newStatus = $invoice->status->value;
-
-                // Если переходим из draft в issued, создаем PaymentDocument
-                if ($oldStatus === 'draft' && $newStatus === 'issued') {
-                    $this->adapter->createPaymentDocumentFromInvoice($invoice);
+            // Синхронизируем изменения с PaymentDocument
+            $paymentDocument = $this->adapter->getPaymentDocumentForInvoice($invoice);
+            
+            if ($paymentDocument) {
+                // Синхронизируем если изменились важные поля
+                if ($invoice->wasChanged(['total_amount', 'paid_amount', 'remaining_amount', 'status', 'payment_purpose', 'bank_account', 'bank_bik', 'bank_name'])) {
+                    $this->adapter->syncInvoiceToPaymentDocument($invoice);
                     
-                    Log::info('invoice.payment_document_created_on_issue', [
+                    Log::info('invoice.payment_document_synced', [
                         'invoice_id' => $invoice->id,
-                        'invoice_number' => $invoice->invoice_number,
+                        'payment_document_id' => $paymentDocument->id,
                     ]);
                 }
-            }
-
-            // Синхронизируем суммы и статус если PaymentDocument уже существует
-            if ($invoice->wasChanged(['paid_amount', 'remaining_amount', 'status'])) {
-                $this->adapter->syncInvoiceToPaymentDocument($invoice);
+            } else {
+                // Если PaymentDocument не существует - создаем (на случай если создание упало при создании Invoice)
+                $this->adapter->createPaymentDocumentFromInvoice($invoice);
+                
+                Log::info('invoice.payment_document_created_on_update', [
+                    'invoice_id' => $invoice->id,
+                ]);
             }
         } catch (\Exception $e) {
             Log::error('invoice.sync_to_payment_document_failed', [
