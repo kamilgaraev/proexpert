@@ -355,9 +355,10 @@ class LegacyPaymentAdapter
             // Отправить на утверждение
             $document = $this->paymentDocumentService->submit($document);
 
-            // Обновить статус Invoice
+            // Обновить статус Invoice (счёт переходит в статус "выставлен")
+            // Workflow утверждения отслеживается в PaymentDocument, а не в Invoice
             $invoice->update([
-                'status' => 'pending_approval',
+                'status' => 'issued', // Invoice остаётся в статусе "выставлен"
                 'metadata' => array_merge($invoice->metadata ?? [], [
                     'payment_document_id' => $document->id,
                     'submitted_for_approval_at' => now()->toDateTimeString(),
