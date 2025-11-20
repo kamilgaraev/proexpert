@@ -166,12 +166,11 @@ class CounterpartyAccountService
      */
     public function blockContractorForOverdue(int $contractorId, int $organizationId, string $reason): bool
     {
-        $account = $this->getOrCreateAccount($organizationId, $contractorId);
+        $account = $this->getOrCreateAccount($organizationId, null, $contractorId);
         
         $account->update([
             'is_blocked' => true,
             'block_reason' => $reason,
-            'blocked_at' => now(),
         ]);
 
         \Log::warning('contractor_account.blocked', [
@@ -188,12 +187,11 @@ class CounterpartyAccountService
      */
     public function unblockContractor(int $contractorId, int $organizationId): bool
     {
-        $account = $this->getOrCreateAccount($organizationId, $contractorId);
+        $account = $this->getOrCreateAccount($organizationId, null, $contractorId);
         
         $account->update([
             'is_blocked' => false,
             'block_reason' => null,
-            'blocked_at' => null,
         ]);
 
         \Log::info('contractor_account.unblocked', [
