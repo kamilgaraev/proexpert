@@ -196,6 +196,19 @@ class LegacyPaymentAdapter
             $payerOrgId = $invoice->counterparty_organization_id;
         }
 
+        // Расчет НДС если его нет в Invoice
+        $vatRate = $invoice->vat_rate ?? 20;
+        $amount = (float) $invoice->total_amount;
+        
+        if ($invoice->vat_amount === null || $invoice->amount_without_vat === null) {
+            // Рассчитываем НДС (предполагаем что сумма включает НДС)
+            $amountWithoutVat = $amount / (1 + $vatRate / 100);
+            $vatAmount = $amount - $amountWithoutVat;
+        } else {
+            $vatAmount = (float) $invoice->vat_amount;
+            $amountWithoutVat = (float) $invoice->amount_without_vat;
+        }
+
         $document = PaymentDocument::create([
             'organization_id' => $invoice->organization_id,
             'project_id' => $invoice->project_id,
@@ -206,11 +219,11 @@ class LegacyPaymentAdapter
             'payer_contractor_id' => $payerContractorId,
             'payee_organization_id' => $payeeOrgId,
             'payee_contractor_id' => $payeeContractorId,
-            'amount' => $invoice->total_amount,
+            'amount' => $amount,
             'currency' => $invoice->currency,
-            'vat_rate' => $invoice->vat_rate,
-            'vat_amount' => $invoice->vat_amount,
-            'amount_without_vat' => $invoice->amount_without_vat,
+            'vat_rate' => $vatRate,
+            'vat_amount' => round($vatAmount, 2),
+            'amount_without_vat' => round($amountWithoutVat, 2),
             'paid_amount' => $invoice->paid_amount,
             'remaining_amount' => $invoice->remaining_amount,
             'status' => $this->mapInvoiceStatusToDocumentStatus($invoice->status),
