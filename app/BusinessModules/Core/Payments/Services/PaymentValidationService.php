@@ -302,7 +302,7 @@ class PaymentValidationService
 
         $account = DB::table('counterparty_accounts')
             ->where('organization_id', $document->organization_id)
-            ->where('contractor_id', $document->payee_contractor_id)
+            ->where('counterparty_contractor_id', $document->payee_contractor_id)
             ->first();
 
         if (!$account) {
