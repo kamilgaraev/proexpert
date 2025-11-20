@@ -27,11 +27,15 @@ class StoreInvoiceRequest extends FormRequest
             'invoice_type' => ['required', new Enum(InvoiceType::class)],
             'invoiceable_type' => 'nullable|string|in:App\\Models\\Contract,App\\Models\\Project',
             'invoiceable_id' => 'nullable|integer',
-            'template_id' => 'nullable|string|in:advance_30,advance_50,advance_70',
+            'template_id' => 'nullable|string|in:advance_30,advance_50,advance_70,advance_100,custom_advance,progress,final_100,custom_final,act',
             'total_amount' => 'required_without:template_id|numeric|min:0.01',
             'vat_rate' => 'nullable|numeric|min:0|max:100',
             'description' => 'nullable|string|max:1000',
             'payment_terms' => 'nullable|string|max:500',
+            'bank_account' => 'nullable|string|size:20|regex:/^\d{20}$/',
+            'bank_bik' => 'nullable|string|size:9|regex:/^\d{9}$/',
+            'bank_name' => 'nullable|string|max:255',
+            'bank_correspondent_account' => 'nullable|string|size:20|regex:/^\d{20}$/',
             'notes' => 'nullable|string|max:1000',
         ];
     }
