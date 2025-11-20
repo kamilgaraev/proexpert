@@ -104,8 +104,8 @@ class FilterController extends Controller
                     'value' => $workType->id,
                     'label' => $workType->name
                 ]),
-            'users' => User::whereHas('organizationUsers', function ($query) use ($organizationId) {
-                    $query->where('organization_id', $organizationId);
+            'users' => User::whereHas('organizations', function ($query) use ($organizationId) {
+                    $query->where('organizations.id', $organizationId);
                 })
                 ->select('id', 'name')
                 ->orderBy('name')

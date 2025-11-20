@@ -82,10 +82,12 @@ class ProcessOverduePaymentsJob implements ShouldQueue
             default => ['chief_accountant', 'accountant'],
         };
 
-        // Получаем пользователей с этими ролями в организации
-        $users = User::whereHas('organizationUsers', function($query) use ($document, $roles) {
-            $query->where('organization_id', $document->organization_id)
-                ->whereIn('role', $roles);
+        // Получаем пользователей с этими ролями в организации через новую систему авторизации
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($document->organization_id);
+        
+        $users = User::whereHas('roleAssignments', function($query) use ($context, $roles) {
+            $query->where('context_id', $context->id)
+                ->whereIn('role_slug', $roles);
         })->get();
 
         // Отправляем уведомления

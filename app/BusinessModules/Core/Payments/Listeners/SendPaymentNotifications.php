@@ -95,10 +95,12 @@ class SendPaymentNotifications
                 }
             }
 
-            // Уведомляем финансовый отдел
-            $financialUsers = User::whereHas('organizationUsers', function($query) use ($document) {
-                $query->where('organization_id', $document->organization_id)
-                    ->whereIn('role', ['financial_director', 'chief_accountant']);
+            // Уведомляем финансовый отдел через новую систему авторизации
+            $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($document->organization_id);
+            
+            $financialUsers = User::whereHas('roleAssignments', function($query) use ($context) {
+                $query->where('context_id', $context->id)
+                    ->whereIn('role_slug', ['financial_director', 'chief_accountant']);
             })->get();
 
             foreach ($financialUsers as $user) {
@@ -155,10 +157,12 @@ class SendPaymentNotifications
             $request = $event->request;
             $contractor = Contractor::find($event->contractorId);
 
-            // Уведомляем ответственных за работу с данным контрагентом
-            $responsibleUsers = User::whereHas('organizationUsers', function($query) use ($request) {
-                $query->where('organization_id', $request->organization_id)
-                    ->whereIn('role', ['financial_director', 'chief_accountant', 'project_manager']);
+            // Уведомляем ответственных за работу с данным контрагентом через новую систему авторизации
+            $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($request->organization_id);
+            
+            $responsibleUsers = User::whereHas('roleAssignments', function($query) use ($context) {
+                $query->where('context_id', $context->id)
+                    ->whereIn('role_slug', ['financial_director', 'chief_accountant', 'project_manager']);
             })->get();
 
             foreach ($responsibleUsers as $user) {

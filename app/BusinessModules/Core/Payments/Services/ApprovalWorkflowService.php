@@ -160,10 +160,12 @@ class ApprovalWorkflowService
      */
     private function findApproverByRole(int $organizationId, string $role): ?User
     {
-        // Ищем пользователя с данной ролью в организации
-        return User::whereHas('organizationUsers', function ($query) use ($organizationId, $role) {
-            $query->where('organization_id', $organizationId)
-                ->where('role', $role);
+        // Ищем пользователя с данной ролью в организации через новую систему авторизации
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+        
+        return User::whereHas('roleAssignments', function ($query) use ($context, $role) {
+            $query->where('context_id', $context->id)
+                ->where('role_slug', $role);
         })->first();
     }
 

@@ -66,9 +66,12 @@ class SendUpcomingPaymentNotificationsJob implements ShouldQueue
         // Определяем роли для уведомления
         $roles = ['financial_director', 'chief_accountant', 'accountant'];
 
-        $users = User::whereHas('organizationUsers', function($query) use ($document, $roles) {
-            $query->where('organization_id', $document->organization_id)
-                ->whereIn('role', $roles);
+        // Получаем пользователей через новую систему авторизации
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($document->organization_id);
+        
+        $users = User::whereHas('roleAssignments', function($query) use ($context, $roles) {
+            $query->where('context_id', $context->id)
+                ->whereIn('role_slug', $roles);
         })->get();
 
         $notification = new class($document, $daysUntilDue) extends Notification {
