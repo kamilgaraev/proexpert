@@ -283,11 +283,19 @@ class LegacyPaymentAdapter
             return null;
         }
 
-        // Синхронизируем суммы и статус
+        // Синхронизируем все важные поля
         $document->update([
+            'amount' => $invoice->total_amount,
             'paid_amount' => $invoice->paid_amount,
             'remaining_amount' => $invoice->remaining_amount,
             'status' => $this->mapInvoiceStatusToDocumentStatus($invoice->status),
+            'payment_purpose' => $invoice->payment_terms,
+            'description' => $invoice->description,
+            'bank_account' => $invoice->bank_account,
+            'bank_bik' => $invoice->bank_bik,
+            'bank_name' => $invoice->bank_name,
+            'bank_correspondent_account' => $invoice->bank_correspondent_account,
+            'due_date' => $invoice->due_date,
         ]);
 
         Log::info('payment_document.synced_from_invoice', [
