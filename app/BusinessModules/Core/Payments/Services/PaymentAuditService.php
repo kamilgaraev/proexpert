@@ -241,9 +241,12 @@ class PaymentAuditService
             return null;
         }
 
-        // Попытка получить роль из организации
-        $orgUser = $user->organizationUsers()->first();
-        return $orgUser?->role;
+        // Получить роли пользователя в организации
+        $organizationId = request()->attributes->get('current_organization_id');
+        $roleSlugs = $user->getRoleSlugs($organizationId);
+        
+        // Вернуть первую роль или null
+        return !empty($roleSlugs) ? $roleSlugs[0] : null;
     }
 
     /**
