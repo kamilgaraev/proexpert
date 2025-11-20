@@ -44,6 +44,11 @@ class InvoiceService
             }
         }
 
+        // Автоматическое определение типа счета по шаблону
+        if (isset($data['template_id']) && !isset($data['invoice_type'])) {
+            $data['invoice_type'] = $this->getInvoiceTypeFromTemplate($data['template_id']);
+        }
+
         // Автоматический расчет суммы по шаблону
         if (isset($data['template_id']) && !isset($data['total_amount'])) {
             $data['total_amount'] = $this->calculateAmountFromTemplate(
@@ -378,14 +383,40 @@ class InvoiceService
             'advance_30' => 30,
             'advance_50' => 50,
             'advance_70' => 70,
+            'advance_100' => 100,
+            'final_100' => 100,
         ];
 
         if (!isset($percentageMap[$templateId])) {
-            throw new \DomainException("Неизвестный шаблон: {$templateId}");
+            throw new \DomainException("Шаблон {$templateId} не поддерживает автоматический расчет. Укажите сумму вручную.");
         }
 
         $percentage = $percentageMap[$templateId];
         return round(($contract->total_amount * $percentage) / 100, 2);
+    }
+
+    /**
+     * Определить тип счета по шаблону
+     */
+    private function getInvoiceTypeFromTemplate(string $templateId): InvoiceType
+    {
+        $typeMap = [
+            'advance_30' => InvoiceType::ADVANCE,
+            'advance_50' => InvoiceType::ADVANCE,
+            'advance_70' => InvoiceType::ADVANCE,
+            'advance_100' => InvoiceType::ADVANCE,
+            'custom_advance' => InvoiceType::ADVANCE,
+            'progress' => InvoiceType::PROGRESS,
+            'final_100' => InvoiceType::FINAL,
+            'custom_final' => InvoiceType::FINAL,
+            'act' => InvoiceType::ACT,
+        ];
+
+        if (!isset($typeMap[$templateId])) {
+            throw new \DomainException("Неизвестный шаблон: {$templateId}");
+        }
+
+        return $typeMap[$templateId];
     }
 
     /**

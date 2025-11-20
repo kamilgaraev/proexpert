@@ -20,9 +20,10 @@ class PaymentTemplatesController extends Controller
     {
         try {
             $templates = [
+                // Авансы с автоматическим расчетом
                 [
                     'id' => 'advance_30',
-                    'name' => 'Аванс (30%)',
+                    'name' => 'Аванс 30%',
                     'invoice_type' => 'advance',
                     'percentage' => 30,
                     'auto_calculate' => true,
@@ -30,7 +31,7 @@ class PaymentTemplatesController extends Controller
                 ],
                 [
                     'id' => 'advance_50',
-                    'name' => 'Аванс (50%)',
+                    'name' => 'Аванс 50%',
                     'invoice_type' => 'advance',
                     'percentage' => 50,
                     'auto_calculate' => true,
@@ -38,35 +39,65 @@ class PaymentTemplatesController extends Controller
                 ],
                 [
                     'id' => 'advance_70',
-                    'name' => 'Аванс (70%)',
+                    'name' => 'Аванс 70%',
                     'invoice_type' => 'advance',
                     'percentage' => 70,
                     'auto_calculate' => true,
                     'description' => 'Авансовый платеж 70% от суммы контракта',
                 ],
                 [
+                    'id' => 'advance_100',
+                    'name' => 'Аванс 100%',
+                    'invoice_type' => 'advance',
+                    'percentage' => 100,
+                    'auto_calculate' => true,
+                    'description' => 'Предоплата 100% от суммы контракта',
+                ],
+                [
+                    'id' => 'custom_advance',
+                    'name' => 'Произвольный аванс',
+                    'invoice_type' => 'advance',
+                    'percentage' => null,
+                    'auto_calculate' => false,
+                    'description' => 'Авансовый платеж произвольной суммы (сумма вводится вручную)',
+                ],
+                
+                // Промежуточные платежи
+                [
                     'id' => 'progress',
                     'name' => 'Промежуточный платеж',
                     'invoice_type' => 'progress',
                     'percentage' => null,
                     'auto_calculate' => false,
-                    'description' => 'Промежуточный платеж (сумма вводится вручную)',
+                    'description' => 'Промежуточный платеж по этапу работ (сумма вводится вручную)',
+                ],
+                
+                // Финальные расчеты
+                [
+                    'id' => 'final_100',
+                    'name' => 'Финальный расчет 100%',
+                    'invoice_type' => 'final',
+                    'percentage' => 100,
+                    'auto_calculate' => true,
+                    'description' => 'Окончательный расчет 100% от суммы контракта',
                 ],
                 [
-                    'id' => 'final',
-                    'name' => 'Окончательный расчет',
+                    'id' => 'custom_final',
+                    'name' => 'Произвольный финальный расчет',
                     'invoice_type' => 'final',
                     'percentage' => null,
                     'auto_calculate' => false,
-                    'description' => 'Финальный расчет после выполнения работ (сумма вводится вручную)',
+                    'description' => 'Финальный расчет произвольной суммы (сумма вводится вручную)',
                 ],
+                
+                // По актам
                 [
                     'id' => 'act',
                     'name' => 'По акту выполненных работ',
                     'invoice_type' => 'act',
                     'percentage' => null,
                     'auto_calculate' => false,
-                    'description' => 'Оплата по факту выполненных работ (сумма вводится вручную)',
+                    'description' => 'Оплата по факту выполненных работ согласно акту',
                 ],
             ];
             
@@ -101,7 +132,7 @@ class PaymentTemplatesController extends Controller
     {
         $request->validate([
             'contract_id' => 'required|integer|exists:contracts,id',
-            'template_id' => 'required|string|in:advance_30,advance_50,advance_70',
+            'template_id' => 'required|string|in:advance_30,advance_50,advance_70,advance_100,final_100',
         ]);
 
         try {
@@ -127,9 +158,19 @@ class PaymentTemplatesController extends Controller
                 'advance_30' => 30,
                 'advance_50' => 50,
                 'advance_70' => 70,
+                'advance_100' => 100,
+                'final_100' => 100,
             ];
 
-            $percentage = $percentageMap[$templateId];
+            $percentage = $percentageMap[$templateId] ?? null;
+            
+            if ($percentage === null) {
+                return response()->json([
+                    'success' => false,
+                    'error' => 'Данный шаблон не поддерживает автоматический расчет',
+                ], 422);
+            }
+            
             $calculatedAmount = round(($contract->total_amount * $percentage) / 100, 2);
 
             return response()->json([
