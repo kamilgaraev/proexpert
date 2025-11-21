@@ -138,7 +138,42 @@ class PaymentDocumentStateMachine
     }
 
     /**
-     * Отметить как частично оплаченный
+     * Зарегистрировать частичную оплату (умный метод)
+     */
+    public function registerPartialPayment(PaymentDocument $document, float $amount): PaymentDocument
+    {
+        if ($amount <= 0) {
+            throw new \InvalidArgumentException('Сумма оплаты должна быть положительной');
+        }
+
+        $document->paid_amount += $amount;
+        $document->remaining_amount = $document->calculateRemainingAmount();
+
+        // Используем epsilon для сравнения float
+        if ($document->remaining_amount <= 0.001) {
+            // Полная оплата
+            // Корректируем возможные погрешности округления
+            $document->remaining_amount = 0;
+            return $this->markPaid($document, $document->paid_amount);
+        }
+
+        // Частичная оплата
+        // Если статус уже PARTIALLY_PAID, то transition не нужен (и может быть запрещен), просто сохраняем
+        if ($document->status === PaymentDocumentStatus::PARTIALLY_PAID) {
+            $document->save();
+            Log::info('payment_document.payment_registered', [
+                'document_id' => $document->id,
+                'amount' => $amount,
+                'remaining' => $document->remaining_amount,
+            ]);
+            return $document;
+        }
+
+        return $this->transition($document, PaymentDocumentStatus::PARTIALLY_PAID, "Частичная оплата: {$amount}");
+    }
+
+    /**
+     * Отметить как частично оплаченный (Legacy метод, лучше использовать registerPartialPayment)
      */
     public function markPartiallyPaid(PaymentDocument $document, float $amount): PaymentDocument
     {

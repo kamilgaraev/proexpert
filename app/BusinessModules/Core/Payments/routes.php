@@ -125,6 +125,13 @@ Route::prefix('api/v1/admin/payments')
         // Payment Documents (Платежные документы - новая архитектура)
         // ============================================
         Route::prefix('documents')->name('documents.')->group(function () {
+            // Bulk Actions
+            Route::post('/bulk', [PaymentDocumentController::class, 'bulkAction'])->name('bulk_action');
+            
+            // Calendar
+            Route::get('/calendar', [PaymentCalendarController::class, 'index'])->name('calendar.index');
+            Route::post('/{id}/reschedule', [PaymentCalendarController::class, 'reschedule'])->name('calendar.reschedule');
+
             Route::get('/', [PaymentDocumentController::class, 'index'])->name('index');
             Route::post('/', [PaymentDocumentController::class, 'store'])->name('store');
             Route::get('/overdue', [PaymentDocumentController::class, 'overdue'])->name('overdue');
@@ -135,10 +142,14 @@ Route::prefix('api/v1/admin/payments')
             Route::delete('/{id}', [PaymentDocumentController::class, 'destroy'])->name('destroy');
             
             // Действия над документом
+            Route::get('/{id}/print-order', [PaymentDocumentController::class, 'printOrder'])->name('print_order');
             Route::post('/{id}/submit', [PaymentDocumentController::class, 'submit'])->name('submit');
             Route::post('/{id}/schedule', [PaymentDocumentController::class, 'schedule'])->name('schedule');
             Route::post('/{id}/register-payment', [PaymentDocumentController::class, 'registerPayment'])->name('register_payment');
             Route::post('/{id}/cancel', [PaymentDocumentController::class, 'cancel'])->name('cancel');
+            
+            // Helpers
+            Route::post('/generate-purpose', [PaymentDocumentController::class, 'generatePurpose'])->name('generate_purpose');
         });
         
         // ============================================

@@ -8,13 +8,13 @@ use App\Models\Contractor;
 use App\Models\Organization;
 use App\Models\Project;
 use App\Models\User;
+use App\Traits\Immutable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class PaymentTransaction extends Model
 {
-    use HasFactory;
+    use HasFactory, Immutable;
 
     protected $fillable = [
         'invoice_id',

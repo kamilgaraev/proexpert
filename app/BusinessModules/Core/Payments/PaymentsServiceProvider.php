@@ -28,6 +28,11 @@ use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Event;
 
+use App\BusinessModules\Core\Payments\Services\Export\PaymentOrderPdfService;
+use App\BusinessModules\Core\Payments\Services\Import\BankStatementImportService;
+use App\BusinessModules\Core\Payments\Services\Integrations\BudgetControlService;
+use App\BusinessModules\Core\Payments\Services\PaymentPurposeGenerator;
+
 class PaymentsServiceProvider extends ServiceProvider
 {
     /**
@@ -44,6 +49,10 @@ class PaymentsServiceProvider extends ServiceProvider
         $this->app->singleton(PaymentValidationService::class);
         $this->app->singleton(PaymentAuditService::class);
         
+        // New services
+        $this->app->singleton(BudgetControlService::class);
+        $this->app->singleton(PaymentPurposeGenerator::class);
+        
         // Bind сервисы (новый экземпляр при каждом resolve)
         $this->app->bind(InvoiceService::class);
         $this->app->bind(PaymentTransactionService::class);
@@ -55,6 +64,10 @@ class PaymentsServiceProvider extends ServiceProvider
         $this->app->bind(CashFlowReportService::class);
         $this->app->bind(AgingAnalysisReportService::class);
         $this->app->bind(OffsetService::class);
+        
+        // New services
+        $this->app->bind(PaymentOrderPdfService::class);
+        $this->app->bind(BankStatementImportService::class);
         
         // Legacy адаптер
         $this->app->bind(LegacyPaymentAdapter::class);
@@ -82,6 +95,7 @@ class PaymentsServiceProvider extends ServiceProvider
             $this->commands([
                 \App\BusinessModules\Core\Payments\Console\Commands\ResetInvoiceNumberSequences::class,
                 \App\BusinessModules\Core\Payments\Console\Commands\MigrateInvoicesToPaymentDocuments::class,
+                \App\BusinessModules\Core\Payments\Console\Commands\SendDailyPaymentDigest::class,
             ]);
         }
 

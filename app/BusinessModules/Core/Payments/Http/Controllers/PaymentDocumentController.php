@@ -10,11 +10,96 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
+use App\BusinessModules\Core\Payments\Http\Requests\BulkActionRequest;
+use Illuminate\Support\Facades\DB;
+
 class PaymentDocumentController extends Controller
 {
     public function __construct(
         private readonly PaymentDocumentService $service
     ) {}
+
+    /**
+     * Массовые действия с документами
+     */
+    public function bulkAction(BulkActionRequest $request): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            $ids = $request->validated('ids');
+            $action = $request->validated('action');
+            
+            $results = [
+                'success' => 0,
+                'failed' => 0,
+                'errors' => [],
+            ];
+
+            DB::transaction(function () use ($organizationId, $ids, $action, $request, &$results) {
+                $documents = PaymentDocument::forOrganization($organizationId)
+                    ->whereIn('id', $ids)
+                    ->lockForUpdate() // Блокируем выбранные документы
+                    ->get();
+
+                foreach ($documents as $document) {
+                    try {
+                        switch ($action) {
+                            case 'submit':
+                                $this->service->submit($document);
+                                break;
+                            case 'approve':
+                                // Для апрува может потребоваться проверка прав
+                                $this->service->approve($document, $request->user()->id);
+                                break;
+                            case 'cancel':
+                                $this->service->cancel($document, $request->validated('reason'));
+                                break;
+                            case 'schedule':
+                                $scheduledAt = new \DateTime($request->validated('scheduled_at'));
+                                $this->service->schedule($document, $scheduledAt);
+                                break;
+                            case 'pay':
+                                // Для оплаты берем полную сумму остатка
+                                $this->service->registerPayment($document, $document->remaining_amount, [
+                                    'notes' => 'Mass payment action',
+                                    'created_by_user_id' => $request->user()->id
+                                ]);
+                                break;
+                        }
+                        $results['success']++;
+                    } catch (\DomainException $e) {
+                        $results['failed']++;
+                        $results['errors'][] = "ID {$document->id}: {$e->getMessage()}";
+                    } catch (\Exception $e) {
+                        $results['failed']++;
+                        $results['errors'][] = "ID {$document->id}: Ошибка обработки";
+                        \Log::error('bulk_action.item_error', [
+                            'id' => $document->id,
+                            'action' => $action,
+                            'error' => $e->getMessage()
+                        ]);
+                    }
+                }
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => "Обработано: {$results['success']}, Ошибок: {$results['failed']}",
+                'data' => $results,
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('payment_document.bulk_action.error', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Ошибка при выполнении массовой операции',
+            ], 500);
+        }
+    }
 
     /**
      * Список платежных документов
@@ -209,6 +294,9 @@ class PaymentDocumentController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $document = PaymentDocument::forOrganization($organizationId)->findOrFail($id);
 
+            // Бюджетный контроль перед отправкой
+            $this->budgetControl->validateForApproval($document);
+
             $submitted = $this->service->submit($document);
 
             return response()->json([
@@ -231,6 +319,57 @@ class PaymentDocumentController extends Controller
                 'success' => false,
                 'error' => 'Не удалось отправить на утверждение',
             ], 500);
+        }
+    }
+
+    /**
+     * Сгенерировать печатную форму платежного поручения
+     */
+    public function printOrder(Request $request, int $id): \Illuminate\Http\Response
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            $document = PaymentDocument::forOrganization($organizationId)->findOrFail($id);
+
+            $pdfContent = $this->pdfExport->generate($document);
+
+            return response($pdfContent, 200, [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' => 'inline; filename="payment_order_' . $document->document_number . '.pdf"',
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('payment_document.print_order.error', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->view('errors.500', [], 500);
+        }
+    }
+
+    /**
+     * Сгенерировать назначение платежа
+     */
+    public function generatePurpose(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'document_type' => 'required|string',
+                'data' => 'required|array',
+            ]);
+
+            $type = PaymentDocumentType::from($validated['document_type']);
+            $purpose = $this->purposeGenerator->generate($type, $validated['data']);
+
+            return response()->json([
+                'success' => true,
+                'purpose' => $purpose,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 400);
         }
     }
 
