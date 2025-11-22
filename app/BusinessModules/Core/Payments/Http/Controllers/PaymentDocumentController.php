@@ -661,7 +661,8 @@ class PaymentDocumentController extends Controller
         $user = request()->user();
         $canApprove = false;
         
-        if ($document->status->value === 'pending_approval' && $user) {
+        // Разрешаем утверждение для статусов submitted и pending_approval
+        if (in_array($document->status->value, ['submitted', 'pending_approval']) && $user) {
             // 1. Проверка прямой записи на утверждение
             $hasApprovalRequest = $document->approvals()
                 ->where('approver_user_id', $user->id)
