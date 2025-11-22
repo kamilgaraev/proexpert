@@ -656,6 +656,24 @@ class PaymentDocumentController extends Controller
     private function formatDocumentDetailed(PaymentDocument $document): array
     {
         $basic = $this->formatDocument($document);
+        
+        // Проверка прав на утверждение
+        $user = request()->user();
+        $canApprove = false;
+        
+        if ($document->status->value === 'pending_approval' && $user) {
+            // 1. Проверка прямой записи на утверждение
+            $hasApprovalRequest = $document->approvals()
+                ->where('approver_user_id', $user->id)
+                ->where('status', 'pending')
+                ->exists();
+                
+            // 2. Проверка прав администратора/владельца (GOD MODE)
+            $isSuperUser = $user->hasRole(['organization_owner', 'admin', 'finance_admin']) || 
+                          $user->can('payments.transaction.approve');
+                          
+            $canApprove = $hasApprovalRequest || $isSuperUser;
+        }
 
         return array_merge($basic, [
             'description' => $document->description,
@@ -676,6 +694,7 @@ class PaymentDocumentController extends Controller
             'attached_documents' => $document->attached_documents,
             'metadata' => $document->metadata,
             'notes' => $document->notes,
+            'can_be_approved_by_current_user' => $canApprove, // Флаг для фронтенда
             'workflow' => [
                 'workflow_stage' => $document->workflow_stage,
                 'submitted_at' => $document->submitted_at?->toDateTimeString(),

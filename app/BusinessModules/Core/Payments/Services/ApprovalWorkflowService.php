@@ -183,28 +183,61 @@ class ApprovalWorkflowService
                 ->where('status', 'pending')
                 ->first();
 
-            if (!$approval) {
-                throw new \DomainException('У вас нет прав на утверждение этого документа');
+            $user = User::find($userId);
+            $isAdmin = $user && ($user->hasRole(['organization_owner', 'admin', 'finance_admin']) || $user->can('payments.transaction.approve'));
+
+            // Если нет прямого назначения, но есть права админа/владельца - ищем любое активное утверждение
+            if (!$approval && $isAdmin) {
+                // Берем первое попавшееся активное утверждение, чтобы закрыть текущий уровень
+                $approval = PaymentApproval::where('payment_document_id', $document->id)
+                    ->where('status', 'pending')
+                    ->orderBy('approval_level')
+                    ->first();
+
+                if ($approval) {
+                    $comment = trim(($comment ?? '') . " [Утверждено администратором/владельцем]");
+                }
             }
 
-            // Проверить лимит суммы
-            if (!$approval->canApproveAmount($document->amount)) {
+            if (!$approval) {
+                // Если даже админ не нашел что утверждать (документ не в статусе pending или нет правил)
+                if ($isAdmin && $document->status === PaymentDocumentStatus::PENDING_APPROVAL) {
+                    // Форс-мажор: документ висит, а апрувов нет. Утверждаем напрямую.
+                    $this->stateMachine->approve($document, $userId);
+                    DB::commit();
+                    return true;
+                }
+                throw new \DomainException('У вас нет прав на утверждение этого документа или он не требует утверждения');
+            }
+
+            // Проверка лимита суммы (пропускаем для админов)
+            if (!$isAdmin && !$approval->canApproveAmount($document->amount)) {
                 throw new \DomainException('Сумма документа превышает ваш лимит утверждения');
             }
 
-            // Проверить условия
-            if (!$approval->checkConditions($document)) {
+            // Проверить условия (пропускаем для админов)
+            if (!$isAdmin && !$approval->checkConditions($document)) {
                 throw new \DomainException('Документ не соответствует условиям утверждения');
             }
 
-            // Утвердить
+            // Утвердить конкретный шаг
             $approval->approve($comment);
+            
+            // Если это админ, утвердим все остальные шаги этого уровня тоже, чтобы не застряло
+            if ($isAdmin) {
+                PaymentApproval::where('payment_document_id', $document->id)
+                    ->where('approval_level', $approval->approval_level)
+                    ->where('status', 'pending')
+                    ->get()
+                    ->each(fn($a) => $a->approve("Автоматически утверждено (Override by Admin)"));
+            }
 
             Log::info('payment_approval.approved', [
                 'document_id' => $document->id,
                 'approval_id' => $approval->id,
                 'user_id' => $userId,
                 'role' => $approval->approval_role,
+                'is_admin_override' => $isAdmin,
             ]);
 
             // Проверить, все ли утверждения текущего уровня завершены
