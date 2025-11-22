@@ -184,7 +184,23 @@ class ApprovalWorkflowService
                 ->first();
 
             $user = User::find($userId);
-            $isAdmin = $user && ($user->hasRole(['organization_owner', 'admin', 'finance_admin']) || $user->can('payments.transaction.approve'));
+            
+            // Для проверки роли передаем массив возможных слагов. hasRole принимает один слаг.
+            // Проверяем по очереди или используем кастомную логику для массива
+            $isAdmin = false;
+            if ($user) {
+                $rolesToCheck = ['organization_owner', 'admin', 'finance_admin'];
+                foreach ($rolesToCheck as $role) {
+                    if ($user->hasRole($role)) {
+                        $isAdmin = true;
+                        break;
+                    }
+                }
+                
+                if (!$isAdmin) {
+                    $isAdmin = $user->can('payments.transaction.approve');
+                }
+            }
 
             // Если нет прямого назначения, но есть права админа/владельца - ищем любое активное утверждение
             if (!$approval && $isAdmin) {
