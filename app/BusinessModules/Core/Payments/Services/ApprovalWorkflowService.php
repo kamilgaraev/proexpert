@@ -404,12 +404,40 @@ class ApprovalWorkflowService
     /**
      * Получить pending утверждения для пользователя
      */
-    public function getPendingApprovalsForUser(int $userId): Collection
+    public function getPendingApprovalsForUser(int $userId, ?int $organizationId = null): Collection
     {
-        return PaymentApproval::with(['paymentDocument', 'organization'])
-            ->where('approver_user_id', $userId)
-            ->where('status', 'pending')
-            ->orderBy('created_at', 'desc')
+        $isAdmin = false;
+        
+        if ($organizationId) {
+            $user = User::find($userId);
+            if ($user) {
+                // Проверяем роли владельца или админа в контексте организации
+                $rolesToCheck = ['organization_owner', 'admin', 'finance_admin'];
+                foreach ($rolesToCheck as $role) {
+                    if ($user->hasRole($role)) {
+                        $isAdmin = true;
+                        break;
+                    }
+                }
+                
+                if (!$isAdmin) {
+                    $isAdmin = $user->can('payments.transaction.approve');
+                }
+            }
+        }
+
+        $query = PaymentApproval::with(['paymentDocument', 'organization'])
+            ->where('status', 'pending');
+            
+        if ($isAdmin && $organizationId) {
+            // Для админа/владельца показываем все pending утверждения организации
+            $query->where('organization_id', $organizationId);
+        } else {
+            // Для обычных пользователей - только назначенные им
+            $query->where('approver_user_id', $userId);
+        }
+            
+        return $query->orderBy('created_at', 'desc')
             ->get();
     }
 

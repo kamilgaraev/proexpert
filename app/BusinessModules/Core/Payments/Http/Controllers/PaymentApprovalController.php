@@ -21,7 +21,8 @@ class PaymentApprovalController extends Controller
     {
         try {
             $userId = $request->user()->id;
-            $approvals = $this->approvalService->getPendingApprovalsForUser($userId);
+            $organizationId = $request->attributes->get('current_organization_id');
+            $approvals = $this->approvalService->getPendingApprovalsForUser($userId, $organizationId);
 
             return response()->json([
                 'success' => true,
