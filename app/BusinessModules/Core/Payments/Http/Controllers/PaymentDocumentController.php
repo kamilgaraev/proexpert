@@ -669,8 +669,19 @@ class PaymentDocumentController extends Controller
                 ->exists();
                 
             // 2. Проверка прав администратора/владельца (GOD MODE)
-            $isSuperUser = $user->hasRole(['organization_owner', 'admin', 'finance_admin']) || 
-                          $user->can('payments.transaction.approve');
+            $isSuperUser = false;
+            $rolesToCheck = ['organization_owner', 'admin', 'finance_admin'];
+            
+            foreach ($rolesToCheck as $role) {
+                if ($user->hasRole($role)) {
+                    $isSuperUser = true;
+                    break;
+                }
+            }
+            
+            if (!$isSuperUser) {
+                $isSuperUser = $user->can('payments.transaction.approve');
+            }
                           
             $canApprove = $hasApprovalRequest || $isSuperUser;
         }
