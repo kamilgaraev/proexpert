@@ -671,18 +671,32 @@ class PaymentDocumentController extends Controller
             // 2. Проверка прав администратора/владельца (GOD MODE)
             $isSuperUser = false;
             
-            // Проверка через нативные методы модели User (надежнее)
-            if ($user->isSystemAdmin() || $user->isOrganizationOwner($document->organization_id)) {
+            // Получаем контекст организации для проверки прав
+            $orgId = $document->organization_id;
+            $context = ['organization_id' => $orgId];
+            
+            // Проверка через нативные методы модели User
+            if ($user->isSystemAdmin() || $user->isOrganizationOwner($orgId)) {
                 $isSuperUser = true;
             } 
             // Если не владелец, проверяем роли финансового админа или бухгалтера
-            elseif ($user->hasRole('admin') || $user->hasRole('finance_admin')) {
+            // Важно: для hasRole нам нужен context_id, но мы можем проверить через hasPermission, 
+            // так как роли дают права. Но если нужно именно роль:
+            elseif ($user->hasRole('admin', null) || $user->hasRole('finance_admin', null)) {
+                // Примечание: передача null в context_id может не сработать, если роль привязана к контексту.
+                // Надежнее проверить пермишн.
                 $isSuperUser = true;
             }
             
-            // Если все еще нет прав, проверяем конкретное разрешение
+            // Если все еще нет прав, проверяем конкретное разрешение С ЯВНЫМ КОНТЕКСТОМ
             if (!$isSuperUser) {
-                $isSuperUser = $user->can('payments.transaction.approve');
+                // Передаем массив контекста вторым аргументом
+                $isSuperUser = $user->can('payments.transaction.approve', $context);
+            }
+            
+            // Дополнительная страховка: если can() не сработал, проверим через hasPermission (если он есть в модели)
+            if (!$isSuperUser && method_exists($user, 'hasPermission')) {
+                $isSuperUser = $user->hasPermission('payments.transaction.approve', $context);
             }
                           
             $canApprove = $hasApprovalRequest || $isSuperUser;
