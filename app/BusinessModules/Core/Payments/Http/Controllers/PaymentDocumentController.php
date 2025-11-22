@@ -671,32 +671,38 @@ class PaymentDocumentController extends Controller
             // 2. Проверка прав администратора/владельца (GOD MODE)
             $isSuperUser = false;
             
-            // Получаем контекст организации для проверки прав
             $orgId = $document->organization_id;
             $context = ['organization_id' => $orgId];
             
+            // Логирование для отладки
+            \Log::info('DEBUG_AUTH: Checking rights for doc ' . $document->id, [
+                'user_id' => $user->id,
+                'org_id' => $orgId,
+                'is_system_admin' => $user->isSystemAdmin(),
+                'is_org_owner' => $user->isOrganizationOwner($orgId),
+            ]);
+
             // Проверка через нативные методы модели User
             if ($user->isSystemAdmin() || $user->isOrganizationOwner($orgId)) {
                 $isSuperUser = true;
             } 
-            // Если не владелец, проверяем роли финансового админа или бухгалтера
-            // Важно: для hasRole нам нужен context_id, но мы можем проверить через hasPermission, 
-            // так как роли дают права. Но если нужно именно роль:
+            // Проверяем роль администратора через новую систему
             elseif ($user->hasRole('admin', null) || $user->hasRole('finance_admin', null)) {
-                // Примечание: передача null в context_id может не сработать, если роль привязана к контексту.
-                // Надежнее проверить пермишн.
                 $isSuperUser = true;
             }
             
             // Если все еще нет прав, проверяем конкретное разрешение С ЯВНЫМ КОНТЕКСТОМ
             if (!$isSuperUser) {
-                // Передаем массив контекста вторым аргументом
-                $isSuperUser = $user->can('payments.transaction.approve', $context);
-            }
-            
-            // Дополнительная страховка: если can() не сработал, проверим через hasPermission (если он есть в модели)
-            if (!$isSuperUser && method_exists($user, 'hasPermission')) {
-                $isSuperUser = $user->hasPermission('payments.transaction.approve', $context);
+                $canApprovePermission = $user->can('payments.transaction.approve', $context);
+                
+                \Log::info('DEBUG_AUTH: Checking permission payments.transaction.approve', [
+                    'result' => $canApprovePermission,
+                    'context' => $context
+                ]);
+                
+                if ($canApprovePermission) {
+                    $isSuperUser = true;
+                }
             }
                           
             $canApprove = $hasApprovalRequest || $isSuperUser;
