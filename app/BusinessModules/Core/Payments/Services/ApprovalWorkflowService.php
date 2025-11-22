@@ -177,10 +177,14 @@ class ApprovalWorkflowService
         DB::beginTransaction();
 
         try {
+            // Блокируем документ для предотвращения гонок
+            $document = PaymentDocument::where('id', $document->id)->lockForUpdate()->first();
+
             // Найти pending утверждение для данного пользователя
             $approval = PaymentApproval::where('payment_document_id', $document->id)
                 ->where('approver_user_id', $userId)
                 ->where('status', 'pending')
+                ->lockForUpdate()
                 ->first();
 
             $user = User::find($userId);
@@ -208,6 +212,7 @@ class ApprovalWorkflowService
                 $approval = PaymentApproval::where('payment_document_id', $document->id)
                     ->where('status', 'pending')
                     ->orderBy('approval_level')
+                    ->lockForUpdate()
                     ->first();
 
                 if ($approval) {
@@ -294,10 +299,14 @@ class ApprovalWorkflowService
         DB::beginTransaction();
 
         try {
+            // Блокируем документ
+            $document = PaymentDocument::where('id', $document->id)->lockForUpdate()->first();
+
             // Найти pending утверждение для данного пользователя
             $approval = PaymentApproval::where('payment_document_id', $document->id)
                 ->where('approver_user_id', $userId)
                 ->where('status', 'pending')
+                ->lockForUpdate()
                 ->first();
 
             if (!$approval) {
