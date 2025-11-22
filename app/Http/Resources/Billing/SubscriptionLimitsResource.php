@@ -29,6 +29,14 @@ class SubscriptionLimitsResource extends JsonResource
                     'is_unlimited' => $this->resource['limits']['projects']['is_unlimited'],
                     'status' => $this->getLimitStatus($this->resource['limits']['projects']),
                 ],
+                'users' => [
+                    'limit' => $this->resource['limits']['users']['limit'] ?? null,
+                    'used' => $this->resource['limits']['users']['used'] ?? 0,
+                    'remaining' => $this->resource['limits']['users']['remaining'] ?? null,
+                    'percentage_used' => $this->resource['limits']['users']['percentage_used'] ?? 0,
+                    'is_unlimited' => $this->resource['limits']['users']['is_unlimited'] ?? false,
+                    'status' => isset($this->resource['limits']['users']) ? $this->getLimitStatus($this->resource['limits']['users']) : 'normal',
+                ],
                 'storage' => [
                     'limit_gb' => $this->resource['limits']['storage']['limit_gb'],
                     'used_gb' => $this->resource['limits']['storage']['used_gb'],
