@@ -22,7 +22,7 @@ class ExportController extends Controller
      * 
      * POST /api/v1/admin/payments/export/excel
      */
-    public function excel(Request $request): Response
+    public function excel(Request $request): \Symfony\Component\HttpFoundation\Response
     {
         $validator = Validator::make($request->all(), [
             'filters' => 'sometimes|array',
@@ -73,7 +73,7 @@ class ExportController extends Controller
                 $query->where('document_date', '<=', $filters['date_to']);
             }
             
-            $documents = $query->with(['contractor', 'project'])->get();
+            $documents = $query->with(['payerContractor', 'payeeContractor', 'payerOrganization', 'payeeOrganization', 'project'])->get();
             
             $filePath = $this->exportService->exportDocumentsToExcel($documents, 'Платежные документы');
             
@@ -99,13 +99,13 @@ class ExportController extends Controller
      * 
      * POST /api/v1/admin/payments/export/pdf/{documentId}
      */
-    public function pdf(Request $request, int $documentId): Response
+    public function pdf(Request $request, int $documentId): \Symfony\Component\HttpFoundation\Response
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             
             $document = PaymentDocument::where('organization_id', $organizationId)
-                ->with(['contractor', 'project', 'counterpartyOrganization'])
+                ->with(['payerContractor', 'payeeContractor', 'payerOrganization', 'payeeOrganization', 'project'])
                 ->findOrFail($documentId);
             
             $filePath = $this->exportService->exportPaymentOrderToPdf($document);
@@ -137,7 +137,7 @@ class ExportController extends Controller
      * 
      * POST /api/v1/admin/payments/export/1c
      */
-    public function onec(Request $request): Response
+    public function onec(Request $request): \Symfony\Component\HttpFoundation\Response
     {
         $validator = Validator::make($request->all(), [
             'document_ids' => 'required|array|min:1',
@@ -158,7 +158,7 @@ class ExportController extends Controller
             
             $documents = PaymentDocument::where('organization_id', $organizationId)
                 ->whereIn('id', $documentIds)
-                ->with(['contractor', 'project', 'counterpartyOrganization'])
+                ->with(['payerContractor', 'payeeContractor', 'payerOrganization', 'payeeOrganization', 'project'])
                 ->get();
             
             if ($documents->count() !== count($documentIds)) {
