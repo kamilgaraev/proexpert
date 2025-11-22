@@ -77,7 +77,7 @@ class ExportController extends Controller
             
             $filePath = $this->exportService->exportDocumentsToExcel($documents, 'Платежные документы');
             
-            return response()->download(storage_path('app/' . $filePath), basename($filePath), [
+            return response()->download($filePath, basename($filePath), [
                 'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             ])->deleteFileAfterSend(true);
             
@@ -110,7 +110,7 @@ class ExportController extends Controller
             
             $filePath = $this->exportService->exportPaymentOrderToPdf($document);
             
-            return response()->download(storage_path('app/' . $filePath), basename($filePath), [
+            return response()->download($filePath, basename($filePath), [
                 'Content-Type' => 'application/pdf',
             ])->deleteFileAfterSend(true);
             
@@ -170,7 +170,7 @@ class ExportController extends Controller
             
             $filePath = $this->exportService->exportPaymentRegistry1C($documents);
             
-            return response()->download(storage_path('app/' . $filePath), basename($filePath), [
+            return response()->download($filePath, basename($filePath), [
                 'Content-Type' => 'text/plain',
             ])->deleteFileAfterSend(true);
             
