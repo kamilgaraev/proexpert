@@ -1186,9 +1186,9 @@ class ActReportsController extends Controller
             $files = $act->files->map(function ($file) use ($disk) {
                 $downloadUrl = null;
                 try {
-                    if ($disk->exists($file->path)) {
-                        $downloadUrl = $disk->temporaryUrl($file->path, now()->addHours(1));
-                    }
+                    // Генерируем ссылку без проверки существования файла для скорости
+                    // Проверка exists() делает синхронный запрос к S3, что замедляет список
+                    $downloadUrl = $disk->temporaryUrl($file->path, now()->addHours(1));
                 } catch (Exception $e) {
                     Log::warning('Не удалось создать временный URL для файла', [
                         'file_id' => $file->id,
