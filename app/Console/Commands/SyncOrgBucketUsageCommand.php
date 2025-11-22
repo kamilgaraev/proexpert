@@ -13,7 +13,7 @@ class SyncOrgBucketUsageCommand extends Command
 
     public function handle(OrgBucketService $bucketService): int
     {
-        $query = Organization::query()->whereNotNull('s3_bucket');
+        $query = Organization::query();
 
         if ($orgId = $this->option('org')) {
             $query->where('id', $orgId);
@@ -22,11 +22,30 @@ class SyncOrgBucketUsageCommand extends Command
         $query->chunkById(50, function ($orgs) use ($bucketService) {
             foreach ($orgs as $org) {
                 try {
-                    $used = $bucketService->calculateBucketSizeMb($org->s3_bucket);
-                    $org->forceFill([
+                    $bucket = $org->s3_bucket ?? config('filesystems.disks.s3.bucket', 'prohelper-storage');
+
+                    if (!$bucket) {
+                        $this->warn("Org {$org->id}: No bucket configured and no default found. Skipping.");
+                        continue;
+                    }
+
+                    $used = $bucketService->calculateOrganizationSizeMb($bucket, $org);
+                    
+                    $data = [
                         'storage_used_mb' => $used,
                         'storage_usage_synced_at' => now(),
-                    ])->save();
+                    ];
+
+                    // Если бакет не был прописан, пропишем его сейчас
+                    if (!$org->s3_bucket) {
+                        $data['s3_bucket'] = $bucket;
+                        if (!$org->bucket_region) {
+                             $data['bucket_region'] = config('filesystems.disks.s3.region', 'ru-central1');
+                        }
+                    }
+
+                    $org->forceFill($data)->save();
+                    
                     $this->info("Org {$org->id}: {$used} MB");
                 } catch (\Throwable $e) {
                     $this->error("Ошибка синхронизации организации {$org->id}: " . $e->getMessage());
@@ -36,4 +55,4 @@ class SyncOrgBucketUsageCommand extends Command
 
         return self::SUCCESS;
     }
-} 
+}

@@ -52,7 +52,7 @@ Schedule::command('reports:sync')
 
 // ДОБАВЛЕНО: Почасовая синхронизация размера бакетов организаций
 Schedule::command('org:sync-bucket-usage')
-    ->hourly()
+    ->everyFiveMinutes()
     ->withoutOverlapping(60)
     ->onFailure(function () {
         Log::channel('stderr')->error('Scheduled org:sync-bucket-usage command failed.');
