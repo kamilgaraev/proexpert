@@ -181,8 +181,8 @@ class MyProjectsController extends Controller
                     
                 // Следующая веха
                 $nextMilestone = $schedule->milestones()
-                    ->where('date', '>=', now())
-                    ->orderBy('date')
+                    ->where('target_date', '>=', now())
+                    ->orderBy('target_date')
                     ->first();
             }
             
@@ -232,7 +232,7 @@ class MyProjectsController extends Controller
                         'health' => $schedule ? $schedule->health_status : 'unknown',
                         'next_milestone' => $nextMilestone ? [
                             'name' => $nextMilestone->name,
-                            'date' => $nextMilestone->date->format('Y-m-d'),
+                            'date' => $nextMilestone->target_date->format('Y-m-d'),
                         ] : null,
                     ],
                     'tasks_summary' => $tasksStats,
