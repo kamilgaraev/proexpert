@@ -58,7 +58,14 @@ class InvitationService
         }
 
         // send mail
-        Mail::to($email)->send(new UserInvitationMail($email, $plainPassword, $loginUrl));
+        try {
+            Mail::to($email)->send(new UserInvitationMail($email, $plainPassword, $loginUrl));
+        } catch (\Exception $e) {
+            \Log::error('Failed to send invitation email', [
+                'email' => $email,
+                'error' => $e->getMessage(),
+            ]);
+        }
 
         return $invitation;
     }
@@ -76,8 +83,16 @@ class InvitationService
             $loginUrl = 'https://admin.prohelper.pro/login';
         }
 
-        Mail::to($invitation->email)->send(new UserInvitationMail($invitation->email, $invitation->plain_password, $loginUrl));
-        $invitation->update(['sent_at' => now()]);
+        try {
+            Mail::to($invitation->email)->send(new UserInvitationMail($invitation->email, $invitation->plain_password, $loginUrl));
+            $invitation->update(['sent_at' => now()]);
+        } catch (\Exception $e) {
+            \Log::error('Failed to resend invitation email', [
+                'email' => $invitation->email,
+                'invitation_id' => $invitation->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     public function getInvitationStats(int $organizationId): array
