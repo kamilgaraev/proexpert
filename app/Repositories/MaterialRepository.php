@@ -340,20 +340,21 @@ class MaterialRepository extends BaseRepository implements MaterialRepositoryInt
 
     public function getMaterialReceiptsHistory(int $materialId, int $perPage = 15): LengthAwarePaginator
     {
-        $query = DB::table('material_receipts as mr')
-            ->leftJoin('suppliers as s', 'mr.supplier_id', '=', 's.id')
-            ->leftJoin('projects as p', 'mr.project_id', '=', 'p.id')
-            ->leftJoin('users as u', 'mr.user_id', '=', 'u.id')
-            ->where('mr.material_id', $materialId)
-            ->orderBy('mr.receipt_date', 'desc')
+        $query = DB::table('material_usage_logs as mul')
+            ->leftJoin('suppliers as s', 'mul.supplier_id', '=', 's.id')
+            ->leftJoin('projects as p', 'mul.project_id', '=', 'p.id')
+            ->leftJoin('users as u', 'mul.user_id', '=', 'u.id')
+            ->where('mul.material_id', $materialId)
+            ->where('mul.operation_type', 'receipt')
+            ->orderBy('mul.usage_date', 'desc')
             ->select([
-                'mr.id',
-                'mr.quantity',
-                'mr.price',
-                'mr.total_amount',
-                'mr.document_number',
-                'mr.receipt_date',
-                'mr.notes',
+                'mul.id',
+                'mul.quantity',
+                'mul.unit_price as price',
+                'mul.total_price as total_amount',
+                'mul.document_number',
+                'mul.usage_date as receipt_date',
+                'mul.notes',
                 's.name as supplier_name',
                 'p.name as project_name',
                 'u.name as user_name'

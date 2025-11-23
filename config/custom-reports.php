@@ -154,15 +154,15 @@ return [
         ],
         
         'material_receipts' => [
-            'table' => 'material_receipts',
-            'model' => \App\Models\MaterialReceipt::class,
+            'table' => 'material_usage_logs',
+            'model' => \App\Models\Models\Log\MaterialUsageLog::class,
             'label' => 'Приемки материалов',
             'category' => 'materials',
             'fields' => [
                 'id' => ['type' => 'integer', 'label' => 'ID', 'filterable' => true, 'sortable' => true],
-                'receipt_date' => ['type' => 'date', 'label' => 'Дата приемки', 'filterable' => true, 'sortable' => true],
+                'usage_date' => ['type' => 'date', 'label' => 'Дата приемки', 'filterable' => true, 'sortable' => true],
                 'quantity' => ['type' => 'decimal', 'label' => 'Количество', 'aggregatable' => true, 'sortable' => true, 'format' => 'number'],
-                'price_per_unit' => ['type' => 'decimal', 'label' => 'Цена за единицу', 'aggregatable' => true, 'format' => 'currency'],
+                'unit_price' => ['type' => 'decimal', 'label' => 'Цена за единицу', 'aggregatable' => true, 'format' => 'currency'],
                 'total_price' => ['type' => 'decimal', 'label' => 'Общая стоимость', 'aggregatable' => true, 'sortable' => true, 'format' => 'currency'],
                 'project_id' => ['type' => 'integer', 'label' => 'ID проекта', 'filterable' => true],
                 'material_id' => ['type' => 'integer', 'label' => 'ID материала', 'filterable' => true],
@@ -176,6 +176,7 @@ return [
             ],
             'default_filters' => [
                 ['field' => 'organization_id', 'operator' => '=', 'value' => ':current_organization_id'],
+                ['field' => 'operation_type', 'operator' => '=', 'value' => 'receipt'],
             ],
         ],
         
