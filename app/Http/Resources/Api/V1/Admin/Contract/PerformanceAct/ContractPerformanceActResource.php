@@ -18,6 +18,9 @@ class ContractPerformanceActResource extends JsonResource
         return [
             'id' => $this->id,
             'contract_id' => $this->contract_id,
+            'contract_number' => $this->whenLoaded('contract', fn() => $this->contract->number),
+            'contract_date' => $this->whenLoaded('contract', fn() => $this->contract->date),
+            'contract_subject' => $this->whenLoaded('contract', fn() => $this->contract->subject),
             // 'contract' => new ContractMiniResource($this->whenLoaded('contract')), // Если нужно будет загружать детали контракта
             'act_document_number' => $this->act_document_number,
             'act_date' => $this->act_date, // Предполагается, что в модели кастуется в Y-m-d
