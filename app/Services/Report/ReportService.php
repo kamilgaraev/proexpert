@@ -806,8 +806,8 @@ class ReportService
                 'contractors.name as contractor_name',
                 'projects.name as project_name',
                 // Используем новую таблицу invoices
-                DB::raw('(SELECT COALESCE(SUM(paid_amount), 0) FROM invoices WHERE invoiceable_type = \'App\\\\Models\\\\Contract\' AND invoiceable_id = contracts.id AND organization_id = ' . $organizationId . ' AND deleted_at IS NULL) as paid_amount'),
-                DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE contract_id = contracts.id AND organization_id = ' . $organizationId . ' AND is_approved = true) as completed_amount')
+                DB::raw('(SELECT COALESCE(SUM(paid_amount), 0) FROM invoices WHERE invoiceable_type = \'App\\\\Models\\\\Contract\' AND invoiceable_id = contracts.id AND invoices.organization_id = ' . $organizationId . ' AND deleted_at IS NULL) as paid_amount'),
+                DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE contract_id = contracts.id AND contract_performance_acts.organization_id = ' . $organizationId . ' AND is_approved = true) as completed_amount')
             );
 
         if ($request->filled('project_id')) {
@@ -925,9 +925,9 @@ class ReportService
                 'contractors.phone',
                 DB::raw('COUNT(DISTINCT contracts.id) as contracts_count'),
                 DB::raw('COALESCE(SUM(contracts.total_amount), 0) as total_contract_amount'),
-                DB::raw('COALESCE(SUM((SELECT SUM(amount) FROM contract_performance_acts WHERE contract_id = contracts.id AND organization_id = ' . $organizationId . ' AND is_approved = true)), 0) as total_completed'),
+                DB::raw('COALESCE(SUM((SELECT SUM(amount) FROM contract_performance_acts WHERE contract_id = contracts.id AND contract_performance_acts.organization_id = ' . $organizationId . ' AND is_approved = true)), 0) as total_completed'),
                 // Используем новую таблицу invoices
-                DB::raw('COALESCE(SUM((SELECT SUM(paid_amount) FROM invoices WHERE invoiceable_type = \'App\\\\Models\\\\Contract\' AND invoiceable_id = contracts.id AND organization_id = ' . $organizationId . ' AND deleted_at IS NULL)), 0) as total_paid')
+                DB::raw('COALESCE(SUM((SELECT SUM(paid_amount) FROM invoices WHERE invoiceable_type = \'App\\\\Models\\\\Contract\' AND invoiceable_id = contracts.id AND invoices.organization_id = ' . $organizationId . ' AND deleted_at IS NULL)), 0) as total_paid')
             )
             ->leftJoin('contracts', 'contractors.id', '=', 'contracts.contractor_id')
             ->groupBy('contractors.id', 'contractors.name', 'contractors.inn', 'contractors.contact_person', 'contractors.phone');
@@ -1410,8 +1410,8 @@ class ReportService
                 'projects.budget_amount',
                 'projects.start_date',
                 'projects.end_date',
-                DB::raw('(SELECT COALESCE(SUM(total_amount), 0) FROM contracts WHERE project_id = projects.id AND organization_id = ' . $organizationId . ') as contractor_costs'),
-                DB::raw('(SELECT COALESCE(SUM(total_price), 0) FROM material_usage_logs WHERE project_id = projects.id AND organization_id = ' . $organizationId . ' AND operation_type = \'receipt\') as material_costs')
+                DB::raw('(SELECT COALESCE(SUM(total_amount), 0) FROM contracts WHERE project_id = projects.id AND contracts.organization_id = ' . $organizationId . ') as contractor_costs'),
+                DB::raw('(SELECT COALESCE(SUM(total_price), 0) FROM material_usage_logs WHERE project_id = projects.id AND material_usage_logs.organization_id = ' . $organizationId . ' AND operation_type = \'receipt\') as material_costs')
             );
 
         if ($request->filled('project_id')) {
@@ -1537,8 +1537,8 @@ class ReportService
                 'projects.end_date',
                 'projects.budget_amount',
                 'projects.created_at',
-                DB::raw('(SELECT COALESCE(SUM(total_amount), 0) FROM contracts WHERE project_id = projects.id AND organization_id = ' . $organizationId . ') as total_contract_amount'),
-                DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE contract_id IN (SELECT id FROM contracts WHERE project_id = projects.id AND organization_id = ' . $organizationId . ') AND organization_id = ' . $organizationId . ' AND is_approved = true) as completed_amount')
+                DB::raw('(SELECT COALESCE(SUM(total_amount), 0) FROM contracts WHERE project_id = projects.id AND contracts.organization_id = ' . $organizationId . ') as total_contract_amount'),
+                DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE contract_id IN (SELECT id FROM contracts WHERE project_id = projects.id AND contracts.organization_id = ' . $organizationId . ') AND contract_performance_acts.organization_id = ' . $organizationId . ' AND is_approved = true) as completed_amount')
             );
 
         if ($request->filled('project_id')) {
