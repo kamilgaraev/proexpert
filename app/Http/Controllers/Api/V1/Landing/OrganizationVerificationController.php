@@ -11,44 +11,10 @@ use App\Services\OrganizationVerificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
-
 use App\Jobs\Organization\VerifyOrganizationJob;
 
 class OrganizationVerificationController extends Controller
 {
-    // ...
-
-    public function update(UpdateOrganizationRequest $request)
-    {
-        // ... (код обновления)
-
-            $organization->update($request->validated());
-
-            // Запускаем фоновую верификацию, если данные изменились и позволяют верификацию
-            if ($organization->canBeVerified()) {
-                // Если организация не верифицирована ИЛИ данные изменились критично (можно добавить проверку dirty полей)
-                // Для простоты: если можно верифицировать и она еще не верифицирована - запускаем Job
-                if (!$organization->is_verified) {
-                    VerifyOrganizationJob::dispatch($organization);
-                    
-                    Log::info('Background verification dispatched after update', [
-                        'organization_id' => $organization->id
-                    ]);
-                }
-            }
-
-            return response()->json([
-                // ...
-                'message' => 'Данные организации обновлены. Запущена проверка данных.',
-                // ...
-            ]);
-    }
-    
-    // ...
-    
-    // В requestVerification тоже можно оставить синхронный вызов (если юзер сам нажал),
-    // либо тоже перевести на Job, но тогда нужно вернуть ответ "Проверка началась"
-}
     private OrganizationVerificationService $verificationService;
     private DaDataService $daDataService;
 

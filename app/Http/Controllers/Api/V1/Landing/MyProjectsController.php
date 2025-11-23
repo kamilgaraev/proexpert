@@ -12,6 +12,7 @@ use App\Models\ProjectSchedule;
 use App\Models\Contractor;
 use App\Enums\Schedule\TaskStatusEnum;
 use App\Models\Project;
+use App\Models\Organization;
 
 class MyProjectsController extends Controller
 {
