@@ -210,7 +210,7 @@ class LegacyPaymentAdapter
         }
 
         // Определить назначение платежа
-        $paymentPurpose = $invoice->payment_terms ?? $invoice->description ?? 'Оплата по счёту ' . $invoice->invoice_number;
+        $paymentPurpose = $invoice->payment_purpose ?? $invoice->payment_terms ?? $invoice->description ?? 'Оплата по счёту ' . $invoice->invoice_number;
 
         $document = PaymentDocument::create([
             'organization_id' => $invoice->organization_id,
@@ -297,7 +297,7 @@ class LegacyPaymentAdapter
             'paid_amount' => $invoice->paid_amount,
             'remaining_amount' => $invoice->remaining_amount,
             'status' => $this->mapInvoiceStatusToDocumentStatus($invoice->status),
-            'payment_purpose' => $invoice->payment_terms,
+            'payment_purpose' => $invoice->payment_purpose ?? $invoice->payment_terms,
             'description' => $invoice->description,
             'bank_account' => $invoice->bank_account,
             'bank_bik' => $invoice->bank_bik,
