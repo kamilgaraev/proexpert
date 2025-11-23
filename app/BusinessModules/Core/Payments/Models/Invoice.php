@@ -72,6 +72,15 @@ class Invoice extends Model
         'overdue_since' => 'datetime',
     ];
 
+    /**
+     * Значения по умолчанию
+     */
+    protected $attributes = [
+        'currency' => 'RUB',
+        'vat_rate' => 20,
+        'paid_amount' => 0,
+    ];
+
     // ==========================================
     // RELATIONSHIPS
     // ==========================================

@@ -58,8 +58,12 @@ class InvoiceService
             );
         }
 
+        // Установка значений по умолчанию если не указаны
+        $data['currency'] = $data['currency'] ?? 'RUB';
+        $data['paid_amount'] = $data['paid_amount'] ?? 0;
+        
         // Автоматический расчёт remaining_amount
-        $data['remaining_amount'] = $data['total_amount'] - ($data['paid_amount'] ?? 0);
+        $data['remaining_amount'] = $data['total_amount'] - $data['paid_amount'];
 
         // Вызываем метод создания с retry механизмом
         return $this->createInvoiceWithRetry($data);
