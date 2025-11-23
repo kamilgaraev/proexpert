@@ -48,8 +48,10 @@ class CustomUserManagementController extends Controller
             'name' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
             'password' => 'required|string|min:8|confirmed',
-            'custom_role_ids' => 'required|array|min:1',
+            'custom_role_ids' => 'nullable|array',
             'custom_role_ids.*' => 'integer|exists:organization_custom_roles,id',
+            'roles' => 'nullable|array',
+            'roles.*' => 'string',
             'send_credentials' => 'sometimes|boolean'
         ]);
         
@@ -73,11 +75,26 @@ class CustomUserManagementController extends Controller
             // Привязываем к организации
             $this->userRepository->attachToOrganization($user->id, $organizationId, false, true);
             
-            // Назначаем кастомные роли через новую систему
             $authContext = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
-            foreach ($data['custom_role_ids'] as $roleId) {
-                $role = \App\Domain\Authorization\Models\OrganizationCustomRole::findOrFail($roleId);
-                $this->customRoleService->assignRoleToUser($role, $user, $authContext);
+
+            // Назначаем кастомные роли через новую систему
+            if (!empty($data['custom_role_ids'])) {
+                foreach ($data['custom_role_ids'] as $roleId) {
+                    $role = \App\Domain\Authorization\Models\OrganizationCustomRole::findOrFail($roleId);
+                    $this->customRoleService->assignRoleToUser($role, $user, $authContext);
+                }
+            }
+
+            // Назначаем системные роли
+            if (!empty($data['roles'])) {
+                foreach ($data['roles'] as $roleSlug) {
+                    try {
+                        $this->authService->assignRole($user, $roleSlug, $authContext);
+                    } catch (\InvalidArgumentException $e) {
+                        Log::warning("Skipping invalid system role: {$roleSlug}", ['error' => $e->getMessage()]);
+                        // Можно прервать или продолжить. Продолжим.
+                    }
+                }
             }
             
             // Отправляем учетные данные, если запрошено
