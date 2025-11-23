@@ -62,6 +62,9 @@ class InvoiceService
         $data['currency'] = $data['currency'] ?? 'RUB';
         $data['paid_amount'] = $data['paid_amount'] ?? 0;
         
+        // Автоматический расчёт НДС
+        $data = $this->calculateVatAmounts($data);
+        
         // Автоматический расчёт remaining_amount
         $data['remaining_amount'] = $data['total_amount'] - $data['paid_amount'];
 
@@ -177,6 +180,7 @@ class InvoiceService
             'description' => "Счёт по акту №{$act->act_document_number}",
             'status' => InvoiceStatus::ISSUED,
             'issued_at' => now(),
+            'vat_rate' => 20, // Установим дефолтную ставку НДС
         ];
 
         // Определить контрагента
@@ -204,6 +208,7 @@ class InvoiceService
             'contractor_id' => $contract->contractor_id,
             'description' => "Счёт по договору №{$contract->number}",
             'status' => InvoiceStatus::ISSUED,
+            'vat_rate' => 20, // Установим дефолтную ставку НДС
         ], $additionalData);
 
         return $this->createInvoice($data);
@@ -244,6 +249,9 @@ class InvoiceService
         if ($invoice->status === InvoiceStatus::PAID) {
             throw new \DomainException('Нельзя изменять оплаченный счёт');
         }
+
+        // Автоматический расчет НДС если изменилась сумма или ставка НДС
+        $data = $this->calculateVatAmounts($data, $invoice);
 
         return DB::transaction(function () use ($invoice, $data) {
             $invoice->update($data);
@@ -460,6 +468,48 @@ class InvoiceService
     private function generateInvoiceNumber(int $organizationId): string
     {
         return $this->generateInvoiceNumberWithLock($organizationId);
+    }
+
+    /**
+     * Автоматический расчет сумм с НДС
+     * 
+     * Логика: total_amount содержит НДС
+     * amount_without_vat = total_amount / (1 + vat_rate / 100)
+     * vat_amount = total_amount - amount_without_vat
+     * 
+     * @param array $data Данные счета
+     * @param Invoice|null $existingInvoice Существующий счет (для обновления)
+     * @return array Данные с рассчитанными суммами НДС
+     */
+    private function calculateVatAmounts(array $data, ?Invoice $existingInvoice = null): array
+    {
+        // Если amount_without_vat и vat_amount уже указаны вручную, не пересчитываем
+        if (isset($data['amount_without_vat']) && isset($data['vat_amount'])) {
+            return $data;
+        }
+
+        // Получить сумму (из новых данных или существующего счета)
+        $totalAmount = $data['total_amount'] ?? $existingInvoice?->total_amount ?? 0;
+        
+        // Получить ставку НДС (из новых данных, существующего счета или дефолт 20%)
+        $vatRate = $data['vat_rate'] ?? $existingInvoice?->vat_rate ?? 20;
+
+        // Рассчитать суммы с НДС
+        $amountWithoutVat = $totalAmount / (1 + $vatRate / 100);
+        $vatAmount = $totalAmount - $amountWithoutVat;
+
+        // Добавить рассчитанные значения
+        $data['amount_without_vat'] = round($amountWithoutVat, 2);
+        $data['vat_amount'] = round($vatAmount, 2);
+
+        Log::debug('payments.invoice.vat_calculated', [
+            'total_amount' => $totalAmount,
+            'vat_rate' => $vatRate,
+            'amount_without_vat' => $data['amount_without_vat'],
+            'vat_amount' => $data['vat_amount'],
+        ]);
+
+        return $data;
     }
 }
 
