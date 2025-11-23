@@ -15,14 +15,25 @@ class UpdateInvoiceRequest extends FormRequest
     {
         return [
             'due_date' => 'sometimes|date',
-            'description' => 'sometimes|string|max:1000',
-            'payment_terms' => 'sometimes|string|max:500',
+            'description' => 'sometimes|nullable|string|max:1000',
+            'payment_terms' => 'sometimes|nullable|string|max:500',
+            'payment_purpose' => 'sometimes|nullable|string|max:500',
             'bank_account' => 'sometimes|nullable|string|size:20|regex:/^\d{20}$/',
             'bank_bik' => 'sometimes|nullable|string|size:9|regex:/^\d{9}$/',
             'bank_name' => 'sometimes|nullable|string|max:255',
             'bank_correspondent_account' => 'sometimes|nullable|string|size:20|regex:/^\d{20}$/',
-            'notes' => 'sometimes|string|max:1000',
+            'notes' => 'sometimes|nullable|string|max:1000',
         ];
+    }
+
+    public function prepareForValidation(): void
+    {
+        // Конвертировать пустые строки в null
+        $this->merge(
+            collect($this->all())
+                ->map(fn($value) => $value === '' ? null : $value)
+                ->toArray()
+        );
     }
 }
 
