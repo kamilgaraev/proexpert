@@ -3,6 +3,13 @@
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
+use App\Console\Commands\ReverifyOrganizationsCommand;
+
+// ... existing commands ...
+
+// Ежемесячная перепроверка организаций (например, 1 числа каждого месяца в 03:00 ночи)
+Schedule::command(ReverifyOrganizationsCommand::class)->monthlyOn(1, '03:00');
+
 use Illuminate\Support\Facades\Log;
 use App\BusinessModules\Core\Payments\Jobs\ProcessOverduePaymentsJob;
 use App\BusinessModules\Core\Payments\Jobs\SendPaymentRemindersJob;

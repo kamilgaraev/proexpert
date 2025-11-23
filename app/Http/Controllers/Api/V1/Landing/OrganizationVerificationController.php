@@ -12,8 +12,43 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 
+use App\Jobs\Organization\VerifyOrganizationJob;
+
 class OrganizationVerificationController extends Controller
 {
+    // ...
+
+    public function update(UpdateOrganizationRequest $request)
+    {
+        // ... (код обновления)
+
+            $organization->update($request->validated());
+
+            // Запускаем фоновую верификацию, если данные изменились и позволяют верификацию
+            if ($organization->canBeVerified()) {
+                // Если организация не верифицирована ИЛИ данные изменились критично (можно добавить проверку dirty полей)
+                // Для простоты: если можно верифицировать и она еще не верифицирована - запускаем Job
+                if (!$organization->is_verified) {
+                    VerifyOrganizationJob::dispatch($organization);
+                    
+                    Log::info('Background verification dispatched after update', [
+                        'organization_id' => $organization->id
+                    ]);
+                }
+            }
+
+            return response()->json([
+                // ...
+                'message' => 'Данные организации обновлены. Запущена проверка данных.',
+                // ...
+            ]);
+    }
+    
+    // ...
+    
+    // В requestVerification тоже можно оставить синхронный вызов (если юзер сам нажал),
+    // либо тоже перевести на Job, но тогда нужно вернуть ответ "Проверка началась"
+}
     private OrganizationVerificationService $verificationService;
     private DaDataService $daDataService;
 
@@ -47,6 +82,9 @@ class OrganizationVerificationController extends Controller
             }
 
             // Автоматическая верификация, если все данные заполнены и верификация не проводилась
+            // PERFORMANCE FIX: Отключаем синхронную авто-верификацию в GET запросе, так как она вызывает долгие внешние запросы (DaData)
+            // Верификация должна вызываться явно через POST /verification/request или в фоновой задаче
+            /*
             if ($organization->canBeVerified() && !$organization->is_verified) {
                 $verificationResult = $this->verificationService->requestVerification($organization);
                 
@@ -58,6 +96,7 @@ class OrganizationVerificationController extends Controller
                 // Перезагружаем организацию с обновленными данными верификации
                 $organization = $organization->fresh();
             }
+            */
 
             $recommendations = $this->verificationService->getVerificationRecommendations($organization);
             $userMessage = $this->verificationService->getUserFriendlyMessage($organization);
@@ -109,12 +148,12 @@ class OrganizationVerificationController extends Controller
 
             $organization->update($request->validated());
 
+            // Запускаем фоновую верификацию
             if ($organization->canBeVerified() && !$organization->is_verified) {
-                $verificationResult = $this->verificationService->requestVerification($organization);
+                VerifyOrganizationJob::dispatch($organization);
                 
-                Log::info('Auto-verification triggered after update', [
-                    'organization_id' => $organization->id,
-                    'verification_result' => $verificationResult
+                Log::info('Background verification dispatched after update', [
+                    'organization_id' => $organization->id
                 ]);
             }
 
@@ -215,6 +254,8 @@ class OrganizationVerificationController extends Controller
             }
 
             // Автоматическая верификация, если все данные заполнены и верификация не проводилась
+            // PERFORMANCE FIX: Отключаем синхронную авто-верификацию
+            /*
             if ($organization->canBeVerified() && !$organization->is_verified) {
                 $verificationResult = $this->verificationService->requestVerification($organization);
                 
@@ -226,6 +267,7 @@ class OrganizationVerificationController extends Controller
                 // Перезагружаем организацию с обновленными данными верификации
                 $organization = $organization->fresh();
             }
+            */
 
             $recommendations = $this->verificationService->getVerificationRecommendations($organization);
             $userMessage = $this->verificationService->getUserFriendlyMessage($organization);
