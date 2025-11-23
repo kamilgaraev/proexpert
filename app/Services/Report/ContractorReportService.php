@@ -4,6 +4,7 @@ namespace App\Services\Report;
 
 use App\Http\Requests\Api\V1\Admin\ContractorReportRequest;
 use App\Models\CompletedWork;
+use App\Models\ContractPerformanceAct;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\BusinessModules\Core\Payments\Models\Invoice;
@@ -378,24 +379,26 @@ class ContractorReportService
         $totalPaymentAmount = 0;
         $contractsCount = $contracts->count();
 
-        // Получаем выполненные работы
+        // Получаем выполненные работы (акты)
         if ($includeCompletedWorks) {
-            // Получаем ID контрактов подрядчика для правильного расчета выполненных работ
+            // Получаем ID контрактов подрядчика
             $contractIds = $contracts->pluck('id');
             
-            $completedWorksQuery = CompletedWork::whereIn('contract_id', $contractIds);
+            // Считаем сумму по актам выполненных работ (ContractPerformanceAct)
+            $actsQuery = ContractPerformanceAct::whereIn('contract_id', $contractIds)
+                ->where('is_approved', true);
 
-            // Если указана дата начала, фильтруем по ней. Иначе получаем за все время
+            // Если указана дата начала, фильтруем по ней
             if ($dateFrom) {
-                $completedWorksQuery->where('completion_date', '>=', Carbon::parse($dateFrom)->toDateString());
+                $actsQuery->where('act_date', '>=', Carbon::parse($dateFrom)->toDateString());
             }
 
-            // Если указана дата окончания, фильтруем по ней. Иначе получаем за все время
+            // Если указана дата окончания, фильтруем по ней
             if ($dateTo) {
-                $completedWorksQuery->where('completion_date', '<=', Carbon::parse($dateTo)->toDateString());
+                $actsQuery->where('act_date', '<=', Carbon::parse($dateTo)->toDateString());
             }
 
-            $totalCompletedAmount = $completedWorksQuery->sum('total_amount');
+            $totalCompletedAmount = $actsQuery->sum('amount');
         }
 
         // Получаем платежи из новой таблицы invoices
@@ -451,20 +454,21 @@ class ContractorReportService
     {
         $contract->load('agreements');
         
-        $completedWorksQuery = $contract->completedWorks();
+        // Получаем акты выполненных работ
+        $actsQuery = $contract->performanceActs()->where('is_approved', true);
 
-        // Если указана дата начала, фильтруем по ней. Иначе получаем за все время
+        // Если указана дата начала, фильтруем по ней
         if ($dateFrom) {
-            $completedWorksQuery->where('completion_date', '>=', Carbon::parse($dateFrom)->toDateString());
+            $actsQuery->where('act_date', '>=', Carbon::parse($dateFrom)->toDateString());
         }
 
-        // Если указана дата окончания, фильтруем по ней. Иначе получаем за все время
+        // Если указана дата окончания, фильтруем по ней
         if ($dateTo) {
-            $completedWorksQuery->where('completion_date', '<=', Carbon::parse($dateTo)->toDateString());
+            $actsQuery->where('act_date', '<=', Carbon::parse($dateTo)->toDateString());
         }
 
-        $completedWorks = $completedWorksQuery->with('workType')->get();
-        $completedAmount = $completedWorks->sum('total_amount');
+        $acts = $actsQuery->get();
+        $completedAmount = $acts->sum('amount');
         
         // Используем новую таблицу invoices для получения платежей
         $paymentsQuery = Invoice::where('invoiceable_type', Contract::class)
@@ -485,8 +489,8 @@ class ContractorReportService
 
         return [
             'contract_id' => $contract->id,
-            'contract_number' => $contract->contract_number,
-            'contract_date' => $contract->contract_date?->format('Y-m-d'),
+            'contract_number' => $contract->number,
+            'contract_date' => $contract->date?->format('Y-m-d'),
             'status' => $contract->status,
             'total_amount' => round($effectiveTotalAmount, 2),
             'completed_amount' => round($completedAmount, 2),
@@ -494,15 +498,15 @@ class ContractorReportService
             'remaining_amount' => round($effectiveTotalAmount - $paymentAmount, 2),
             'completion_percentage' => $effectiveTotalAmount > 0 ? round(($completedAmount / $effectiveTotalAmount) * 100, 2) : 0,
             'payment_percentage' => $effectiveTotalAmount > 0 ? round(($paymentAmount / $effectiveTotalAmount) * 100, 2) : 0,
-            'completed_works' => $completedWorks->map(function ($work) {
+            'performance_acts' => $acts->map(function ($act) {
                 return [
-                    'id' => $work->id,
-                    'work_type' => $work->workType?->name,
-                    'quantity' => $work->quantity,
-                    'price' => $work->price,
-                    'total_amount' => $work->total_amount,
-                    'completion_date' => $work->completion_date?->format('Y-m-d'),
-                    'notes' => $work->notes,
+                    'id' => $act->id,
+                    'act_document_number' => $act->act_document_number,
+                    'act_date' => $act->act_date?->format('Y-m-d'),
+                    'amount' => $act->amount,
+                    'description' => $act->description,
+                    'is_approved' => $act->is_approved,
+                    'approval_date' => $act->approval_date?->format('Y-m-d'),
                 ];
             })->toArray(),
             'payments' => $payments->map(function ($payment) {
