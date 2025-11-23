@@ -209,6 +209,9 @@ class LegacyPaymentAdapter
             $amountWithoutVat = (float) $invoice->amount_without_vat;
         }
 
+        // Определить назначение платежа
+        $paymentPurpose = $invoice->payment_terms ?? $invoice->description ?? 'Оплата по счёту ' . $invoice->invoice_number;
+
         $document = PaymentDocument::create([
             'organization_id' => $invoice->organization_id,
             'project_id' => $invoice->project_id,
@@ -231,7 +234,12 @@ class LegacyPaymentAdapter
             'source_id' => $invoice->id,
             'due_date' => $invoice->due_date,
             'description' => $invoice->description,
-            'payment_purpose' => $invoice->payment_terms,
+            'payment_purpose' => $paymentPurpose,
+            // Банковские реквизиты
+            'bank_account' => $invoice->bank_account,
+            'bank_bik' => $invoice->bank_bik,
+            'bank_name' => $invoice->bank_name,
+            'bank_correspondent_account' => $invoice->bank_correspondent_account,
             'metadata' => array_merge($invoice->metadata ?? [], [
                 'created_from_invoice' => true,
                 'invoice_type' => $invoice->invoice_type->value,
@@ -350,6 +358,12 @@ class LegacyPaymentAdapter
             if ($document->status === PaymentDocumentStatus::PENDING_APPROVAL) {
                 DB::commit();
                 return $document;
+            }
+
+            // Синхронизировать данные из Invoice перед отправкой на утверждение
+            // (на случай если документ был создан ранее, но Invoice был обновлен)
+            if ($document->exists && $document->status === PaymentDocumentStatus::DRAFT) {
+                $document = $this->syncInvoiceToPaymentDocument($invoice);
             }
 
             // Отправить на утверждение
