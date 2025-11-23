@@ -8,6 +8,7 @@ use App\Models\ContractPerformanceAct;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\BusinessModules\Core\Payments\Models\Invoice;
+use App\BusinessModules\Core\Payments\Enums\InvoiceStatus;
 // ContractPayment больше не используется - платежи теперь в модуле Payments (invoices)
 use App\Models\Project;
 use App\Models\ReportFile;
@@ -113,6 +114,11 @@ class ContractorReportService
                 $includeMaterials
             );
 
+            // Пропускаем подрядчиков без контрактов в этом проекте (после применения фильтров)
+            if ($contractorData['contracts_count'] === 0) {
+                continue;
+            }
+
             $reportData[] = $contractorData;
 
             // Обновляем общую сводку
@@ -121,6 +127,9 @@ class ContractorReportService
             $totalSummary['total_payment_amount'] += $contractorData['total_payment_amount'];
             $totalSummary['total_remaining_amount'] += $contractorData['remaining_amount'];
         }
+
+        // Обновляем количество подрядчиков после фильтрации
+        $totalSummary['total_contractors'] = count($reportData);
 
         // Сортировка
         $reportData = $this->sortContractorData($reportData, $sortBy, $sortDirection);
@@ -407,6 +416,8 @@ class ContractorReportService
             
             $paymentsQuery = Invoice::where('invoiceable_type', Contract::class)
                 ->whereIn('invoiceable_id', $contractIds)
+                ->where('organization_id', $organizationId)
+                ->whereIn('status', [InvoiceStatus::PAID, InvoiceStatus::PARTIALLY_PAID])
                 ->whereNotNull('paid_at');
 
             // Если указана дата начала, фильтруем по ней. Иначе получаем за все время
@@ -473,6 +484,8 @@ class ContractorReportService
         // Используем новую таблицу invoices для получения платежей
         $paymentsQuery = Invoice::where('invoiceable_type', Contract::class)
             ->where('invoiceable_id', $contract->id)
+            ->where('organization_id', $contract->organization_id)
+            ->whereIn('status', [InvoiceStatus::PAID, InvoiceStatus::PARTIALLY_PAID])
             ->whereNotNull('paid_at');
 
         if ($dateFrom) {
