@@ -995,14 +995,8 @@ class ContractorReportService
      */
     private function calculateSingleContractAmount(Contract $contract): float
     {
-        $baseAmount = (float) ($contract->total_amount ?? 0);
-        $agreementsDelta = 0;
-        
-        if ($contract->relationLoaded('agreements')) {
-            $agreementsDelta = $contract->agreements->sum('change_amount') ?? 0;
-        }
-        
-        return $baseAmount + $agreementsDelta;
+        // Поле total_amount в модели Contract уже содержит актуальную сумму с учетом доп. соглашений
+        return (float) ($contract->total_amount ?? 0);
     }
 
 }
