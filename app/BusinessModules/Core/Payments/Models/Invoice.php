@@ -43,6 +43,7 @@ class Invoice extends Model
         'status',
         'description',
         'payment_terms',
+        'payment_purpose',
         'bank_account',
         'bank_bik',
         'bank_name',
