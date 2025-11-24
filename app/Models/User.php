@@ -58,8 +58,9 @@ class User extends Authenticatable implements JWTSubject
     ];
 
     // Добавляем avatar_url к сериализации модели
+    // ОТКЛЮЧЕНО для производительности - добавляется только когда нужно
     protected $appends = [
-        'avatar_url'
+        // 'avatar_url' // Закомментировано - генерируется через кеш в getAvatarUrlAttribute
     ];
 
     /**
@@ -397,17 +398,26 @@ class User extends Authenticatable implements JWTSubject
     }
 
     /**
-     * Аксессор для получения URL аватара.
+     * Аксессор для получения URL аватара с кешированием.
+     * 
+     * ОПТИМИЗИРОВАНО: Кеш на 55 минут (подписанная ссылка живет 60 минут)
      *
      * @return string|null
      */
     public function getAvatarUrlAttribute(): ?string
     {
-        // Предполагаем, что дефолтный аватар находится в public/images/default-avatar.png
-        // или вы настроите свой путь к дефолтному изображению.
-        // Если аватары загружаются с видимостью 'public', то $temporary = false (по умолчанию)
-        // Для приватного бакета генерируем временную ссылку (60 минут)
-        return $this->getImageUrl('avatar_path', asset('images/default-avatar.png'), true, 60);
+        // Если нет аватара - сразу возвращаем дефолтный
+        if (!$this->avatar_path) {
+            return asset('images/default-avatar.png');
+        }
+
+        // Кеш на 55 минут (подписанная ссылка S3 живет 60 минут)
+        $cacheKey = "user_avatar_url_{$this->id}_{$this->updated_at?->timestamp}";
+        
+        return cache()->remember($cacheKey, 3300, function() {
+            // Генерируем временную ссылку (60 минут)
+            return $this->getImageUrl('avatar_path', asset('images/default-avatar.png'), true, 60);
+        });
     }
 
     /**

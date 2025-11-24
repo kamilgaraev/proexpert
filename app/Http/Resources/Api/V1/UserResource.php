@@ -20,7 +20,7 @@ class UserResource extends JsonResource
             'email' => $this->email,
             'phone' => $this->phone,
             'position' => $this->position,
-            'avatar_url' => $this->avatar_url, // Это поле добавляется аксессором и $appends
+            'avatar_url' => $this->avatar_url, // Кешированный accessor (55 минут)
             'is_active' => $this->is_active,
             // 'user_type' => $this->user_type, // Удалена в новой системе авторизации
             'current_organization_id' => $this->current_organization_id,
