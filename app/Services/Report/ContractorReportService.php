@@ -8,8 +8,10 @@ use App\Models\ContractPerformanceAct;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\BusinessModules\Core\Payments\Models\Invoice;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Enums\InvoiceStatus;
-// ContractPayment больше не используется - платежи теперь в модуле Payments (invoices)
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+// ContractPayment больше не используется - платежи теперь в модуле Payments (payment_documents)
 use App\Models\Project;
 use App\Models\ReportFile;
 use App\Models\Organization;
@@ -410,14 +412,14 @@ class ContractorReportService
             $totalCompletedAmount = $actsQuery->sum('amount');
         }
 
-        // Получаем платежи из новой таблицы invoices
+        // Получаем платежи из таблицы payment_documents
         if ($includePayments) {
             $contractIds = $contracts->pluck('id');
             
-            $paymentsQuery = Invoice::where('invoiceable_type', Contract::class)
-                ->whereIn('invoiceable_id', $contractIds)
+            $paymentsQuery = PaymentDocument::where('source_type', Contract::class)
+                ->whereIn('source_id', $contractIds)
                 ->where('organization_id', $organizationId)
-                ->whereIn('status', [InvoiceStatus::PAID, InvoiceStatus::PARTIALLY_PAID])
+                ->whereIn('status', [PaymentDocumentStatus::PAID, PaymentDocumentStatus::PARTIALLY_PAID])
                 ->whereNotNull('paid_at');
 
             // Если указана дата начала, фильтруем по ней. Иначе получаем за все время
@@ -481,11 +483,11 @@ class ContractorReportService
         $acts = $actsQuery->get();
         $completedAmount = $acts->sum('amount');
         
-        // Используем новую таблицу invoices для получения платежей
-        $paymentsQuery = Invoice::where('invoiceable_type', Contract::class)
-            ->where('invoiceable_id', $contract->id)
+        // Используем таблицу payment_documents для получения платежей
+        $paymentsQuery = PaymentDocument::where('source_type', Contract::class)
+            ->where('source_id', $contract->id)
             ->where('organization_id', $contract->organization_id)
-            ->whereIn('status', [InvoiceStatus::PAID, InvoiceStatus::PARTIALLY_PAID])
+            ->whereIn('status', [PaymentDocumentStatus::PAID, PaymentDocumentStatus::PARTIALLY_PAID])
             ->whereNotNull('paid_at');
 
         if ($dateFrom) {
@@ -525,9 +527,12 @@ class ContractorReportService
             'payments' => $payments->map(function ($payment) {
                 return [
                     'id' => $payment->id,
+                    'document_number' => $payment->document_number,
                     'amount' => $payment->paid_amount,
                     'payment_date' => $payment->paid_at?->format('Y-m-d'),
-                    'payment_type' => $payment->invoice_type instanceof \BackedEnum ? $payment->invoice_type->value : $payment->invoice_type,
+                    'document_type' => $payment->document_type instanceof \BackedEnum ? $payment->document_type->value : $payment->document_type,
+                    'status' => $payment->status instanceof \BackedEnum ? $payment->status->value : $payment->status,
+                    'payment_purpose' => $payment->payment_purpose,
                     'notes' => $payment->notes,
                 ];
             })->toArray(),
