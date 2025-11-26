@@ -32,42 +32,13 @@ class ProjectOrganizationController extends Controller
     }
 
     /**
-     * Получить проект и проверить доступ к нему
-     */
-    private function getProjectWithAccess(Request $request, int $projectId): array
-    {
-        $project = Project::findOrFail($projectId);
-        $user = $request->user();
-        
-        if (!$user) {
-            throw new \RuntimeException('Unauthorized', 401);
-        }
-
-        $currentOrg = Organization::find($user->current_organization_id);
-        if (!$currentOrg) {
-            throw new \RuntimeException('Organization not found', 404);
-        }
-
-        if (!$this->projectContextService->canOrganizationAccessProject($project, $currentOrg)) {
-            throw new \RuntimeException('Access denied', 403);
-        }
-
-        $projectContext = $this->projectContextService->getContext($project, $currentOrg);
-
-        return [$project, $currentOrg, $projectContext];
-    }
-
-    /**
      * Получить список участников проекта
      * 
      * GET /api/v1/admin/projects/{project}/organizations
      */
-    public function index(Request $request): JsonResponse
+    public function index(Request $request, Project $project): JsonResponse
     {
         try {
-            $projectId = (int) $request->route('project');
-            $project = Project::findOrFail($projectId);
-            
             $user = $request->user();
             if (!$user) {
                 return response()->json([
@@ -119,7 +90,7 @@ class ProjectOrganizationController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to get project participants', [
-                'project_id' => $request->route('project'),
+                'project_id' => $project->id ?? null,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
@@ -136,12 +107,9 @@ class ProjectOrganizationController extends Controller
      * 
      * POST /api/v1/admin/projects/{project}/organizations
      */
-    public function store(Request $request): JsonResponse
+    public function store(Request $request, Project $project): JsonResponse
     {
         try {
-            $projectId = (int) $request->route('project');
-            $project = Project::findOrFail($projectId);
-            
             $user = $request->user();
             if (!$user) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
@@ -182,7 +150,7 @@ class ProjectOrganizationController extends Controller
             $role = ProjectOrganizationRole::from($request->input('role'));
             
             $this->projectService->addOrganizationToProject(
-                $projectId,
+                $project->id,
                 $organizationId,
                 $role,
                 $request
@@ -194,7 +162,7 @@ class ProjectOrganizationController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to add participant to project', [
-                'project_id' => $request->route('project'),
+                'project_id' => $project->id ?? null,
                 'organization_id' => $request->input('organization_id'),
                 'error' => $e->getMessage(),
             ]);
@@ -209,12 +177,11 @@ class ProjectOrganizationController extends Controller
     /**
      * Получить информацию об участнике
      * 
-     * GET /api/v1/admin/projects/{id}/organizations/{organization}
+     * GET /api/v1/admin/projects/{project}/organizations/{organization}
      */
-    public function show(Request $request, int $id, int $organization): JsonResponse
+    public function show(Request $request, Project $project, Organization $organization): JsonResponse
     {
         try {
-            $projectModel = Project::findOrFail($id);
             $user = $request->user();
             
             if (!$user) {
@@ -226,13 +193,11 @@ class ProjectOrganizationController extends Controller
                 return response()->json(['success' => false, 'message' => 'Organization not found'], 404);
             }
 
-            if (!$this->projectContextService->canOrganizationAccessProject($projectModel, $currentOrg)) {
+            if (!$this->projectContextService->canOrganizationAccessProject($project, $currentOrg)) {
                 return response()->json(['success' => false, 'message' => 'Access denied'], 403);
             }
-
-            $org = Organization::findOrFail($organization);
             
-            $role = $this->projectContextService->getOrganizationRole($projectModel, $org);
+            $role = $this->projectContextService->getOrganizationRole($project, $organization);
             
             if (!$role) {
                 return response()->json([
@@ -241,17 +206,17 @@ class ProjectOrganizationController extends Controller
                 ], 404);
             }
             
-            $profile = $this->organizationProfileService->getProfile($org);
-            $pivot = $projectModel->getOrganizationPivot($organization);
+            $profile = $this->organizationProfileService->getProfile($organization);
+            $pivot = $project->getOrganizationPivot($organization->id);
             
             return response()->json([
                 'success' => true,
                 'data' => [
                     'organization' => [
-                        'id' => $org->id,
-                        'name' => $org->name,
-                        'inn' => $org->inn,
-                        'address' => $org->address,
+                        'id' => $organization->id,
+                        'name' => $organization->name,
+                        'inn' => $organization->inn,
+                        'address' => $organization->address,
                     ],
                     'role' => [
                         'value' => $role->value,
@@ -269,8 +234,8 @@ class ProjectOrganizationController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to get participant details', [
-                'project_id' => $id,
-                'organization_id' => $organization,
+                'project_id' => $project->id ?? null,
+                'organization_id' => $organization->id ?? null,
                 'error' => $e->getMessage(),
             ]);
             
@@ -284,12 +249,26 @@ class ProjectOrganizationController extends Controller
     /**
      * Обновить роль участника
      * 
-     * PATCH /api/v1/admin/projects/{id}/organizations/{organization}/role
+     * PATCH /api/v1/admin/projects/{project}/organizations/{organization}/role
      */
-    public function updateRole(Request $request, int $id, int $organization): JsonResponse
+    public function updateRole(Request $request, Project $project, Organization $organization): JsonResponse
     {
         try {
-            [$project, $currentOrg, $projectContext] = $this->getProjectWithAccess($request, $id);
+            $user = $request->user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            }
+
+            $currentOrg = Organization::find($user->current_organization_id);
+            if (!$currentOrg) {
+                return response()->json(['success' => false, 'message' => 'Organization not found'], 404);
+            }
+
+            if (!$this->projectContextService->canOrganizationAccessProject($project, $currentOrg)) {
+                return response()->json(['success' => false, 'message' => 'Access denied'], 403);
+            }
+
+            $projectContext = $this->projectContextService->getContext($project, $currentOrg);
             
             if (!$projectContext->roleConfig->canInviteParticipants) {
                 return response()->json([
@@ -313,8 +292,8 @@ class ProjectOrganizationController extends Controller
             $role = ProjectOrganizationRole::from($request->input('role'));
             
             $this->projectService->updateOrganizationRole(
-                $id,
-                $organization,
+                $project->id,
+                $organization->id,
                 $role,
                 $request
             );
@@ -327,8 +306,8 @@ class ProjectOrganizationController extends Controller
             return response()->json(['success' => false, 'message' => $e->getMessage()], (int)$e->getCode() ?: 500);
         } catch (\Exception $e) {
             Log::error('Failed to update participant role', [
-                'project_id' => $id,
-                'organization_id' => $organization,
+                'project_id' => $project->id ?? null,
+                'organization_id' => $organization->id ?? null,
                 'error' => $e->getMessage(),
             ]);
             
@@ -342,12 +321,26 @@ class ProjectOrganizationController extends Controller
     /**
      * Удалить участника из проекта
      * 
-     * DELETE /api/v1/admin/projects/{id}/organizations/{organization}
+     * DELETE /api/v1/admin/projects/{project}/organizations/{organization}
      */
-    public function destroy(Request $request, int $id, int $organization): JsonResponse
+    public function destroy(Request $request, Project $project, Organization $organization): JsonResponse
     {
         try {
-            [$project, $currentOrg, $projectContext] = $this->getProjectWithAccess($request, $id);
+            $user = $request->user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            }
+
+            $currentOrg = Organization::find($user->current_organization_id);
+            if (!$currentOrg) {
+                return response()->json(['success' => false, 'message' => 'Organization not found'], 404);
+            }
+
+            if (!$this->projectContextService->canOrganizationAccessProject($project, $currentOrg)) {
+                return response()->json(['success' => false, 'message' => 'Access denied'], 403);
+            }
+
+            $projectContext = $this->projectContextService->getContext($project, $currentOrg);
             
             if (!$projectContext->roleConfig->canInviteParticipants) {
                 return response()->json([
@@ -357,8 +350,8 @@ class ProjectOrganizationController extends Controller
             }
             
             $this->projectService->removeOrganizationFromProject(
-                $id,
-                $organization,
+                $project->id,
+                $organization->id,
                 $request
             );
             
@@ -370,8 +363,8 @@ class ProjectOrganizationController extends Controller
             return response()->json(['success' => false, 'message' => $e->getMessage()], (int)$e->getCode() ?: 500);
         } catch (\Exception $e) {
             Log::error('Failed to remove participant from project', [
-                'project_id' => $id,
-                'organization_id' => $organization,
+                'project_id' => $project->id ?? null,
+                'organization_id' => $organization->id ?? null,
                 'error' => $e->getMessage(),
             ]);
             
@@ -385,12 +378,26 @@ class ProjectOrganizationController extends Controller
     /**
      * Активировать участника
      * 
-     * POST /api/v1/admin/projects/{id}/organizations/{organization}/activate
+     * POST /api/v1/admin/projects/{project}/organizations/{organization}/activate
      */
-    public function activate(Request $request, int $id, int $organization): JsonResponse
+    public function activate(Request $request, Project $project, Organization $organization): JsonResponse
     {
         try {
-            [$projectModel, $currentOrg, $projectContext] = $this->getProjectWithAccess($request, $id);
+            $user = $request->user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            }
+
+            $currentOrg = Organization::find($user->current_organization_id);
+            if (!$currentOrg) {
+                return response()->json(['success' => false, 'message' => 'Organization not found'], 404);
+            }
+
+            if (!$this->projectContextService->canOrganizationAccessProject($project, $currentOrg)) {
+                return response()->json(['success' => false, 'message' => 'Access denied'], 403);
+            }
+
+            $projectContext = $this->projectContextService->getContext($project, $currentOrg);
             
             if (!$projectContext->roleConfig->canInviteParticipants) {
                 return response()->json([
@@ -399,7 +406,7 @@ class ProjectOrganizationController extends Controller
                 ], 403);
             }
             
-            $projectModel->organizations()->updateExistingPivot($organization, [
+            $project->organizations()->updateExistingPivot($organization->id, [
                 'is_active' => true,
                 'updated_at' => now(),
             ]);
@@ -412,8 +419,8 @@ class ProjectOrganizationController extends Controller
             return response()->json(['success' => false, 'message' => $e->getMessage()], (int)$e->getCode() ?: 500);
         } catch (\Exception $e) {
             Log::error('Failed to activate participant', [
-                'project_id' => $id,
-                'organization_id' => $organization,
+                'project_id' => $project->id ?? null,
+                'organization_id' => $organization->id ?? null,
                 'error' => $e->getMessage(),
             ]);
             
@@ -427,12 +434,26 @@ class ProjectOrganizationController extends Controller
     /**
      * Деактивировать участника
      * 
-     * POST /api/v1/admin/projects/{id}/organizations/{organization}/deactivate
+     * POST /api/v1/admin/projects/{project}/organizations/{organization}/deactivate
      */
-    public function deactivate(Request $request, int $id, int $organization): JsonResponse
+    public function deactivate(Request $request, Project $project, Organization $organization): JsonResponse
     {
         try {
-            [$projectModel, $currentOrg, $projectContext] = $this->getProjectWithAccess($request, $id);
+            $user = $request->user();
+            if (!$user) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized'], 401);
+            }
+
+            $currentOrg = Organization::find($user->current_organization_id);
+            if (!$currentOrg) {
+                return response()->json(['success' => false, 'message' => 'Organization not found'], 404);
+            }
+
+            if (!$this->projectContextService->canOrganizationAccessProject($project, $currentOrg)) {
+                return response()->json(['success' => false, 'message' => 'Access denied'], 403);
+            }
+
+            $projectContext = $this->projectContextService->getContext($project, $currentOrg);
             
             if (!$projectContext->roleConfig->canInviteParticipants) {
                 return response()->json([
@@ -441,7 +462,7 @@ class ProjectOrganizationController extends Controller
                 ], 403);
             }
             
-            $projectModel->organizations()->updateExistingPivot($organization, [
+            $project->organizations()->updateExistingPivot($organization->id, [
                 'is_active' => false,
                 'updated_at' => now(),
             ]);
@@ -454,8 +475,8 @@ class ProjectOrganizationController extends Controller
             return response()->json(['success' => false, 'message' => $e->getMessage()], (int)$e->getCode() ?: 500);
         } catch (\Exception $e) {
             Log::error('Failed to deactivate participant', [
-                'project_id' => $id,
-                'organization_id' => $organization,
+                'project_id' => $project->id ?? null,
+                'organization_id' => $organization->id ?? null,
                 'error' => $e->getMessage(),
             ]);
             
@@ -469,12 +490,11 @@ class ProjectOrganizationController extends Controller
     /**
      * Получить список доступных организаций для добавления в проект
      * 
-     * GET /api/v1/admin/projects/{id}/available-organizations
+     * GET /api/v1/admin/projects/{project}/available-organizations
      */
-    public function available(Request $request, int $id): JsonResponse
+    public function available(Request $request, Project $project): JsonResponse
     {
         try {
-            $project = Project::findOrFail($id);
             $user = $request->user();
             
             if (!$user) {
@@ -529,7 +549,7 @@ class ProjectOrganizationController extends Controller
             ]);
         } catch (\Exception $e) {
             Log::error('Failed to get available organizations', [
-                'project_id' => $id,
+                'project_id' => $project->id ?? null,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);

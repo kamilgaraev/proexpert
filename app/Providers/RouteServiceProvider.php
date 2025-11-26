@@ -29,6 +29,11 @@ class RouteServiceProvider extends ServiceProvider
             return \App\Models\ContractPerformanceAct::findOrFail($value);
         });
         
+        // Route Model Binding для project - только находим, проверку доступа делаем в контроллере
+        Route::bind('project', function ($value) {
+            return \App\Models\Project::findOrFail($value);
+        });
+        
         // Route Model Binding для estimate, section, item УДАЛЕНЫ
         // Контроллеры теперь сами загружают модели и проверяют организацию
         
@@ -165,25 +170,25 @@ class RouteServiceProvider extends ServiceProvider
      */
     protected function configureRateLimiting()
     {
-        // Основной API rate limiter - увеличен для аутентифицированных пользователей
+        // Основной API rate limiter - ВРЕМЕННО увеличен для нагрузочного тестирования
         RateLimiter::for('api', function (Request $request) {
-            // Для аутентифицированных пользователей - 180 запросов в минуту
+            // ДЛЯ ТЕСТА: 100K запросов в минуту
             if ($request->user()) {
-                return Limit::perMinute(180)->by($request->user()->id);
+                return Limit::perMinute(100000)->by($request->user()->id);
             }
             
-            // Для неаутентифицированных (по IP) - 60 запросов в минуту
-            return Limit::perMinute(60)->by($request->ip());
+            // Для неаутентифицированных (по IP) - 50K запросов в минуту
+            return Limit::perMinute(50000)->by($request->ip());
         });
         
-        // Dashboard rate limiter - более щадящий, т.к. делает много параллельных запросов
+        // Dashboard rate limiter - ВРЕМЕННО увеличен для нагрузочного тестирования
         RateLimiter::for('dashboard', function (Request $request) {
-            // Dashboard делает ~12 запросов при загрузке, разрешаем 300 в минуту
+            // ДЛЯ ТЕСТА: 100K запросов в минуту
             if ($request->user()) {
-                return Limit::perMinute(300)->by($request->user()->id);
+                return Limit::perMinute(100000)->by($request->user()->id);
             }
             
-            return Limit::perMinute(100)->by($request->ip());
+            return Limit::perMinute(50000)->by($request->ip());
         });
         
         // Публичные эндпоинты (более строгий лимит)

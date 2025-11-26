@@ -25,17 +25,15 @@ class ProjectChildWorksController extends Controller
      *
      * @param int $projectId
      */
-    public function index(Request $request, int $projectId): JsonResponse
+    public function index(Request $request, Project $project): JsonResponse
     {
         Log::info('[ProjectChildWorksController] incoming request', [
-            'project_id' => $projectId,
+            'project_id' => $project->id,
             'query' => $request->query->all(),
             'user_id' => $request->user()?->id,
         ]);
 
         try {
-            $project = Project::findOrFail($projectId);
-
             $user = $request->user();
             if (!$user) {
                 return response()->json([
@@ -58,7 +56,7 @@ class ProjectChildWorksController extends Controller
             if (!$this->projectContextService->canOrganizationAccessProject($project, $organization)) {
                 Log::warning('[ProjectChildWorksController] Access denied', [
                     'user_id' => $user->id,
-                    'project_id' => $projectId,
+                    'project_id' => $project->id,
                     'project_org_id' => $project->organization_id,
                     'user_current_org_id' => $currentOrgId,
                     'reason' => 'Organization is not project owner or participant',
