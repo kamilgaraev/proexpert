@@ -55,7 +55,8 @@
     "basic-warehouse": ["*"],
     "advanced-warehouse": ["*"],
     "budget-estimates": ["*"],
-    "payments": ["*"]
+    "payments": ["*"],
+    "site-requests": ["*"]
   },
   
   "interface_access": ["lk", "admin", "mobile"],

@@ -53,7 +53,22 @@ class InterfaceMiddleware
         $context = $this->resolveContext($request, $contextType, $contextParam);
         
         // Проверяем доступ к интерфейсу
-        if (!$this->authService->canAccessInterface($user, $interface, $context)) {
+        $hasAccess = $this->authService->canAccessInterface($user, $interface, $context);
+        
+        if (!$hasAccess) {
+            // Диагностика для отладки проблем с доступом к интерфейсам
+            \Log::warning('interface.access.denied', [
+                'user_id' => $user->id,
+                'user_email' => $user->email,
+                'interface' => $interface,
+                'context_type' => $contextType,
+                'context_id' => $context?->id,
+                'context_resource_id' => $context?->resource_id,
+                'current_organization_id' => $request->attributes->get('current_organization_id'),
+                'user_current_org' => $user->current_organization_id,
+                'uri' => $request->getRequestUri(),
+            ]);
+            
             return response()->json([
                 'error' => 'Доступ к интерфейсу запрещен',
                 'interface' => $interface,
@@ -72,7 +87,21 @@ class InterfaceMiddleware
      */
     protected function resolveContext(Request $request, ?string $contextType, ?string $contextParam): ?AuthorizationContext
     {
+        // Если contextType не указан явно, пробуем автоматически определить контекст
+        // из ранее установленных атрибутов (middleware organization.context)
         if (!$contextType) {
+            // Пробуем получить organization_id из атрибутов запроса
+            $organizationId = $request->attributes->get('current_organization_id');
+            if ($organizationId) {
+                return AuthorizationContext::getOrganizationContext($organizationId);
+            }
+            
+            // Fallback на current_organization_id пользователя
+            $user = $request->user();
+            if ($user && $user->current_organization_id) {
+                return AuthorizationContext::getOrganizationContext($user->current_organization_id);
+            }
+            
             return null;
         }
 
@@ -82,6 +111,10 @@ class InterfaceMiddleware
                 
             case 'organization':
                 $organizationId = $this->extractParam($request, $contextParam ?? 'organization_id');
+                if (!$organizationId) {
+                    // Пробуем получить из атрибутов запроса
+                    $organizationId = $request->attributes->get('current_organization_id');
+                }
                 if (!$organizationId && $request->user()) {
                     $organizationId = $request->user()->current_organization_id;
                 }

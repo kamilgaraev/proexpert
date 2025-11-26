@@ -36,7 +36,21 @@
     "reports": ["reports.view", "reports.export"],
     "personnel": ["personnel.view", "personnel.manage"],
     "time-tracking": ["time-tracking.view", "time-tracking.manage"],
-    "site-requests": ["site-requests.view", "site-requests.edit"],
+    "site-requests": [
+      "site_requests.view",
+      "site_requests.create",
+      "site_requests.edit",
+      "site_requests.delete",
+      "site_requests.approve",
+      "site_requests.assign",
+      "site_requests.change_status",
+      "site_requests.files.upload",
+      "site_requests.files.delete",
+      "site_requests.statistics",
+      "site_requests.export",
+      "site_requests.templates.manage",
+      "site_requests.calendar.view"
+    ],
     "project-management": [
       "projects.view", "projects.create", "projects.edit", "projects.delete", 
       "projects.analytics", "projects.foremen.assign", "projects.foremen.detach",

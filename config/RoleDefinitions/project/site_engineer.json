@@ -85,6 +85,14 @@
       "budget-estimates.view",
       "budget-estimates.create",
       "budget-estimates.edit"
+    ],
+    "site-requests": [
+      "site_requests.view",
+      "site_requests.create",
+      "site_requests.edit",
+      "site_requests.files.upload",
+      "site_requests.templates.manage",
+      "site_requests.calendar.view"
     ]
   },
   

@@ -1,0 +1,100 @@
+{
+  "name": "Заявки с объекта",
+  "slug": "site-requests",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "workflow",
+  "description": "Система управления заявками с строительных объектов: материалы, персонал, техника",
+
+  "class_name": "App\\BusinessModules\\Features\\SiteRequests\\SiteRequestsModule",
+  "service_provider": "App\\BusinessModules\\Features\\SiteRequests\\SiteRequestsServiceProvider",
+
+  "pricing": {
+    "base_price": 2490,
+    "currency": "RUB",
+    "included_in_plans": ["business", "profi", "enterprise"],
+    "duration_days": 30,
+    "trial_days": 7
+  },
+
+  "permissions": [
+    "site_requests.view",
+    "site_requests.create",
+    "site_requests.edit",
+    "site_requests.delete",
+    "site_requests.approve",
+    "site_requests.assign",
+    "site_requests.change_status",
+    "site_requests.files.upload",
+    "site_requests.files.delete",
+    "site_requests.statistics",
+    "site_requests.export",
+    "site_requests.templates.manage",
+    "site_requests.calendar.view"
+  ],
+
+  "features": [
+    "Управление заявками с объектов",
+    "Заявки на материалы (с привязкой к каталогу)",
+    "Заявки на персонал (с расчетом стоимости)",
+    "Заявки на технику (с графиком аренды)",
+    "Прикрепление фото к заявкам (до 10 файлов, до 5MB)",
+    "Шаблоны заявок (быстрое создание)",
+    "Офлайн-режим с синхронизацией",
+    "Гибкий workflow (настраиваемые статусы)",
+    "Статистика и аналитика по заявкам",
+    "Фильтрация и поиск",
+    "Push-уведомления при смене статуса",
+    "История изменений (audit log)",
+    "Интеграция с календарем событий",
+    "Отображение заявок в календаре проекта",
+    "Планирование ресурсов через календарь"
+  ],
+
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management"
+  ],
+
+  "optional_integrations": [
+    "catalog-management",
+    "ai-assistant",
+    "integrations",
+    "notifications",
+    "material-analytics",
+    "schedule-management"
+  ],
+
+  "conflicts": [],
+
+  "limits": {
+    "max_requests_per_month": null,
+    "max_files_per_request": 10,
+    "max_file_size_mb": 5,
+    "max_personnel_in_request": 50,
+    "retention_days": 365,
+    "max_templates": 20
+  },
+
+  "routes": "routes.php",
+  "migrations": "migrations/",
+
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "clipboard",
+  "display_order": 14,
+
+  "tags": ["workflow", "requests", "construction", "materials", "personnel"],
+
+  "screenshots": [
+    "/images/modules/site-requests/requests-list.png",
+    "/images/modules/site-requests/create-request.png",
+    "/images/modules/site-requests/calendar-view.png"
+  ],
+
+  "documentation_url": "/docs/modules/site-requests"
+}
+

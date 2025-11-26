@@ -86,6 +86,14 @@
       "warehouse.view",
       "warehouse.receipts",
       "warehouse.write_offs"
+    ],
+    "site-requests": [
+      "site_requests.view",
+      "site_requests.create",
+      "site_requests.edit",
+      "site_requests.files.upload",
+      "site_requests.templates.manage",
+      "site_requests.calendar.view"
     ]
   },
   

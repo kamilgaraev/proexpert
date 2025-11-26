@@ -1,0 +1,1826 @@
+════════════════════════════════════════════════════════════════════════════════
+  ТЕХНИЧЕСКОЕ ЗАДАНИЕ НА РАЗРАБОТКУ МОДУЛЯ "ЗАЯВКИ С ОБЪЕКТА" (Site Requests)
+  Проект: ProHelper - система управления строительными проектами
+  Архитектура: Модульная Laravel 11 приложение
+════════════════════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════════════════
+│ 1. КОНТЕКСТ ПРОЕКТА ProHelper
+═══════════════════════════════════════════════════════════════════════════════
+
+1.1. ТЕХНИЧЕСКИЙ СТЕК:
+---------------------
+Backend:
+- PHP 8.2+
+- Laravel 11.x
+- PostgreSQL (основная БД)
+- Redis (кеш + очереди)
+- Laravel Horizon (управление очередями)
+- Laravel Reverb (WebSocket для реал-тайм уведомлений)
+
+Инфраструктура:
+- S3: Yandex Object Storage (хранение файлов)
+- PDF: DomPDF
+- Excel: PhpSpreadsheet
+- AI: YandexGPT
+- Monitoring: Prometheus + Grafana + Loki
+
+Стандарты кодирования:
+- PSR-1, PSR-4, PSR-12
+- Строгая типизация (type hints для всех параметров и возвратов)
+- PHPDoc комментарии на русском языке
+- Классы: PascalCase
+- Методы/переменные: camelCase
+- Константы: SCREAMING_SNAKE_CASE
+- Таблицы БД: snake_case, множественное число
+- Маршруты: kebab-case
+
+
+1.2. АРХИТЕКТУРА МОДУЛЕЙ:
+-------------------------
+ProHelper использует модульную архитектуру:
+
+app/BusinessModules/
+├── Core/          # Базовая функциональность (всегда активны, billing_model: free)
+│   ├── Organizations/
+│   ├── Users/
+│   ├── Payments/
+│   └── MultiOrganization/
+├── Features/      # Основные бизнес-модули (billing_model: free/subscription)
+│   ├── ProjectManagement/      (free, всегда включен)
+│   ├── ContractManagement/     (free, всегда включен)
+│   ├── CatalogManagement/      (free)
+│   ├── WorkflowManagement/     (subscription, 1990₽/мес)
+│   ├── AdvancedDashboard/      (subscription)
+│   └── ...
+├── Addons/        # Дополнительные модули (billing_model: subscription)
+│   ├── AIAssistant/            (subscription, 3990₽/мес)
+│   ├── Integrations/           (subscription, 2900₽/мес)
+│   ├── MaterialAnalytics/      (subscription, 2990₽/мес)
+│   └── ...
+├── Services/      # Сервисные модули (billing_model: one_time)
+│   ├── DataExport/
+│   ├── DashboardWidgets/
+│   └── ...
+└── Enterprise/    # Корпоративные расширения
+
+
+1.3. СИСТЕМА ТАРИФНЫХ ПЛАНОВ:
+-----------------------------
+Тарифы: Free → Start → Business → Profi → Enterprise
+
+Модули могут быть:
+- included_in_plans: ["business", "profi", "enterprise"] - включены в определенные планы
+- included_in_plan: false - платные для всех планов
+
+Каждый модуль имеет:
+- billing_model: free/subscription/one_time/usage_based/freemium
+- pricing.base_price: цена в копейках (2490₽ = 2490)
+- pricing.duration_days: 30 (месячная подписка)
+- pricing.trial_days: 7 (пробный период)
+
+
+1.4. ВЗАИМОДЕЙСТВИЕ МОДУЛЕЙ:
+----------------------------
+Модули взаимодействуют через:
+
+1) Dependencies (жесткие зависимости):
+   "dependencies": ["organizations", "users", "project-management"]
+   Модуль НЕ МОЖЕТ быть активирован без зависимостей.
+
+2) Optional Integrations (опциональные интеграции):
+   Проверка в коде через hasModuleAccess():
+   
+   if (hasModuleAccess('ai-assistant', $user)) {
+       // Используем AI для анализа заявки
+       $this->aiService->analyzeRequest($request);
+   }
+
+3) Events (события):
+   Модули слушают события друг друга:
+   
+   event(new SiteRequestCreated($siteRequest));
+   // Другие модули могут подписаться на это событие
+
+4) Permissions (права доступа):
+   Модули проверяют permissions через систему ролей.
+
+
+1.5. ОБЯЗАТЕЛЬНЫЕ КОМПОНЕНТЫ МОДУЛЯ:
+------------------------------------
+Каждый модуль ДОЛЖЕН содержать:
+
+1) Основной класс модуля: {ModuleName}Module.php
+   implements ModuleInterface
+   + опционально: ConfigurableInterface, BillableInterface
+
+2) ServiceProvider: {ModuleName}ServiceProvider.php
+   Регистрация сервисов, маршрутов, миграций, middleware
+
+3) JSON манифест: config/ModuleList/{category}/{slug}.json
+   Полное описание модуля, цены, permissions, features, limits
+
+4) routes.php - маршруты модуля (если есть API)
+
+5) migrations/ - миграции БД (если нужны таблицы)
+
+6) README.md - документация модуля
+
+
+1.6. СТРУКТУРА ДИРЕКТОРИЙ МОДУЛЯ:
+---------------------------------
+app/BusinessModules/Features/SiteRequests/
+├── SiteRequestsModule.php                    # Главный класс
+├── SiteRequestsServiceProvider.php           # Service Provider
+├── README.md                                 # Документация
+├── routes.php                                # API маршруты
+├── config/                                   # Конфигурационные файлы (опц.)
+├── migrations/                               # Миграции БД
+│   ├── 2025_XX_XX_create_site_requests_table.php
+│   ├── 2025_XX_XX_create_site_request_statuses_table.php
+│   └── 2025_XX_XX_create_site_request_templates_table.php
+├── Models/                                   # Eloquent модели
+│   ├── SiteRequest.php
+│   ├── SiteRequestStatus.php
+│   ├── SiteRequestTemplate.php
+│   └── Traits/
+│       └── HasOrganization.php
+├── Services/                                 # Бизнес-логика
+│   ├── SiteRequestService.php
+│   ├── SiteRequestWorkflowService.php
+│   ├── SiteRequestNotificationService.php
+│   ├── SiteRequestTemplateService.php
+│   └── SiteRequestCalendarService.php        # *** ИНТЕГРАЦИЯ С КАЛЕНДАРЕМ ***
+├── Http/
+│   ├── Controllers/
+│   │   ├── SiteRequestController.php         # Admin API
+│   │   ├── SiteRequestDashboardController.php
+│   │   ├── SiteRequestSettingsController.php
+│   │   ├── SiteRequestCalendarController.php # *** КАЛЕНДАРЬ API ***
+│   │   └── Mobile/
+│   │       └── SiteRequestController.php     # Mobile API для прорабов
+│   ├── Middleware/
+│   │   └── CheckSiteRequestsModuleActive.php
+│   ├── Requests/                             # Form Requests (валидация)
+│   │   ├── StoreSiteRequestRequest.php
+│   │   ├── UpdateSiteRequestRequest.php
+│   │   └── SiteRequestFilterRequest.php
+│   └── Resources/                            # API Resources
+│       ├── SiteRequestResource.php
+│       ├── SiteRequestCollection.php
+│       └── SiteRequestCalendarEventResource.php
+├── Contracts/                                # Интерфейсы
+│   ├── SiteRequestServiceInterface.php
+│   └── SiteRequestRepositoryInterface.php
+├── Events/                                   # События
+│   ├── SiteRequestCreated.php
+│   ├── SiteRequestStatusChanged.php
+│   └── SiteRequestAssigned.php
+├── Listeners/                                # Обработчики событий
+│   └── SendSiteRequestNotification.php
+├── Jobs/                                     # Асинхронные задачи
+│   ├── ProcessSiteRequestJob.php
+│   └── SyncSiteRequestToCalendarJob.php      # *** СИНХРОНИЗАЦИЯ С КАЛЕНДАРЕМ ***
+├── Observers/                                # Eloquent Observers
+│   └── SiteRequestObserver.php
+├── DTOs/                                     # Data Transfer Objects
+│   └── SiteRequestDTO.php
+├── Enums/                                    # Enums
+│   ├── SiteRequestTypeEnum.php
+│   ├── SiteRequestStatusEnum.php
+│   ├── SiteRequestPriorityEnum.php
+│   └── PersonnelTypeEnum.php
+└── Traits/                                   # Переиспользуемые трейты
+
+
+═══════════════════════════════════════════════════════════════════════════════
+│ 2. ТЕХНИЧЕСКОЕ ЗАДАНИЕ НА МОДУЛЬ "ЗАЯВКИ С ОБЪЕКТА"
+═══════════════════════════════════════════════════════════════════════════════
+
+2.1. ОБЩЕЕ ОПИСАНИЕ:
+-------------------
+Модуль для управления заявками с строительных объектов.
+Прораб через мобильное приложение создает заявки на:
+- Материалы (cement, кирпич, арматура...)
+- Персонал (каменщики, электрики, разнорабочие...)
+- Технику (кран, экскаватор, самосвал...)
+- Информацию (консультация инженера)
+- Проблемы (инциденты на объекте)
+
+Офис-менеджер обрабатывает заявки, назначает исполнителей, контролирует сроки.
+
+
+2.2. ОСНОВНЫЕ ХАРАКТЕРИСТИКИ МОДУЛЯ:
+------------------------------------
+Тип: FEATURE
+Категория: workflow
+Slug: site-requests
+Billing Model: SUBSCRIPTION
+Цена: 2490₽/месяц (включено в планы Business, Profi, Enterprise)
+Пробный период: 7 дней
+
+
+2.3. ЗАВИСИМОСТИ:
+-----------------
+Жесткие (dependencies):
+- organizations (Core, всегда есть)
+- users (Core, всегда есть)
+- project-management (Feature, базовый модуль)
+
+Опциональные интеграции (проверяем через hasModuleAccess):
+- catalog-management → подтягивать материалы из каталога
+- ai-assistant → голосовой ввод заявок, AI-анализ
+- integrations → экспорт заявок в 1С
+- notifications → уведомления в Telegram/Push
+- material-analytics → прогнозирование потребностей
+- schedule-management → *** ИНТЕГРАЦИЯ С КАЛЕНДАРЕМ СОБЫТИЙ ***
+
+
+2.4. PERMISSIONS (детальные права):
+-----------------------------------
+site_requests.view                  // Просмотр заявок
+site_requests.create                // Создание заявок
+site_requests.edit                  // Редактирование заявок
+site_requests.delete                // Удаление заявок
+site_requests.approve               // Согласование заявок
+site_requests.assign                // Назначение исполнителей
+site_requests.change_status         // Изменение статуса
+site_requests.files.upload          // Загрузка файлов
+site_requests.files.delete          // Удаление файлов
+site_requests.statistics            // Просмотр статистики
+site_requests.export                // Экспорт данных
+site_requests.templates.manage      // Управление шаблонами
+site_requests.calendar.view         // *** Просмотр календаря заявок ***
+
+
+2.5. FEATURES (список возможностей):
+------------------------------------
+- Управление заявками с объектов
+- Заявки на материалы (с привязкой к каталогу)
+- Заявки на персонал (с расчетом стоимости)
+- Заявки на технику (с графиком аренды)
+- Прикрепление фото к заявкам (до 10 файлов, до 5MB)
+- Шаблоны заявок (быстрое создание)
+- Офлайн-режим с синхронизацией
+- Гибкий workflow (настраиваемые статусы)
+- Статистика и аналитика по заявкам
+- Фильтрация и поиск
+- Push-уведомления при смене статуса
+- История изменений (audit log)
+- *** Интеграция с календарем событий ***  // НОВОЕ!
+- *** Отображение заявок в календаре ***   // НОВОЕ!
+- *** Планирование ресурсов через календарь *** // НОВОЕ!
+
+
+2.6. LIMITS (лимиты модуля):
+----------------------------
+max_requests_per_month: null         // Безлимит в подписке
+max_files_per_request: 10            // До 10 файлов на заявку
+max_file_size_mb: 5                  // До 5MB на файл
+max_personnel_in_request: 50         // До 50 человек в заявке на персонал
+retention_days: 365                  // Хранение данных 1 год
+max_templates: 20                    // До 20 шаблонов на организацию
+
+
+═══════════════════════════════════════════════════════════════════════════════
+│ 3. СТРУКТУРА БАЗЫ ДАННЫХ
+═══════════════════════════════════════════════════════════════════════════════
+
+3.1. ТАБЛИЦА: site_requests
+----------------------------
+id                      bigint          PRIMARY KEY
+organization_id         bigint          NOT NULL, FK → organizations
+project_id              bigint          NOT NULL, FK → projects
+user_id                 bigint          NOT NULL, FK → users (прораб-создатель)
+assigned_to             bigint          NULL, FK → users (исполнитель)
+
+title                   varchar(255)    NOT NULL (краткое название заявки)
+description             text            NULL (подробное описание)
+
+status                  varchar(50)     NOT NULL DEFAULT 'draft' (статус заявки)
+priority                varchar(50)     NOT NULL DEFAULT 'medium' (low/medium/high/urgent)
+request_type            varchar(50)     NOT NULL (material/personnel/equipment/info/issue)
+
+required_date           date            NULL (желаемая дата исполнения)
+notes                   text            NULL (дополнительные примечания)
+
+-- Поля для заявок на МАТЕРИАЛЫ:
+material_id             bigint          NULL, FK → materials (из каталога, если есть)
+material_name           varchar(255)    NULL (если нет в каталоге)
+material_quantity       decimal(15,3)   NULL
+material_unit           varchar(50)     NULL (м³, т, шт...)
+delivery_address        text            NULL
+delivery_time_from      time            NULL
+delivery_time_to        time            NULL
+contact_person_name     varchar(255)    NULL
+contact_person_phone    varchar(50)     NULL
+
+-- Поля для заявок на ПЕРСОНАЛ:
+personnel_type          varchar(50)     NULL (general_worker, mason, electrician...)
+personnel_count         int             NULL (количество человек)
+personnel_requirements  text            NULL (требования к квалификации)
+hourly_rate             decimal(8,2)    NULL (почасовая ставка)
+work_hours_per_day      int             NULL (часов работы в день)
+work_start_date         date            NULL (дата начала работ) *** КАЛЕНДАРЬ ***
+work_end_date           date            NULL (дата окончания)    *** КАЛЕНДАРЬ ***
+work_location           text            NULL (место выполнения работ)
+additional_conditions   text            NULL (проживание, питание, транспорт)
+
+-- Поля для заявок на ТЕХНИКУ:
+equipment_type          varchar(100)    NULL (crane, excavator, truck...)
+equipment_specs         text            NULL (характеристики: грузоподъемность...)
+rental_start_date       date            NULL (дата начала аренды) *** КАЛЕНДАРЬ ***
+rental_end_date         date            NULL (дата окончания)     *** КАЛЕНДАРЬ ***
+rental_hours_per_day    int             NULL
+with_operator           boolean         NULL DEFAULT false
+equipment_location      text            NULL
+
+-- Метаданные:
+metadata                jsonb           NULL (гибкие кастомные поля)
+template_id             bigint          NULL, FK → site_request_templates
+
+-- Системные поля:
+created_at              timestamp       NOT NULL
+updated_at              timestamp       NOT NULL
+deleted_at              timestamp       NULL (soft deletes)
+
+-- Индексы:
+INDEX idx_site_requests_org (organization_id)
+INDEX idx_site_requests_project (project_id)
+INDEX idx_site_requests_user (user_id)
+INDEX idx_site_requests_status (status)
+INDEX idx_site_requests_priority (priority)
+INDEX idx_site_requests_type (request_type)
+INDEX idx_site_requests_required_date (required_date)
+INDEX idx_site_requests_work_dates (work_start_date, work_end_date)      *** КАЛЕНДАРЬ ***
+INDEX idx_site_requests_rental_dates (rental_start_date, rental_end_date) *** КАЛЕНДАРЬ ***
+UNIQUE idx_site_requests_org_status (organization_id, status)
+
+
+3.2. ТАБЛИЦА: site_request_statuses (настраиваемые статусы)
+------------------------------------------------------------
+id                  bigint          PRIMARY KEY
+organization_id     bigint          NOT NULL, FK → organizations
+slug                varchar(50)     NOT NULL (draft, pending, approved...)
+name                varchar(100)    NOT NULL (Черновик, Ожидает обработки...)
+description         text            NULL
+color               varchar(7)      NULL (#FF5733)
+icon                varchar(50)     NULL (FontAwesome icon)
+is_initial          boolean         DEFAULT false (начальный статус)
+is_final            boolean         DEFAULT false (конечный статус)
+display_order       int             DEFAULT 0
+created_at          timestamp       NOT NULL
+updated_at          timestamp       NOT NULL
+
+UNIQUE idx_site_request_statuses_org_slug (organization_id, slug)
+
+
+3.3. ТАБЛИЦА: site_request_status_transitions (workflow переходов)
+-------------------------------------------------------------------
+id                  bigint          PRIMARY KEY
+organization_id     bigint          NOT NULL, FK → organizations
+from_status_id      bigint          NOT NULL, FK → site_request_statuses
+to_status_id        bigint          NOT NULL, FK → site_request_statuses
+required_permission varchar(100)    NULL (какое право нужно для перехода)
+is_active           boolean         DEFAULT true
+created_at          timestamp       NOT NULL
+updated_at          timestamp       NOT NULL
+
+
+3.4. ТАБЛИЦА: site_request_templates (шаблоны заявок)
+------------------------------------------------------
+id                  bigint          PRIMARY KEY
+organization_id     bigint          NOT NULL, FK → organizations
+user_id             bigint          NOT NULL, FK → users (создатель шаблона)
+name                varchar(255)    NOT NULL (название шаблона)
+description         text            NULL
+request_type        varchar(50)     NOT NULL
+template_data       jsonb           NOT NULL (все поля заявки)
+is_active           boolean         DEFAULT true
+usage_count         int             DEFAULT 0 (сколько раз использовали)
+created_at          timestamp       NOT NULL
+updated_at          timestamp       NOT NULL
+
+INDEX idx_site_request_templates_org (organization_id)
+INDEX idx_site_request_templates_type (request_type)
+
+
+3.5. ТАБЛИЦА: site_request_history (история изменений)
+-------------------------------------------------------
+id                  bigint          PRIMARY KEY
+site_request_id     bigint          NOT NULL, FK → site_requests
+user_id             bigint          NOT NULL, FK → users (кто изменил)
+action              varchar(50)     NOT NULL (created, status_changed, assigned...)
+old_value           jsonb           NULL (старое значение)
+new_value           jsonb           NULL (новое значение)
+notes               text            NULL (комментарий к изменению)
+created_at          timestamp       NOT NULL
+
+INDEX idx_site_request_history_request (site_request_id)
+INDEX idx_site_request_history_user (user_id)
+INDEX idx_site_request_history_created (created_at)
+
+
+3.6. ТАБЛИЦА: site_request_calendar_events (*** НОВАЯ ТАБЛИЦА ДЛЯ КАЛЕНДАРЯ ***)
+---------------------------------------------------------------------------------
+id                  bigint          PRIMARY KEY
+site_request_id     bigint          NOT NULL, FK → site_requests
+organization_id     bigint          NOT NULL, FK → organizations
+project_id          bigint          NOT NULL, FK → projects
+
+event_type          varchar(50)     NOT NULL (material_delivery, personnel_work, equipment_rental)
+title               varchar(255)    NOT NULL (что отображать в календаре)
+description         text            NULL
+color               varchar(7)      NOT NULL (цвет события в календаре)
+
+start_date          date            NOT NULL (дата начала события)
+end_date            date            NULL (дата окончания, если есть)
+start_time          time            NULL (время начала)
+end_time            time            NULL (время окончания)
+all_day             boolean         DEFAULT true
+
+-- Для интеграции с модулем schedule-management (если активен):
+schedule_event_id   bigint          NULL, FK → schedule_events (если есть модуль)
+
+created_at          timestamp       NOT NULL
+updated_at          timestamp       NOT NULL
+
+INDEX idx_site_request_calendar_org (organization_id)
+INDEX idx_site_request_calendar_project (project_id)
+INDEX idx_site_request_calendar_request (site_request_id)
+INDEX idx_site_request_calendar_dates (start_date, end_date)
+INDEX idx_site_request_calendar_type (event_type)
+
+
+3.7. СВЯЗЬ С ФАЙЛАМИ (полиморфная):
+-----------------------------------
+Используем существующую таблицу files через полиморфную связь:
+
+files.fileable_id   → site_requests.id
+files.fileable_type → 'App\BusinessModules\Features\SiteRequests\Models\SiteRequest'
+
+
+═══════════════════════════════════════════════════════════════════════════════
+│ 4. ENUMS (ПЕРЕЧИСЛЕНИЯ)
+═══════════════════════════════════════════════════════════════════════════════
+
+4.1. SiteRequestTypeEnum
+------------------------
+MATERIAL_REQUEST = 'material_request'      // Заявка на материалы
+PERSONNEL_REQUEST = 'personnel_request'    // Заявка на персонал
+EQUIPMENT_REQUEST = 'equipment_request'    // Заявка на технику
+INFO_REQUEST = 'info_request'              // Запрос информации
+ISSUE_REPORT = 'issue_report'              // Сообщение о проблеме
+OTHER = 'other'                            // Другое
+
+
+4.2. SiteRequestStatusEnum (базовые статусы)
+---------------------------------------------
+DRAFT = 'draft'                   // Черновик (не отправлена)
+PENDING = 'pending'               // Ожидает обработки (новая)
+IN_REVIEW = 'in_review'           // На рассмотрении (менеджер взял в работу)
+APPROVED = 'approved'             // Одобрена (руководитель согласовал)
+REJECTED = 'rejected'             // Отклонена (не может быть выполнена)
+IN_PROGRESS = 'in_progress'       // В исполнении (исполнитель работает)
+FULFILLED = 'fulfilled'           // Выполнена (материал доставлен / люди вышли)
+COMPLETED = 'completed'           // Закрыта (прораб подтвердил выполнение)
+CANCELLED = 'cancelled'           // Отменена (прораб отменил)
+ON_HOLD = 'on_hold'               // Приостановлена (временно)
+
+ВАЖНО: Организация может создать свои статусы через site_request_statuses!
+
+
+4.3. SiteRequestPriorityEnum
+----------------------------
+LOW = 'low'          // Низкий
+MEDIUM = 'medium'    // Средний
+HIGH = 'high'        // Высокий
+URGENT = 'urgent'    // Срочно
+
+
+4.4. PersonnelTypeEnum (типы персонала)
+---------------------------------------
+GENERAL_WORKER = 'general_worker'      // Разнорабочий
+SKILLED_WORKER = 'skilled_worker'      // Квалифицированный рабочий
+FOREMAN = 'foreman'                    // Прораб
+ENGINEER = 'engineer'                  // Инженер
+SPECIALIST = 'specialist'              // Специалист
+OPERATOR = 'operator'                  // Оператор техники
+ELECTRICIAN = 'electrician'            // Электрик
+PLUMBER = 'plumber'                    // Сантехник
+WELDER = 'welder'                      // Сварщик
+CARPENTER = 'carpenter'                // Плотник
+MASON = 'mason'                        // Каменщик
+PAINTER = 'painter'                    // Маляр
+ROOFER = 'roofer'                      // Кровельщик
+PLASTERER = 'plasterer'                // Штукатур
+TILER = 'tiler'                        // Плиточник
+SECURITY = 'security'                  // Охрана
+DRIVER = 'driver'                      // Водитель
+CLEANER = 'cleaner'                    // Уборщик
+OTHER = 'other'                        // Другое
+
+
+4.5. EquipmentTypeEnum (типы техники)
+-------------------------------------
+TOWER_CRANE = 'tower_crane'            // Башенный кран
+MOBILE_CRANE = 'mobile_crane'          // Автокран
+EXCAVATOR = 'excavator'                // Экскаватор
+BULLDOZER = 'bulldozer'                // Бульдозер
+LOADER = 'loader'                      // Погрузчик
+DUMP_TRUCK = 'dump_truck'              // Самосвал
+CONCRETE_MIXER = 'concrete_mixer'      // Бетономешалка
+CONCRETE_PUMP = 'concrete_pump'        // Бетононасос
+FORKLIFT = 'forklift'                  // Вилочный погрузчик
+SCAFFOLDING = 'scaffolding'            // Строительные леса
+COMPRESSOR = 'compressor'              // Компрессор
+GENERATOR = 'generator'                // Генератор
+WELDING_MACHINE = 'welding_machine'    // Сварочный аппарат
+VIBRATOR = 'vibrator'                  // Вибратор для бетона
+GRADER = 'grader'                      // Грейдер
+ROLLER = 'roller'                      // Каток
+OTHER = 'other'                        // Другое
+
+
+4.6. CalendarEventTypeEnum (*** НОВОЕ ДЛЯ КАЛЕНДАРЯ ***)
+---------------------------------------------------------
+MATERIAL_DELIVERY = 'material_delivery'    // Доставка материалов
+PERSONNEL_WORK = 'personnel_work'          // Работа персонала
+EQUIPMENT_RENTAL = 'equipment_rental'      // Аренда техники
+DEADLINE = 'deadline'                      // Дедлайн заявки
+
+
+═══════════════════════════════════════════════════════════════════════════════
+│ 5. БИЗНЕС-ЛОГИКА И СЕРВИСЫ
+═══════════════════════════════════════════════════════════════════════════════
+
+5.1. SiteRequestService (главный сервис)
+----------------------------------------
+Методы:
+- create(SiteRequestDTO $dto): SiteRequest
+  • Валидация данных
+  • Проверка лимитов модуля
+  • Создание заявки
+  • Загрузка файлов через FileService
+  • Создание события в календаре (если есть даты)
+  • Отправка события SiteRequestCreated
+  • Логирование через LoggingService
+
+- update(int $id, SiteRequestDTO $dto): SiteRequest
+  • Валидация прав (только автор или админ)
+  • Обновление заявки
+  • Обновление события в календаре
+  • Отправка события SiteRequestUpdated
+
+- delete(int $id, int $organizationId): bool
+  • Проверка прав
+  • Soft delete заявки
+  • Удаление файлов
+  • Удаление события из календаря
+  • Логирование
+
+- changeStatus(int $id, string $newStatus, ?string $notes): SiteRequest
+  • Проверка workflow (можно ли перейти из текущего в новый)
+  • Изменение статуса
+  • Запись в историю
+  • Отправка уведомления
+  • Отправка события SiteRequestStatusChanged
+
+- assign(int $id, int $userId): SiteRequest
+  • Назначение исполнителя
+  • Уведомление исполнителя
+  • Отправка события SiteRequestAssigned
+
+- getStatistics(int $organizationId): array
+  • Общее количество заявок
+  • По статусам (сколько новых, в работе, выполненных)
+  • По типам (материалы, персонал, техника)
+  • По приоритетам
+  • Просроченные заявки
+  • Статистика по заявкам на персонал (расчет стоимости)
+
+
+5.2. SiteRequestWorkflowService (управление workflow)
+-----------------------------------------------------
+Методы:
+- canTransition(SiteRequest $request, string $toStatus): bool
+  • Проверка, можно ли перейти в указанный статус
+
+- getAvailableTransitions(SiteRequest $request): array
+  • Список доступных переходов для текущего статуса
+
+- validateStatusTransition(string $from, string $to, int $organizationId): void
+  • Валидация перехода через site_request_status_transitions
+
+
+5.3. SiteRequestNotificationService (уведомления)
+-------------------------------------------------
+Методы:
+- notifyOnCreated(SiteRequest $request): void
+  • Уведомление менеджеров о новой заявке
+  • Если активен модуль notifications → Telegram/Push
+
+- notifyOnStatusChange(SiteRequest $request, string $oldStatus, string $newStatus): void
+  • Уведомление прораба о смене статуса
+  • Уведомление исполнителя
+
+- notifyOnAssigned(SiteRequest $request): void
+  • Уведомление исполнителя о назначении
+
+
+5.4. SiteRequestTemplateService (шаблоны)
+-----------------------------------------
+Методы:
+- createFromTemplate(int $templateId, int $projectId): SiteRequest
+  • Создание заявки из шаблона
+
+- saveAsTemplate(int $requestId, string $name): SiteRequestTemplate
+  • Сохранение заявки как шаблон
+
+- getPopularTemplates(int $organizationId): Collection
+  • Наиболее используемые шаблоны
+
+
+5.5. SiteRequestCalendarService (*** НОВЫЙ СЕРВИС ДЛЯ КАЛЕНДАРЯ ***)
+---------------------------------------------------------------------
+Методы:
+- createCalendarEvent(SiteRequest $request): ?SiteRequestCalendarEvent
+  • Создание события в календаре на основе заявки
+  • Для material_request → если есть required_date
+  • Для personnel_request → если есть work_start_date и work_end_date
+  • Для equipment_request → если есть rental_start_date и rental_end_date
+
+- updateCalendarEvent(SiteRequest $request): ?SiteRequestCalendarEvent
+  • Обновление события при изменении дат в заявке
+
+- deleteCalendarEvent(SiteRequest $request): void
+  • Удаление события из календаря
+
+- getCalendarEvents(int $organizationId, Carbon $startDate, Carbon $endDate): Collection
+  • Получить все события заявок для календаря за период
+
+- syncWithScheduleManagement(SiteRequest $request): void
+  • ИНТЕГРАЦИЯ: Если активен модуль schedule-management,
+    создать event в их таблице schedule_events
+
+- getEventColor(SiteRequest $request): string
+  • Определить цвет события в календаре:
+    - Материалы → #4CAF50 (зеленый)
+    - Персонал → #2196F3 (синий)
+    - Техника → #FF9800 (оранжевый)
+    - Приоритет URGENT → #F44336 (красный)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+│ 6. API ENDPOINTS (RESTful)
+═══════════════════════════════════════════════════════════════════════════════
+
+6.1. ADMIN API (для офис-менеджеров)
+------------------------------------
+Базовый путь: /api/v1/admin/site-requests
+Middleware: auth:api_admin, auth.jwt:api_admin, organization.context, site_requests.active
+
+GET    /api/v1/admin/site-requests
+       → Список заявок с фильтрацией
+       Фильтры: status, priority, request_type, project_id, user_id, assigned_to,
+                date_from, date_to, search
+       Возврат: SiteRequestCollection (пагинация)
+
+POST   /api/v1/admin/site-requests
+       → Создать заявку (админ может создать от имени прораба)
+       Body: SiteRequestDTO
+       Возврат: SiteRequestResource (201)
+
+GET    /api/v1/admin/site-requests/{id}
+       → Получить конкретную заявку
+       Возврат: SiteRequestResource
+
+PUT    /api/v1/admin/site-requests/{id}
+       → Обновить заявку
+       Body: SiteRequestDTO
+       Возврат: SiteRequestResource
+
+DELETE /api/v1/admin/site-requests/{id}
+       → Удалить заявку (soft delete)
+       Возврат: 204 No Content
+
+POST   /api/v1/admin/site-requests/{id}/status
+       → Изменить статус заявки
+       Body: { status: string, notes?: string }
+       Возврат: SiteRequestResource
+
+POST   /api/v1/admin/site-requests/{id}/assign
+       → Назначить исполнителя
+       Body: { user_id: int }
+       Возврат: SiteRequestResource
+
+GET    /api/v1/admin/site-requests/statistics
+       → Статистика по заявкам
+       Возврат: { total, by_status, by_type, by_priority, overdue, personnel_stats }
+
+DELETE /api/v1/admin/site-requests/{id}/files/{fileId}
+       → Удалить файл из заявки
+       Возврат: 204 No Content
+
+-- *** НОВЫЕ ENDPOINTS ДЛЯ КАЛЕНДАРЯ ***
+
+GET    /api/v1/admin/site-requests/calendar
+       → Получить события заявок для календаря
+       Query: start_date, end_date, project_id?, request_type?
+       Возврат: [SiteRequestCalendarEventResource]
+       Формат:
+       {
+         events: [
+           {
+             id: 1,
+             site_request_id: 42,
+             title: "Доставка цемента - 10 тонн",
+             event_type: "material_delivery",
+             start_date: "2025-11-28",
+             end_date: null,
+             start_time: "09:00",
+             end_time: "12:00",
+             all_day: false,
+             color: "#4CAF50",
+             project: { id: 5, name: "ЖК Новострой" },
+             request: { id: 42, status: "approved", priority: "high" }
+           },
+           {
+             id: 2,
+             site_request_id: 43,
+             title: "Работа каменщиков - 5 человек",
+             event_type: "personnel_work",
+             start_date: "2025-11-27",
+             end_date: "2025-11-30",
+             all_day: true,
+             color: "#2196F3",
+             project: { id: 5, name: "ЖК Новострой" },
+             request: { id: 43, status: "in_progress", priority: "medium" }
+           }
+         ]
+       }
+
+GET    /api/v1/admin/site-requests/calendar/export
+       → Экспорт календаря заявок в iCal формат
+       Query: start_date, end_date, project_id?
+       Возврат: file.ics
+
+
+6.2. MOBILE API (для прорабов)
+-------------------------------
+Базовый путь: /api/v1/mobile/site-requests
+Middleware: auth:api_mobile, auth.jwt:api_mobile, organization.context, site_requests.active
+
+GET    /api/v1/mobile/site-requests
+       → Список заявок прораба (только свои или по своим проектам)
+       Фильтры: status, priority, request_type, project_id
+       Возврат: SiteRequestCollection
+
+POST   /api/v1/mobile/site-requests
+       → Создать заявку
+       Body: SiteRequestDTO + files (multipart/form-data)
+       Возврат: SiteRequestResource (201)
+
+GET    /api/v1/mobile/site-requests/{id}
+       → Просмотр заявки
+       Возврат: SiteRequestResource
+
+PUT    /api/v1/mobile/site-requests/{id}
+       → Обновить заявку (только свою, только в статусе draft/pending)
+       Body: SiteRequestDTO
+       Возврат: SiteRequestResource
+
+DELETE /api/v1/mobile/site-requests/{id}
+       → Отменить заявку (перевести в cancelled)
+       Возврат: 204 No Content
+
+POST   /api/v1/mobile/site-requests/{id}/complete
+       → Подтвердить выполнение (перевести в completed)
+       Body: { notes?: string, rating?: int }
+       Возврат: SiteRequestResource
+
+DELETE /api/v1/mobile/site-requests/{id}/files/{fileId}
+       → Удалить файл
+       Возврат: 204 No Content
+
+GET    /api/v1/mobile/site-requests/templates
+       → Список шаблонов
+       Возврат: [SiteRequestTemplateResource]
+
+POST   /api/v1/mobile/site-requests/from-template/{templateId}
+       → Создать заявку из шаблона
+       Body: { project_id: int }
+       Возврат: SiteRequestResource (201)
+
+-- *** НОВЫЕ ENDPOINTS ДЛЯ КАЛЕНДАРЯ (MOBILE) ***
+
+GET    /api/v1/mobile/site-requests/calendar
+       → Календарь заявок прораба (только по его проектам)
+       Query: start_date, end_date, project_id?
+       Возврат: [SiteRequestCalendarEventResource]
+
+
+═══════════════════════════════════════════════════════════════════════════════
+│ 7. ИНТЕГРАЦИИ С ДРУГИМИ МОДУЛЯМИ
+═══════════════════════════════════════════════════════════════════════════════
+
+7.1. CATALOG-MANAGEMENT (управление каталогами)
+-----------------------------------------------
+Проверка активации:
+if (hasModuleAccess('catalog-management', $user)) {
+    // Интеграция активна
+}
+
+Функциональность:
+• В форме создания заявки на материалы - автозаполнение из каталога
+• Поле material_id → FK на таблицу materials
+• API: GET /api/v1/admin/materials?search=цемент
+• Автоподстановка: название, единица измерения, поставщик
+
+Код:
+if ($this->hasCatalogManagement()) {
+    $material = Material::find($dto->material_id);
+    $siteRequest->material_name = $material->name;
+    $siteRequest->material_unit = $material->measurement_unit;
+}
+
+
+7.2. AI-ASSISTANT (AI помощник)
+-------------------------------
+Проверка активации:
+if (hasModuleAccess('ai-assistant', $user)) {
+    // AI доступен
+}
+
+Функциональность:
+• Голосовой ввод заявки через YandexGPT
+  Прораб говорит: "Нужно 10 тонн цемента М500 на завтра к 9 утра"
+  AI парсит и создает заявку автоматически
+
+• AI-анализ заявки:
+  - Определение приоритета (срочная/обычная)
+  - Проверка на дубликаты (похожая заявка уже создана?)
+  - Предложение оптимизаций (можно заказать оптом дешевле)
+
+• AI-ассистент для менеджера:
+  - "Какие заявки самые срочные сегодня?"
+  - "Сколько каменщиков нужно на следующей неделе?"
+
+Код:
+if ($this->hasAIAssistant()) {
+    $aiService = app(AIService::class);
+    
+    // Определить приоритет
+    $priority = $aiService->analyzePriority($siteRequest);
+    
+    // Проверить дубликаты
+    $duplicates = $aiService->findSimilarRequests($siteRequest);
+    if ($duplicates->isNotEmpty()) {
+        // Предупредить пользователя
+    }
+}
+
+
+7.3. INTEGRATIONS (интеграции с внешними системами)
+---------------------------------------------------
+Проверка активации:
+if (hasModuleAccess('integrations', $user)) {
+    // Интеграции активны
+}
+
+Функциональность:
+• Экспорт заявок в 1С
+  При создании заявки на материалы → автоматически создать заказ в 1С
+
+• Webhook при смене статуса
+  POST к внешней системе с данными заявки
+
+• Синхронизация с CRM подрядчиков
+  Заявка на персонал → автоматически отправить в CRM подрядчика
+
+Код:
+if ($this->hasIntegrations()) {
+    $integrationService = app(IntegrationService::class);
+    
+    // Экспорт в 1С
+    if ($siteRequest->request_type === 'material_request') {
+        $integrationService->exportTo1C($siteRequest);
+    }
+    
+    // Webhook
+    $integrationService->sendWebhook('site_request.created', $siteRequest);
+}
+
+
+7.4. NOTIFICATIONS (уведомления)
+--------------------------------
+Проверка активации:
+if (hasModuleAccess('notifications', $user)) {
+    // Уведомления активны
+}
+
+Функциональность:
+• Telegram уведомления менеджерам при новой заявке
+• Push-уведомления прорабу при смене статуса
+• Email уведомления руководителю о срочных заявках
+• SMS уведомления исполнителю о назначении
+
+Код:
+if ($this->hasNotifications()) {
+    $notificationService = app(NotificationService::class);
+    
+    // Telegram
+    $notificationService->sendToTelegram(
+        $managers,
+        "Новая заявка на материалы: {$siteRequest->title}"
+    );
+    
+    // Push
+    $notificationService->sendPush(
+        $foreman,
+        "Статус заявки изменен: {$newStatus}"
+    );
+}
+
+
+7.5. MATERIAL-ANALYTICS (аналитика материалов)
+----------------------------------------------
+Проверка активации:
+if (hasModuleAccess('material-analytics', $user)) {
+    // Аналитика активна
+}
+
+Функциональность:
+• Прогнозирование потребностей в материалах
+  На основе истории заявок: "На следующей неделе вам понадобится цемент"
+
+• Умные предложения
+  "Обычно после заказа кирпича вы заказываете раствор. Заказать сразу?"
+
+• Анализ расходов
+  "Заявки на материалы за этот месяц на 15% выше, чем в прошлом"
+
+Код:
+if ($this->hasMaterialAnalytics()) {
+    $analyticsService = app(MaterialAnalyticsService::class);
+    
+    // Прогноз
+    $forecast = $analyticsService->forecastNeeds($project, Carbon::now()->addWeek());
+    
+    // Предложения
+    $suggestions = $analyticsService->suggestMaterials($siteRequest);
+}
+
+
+7.6. SCHEDULE-MANAGEMENT (*** ИНТЕГРАЦИЯ С КАЛЕНДАРЕМ СОБЫТИЙ ***)
+-------------------------------------------------------------------
+Проверка активации:
+if (hasModuleAccess('schedule-management', $user)) {
+    // Календарь событий активен
+}
+
+Функциональность:
+• Автоматическое создание событий в общем календаре проекта
+  - Заявка на материалы → событие "Доставка материалов"
+  - Заявка на персонал → событие "Работа бригады каменщиков"
+  - Заявка на технику → событие "Аренда крана"
+
+• Двусторонняя синхронизация:
+  - Изменение даты в заявке → обновление события в календаре
+  - Перенос события в календаре → обновление даты в заявке (если разрешено)
+
+• Отображение заявок в общем календаре проекта
+  Прораб/менеджер видит в календаре ВСЕ запланированные ресурсы
+
+• Конфликты и предупреждения:
+  - "На 28 ноября уже запланировано 3 доставки, добавить еще?"
+  - "Кран уже забронирован на эти даты"
+
+• Цветовая маркировка в календаре:
+  - Материалы → зеленый
+  - Персонал → синий
+  - Техника → оранжевый
+  - Срочные → красный
+
+Код:
+if ($this->hasScheduleManagement()) {
+    $scheduleService = app(ScheduleService::class);
+    
+    // Создать событие в календаре
+    $scheduleEvent = $scheduleService->createEvent([
+        'title' => $this->getCalendarEventTitle($siteRequest),
+        'start_date' => $siteRequest->work_start_date,
+        'end_date' => $siteRequest->work_end_date,
+        'all_day' => true,
+        'color' => $this->getEventColor($siteRequest),
+        'project_id' => $siteRequest->project_id,
+        'organization_id' => $siteRequest->organization_id,
+        'event_type' => 'site_request',
+        'related_id' => $siteRequest->id,
+    ]);
+    
+    // Связать событие с заявкой
+    SiteRequestCalendarEvent::create([
+        'site_request_id' => $siteRequest->id,
+        'schedule_event_id' => $scheduleEvent->id,
+        // ... остальные поля
+    ]);
+    
+    // Проверить конфликты
+    $conflicts = $scheduleService->checkConflicts(
+        $siteRequest->project_id,
+        $siteRequest->work_start_date,
+        $siteRequest->work_end_date
+    );
+    
+    if ($conflicts->isNotEmpty()) {
+        // Предупредить пользователя
+        Log::warning('Schedule conflicts detected', [
+            'site_request_id' => $siteRequest->id,
+            'conflicts' => $conflicts->toArray(),
+        ]);
+    }
+}
+
+Методы SiteRequestCalendarService:
+• syncWithScheduleManagement(SiteRequest $request): void
+  Синхронизация с модулем schedule-management
+
+• getCalendarEventTitle(SiteRequest $request): string
+  Генерация названия события:
+  - "Доставка: Цемент М500 - 10 т"
+  - "Бригада каменщиков - 5 чел."
+  - "Аренда крана 25т"
+
+• getEventColor(SiteRequest $request): string
+  Определение цвета события
+
+• checkScheduleConflicts(SiteRequest $request): Collection
+  Проверка конфликтов в расписании
+
+
+═══════════════════════════════════════════════════════════════════════════════
+│ 8. WORKFLOW И ЖИЗНЕННЫЙ ЦИКЛ ЗАЯВКИ
+═══════════════════════════════════════════════════════════════════════════════
+
+8.1. БАЗОВЫЙ ЖИЗНЕННЫЙ ЦИКЛ:
+----------------------------
+
+1. DRAFT (Черновик)
+   Создатель: Прораб
+   Действия: Редактировать, Отправить, Удалить
+   → Переход в: PENDING
+
+2. PENDING (Ожидает обработки)
+   Создатель: Прораб отправил
+   Действия: Взять в работу, Отклонить
+   Ответственный: Менеджер офиса
+   → Переход в: IN_REVIEW, REJECTED
+
+3. IN_REVIEW (На рассмотрении)
+   Создатель: Менеджер взял в работу
+   Действия: Одобрить, Отклонить, Запросить уточнения
+   Ответственный: Руководитель/Менеджер
+   → Переход в: APPROVED, REJECTED, PENDING
+
+4. APPROVED (Одобрена)
+   Создатель: Руководитель одобрил
+   Действия: Назначить исполнителя, Начать исполнение
+   Ответственный: Менеджер
+   → Переход в: IN_PROGRESS
+
+5. IN_PROGRESS (В исполнении)
+   Создатель: Исполнитель работает
+   Действия: Отметить выполненной, Приостановить
+   Ответственный: Исполнитель (поставщик/рекрутер/служба аренды)
+   → Переход в: FULFILLED, ON_HOLD
+
+6. FULFILLED (Выполнена)
+   Создатель: Исполнитель отметил выполнение
+   Действия: Подтвердить получение, Отклонить
+   Ответственный: Прораб (подтверждает получение)
+   → Переход в: COMPLETED, IN_PROGRESS (если что-то не так)
+
+7. COMPLETED (Закрыта)
+   Создатель: Прораб подтвердил
+   Действия: Нет (финальный статус)
+   Ответственный: -
+
+Альтернативные статусы:
+8. REJECTED (Отклонена)
+9. CANCELLED (Отменена прорабом)
+10. ON_HOLD (Приостановлена)
+
+
+8.2. НАСТРАИВАЕМЫЙ WORKFLOW:
+---------------------------
+Организация может создать свои статусы через таблицу site_request_statuses
+и определить переходы через site_request_status_transitions.
+
+Пример:
+- Добавить статус "BUDGET_APPROVAL" (ожидание бюджета)
+- Добавить переход: IN_REVIEW → BUDGET_APPROVAL (требует permission: site_requests.approve)
+- Добавить переход: BUDGET_APPROVAL → APPROVED
+
+
+8.3. ПРОВЕРКА ПЕРЕХОДОВ:
+------------------------
+Перед изменением статуса проверять:
+1. Существует ли переход в site_request_status_transitions?
+2. Есть ли у пользователя required_permission?
+3. Текущий статус == from_status_id?
+
+
+═══════════════════════════════════════════════════════════════════════════════
+│ 9. UX/UI ТРЕБОВАНИЯ (ДЛЯ МОБИЛЬНОГО ПРИЛОЖЕНИЯ)
+═══════════════════════════════════════════════════════════════════════════════
+
+9.1. ГЛАВНАЯ СТРАНИЦА ЗАЯВОК (Mobile):
+--------------------------------------
+• Список заявок с фильтрами (по статусу, проекту, типу)
+• Каждая карточка заявки:
+  - Крупный заголовок
+  - Цветной индикатор статуса (зеленый/желтый/красный)
+  - Приоритет (значок)
+  - Дата создания / дата исполнения
+  - Кнопка быстрых действий (отменить, подтвердить)
+
+• Плавающая кнопка "+" для создания новой заявки
+• Pull-to-refresh для обновления списка
+• Оффлайн-индикатор (если нет интернета)
+
+
+9.2. СОЗДАНИЕ ЗАЯВКИ (Mobile):
+------------------------------
+Требования к UX:
+• Создание заявки за 30-60 секунд максимум
+• Минимум печати (используем выбор из списков)
+• Голосовой ввод (если активен ai-assistant)
+
+Шаги:
+1. Выбор типа заявки (большие кнопки с иконками):
+   [Материалы] [Персонал] [Техника] [Информация] [Проблема]
+
+2. Выбор проекта (если больше одного)
+
+3. Заполнение полей в зависимости от типа:
+   
+   Для МАТЕРИАЛОВ:
+   - Название (автозаполнение из каталога, если есть catalog-management)
+   - Количество (цифровая клавиатура)
+   - Единица измерения (выбор: т, м³, шт...)
+   - Желаемая дата (календарь)
+   - Время доставки (опционально)
+   - Адрес доставки (автоподстановка адреса проекта)
+   
+   Для ПЕРСОНАЛА:
+   - Специальность (выбор из списка PersonnelTypeEnum)
+   - Количество человек (цифровая клавиатура)
+   - Даты работы (календарь, range picker) *** ДЛЯ КАЛЕНДАРЯ ***
+   - Часов в день (цифры)
+   - Ставка в час (опционально, цифры)
+   - Требования (текст, голосовой ввод)
+   
+   Для ТЕХНИКИ:
+   - Тип техники (выбор из списка EquipmentTypeEnum)
+   - Даты аренды (календарь) *** ДЛЯ КАЛЕНДАРЯ ***
+   - С оператором? (свитч да/нет)
+   - Требования (текст)
+
+4. Приоритет (выбор: Обычный / Срочно)
+
+5. Прикрепление фото:
+   - Кнопка "Сфотографировать"
+   - Кнопка "Из галереи"
+   - До 10 фото, каждое до 5MB
+   - Превью с возможностью удаления
+
+6. Примечания (опционально, текст или голос)
+
+7. Кнопки:
+   [Сохранить как черновик] [Отправить]
+
+
+9.3. ПРОСМОТР ЗАЯВКИ (Mobile):
+------------------------------
+• Крупный заголовок
+• Цветной статус-бар (зеленый/желтый/красный)
+• Вся информация заявки блоками:
+  - Основная информация
+  - Даты и сроки (с индикатором "Осталось X дней")
+  - Детали (в зависимости от типа)
+  - Исполнитель (если назначен)
+  - Прикрепленные файлы (галерея)
+  - История изменений (timeline)
+
+• Кнопки действий (в зависимости от статуса):
+  - [Отменить заявку]
+  - [Подтвердить выполнение]
+  - [Позвонить исполнителю] (если назначен)
+
+
+9.4. КАЛЕНДАРЬ ЗАЯВОК (Mobile): *** НОВОЕ ***
+----------------------------------------------
+• Календарное представление (месяц/неделя/день)
+• Цветные точки на датах (зеленый/синий/оранжевый)
+• При клике на дату - список заявок на эту дату
+• Свайп влево/вправо для переключения месяцев
+• Легенда цветов:
+  - 🟢 Зеленый: Доставка материалов
+  - 🔵 Синий: Работа персонала
+  - 🟠 Оранжевый: Аренда техники
+  - 🔴 Красный: Срочная заявка
+
+• Фильтры:
+  - По проектам
+  - По типам заявок
+
+• Кнопка "Создать заявку на эту дату" (быстрое создание)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+│ 10. КОНФИГУРАЦИОННЫЙ JSON МАНИФЕСТ
+═══════════════════════════════════════════════════════════════════════════════
+
+Файл: config/ModuleList/features/site-requests.json
+
+{
+  "name": "Заявки с объекта",
+  "slug": "site-requests",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "workflow",
+  "description": "Система управления заявками с строительных объектов: материалы, персонал, техника",
+  
+  "class_name": "App\\BusinessModules\\Features\\SiteRequests\\SiteRequestsModule",
+  "service_provider": "App\\BusinessModules\\Features\\SiteRequests\\SiteRequestsServiceProvider",
+  
+  "pricing": {
+    "base_price": 2490,
+    "currency": "RUB",
+    "included_in_plans": ["business", "profi", "enterprise"],
+    "duration_days": 30,
+    "trial_days": 7
+  },
+  
+  "permissions": [
+    "site_requests.view",
+    "site_requests.create",
+    "site_requests.edit",
+    "site_requests.delete",
+    "site_requests.approve",
+    "site_requests.assign",
+    "site_requests.change_status",
+    "site_requests.files.upload",
+    "site_requests.files.delete",
+    "site_requests.statistics",
+    "site_requests.export",
+    "site_requests.templates.manage",
+    "site_requests.calendar.view"
+  ],
+  
+  "features": [
+    "Управление заявками с объектов",
+    "Заявки на материалы (с привязкой к каталогу)",
+    "Заявки на персонал (с расчетом стоимости)",
+    "Заявки на технику (с графиком аренды)",
+    "Прикрепление фото к заявкам (до 10 файлов, до 5MB)",
+    "Шаблоны заявок (быстрое создание)",
+    "Офлайн-режим с синхронизацией",
+    "Гибкий workflow (настраиваемые статусы)",
+    "Статистика и аналитика по заявкам",
+    "Фильтрация и поиск",
+    "Push-уведомления при смене статуса",
+    "История изменений (audit log)",
+    "Интеграция с календарем событий",
+    "Отображение заявок в календаре проекта",
+    "Планирование ресурсов через календарь"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "project-management"
+  ],
+  
+  "optional_integrations": [
+    "catalog-management",
+    "ai-assistant",
+    "integrations",
+    "notifications",
+    "material-analytics",
+    "schedule-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_requests_per_month": null,
+    "max_files_per_request": 10,
+    "max_file_size_mb": 5,
+    "max_personnel_in_request": 50,
+    "retention_days": 365,
+    "max_templates": 20
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "clipboard",
+  "display_order": 14
+}
+
+
+═══════════════════════════════════════════════════════════════════════════════
+│ 11. ПРИМЕРЫ КОДА
+═══════════════════════════════════════════════════════════════════════════════
+
+11.1. ПРИМЕР МОДЕЛИ SiteRequest
+-------------------------------
+<?php
+
+namespace App\BusinessModules\Features\SiteRequests\Models;
+
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestStatusEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestPriorityEnum;
+use App\BusinessModules\Features\SiteRequests\Enums\PersonnelTypeEnum;
+
+class SiteRequest extends Model
+{
+    use SoftDeletes;
+
+    protected $fillable = [
+        'organization_id',
+        'project_id',
+        'user_id',
+        'assigned_to',
+        'title',
+        'description',
+        'status',
+        'priority',
+        'request_type',
+        'required_date',
+        'notes',
+        // Материалы
+        'material_id',
+        'material_name',
+        'material_quantity',
+        'material_unit',
+        'delivery_address',
+        'delivery_time_from',
+        'delivery_time_to',
+        'contact_person_name',
+        'contact_person_phone',
+        // Персонал
+        'personnel_type',
+        'personnel_count',
+        'personnel_requirements',
+        'hourly_rate',
+        'work_hours_per_day',
+        'work_start_date',
+        'work_end_date',
+        'work_location',
+        'additional_conditions',
+        // Техника
+        'equipment_type',
+        'equipment_specs',
+        'rental_start_date',
+        'rental_end_date',
+        'rental_hours_per_day',
+        'with_operator',
+        'equipment_location',
+        // Метаданные
+        'metadata',
+        'template_id',
+    ];
+
+    protected $casts = [
+        'status' => SiteRequestStatusEnum::class,
+        'priority' => SiteRequestPriorityEnum::class,
+        'request_type' => SiteRequestTypeEnum::class,
+        'personnel_type' => PersonnelTypeEnum::class,
+        'required_date' => 'date',
+        'work_start_date' => 'date',
+        'work_end_date' => 'date',
+        'rental_start_date' => 'date',
+        'rental_end_date' => 'date',
+        'delivery_time_from' => 'datetime:H:i',
+        'delivery_time_to' => 'datetime:H:i',
+        'hourly_rate' => 'decimal:2',
+        'material_quantity' => 'decimal:3',
+        'with_operator' => 'boolean',
+        'metadata' => 'array',
+    ];
+
+    // Relationships
+    public function organization(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Organization::class);
+    }
+
+    public function project(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Project::class);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\User::class, 'user_id');
+    }
+
+    public function assignedUser(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\User::class, 'assigned_to');
+    }
+
+    public function files(): MorphMany
+    {
+        return $this->morphMany(\App\Models\File::class, 'fileable');
+    }
+
+    // Scopes
+    public function scopeForOrganization($query, int $organizationId)
+    {
+        return $query->where('organization_id', $organizationId);
+    }
+
+    public function scopeWithStatus($query, string $status)
+    {
+        return $query->where('status', $status);
+    }
+
+    // Methods
+    public function canBeEdited(): bool
+    {
+        return in_array($this->status->value, ['draft', 'pending']);
+    }
+
+    public function canBeCancelled(): bool
+    {
+        return !in_array($this->status->value, ['completed', 'cancelled']);
+    }
+
+    public function hasCalendarEvent(): bool
+    {
+        return $this->required_date !== null ||
+               $this->work_start_date !== null ||
+               $this->rental_start_date !== null;
+    }
+}
+
+
+11.2. ПРИМЕР СЕРВИСА SiteRequestCalendarService (*** НОВОЕ ***)
+---------------------------------------------------------------
+<?php
+
+namespace App\BusinessModules\Features\SiteRequests\Services;
+
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequest;
+use App\BusinessModules\Features\SiteRequests\Models\SiteRequestCalendarEvent;
+use Carbon\Carbon;
+use Illuminate\Support\Collection;
+
+class SiteRequestCalendarService
+{
+    public function createCalendarEvent(SiteRequest $request): ?SiteRequestCalendarEvent
+    {
+        if (!$request->hasCalendarEvent()) {
+            return null;
+        }
+
+        $eventData = $this->prepareEventData($request);
+        
+        $calendarEvent = SiteRequestCalendarEvent::create($eventData);
+
+        // Интеграция с schedule-management (если активен)
+        if ($this->hasScheduleManagement()) {
+            $this->syncWithScheduleManagement($request, $calendarEvent);
+        }
+
+        return $calendarEvent;
+    }
+
+    public function updateCalendarEvent(SiteRequest $request): ?SiteRequestCalendarEvent
+    {
+        $calendarEvent = SiteRequestCalendarEvent::where('site_request_id', $request->id)->first();
+
+        if (!$calendarEvent) {
+            return $this->createCalendarEvent($request);
+        }
+
+        if (!$request->hasCalendarEvent()) {
+            $this->deleteCalendarEvent($request);
+            return null;
+        }
+
+        $eventData = $this->prepareEventData($request);
+        $calendarEvent->update($eventData);
+
+        // Обновить в schedule-management
+        if ($this->hasScheduleManagement() && $calendarEvent->schedule_event_id) {
+            $this->updateScheduleManagementEvent($calendarEvent);
+        }
+
+        return $calendarEvent;
+    }
+
+    public function deleteCalendarEvent(SiteRequest $request): void
+    {
+        $calendarEvent = SiteRequestCalendarEvent::where('site_request_id', $request->id)->first();
+
+        if ($calendarEvent) {
+            // Удалить из schedule-management
+            if ($this->hasScheduleManagement() && $calendarEvent->schedule_event_id) {
+                $this->deleteScheduleManagementEvent($calendarEvent);
+            }
+
+            $calendarEvent->delete();
+        }
+    }
+
+    public function getCalendarEvents(
+        int $organizationId,
+        Carbon $startDate,
+        Carbon $endDate,
+        ?int $projectId = null
+    ): Collection {
+        $query = SiteRequestCalendarEvent::query()
+            ->where('organization_id', $organizationId)
+            ->where(function ($q) use ($startDate, $endDate) {
+                $q->whereBetween('start_date', [$startDate, $endDate])
+                  ->orWhereBetween('end_date', [$startDate, $endDate])
+                  ->orWhere(function ($q2) use ($startDate, $endDate) {
+                      $q2->where('start_date', '<=', $startDate)
+                         ->where('end_date', '>=', $endDate);
+                  });
+            })
+            ->with(['siteRequest.project', 'siteRequest.user']);
+
+        if ($projectId) {
+            $query->where('project_id', $projectId);
+        }
+
+        return $query->get();
+    }
+
+    private function prepareEventData(SiteRequest $request): array
+    {
+        $eventType = $this->determineEventType($request);
+        
+        return [
+            'site_request_id' => $request->id,
+            'organization_id' => $request->organization_id,
+            'project_id' => $request->project_id,
+            'event_type' => $eventType,
+            'title' => $this->getCalendarEventTitle($request),
+            'description' => $request->description,
+            'color' => $this->getEventColor($request),
+            'start_date' => $this->getStartDate($request),
+            'end_date' => $this->getEndDate($request),
+            'start_time' => $this->getStartTime($request),
+            'end_time' => $this->getEndTime($request),
+            'all_day' => $this->isAllDay($request),
+        ];
+    }
+
+    private function determineEventType(SiteRequest $request): string
+    {
+        return match($request->request_type->value) {
+            'material_request' => 'material_delivery',
+            'personnel_request' => 'personnel_work',
+            'equipment_request' => 'equipment_rental',
+            default => 'deadline',
+        };
+    }
+
+    private function getCalendarEventTitle(SiteRequest $request): string
+    {
+        return match($request->request_type->value) {
+            'material_request' => "Доставка: {$request->material_name} - {$request->material_quantity} {$request->material_unit}",
+            'personnel_request' => "{$request->personnel_type->name} - {$request->personnel_count} чел.",
+            'equipment_request' => "Аренда: {$request->equipment_type}",
+            default => $request->title,
+        };
+    }
+
+    private function getEventColor(SiteRequest $request): string
+    {
+        // Срочные - всегда красные
+        if ($request->priority === 'urgent') {
+            return '#F44336';
+        }
+
+        // Иначе по типу
+        return match($request->request_type->value) {
+            'material_request' => '#4CAF50',  // Зеленый
+            'personnel_request' => '#2196F3', // Синий
+            'equipment_request' => '#FF9800', // Оранжевый
+            default => '#9E9E9E',             // Серый
+        };
+    }
+
+    private function getStartDate(SiteRequest $request): ?Carbon
+    {
+        return $request->work_start_date 
+            ?? $request->rental_start_date 
+            ?? $request->required_date;
+    }
+
+    private function getEndDate(SiteRequest $request): ?Carbon
+    {
+        return $request->work_end_date 
+            ?? $request->rental_end_date;
+    }
+
+    private function getStartTime(SiteRequest $request): ?string
+    {
+        return $request->delivery_time_from?->format('H:i');
+    }
+
+    private function getEndTime(SiteRequest $request): ?string
+    {
+        return $request->delivery_time_to?->format('H:i');
+    }
+
+    private function isAllDay(SiteRequest $request): bool
+    {
+        return $request->delivery_time_from === null;
+    }
+
+    private function hasScheduleManagement(): bool
+    {
+        return hasModuleAccess('schedule-management', auth()->user());
+    }
+
+    private function syncWithScheduleManagement(
+        SiteRequest $request,
+        SiteRequestCalendarEvent $calendarEvent
+    ): void {
+        $scheduleService = app(\App\BusinessModules\Features\ScheduleManagement\Services\ScheduleService::class);
+
+        $scheduleEvent = $scheduleService->createEvent([
+            'title' => $calendarEvent->title,
+            'description' => $calendarEvent->description,
+            'start_date' => $calendarEvent->start_date,
+            'end_date' => $calendarEvent->end_date,
+            'start_time' => $calendarEvent->start_time,
+            'end_time' => $calendarEvent->end_time,
+            'all_day' => $calendarEvent->all_day,
+            'color' => $calendarEvent->color,
+            'project_id' => $request->project_id,
+            'organization_id' => $request->organization_id,
+            'event_type' => 'site_request',
+            'related_id' => $request->id,
+        ]);
+
+        $calendarEvent->update(['schedule_event_id' => $scheduleEvent->id]);
+    }
+
+    private function updateScheduleManagementEvent(SiteRequestCalendarEvent $calendarEvent): void
+    {
+        $scheduleService = app(\App\BusinessModules\Features\ScheduleManagement\Services\ScheduleService::class);
+
+        $scheduleService->updateEvent($calendarEvent->schedule_event_id, [
+            'title' => $calendarEvent->title,
+            'description' => $calendarEvent->description,
+            'start_date' => $calendarEvent->start_date,
+            'end_date' => $calendarEvent->end_date,
+            'start_time' => $calendarEvent->start_time,
+            'end_time' => $calendarEvent->end_time,
+            'all_day' => $calendarEvent->all_day,
+            'color' => $calendarEvent->color,
+        ]);
+    }
+
+    private function deleteScheduleManagementEvent(SiteRequestCalendarEvent $calendarEvent): void
+    {
+        $scheduleService = app(\App\BusinessModules\Features\ScheduleManagement\Services\ScheduleService::class);
+        $scheduleService->deleteEvent($calendarEvent->schedule_event_id);
+    }
+}
+
+
+═══════════════════════════════════════════════════════════════════════════════
+│ 12. ИНСТРУКЦИИ ДЛЯ AI
+═══════════════════════════════════════════════════════════════════════════════
+
+ВАЖНЫЕ ПРАВИЛА ДЛЯ РАЗРАБОТКИ:
+
+1. СЛЕДУЙ АРХИТЕКТУРЕ ProHelper:
+   • Модуль в директории: app/BusinessModules/Features/SiteRequests/
+   • Все классы следуют PSR-12
+   • Строгая типизация для всех параметров и возвратов
+   • PHPDoc комментарии на русском языке
+
+2. ОБЯЗАТЕЛЬНЫЕ КОМПОНЕНТЫ:
+   • SiteRequestsModule.php (implements ModuleInterface)
+   • SiteRequestsServiceProvider.php
+   • config/ModuleList/features/site-requests.json
+   • routes.php
+   • README.md
+   • migrations/ (все таблицы из раздела 3)
+
+3. ИНТЕГРАЦИИ:
+   • Проверяй активацию модулей через hasModuleAccess()
+   • НЕ дублируй функционал других модулей
+   • Используй их API через сервисы
+
+4. КАЛЕНДАРЬ (КРИТИЧНО!):
+   • Создавай SiteRequestCalendarEvent при создании заявки с датами
+   • Обновляй события при изменении дат
+   • Интегрируй с schedule-management если активен
+   • Реализуй API /calendar для получения событий
+   • Цветовая маркировка по типам заявок
+
+5. МИГРАЦИИ:
+   • Создай все 6 таблиц из раздела 3
+   • Индексы на все часто используемые колонки
+   • Foreign keys с onDelete constraints
+   • Soft deletes для site_requests
+
+6. ENUMS:
+   • Используй backed enums (enum ... : string)
+   • Все Enums из раздела 4
+
+7. API:
+   • RESTful endpoints из раздела 6
+   • Admin API: /api/v1/admin/site-requests
+   • Mobile API: /api/v1/mobile/site-requests
+   • Calendar API: /api/v1/admin/site-requests/calendar
+   • Middleware: auth, organization.context, module.active
+
+8. СЕРВИСЫ:
+   • SiteRequestService - основная бизнес-логика
+   • SiteRequestWorkflowService - управление статусами
+   • SiteRequestNotificationService - уведомления
+   • SiteRequestCalendarService - интеграция с календарем (ОБЯЗАТЕЛЬНО!)
+   • SiteRequestTemplateService - шаблоны
+
+9. ВАЛИДАЦИЯ:
+   • Form Requests для всех POST/PUT
+   • Бизнес-валидация в сервисах
+   • Проверка лимитов модуля
+
+10. СОБЫТИЯ:
+    • SiteRequestCreated
+    • SiteRequestStatusChanged
+    • SiteRequestAssigned
+    • Слушатели для уведомлений
+
+11. ЛОГИРОВАНИЕ:
+    • Все CRUD операции
+    • Изменения статусов в site_request_history
+    • Ошибки через Log::error()
+
+12. КЕШИРОВАНИЕ:
+    • Используй Redis tags
+    • Cache::tags(['site_requests', "org_{$orgId}"])
+    • Инвалидация при изменениях
+
+13. ТЕСТИРОВАНИЕ:
+    • Unit тесты для сервисов
+    • Feature тесты для API
+    • Тесты интеграций с другими модулями
+
+14. БЕЗОПАСНОСТЬ:
+    • Проверка прав через permissions
+    • Проверка принадлежности к организации
+    • SQL injection prevention (использовать Eloquent)
+    • XSS prevention (экранирование)
+
+15. ДОКУМЕНТАЦИЯ:
+    • README.md с описанием модуля
+    • PHPDoc для всех публичных методов
+    • Примеры использования API
+
+16. ПРОИЗВОДИТЕЛЬНОСТЬ:
+    • Eager loading (with()) для relationships
+    • Индексы в БД на часто используемые колонки
+    • Кеширование тяжелых запросов
+    • Пагинация для списков
+
+НАЧНИ С СОЗДАНИЯ:
+1. Директории app/BusinessModules/Features/SiteRequests/
+2. Основного класса SiteRequestsModule.php
+3. ServiceProvider
+4. JSON манифеста
+5. Миграций
+6. Моделей
+7. Enums
+8. Сервисов (ВКЛЮЧАЯ SiteRequestCalendarService!)
+9. Контроллеров (Admin + Mobile + Calendar)
+10. Routes
+11. README.md
+
+УДАЧИ! 🚀
+
+════════════════════════════════════════════════════════════════════════════════
