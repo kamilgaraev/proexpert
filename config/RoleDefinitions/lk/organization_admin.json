@@ -61,8 +61,6 @@
       "work_types.materials.manage", "measurement_units.view", "cost_categories.view"
     ],
     "workflow-management": [
-      "site_requests.view", "site_requests.create", "site_requests.edit", "site_requests.delete",
-      "site_requests.files.upload", "site_requests.files.delete", "site_requests.statistics",
       "completed_works.view", "completed_works.create", "completed_works.edit", "completed_works.delete",
       "completed_works.materials.sync", "completed_works.work_type_defaults.view"
     ],

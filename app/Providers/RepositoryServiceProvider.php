@@ -39,8 +39,6 @@ use App\Repositories\Interfaces\ContractPaymentRepositoryInterface;
 use App\Repositories\ContractPaymentRepository;
 use App\Repositories\Interfaces\CompletedWorkRepositoryInterface;
 use App\Repositories\CompletedWork\CompletedWorkRepository;
-use App\Repositories\Interfaces\SiteRequestRepositoryInterface;
-use App\Repositories\SiteRequest\SiteRequestRepository;
 use App\Repositories\Interfaces\ProjectScheduleRepositoryInterface;
 use App\Repositories\Schedule\ProjectScheduleRepository;
 use App\Repositories\Interfaces\ContractStateEventRepositoryInterface;
@@ -79,9 +77,6 @@ class RepositoryServiceProvider extends ServiceProvider
         
         // Привязка для выполненных работ
         $this->app->bind(CompletedWorkRepositoryInterface::class, CompletedWorkRepository::class);
-        
-        // Привязка для заявок с объекта
-        $this->app->bind(SiteRequestRepositoryInterface::class, SiteRequestRepository::class);
         
         // Привязка для графиков проектов
         $this->app->bind(ProjectScheduleRepositoryInterface::class, ProjectScheduleRepository::class);

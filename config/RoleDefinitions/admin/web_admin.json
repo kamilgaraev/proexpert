@@ -23,8 +23,6 @@
     "admin.reports.view",
     "admin.reports.export",
     "admin.catalogs.manage",
-    "admin.site_requests.view",
-    "admin.site_requests.edit",
     "admin.time_tracking.view",
     "admin.time_tracking.manage",
     "profile.view",
@@ -63,8 +61,6 @@
       "work_types.materials.manage", "measurement_units.view", "cost_categories.view"
     ],
     "workflow-management": [
-      "site_requests.view", "site_requests.create", "site_requests.edit", "site_requests.delete",
-      "site_requests.files.upload", "site_requests.files.delete", "site_requests.statistics",
       "completed_works.view", "completed_works.create", "completed_works.edit", "completed_works.delete",
       "completed_works.materials.sync", "completed_works.work_type_defaults.view"
     ],
@@ -113,7 +109,7 @@
     "dashboard-widgets": [
       "dashboard.view", "dashboard.timeseries.view", "dashboard.top_entities.view", "dashboard.history.view",
       "dashboard.limits.view", "dashboard.contracts.statistics", "dashboard.recent_activity.view",
-      "dashboard.site_requests.statistics", "dashboard.widgets.customize", "dashboard.settings.manage"
+      "dashboard.widgets.customize", "dashboard.settings.manage"
     ],
     "schedule-management": [
       "schedule.view", "schedule.create", "schedule.edit", "schedule.delete", "schedule.assign",

@@ -7,7 +7,6 @@ return [
     
     'notifications' => [
         'contact_forms' => env('TELEGRAM_NOTIFY_CONTACT_FORMS', true),
-        'site_requests' => env('TELEGRAM_NOTIFY_SITE_REQUESTS', false),
     ],
     
     'api_timeout' => env('TELEGRAM_API_TIMEOUT', 30),

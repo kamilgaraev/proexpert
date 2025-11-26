@@ -225,7 +225,6 @@ Route::prefix('v1/admin')->name('admin.')->group(function () {
         require __DIR__ . '/api/v1/admin/time_tracking.php';
         require __DIR__ . '/api/v1/admin/contractors.php';
         require __DIR__ . '/api/v1/admin/contractor_invitations.php';
-        require __DIR__ . '/api/v1/admin/site_requests.php';
         require __DIR__ . '/api/v1/admin/custom-reports.php';
         require __DIR__ . '/api/v1/admin/advanced_dashboard.php';
         require __DIR__ . '/api/v1/admin/estimates.php';
@@ -264,10 +263,6 @@ Route::prefix('mobile')->name('mobile.')->group(function () {
         // Подключаем маршруты выполненных работ для мобильного приложения
         if (file_exists(__DIR__ . '/api/v1/mobile/completed_works.php')) {
             require __DIR__ . '/api/v1/mobile/completed_works.php';
-        }
-        // Подключаем маршруты для заявок с объекта
-        if (file_exists(__DIR__ . '/api/v1/mobile/site_requests.php')) {
-            require __DIR__ . '/api/v1/mobile/site_requests.php';
         }
         // Подключаем маршруты для учета времени
         if (file_exists(__DIR__ . '/api/v1/mobile/time_tracking.php')) {

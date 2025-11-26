@@ -43,7 +43,6 @@
       "materials.view", "work_types.view", "measurement_units.view"
     ],
     "workflow-management": [
-      "site_requests.view", "site_requests.create", 
       "completed_works.view", "completed_works.create", "completed_works.edit"
     ],
     "advance-accounting": [

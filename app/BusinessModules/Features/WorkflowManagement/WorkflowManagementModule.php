@@ -26,7 +26,7 @@ class WorkflowManagementModule implements ModuleInterface, ConfigurableInterface
 
     public function getDescription(): string
     {
-        return 'Система управления заявками и выполненными работами';
+        return 'Система управления выполненными работами';
     }
 
     public function getType(): ModuleType
@@ -82,13 +82,6 @@ class WorkflowManagementModule implements ModuleInterface, ConfigurableInterface
     public function getPermissions(): array
     {
         return [
-            'site_requests.view',
-            'site_requests.create',
-            'site_requests.edit',
-            'site_requests.delete',
-            'site_requests.files.upload',
-            'site_requests.files.delete',
-            'site_requests.statistics',
             'completed_works.view',
             'completed_works.create',
             'completed_works.edit',
@@ -101,22 +94,16 @@ class WorkflowManagementModule implements ModuleInterface, ConfigurableInterface
     public function getFeatures(): array
     {
         return [
-            'Управление заявками с объектов',
-            'Заявки на персонал',
-            'Прикрепление файлов к заявкам',
-            'Статистика по заявкам',
             'Управление выполненными работами',
             'Синхронизация материалов с работами', 
             'Просмотр дефолтных материалов по типам работ',
-            'Фильтрация и поиск',
-            'Уведомления по заявкам'
+            'Фильтрация и поиск'
         ];
     }
 
     public function getLimits(): array
     {
         return [
-            'max_site_requests_per_month' => 500,
             'max_completed_works_per_month' => 1000,
             'max_file_size_mb' => 50,
             'max_files_per_request' => 10

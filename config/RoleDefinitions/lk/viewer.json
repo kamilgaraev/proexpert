@@ -35,7 +35,7 @@
       "contractors.view", "work_types.view", "cost_categories.view"
     ],
     "workflow-management": [
-      "site_requests.view", "completed_works.view"
+      "completed_works.view"
     ],
     "advance-accounting": [
       "advance_transactions.view", "users.advance_balance.view", "reports.advance_accounts.view"

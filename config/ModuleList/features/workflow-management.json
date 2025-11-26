@@ -5,7 +5,7 @@
   "type": "feature",
   "billing_model": "subscription",
   "category": "workflow",
-  "description": "Система управления заявками и выполненными работами",
+  "description": "Система управления выполненными работами",
   
   "class_name": "App\\BusinessModules\\Features\\WorkflowManagement\\WorkflowManagementModule",
   "service_provider": "App\\BusinessModules\\Features\\WorkflowManagement\\WorkflowManagementServiceProvider",
@@ -19,13 +19,6 @@
   },
   
   "permissions": [
-    "site_requests.view",
-    "site_requests.create",
-    "site_requests.edit",
-    "site_requests.delete",
-    "site_requests.files.upload",
-    "site_requests.files.delete",
-    "site_requests.statistics",
     "completed_works.view",
     "completed_works.create",
     "completed_works.edit",
@@ -35,15 +28,10 @@
   ],
   
   "features": [
-    "Управление заявками с объектов",
-    "Заявки на персонал",
-    "Прикрепление файлов к заявкам",
-    "Статистика по заявкам",
     "Управление выполненными работами",
     "Синхронизация материалов с работами", 
     "Просмотр дефолтных материалов по типам работ",
-    "Фильтрация и поиск",
-    "Уведомления по заявкам"
+    "Фильтрация и поиск"
   ],
   
   "dependencies": [
@@ -56,7 +44,6 @@
   "conflicts": [],
   
   "limits": {
-    "max_site_requests_per_month": 500,
     "max_completed_works_per_month": 1000,
     "max_file_size_mb": 50,
     "max_files_per_request": 10

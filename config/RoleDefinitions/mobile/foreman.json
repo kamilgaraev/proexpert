@@ -43,7 +43,6 @@
       "materials.view", "work_types.view"
     ],
     "workflow-management": [
-      "site_requests.view", "site_requests.create", "site_requests.files.upload",
       "completed_works.view", "completed_works.create", "completed_works.materials.sync"
     ],
     "advance-accounting": [

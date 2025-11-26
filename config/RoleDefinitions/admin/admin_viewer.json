@@ -14,7 +14,6 @@
     "admin.materials.view",
     "admin.contracts.view",
     "admin.reports.view",
-    "admin.site_requests.view",
     "admin.time_tracking.view",
     "profile.view"
   ],

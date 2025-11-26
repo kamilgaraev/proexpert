@@ -87,7 +87,6 @@ class DashboardWidgetsModule implements ModuleInterface, ConfigurableInterface
             'dashboard.limits.view',
             'dashboard.contracts.statistics',
             'dashboard.recent_activity.view',
-            'dashboard.site_requests.statistics',
             'dashboard.widgets.customize',
             'dashboard.settings.manage'
         ];

@@ -35,7 +35,7 @@
       "materials.view"
     ],
     "workflow-management": [
-      "site_requests.view", "completed_works.view"
+      "completed_works.view"
     ],
     "advance-accounting": [
       "advance_transactions.view", "users.advance_balance.view"
