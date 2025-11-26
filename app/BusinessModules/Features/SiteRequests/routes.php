@@ -26,7 +26,37 @@ Route::prefix('api/v1/admin/site-requests')
     ->group(function () {
 
         // ============================================
-        // Основной CRUD заявок
+        // Дашборд и статистика (ПЕРЕД CRUD)
+        // ============================================
+        Route::prefix('dashboard')->name('dashboard.')->group(function () {
+            Route::get('/statistics', [SiteRequestDashboardController::class, 'statistics'])->name('statistics');
+            Route::get('/overdue', [SiteRequestDashboardController::class, 'overdue'])->name('overdue');
+        });
+
+        // ============================================
+        // Календарь (ПЕРЕД CRUD)
+        // ============================================
+        Route::prefix('calendar')->name('calendar.')->group(function () {
+            Route::get('/', [SiteRequestCalendarController::class, 'index'])->name('index');
+            Route::get('/by-date', [SiteRequestCalendarController::class, 'byDate'])->name('by_date');
+            Route::get('/export', [SiteRequestCalendarController::class, 'export'])->name('export');
+        });
+
+        // ============================================
+        // Шаблоны (ПЕРЕД CRUD)
+        // ============================================
+        Route::prefix('templates')->name('templates.')->group(function () {
+            Route::get('/', [SiteRequestTemplateController::class, 'index'])->name('index');
+            Route::get('/popular', [SiteRequestTemplateController::class, 'popular'])->name('popular');
+            Route::post('/', [SiteRequestTemplateController::class, 'store'])->name('store');
+            Route::get('/{id}', [SiteRequestTemplateController::class, 'show'])->name('show');
+            Route::put('/{id}', [SiteRequestTemplateController::class, 'update'])->name('update');
+            Route::delete('/{id}', [SiteRequestTemplateController::class, 'destroy'])->name('destroy');
+            Route::post('/{templateId}/create', [SiteRequestTemplateController::class, 'createFromTemplate'])->name('create_from');
+        });
+
+        // ============================================
+        // Основной CRUD заявок (ПОСЛЕ специфичных маршрутов)
         // ============================================
         Route::get('/', [SiteRequestController::class, 'index'])->name('index');
         Route::post('/', [SiteRequestController::class, 'store'])->name('store');
@@ -40,36 +70,6 @@ Route::prefix('api/v1/admin/site-requests')
         Route::post('/{id}/status', [SiteRequestController::class, 'changeStatus'])->name('change_status');
         Route::post('/{id}/assign', [SiteRequestController::class, 'assign'])->name('assign');
         Route::post('/{id}/submit', [SiteRequestController::class, 'submit'])->name('submit');
-
-        // ============================================
-        // Дашборд и статистика
-        // ============================================
-        Route::prefix('dashboard')->name('dashboard.')->group(function () {
-            Route::get('/statistics', [SiteRequestDashboardController::class, 'statistics'])->name('statistics');
-            Route::get('/overdue', [SiteRequestDashboardController::class, 'overdue'])->name('overdue');
-        });
-
-        // ============================================
-        // Календарь
-        // ============================================
-        Route::prefix('calendar')->name('calendar.')->group(function () {
-            Route::get('/', [SiteRequestCalendarController::class, 'index'])->name('index');
-            Route::get('/by-date', [SiteRequestCalendarController::class, 'byDate'])->name('by_date');
-            Route::get('/export', [SiteRequestCalendarController::class, 'export'])->name('export');
-        });
-
-        // ============================================
-        // Шаблоны
-        // ============================================
-        Route::prefix('templates')->name('templates.')->group(function () {
-            Route::get('/', [SiteRequestTemplateController::class, 'index'])->name('index');
-            Route::get('/popular', [SiteRequestTemplateController::class, 'popular'])->name('popular');
-            Route::post('/', [SiteRequestTemplateController::class, 'store'])->name('store');
-            Route::get('/{id}', [SiteRequestTemplateController::class, 'show'])->name('show');
-            Route::put('/{id}', [SiteRequestTemplateController::class, 'update'])->name('update');
-            Route::delete('/{id}', [SiteRequestTemplateController::class, 'destroy'])->name('destroy');
-            Route::post('/{templateId}/create', [SiteRequestTemplateController::class, 'createFromTemplate'])->name('create_from');
-        });
     });
 
 // ============================================
@@ -81,7 +81,18 @@ Route::prefix('api/v1/mobile/site-requests')
     ->group(function () {
 
         // ============================================
-        // CRUD заявок для прорабов
+        // Шаблоны (ПЕРЕД CRUD)
+        // ============================================
+        Route::get('/templates', [MobileSiteRequestController::class, 'templates'])->name('templates');
+        Route::post('/from-template/{templateId}', [MobileSiteRequestController::class, 'createFromTemplate'])->name('from_template');
+
+        // ============================================
+        // Календарь (ПЕРЕД CRUD)
+        // ============================================
+        Route::get('/calendar', [MobileSiteRequestController::class, 'calendar'])->name('calendar');
+
+        // ============================================
+        // CRUD заявок для прорабов (ПОСЛЕ специфичных маршрутов)
         // ============================================
         Route::get('/', [MobileSiteRequestController::class, 'index'])->name('index');
         Route::post('/', [MobileSiteRequestController::class, 'store'])->name('store');
@@ -94,16 +105,5 @@ Route::prefix('api/v1/mobile/site-requests')
         Route::post('/{id}/submit', [MobileSiteRequestController::class, 'submit'])->name('submit');
         Route::post('/{id}/cancel', [MobileSiteRequestController::class, 'cancel'])->name('cancel');
         Route::post('/{id}/complete', [MobileSiteRequestController::class, 'complete'])->name('complete');
-
-        // ============================================
-        // Шаблоны
-        // ============================================
-        Route::get('/templates', [MobileSiteRequestController::class, 'templates'])->name('templates');
-        Route::post('/from-template/{templateId}', [MobileSiteRequestController::class, 'createFromTemplate'])->name('from_template');
-
-        // ============================================
-        // Календарь
-        // ============================================
-        Route::get('/calendar', [MobileSiteRequestController::class, 'calendar'])->name('calendar');
     });
 
