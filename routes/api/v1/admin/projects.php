@@ -30,37 +30,33 @@ Route::delete('projects/{project}', [ProjectController::class, 'destroy'])
     ->name('projects.destroy');
 
 // Дополнительные маршруты для проекта
-Route::post('/projects/{project}/foremen/{user}', [ProjectController::class, 'assignForeman'])->name('projects.foremen.assign');
-Route::delete('/projects/{project}/foremen/{user}', [ProjectController::class, 'detachForeman'])->name('projects.foremen.detach');
+Route::post('/projects/{projectId}/foremen/{userId}', [ProjectController::class, 'assignForeman'])->name('projects.foremen.assign');
+Route::delete('/projects/{projectId}/foremen/{userId}', [ProjectController::class, 'detachForeman'])->name('projects.foremen.detach');
 
 // Получить статистику по проекту
-Route::get('/projects/{project}/statistics', [ProjectController::class, 'statistics'])
+Route::get('/projects/{id}/statistics', [ProjectController::class, 'statistics'])
     ->middleware('authorize:admin.projects.analytics')
     ->name('projects.statistics');
 
 // Получить материалы проекта
-Route::get('/projects/{project}/materials', [ProjectController::class, 'getProjectMaterials'])->name('projects.materials');
+Route::get('/projects/{id}/materials', [ProjectController::class, 'getProjectMaterials'])->name('projects.materials');
 
 // Получить типы работ проекта
-Route::get('/projects/{project}/work-types', [ProjectController::class, 'getProjectWorkTypes'])->name('projects.workTypes');
+Route::get('/projects/{id}/work-types', [ProjectController::class, 'getProjectWorkTypes'])->name('projects.workTypes');
 
 // Получить организации проекта
-Route::get('/projects/{project}/organizations', [ProjectOrganizationController::class, 'index'])->name('projects.organizations.index');
-Route::post('/projects/{project}/organizations', [ProjectOrganizationController::class, 'store'])->name('projects.organizations.store');
-Route::get('/projects/{project}/organizations/{organization}', [ProjectOrganizationController::class, 'show'])->name('projects.organizations.show');
-Route::patch('/projects/{project}/organizations/{organization}/role', [ProjectOrganizationController::class, 'updateRole'])->name('projects.organizations.updateRole');
-Route::delete('/projects/{project}/organizations/{organization}', [ProjectOrganizationController::class, 'destroy'])->name('projects.organizations.destroy');
-Route::post('/projects/{project}/organizations/{organization}/activate', [ProjectOrganizationController::class, 'activate'])->name('projects.organizations.activate');
-Route::post('/projects/{project}/organizations/{organization}/deactivate', [ProjectOrganizationController::class, 'deactivate'])->name('projects.organizations.deactivate');
+Route::get('/projects/{id}/organizations', [ProjectOrganizationController::class, 'index'])->name('projects.organizations.index');
+Route::post('/projects/{projectId}/organizations/{organizationId}', [ProjectOrganizationController::class, 'attach'])->name('projects.organizations.attach');
+Route::delete('/projects/{projectId}/organizations/{organizationId}', [ProjectOrganizationController::class, 'detach'])->name('projects.organizations.detach');
 
 // Получить детализированные работы дочерних организаций
-Route::get('/projects/{project}/child-works', [ProjectChildWorksController::class, 'index'])
+Route::get('/projects/{id}/child-works', [ProjectChildWorksController::class, 'index'])
     ->middleware('authorize:admin.projects.view')
     ->name('projects.child-works.index');
 
 // Статистика (если понадобится)
 // Route::get('projects/{project}/statistics', [ProjectController::class, 'statistics'])->name('projects.statistics'); 
 
-Route::get('/projects/{project}/full', [ProjectController::class, 'fullDetails'])->name('projects.full-details');
+Route::get('/projects/{id}/full', [ProjectController::class, 'fullDetails'])->name('projects.full-details');
 
-Route::get('/projects/{project}/available-organizations', [ProjectOrganizationController::class, 'available'])->name('projects.organizations.available'); 
+Route::get('/projects/{id}/available-organizations', [ProjectOrganizationController::class, 'available'])->name('projects.organizations.available'); 

@@ -176,10 +176,10 @@ class ProjectController extends Controller
     /**
      * Назначить прораба на проект.
      */
-    public function assignForeman(Request $request, \App\Models\Project $project, \App\Models\User $user): JsonResponse
+    public function assignForeman(Request $request, string $projectId, string $userId): JsonResponse
     {
         try {
-            $this->projectService->assignForemanToProject($project->id, $user->id, $request);
+            $this->projectService->assignForemanToProject((int)$projectId, (int)$userId, $request);
             // Если assignForemanToProject не выбросил исключение, считаем успешным
             return response()->json([
                 'success' => true,
@@ -192,7 +192,7 @@ class ProjectController extends Controller
             ], $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@assignForeman', [
-                'projectId' => $project->id, 'userId' => $user->id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+                'projectId' => $projectId, 'userId' => $userId, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
             return response()->json([
                 'success' => false,
@@ -204,10 +204,10 @@ class ProjectController extends Controller
     /**
      * Открепить прораба от проекта.
      */
-    public function detachForeman(Request $request, \App\Models\Project $project, \App\Models\User $user): JsonResponse
+    public function detachForeman(Request $request, string $projectId, string $userId): JsonResponse
     {
         try {
-            $this->projectService->detachForemanFromProject($project->id, $user->id, $request);
+            $this->projectService->detachForemanFromProject((int)$projectId, (int)$userId, $request);
             // Если detachForemanFromProject не выбросил исключение, считаем успешным
             return response()->json([
                 'success' => true,
@@ -220,7 +220,7 @@ class ProjectController extends Controller
             ], $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@detachForeman', [
-                'projectId' => $project->id, 'userId' => $user->id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+                'projectId' => $projectId, 'userId' => $userId, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
             return response()->json([
                 'success' => false,
@@ -229,17 +229,17 @@ class ProjectController extends Controller
         }
     }
 
-    public function statistics(\App\Models\Project $project): JsonResponse
+    public function statistics(int $id): JsonResponse
     {
         try {
-            $statistics = $this->projectService->getProjectStatistics($project->id);
+            $statistics = $this->projectService->getProjectStatistics($id);
             return response()->json([
                 'success' => true, // Условно true, так как метод-заглушка отработал
                 'data' => $statistics
             ]);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@statistics', [
-                'id' => $project->id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
             return response()->json([
                 'success' => false,
@@ -248,11 +248,11 @@ class ProjectController extends Controller
         }
     }
 
-    public function getProjectMaterials(\App\Models\Project $project, Request $request): JsonResponse
+    public function getProjectMaterials(int $id, Request $request): JsonResponse
     {
         try {
             $materials = $this->projectService->getProjectMaterials(
-                $project->id,
+                $id,
                 $request->get('per_page', 15),
                 $request->get('search'),
                 $request->get('sort_by', 'created_at'),
@@ -273,11 +273,11 @@ class ProjectController extends Controller
         }
     }
 
-    public function getProjectWorkTypes(\App\Models\Project $project, Request $request): JsonResponse
+    public function getProjectWorkTypes(int $id, Request $request): JsonResponse
     {
         try {
             $workTypes = $this->projectService->getProjectWorkTypes(
-                $project->id,
+                $id,
                 $request->get('per_page', 15),
                 $request->get('search'),
                 $request->get('sort_by', 'created_at'),
@@ -289,7 +289,7 @@ class ProjectController extends Controller
             ]);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@getProjectWorkTypes', [
-                'id' => $project->id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+                'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
             return response()->json([
                 'success' => false,
@@ -327,10 +327,10 @@ class ProjectController extends Controller
     /**
      * Полная сводка по проекту.
      */
-    public function fullDetails(Request $request, \App\Models\Project $project): JsonResponse
+    public function fullDetails(Request $request, int $id): JsonResponse
     {
         try {
-            $details = $this->projectService->getFullProjectDetails($project->id, $request);
+            $details = $this->projectService->getFullProjectDetails($id, $request);
             return response()->json([
                 'success' => true,
                 'data' => $details,
@@ -342,7 +342,7 @@ class ProjectController extends Controller
             ], $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@fullDetails', [
-                'projectId' => $project->id,
+                'projectId' => $id,
                 'error' => $e->getMessage(),
             ]);
             return response()->json([

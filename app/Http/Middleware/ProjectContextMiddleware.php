@@ -25,30 +25,13 @@ class ProjectContextMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
-        // Получаем проект из route parameter
-        // route()->parameter('key') возвращает конкретный параметр (может быть уже модель после Route Model Binding)
-        $projectParam = $request->route()->parameter('project');
+        $projectId = $request->route('project');
         
-        if (!$projectParam) {
+        if (!$projectId) {
             return response()->json([
                 'message' => 'Project ID is required in URL',
                 'error' => 'MISSING_PROJECT_CONTEXT',
             ], 400);
-        }
-
-        // Если это уже модель Project (Route Model Binding), используем её
-        // Иначе загружаем по ID
-        if ($projectParam instanceof Project) {
-            $project = $projectParam;
-        } else {
-            $project = Project::find($projectParam);
-            
-            if (!$project) {
-                return response()->json([
-                    'message' => 'Project not found',
-                    'error' => 'PROJECT_NOT_FOUND',
-                ], 404);
-            }
         }
 
         $user = $request->user();
@@ -69,10 +52,19 @@ class ProjectContextMiddleware
             ], 403);
         }
 
+        $project = Project::find($projectId);
+        
+        if (!$project) {
+            return response()->json([
+                'message' => 'Project not found',
+                'error' => 'PROJECT_NOT_FOUND',
+            ], 404);
+        }
+
         // Проверка доступа организации к проекту
         if (!$this->projectContextService->canOrganizationAccessProject($project, $organization)) {
             Log::warning('Unauthorized project access attempt', [
-                'project_id' => $project->id,
+                'project_id' => $projectId,
                 'organization_id' => $organization->id,
                 'user_id' => $user->id,
             ]);
@@ -88,7 +80,7 @@ class ProjectContextMiddleware
             $projectContext = $this->projectContextService->getContext($project, $organization);
         } catch (\Exception $e) {
             Log::error('Failed to build project context', [
-                'project_id' => $project->id,
+                'project_id' => $projectId,
                 'organization_id' => $organization->id,
                 'error' => $e->getMessage(),
             ]);

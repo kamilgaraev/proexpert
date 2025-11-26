@@ -29,11 +29,6 @@ class RouteServiceProvider extends ServiceProvider
             return \App\Models\ContractPerformanceAct::findOrFail($value);
         });
         
-        // Route Model Binding для project - только находим, проверку доступа делаем в контроллере
-        Route::bind('project', function ($value) {
-            return \App\Models\Project::findOrFail($value);
-        });
-        
         // Route Model Binding для estimate, section, item УДАЛЕНЫ
         // Контроллеры теперь сами загружают модели и проверяют организацию
         
