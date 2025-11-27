@@ -139,7 +139,8 @@ enum SiteRequestStatusEnum: string
     {
         return [
             self::DRAFT->value => [self::PENDING->value, self::CANCELLED->value],
-            self::PENDING->value => [self::IN_REVIEW->value, self::REJECTED->value, self::CANCELLED->value],
+            // Разрешаем прямой переход в APPROVED из PENDING
+            self::PENDING->value => [self::IN_REVIEW->value, self::APPROVED->value, self::REJECTED->value, self::CANCELLED->value],
             self::IN_REVIEW->value => [self::APPROVED->value, self::REJECTED->value, self::PENDING->value],
             self::APPROVED->value => [self::IN_PROGRESS->value, self::CANCELLED->value],
             self::IN_PROGRESS->value => [self::FULFILLED->value, self::ON_HOLD->value, self::CANCELLED->value],
