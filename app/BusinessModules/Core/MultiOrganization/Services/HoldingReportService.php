@@ -320,6 +320,7 @@ class HoldingReportService
         $contractIds = DB::table('contracts')
             ->whereIn('organization_id', $orgIds)
             ->whereIn('project_id', $projectIds)
+            ->whereNull('deleted_at')
             ->pluck('id')
             ->toArray();
 
@@ -408,6 +409,7 @@ class HoldingReportService
             $contractIds = DB::table('contracts')
                 ->where('organization_id', $org->id)
                 ->whereIn('project_id', $projectIds)
+                ->whereNull('deleted_at')
                 ->pluck('id')
                 ->toArray();
             
@@ -540,6 +542,7 @@ class HoldingReportService
             ->join('contracts', 'contractors.id', '=', 'contracts.contractor_id')
             ->join('organizations as orgs', 'contracts.organization_id', '=', 'orgs.id')
             ->whereIn('contracts.organization_id', $orgIds)
+            ->whereNull('contracts.deleted_at')
             ->groupBy([
                 'contractors.id',
                 'contractors.name',
@@ -579,6 +582,7 @@ class HoldingReportService
             $contractIds = DB::table('contracts')
                 ->where('contractor_id', $contractor->id)
                 ->whereIn('organization_id', $orgIds)
+                ->whereNull('deleted_at')
                 ->pluck('id')
                 ->toArray();
 
@@ -1407,6 +1411,7 @@ class HoldingReportService
 
         $contractsBase = DB::table('contracts')
             ->whereIn('id', $contractIds)
+            ->whereNull('deleted_at')
             ->sum('total_amount');
 
         $agreementsTotal = DB::table('supplementary_agreements')
@@ -1423,7 +1428,8 @@ class HoldingReportService
     private function calculateContractAmountFromDbWithConditions(array $organizationIds, array $projectIds = null): float
     {
         $contractsQuery = DB::table('contracts')
-            ->whereIn('organization_id', $organizationIds);
+            ->whereIn('organization_id', $organizationIds)
+            ->whereNull('deleted_at');
         
         if ($projectIds !== null) {
             $contractsQuery->whereIn('project_id', $projectIds);
