@@ -1541,14 +1541,25 @@ class HoldingReportService
             $contractInvoices = $invoicesByContract->get($contract->id, collect());
 
             // Получаем активную спецификацию или первое дополнительное соглашение для отображения в №ДС/СП
-            $activeSpecification = $contract->activeSpecification();
-            $firstAgreement = $contract->agreements->first();
             $agreementSpecNumber = '-';
-            if ($activeSpecification) {
-                $agreementSpecNumber = $activeSpecification->name ?? '-';
-            } elseif ($firstAgreement) {
-                $agreementDate = $firstAgreement->agreement_date ? $firstAgreement->agreement_date->format('d.m.Y') : '';
-                $agreementSpecNumber = $firstAgreement->number . ($agreementDate ? ", {$agreementDate}" : '');
+            try {
+                $activeSpecification = $contract->activeSpecification();
+                if ($activeSpecification) {
+                    $agreementSpecNumber = $activeSpecification->name ?? '-';
+                } else {
+                    $firstAgreement = $contract->agreements->first();
+                    if ($firstAgreement) {
+                        $agreementDate = $firstAgreement->agreement_date ? $firstAgreement->agreement_date->format('d.m.Y') : '';
+                        $agreementSpecNumber = $firstAgreement->number . ($agreementDate ? ", {$agreementDate}" : '');
+                    }
+                }
+            } catch (\Exception $e) {
+                // Если метод activeSpecification() не работает, используем первое соглашение
+                $firstAgreement = $contract->agreements->first();
+                if ($firstAgreement) {
+                    $agreementDate = $firstAgreement->agreement_date ? $firstAgreement->agreement_date->format('d.m.Y') : '';
+                    $agreementSpecNumber = $firstAgreement->number . ($agreementDate ? ", {$agreementDate}" : '');
+                }
             }
 
             // Если есть invoices или акты, создаем строки для каждого
@@ -1589,7 +1600,9 @@ class HoldingReportService
 
                 // Создаем строки для каждого акта (если еще не созданы для этого акта)
                 foreach ($approvedActs as $act) {
-                    $actDate = $act->act_date ?? $contract->date ?? now();
+                    $actDate = $act->act_date 
+                        ? Carbon::parse($act->act_date) 
+                        : ($contract->date ? Carbon::parse($contract->date) : now());
                     
                     // Проверяем, есть ли уже строка для этого акта (по дате)
                     $hasRowForAct = $contractInvoices->contains(function ($invoice) use ($actDate) {
@@ -1607,7 +1620,7 @@ class HoldingReportService
                             contractorName: $contractor->name ?? '-',
                             contractNumber: $contractNumber,
                             contractDate: $contractDate,
-                            agreementNumber: $act->number ?? $agreementSpecNumber,
+                            agreementNumber: $act->act_document_number ?? $agreementSpecNumber,
                             subject: $contractSubject,
                             workTypeCategory: $workTypeCategory,
                             paymentTerms: $paymentTerms,
@@ -1623,7 +1636,7 @@ class HoldingReportService
                             remainingToPay: $remainingToPay,
                             performedAmount: $totalPerformed,
                             remainingToPerform: $remainingToPerform,
-                            notes: $act->notes ?? $contract->notes ?? ''
+                            notes: $act->description ?? $contract->notes ?? ''
                         );
                     }
                 }
