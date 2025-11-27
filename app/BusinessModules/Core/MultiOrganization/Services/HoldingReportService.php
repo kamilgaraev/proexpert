@@ -1439,5 +1439,391 @@ class HoldingReportService
         
         return $this->calculateContractAmountFromDb($contractIds);
     }
+
+    /**
+     * Детальный отчет по контрактам холдинга с разбивкой по платежам и актам
+     */
+    public function getDetailedContractsReport(HoldingReportRequest $request, int $holdingId): array|StreamedResponse
+    {
+        $holding = $this->validateHoldingAccess($holdingId);
+        $availableOrgIds = $this->scope->getOrganizationScope($holdingId);
+        $filters = $this->extractFilters($request);
+
+        $selectedOrgIds = !empty($filters['organization_ids']) 
+            ? array_intersect($filters['organization_ids'], $availableOrgIds)
+            : $availableOrgIds;
+
+        Log::info('Holding detailed contracts report requested', [
+            'holding_id' => $holdingId,
+            'organizations' => count($selectedOrgIds),
+            'filters' => $filters
+        ]);
+
+        $contracts = Contract::query()
+            ->whereIn('organization_id', $selectedOrgIds)
+            ->with([
+                'organization:id,name',
+                'contractor:id,name',
+                'agreements:id,contract_id,number,date,change_amount',
+                'specifications:id,name,total_amount',
+                'performanceActs' => function ($query) {
+                    $query->where('is_approved', true)
+                        ->orderBy('act_date', 'asc');
+                }
+            ])
+            ->whereNull('deleted_at');
+
+        $this->applyContractFilters($contracts, $filters);
+
+        $contracts = $contracts->get();
+
+        // Получаем все invoices для контрактов
+        $contractIds = $contracts->pluck('id')->toArray();
+        $invoices = DB::table('invoices')
+            ->where('invoiceable_type', 'App\\Models\\Contract')
+            ->whereIn('invoiceable_id', $contractIds)
+            ->whereNull('deleted_at')
+            ->orderBy('invoice_date', 'asc')
+            ->get();
+
+        // Группируем invoices по contract_id
+        $invoicesByContract = $invoices->groupBy('invoiceable_id');
+
+        // Получаем платежи из invoices (данные мигрированы из contract_payments)
+        // Группируем по типу invoice_type
+        $advanceInvoices = $invoices->where('invoice_type', 'advance')->groupBy('invoiceable_id');
+        // Оплата по факту (КС) - это ACT и PROGRESS типы
+        $factInvoices = $invoices->whereIn('invoice_type', ['act', 'progress'])->groupBy('invoiceable_id');
+        // Отложенный платеж (10% - гарантийное удержание)
+        // Пока используем пустую коллекцию, так как отложенный платеж обычно не оплачивается отдельно
+        // Это удержание из суммы, а не отдельный платеж
+        $deferredInvoices = collect()->groupBy('invoiceable_id');
+
+        $rows = [];
+
+        foreach ($contracts as $contract) {
+            $organization = $contract->organization;
+            $contractor = $contract->contractor;
+            
+            // Базовые данные контракта
+            $contractNumber = $contract->number ?? '-';
+            $contractDate = $contract->date ? $contract->date->format('d.m.Y') : '-';
+            $contractSubject = $contract->subject ?? '-';
+            $workTypeCategory = $contract->work_type_category?->value ?? '-';
+            $paymentTerms = is_string($contract->payment_terms) 
+                ? $contract->payment_terms 
+                : (is_array($contract->payment_terms) ? json_encode($contract->payment_terms, JSON_UNESCAPED_UNICODE) : '-');
+            
+            // Финансовые данные контракта
+            $baseAmount = (float) ($contract->base_amount ?? 0);
+            $gpPercentage = (float) ($contract->gp_percentage ?? 0);
+            $gpAmount = (float) ($contract->gp_amount ?? 0);
+            $warrantyRetentionAmount = (float) ($contract->warranty_retention_amount ?? 0);
+            $totalAmountWithGp = $baseAmount + $gpAmount;
+            $amountToPay = $totalAmountWithGp - $warrantyRetentionAmount;
+
+            // Суммы платежей из invoices
+            $contractInvoicesForPayment = $invoicesByContract->get($contract->id, collect());
+            $totalAdvancePaid = (float) ($advanceInvoices->get($contract->id, collect())->sum('paid_amount') ?? 0);
+            $totalFactPaid = (float) ($factInvoices->get($contract->id, collect())->sum('paid_amount') ?? 0);
+            $totalDeferredPaid = (float) ($deferredInvoices->get($contract->id, collect())->sum('paid_amount') ?? 0);
+            $totalPaid = (float) $contractInvoicesForPayment->sum('paid_amount');
+
+            // Акты выполнения
+            $approvedActs = $contract->performanceActs ?? collect();
+            $totalPerformed = (float) $approvedActs->sum('amount');
+            $remainingToPerform = max(0, $totalAmountWithGp - $totalPerformed);
+
+            // Остаток к оплате
+            $remainingToPay = max(0, $amountToPay - $totalPaid);
+
+            // Получаем invoices для этого контракта
+            $contractInvoices = $invoicesByContract->get($contract->id, collect());
+
+            // Получаем активную спецификацию или первое дополнительное соглашение для отображения в №ДС/СП
+            $activeSpecification = $contract->activeSpecification();
+            $firstAgreement = $contract->agreements->first();
+            $agreementSpecNumber = '-';
+            if ($activeSpecification) {
+                $agreementSpecNumber = $activeSpecification->name ?? '-';
+            } elseif ($firstAgreement) {
+                $agreementDate = $firstAgreement->date ? $firstAgreement->date->format('d.m.Y') : '';
+                $agreementSpecNumber = $firstAgreement->number . ($agreementDate ? ", {$agreementDate}" : '');
+            }
+
+            // Если есть invoices или акты, создаем строки для каждого
+            if ($contractInvoices->isNotEmpty() || $approvedActs->isNotEmpty()) {
+                // Создаем строки для каждого invoice
+                foreach ($contractInvoices as $invoice) {
+                    $invoiceDate = $invoice->invoice_date ? Carbon::parse($invoice->invoice_date) : null;
+                    $paidAt = $invoice->paid_at ? Carbon::parse($invoice->paid_at) : $invoiceDate;
+                    
+                    $rows[] = $this->buildDetailedReportRow(
+                        registryDate: $invoiceDate ?? $contract->date ?? now(),
+                        paymentDate: $paidAt,
+                        month: $paidAt ? $paidAt->format('m') : '',
+                        year: $paidAt ? $paidAt->format('Y') : '',
+                        organizationName: $organization->name ?? '-',
+                        contractorName: $contractor->name ?? '-',
+                        contractNumber: $contractNumber,
+                        contractDate: $contractDate,
+                        agreementNumber: $agreementSpecNumber,
+                        subject: $contractSubject,
+                        workTypeCategory: $workTypeCategory,
+                        paymentTerms: $paymentTerms,
+                        contractAmount: $totalAmountWithGp,
+                        gpPercentage: $gpPercentage,
+                        gpAmount: $gpAmount,
+                        warrantyRetentionAmount: $warrantyRetentionAmount,
+                        amountToPay: $amountToPay,
+                        advancePaid: $totalAdvancePaid,
+                        factPaid: $totalFactPaid,
+                        deferredPaid: $totalDeferredPaid,
+                        totalPaid: $totalPaid,
+                        remainingToPay: $remainingToPay,
+                        performedAmount: $totalPerformed,
+                        remainingToPerform: $remainingToPerform,
+                        notes: $invoice->notes ?? $contract->notes ?? ''
+                    );
+                }
+
+                // Создаем строки для каждого акта (если еще не созданы для этого акта)
+                foreach ($approvedActs as $act) {
+                    $actDate = $act->act_date ?? $contract->date ?? now();
+                    
+                    // Проверяем, есть ли уже строка для этого акта (по дате)
+                    $hasRowForAct = $contractInvoices->contains(function ($invoice) use ($actDate) {
+                        $invoiceDate = $invoice->invoice_date ? Carbon::parse($invoice->invoice_date) : null;
+                        return $invoiceDate && $invoiceDate->format('Y-m-d') === $actDate->format('Y-m-d');
+                    });
+
+                    if (!$hasRowForAct) {
+                        $rows[] = $this->buildDetailedReportRow(
+                            registryDate: $actDate,
+                            paymentDate: $actDate,
+                            month: $actDate->format('m'),
+                            year: $actDate->format('Y'),
+                            organizationName: $organization->name ?? '-',
+                            contractorName: $contractor->name ?? '-',
+                            contractNumber: $contractNumber,
+                            contractDate: $contractDate,
+                            agreementNumber: $act->number ?? $agreementSpecNumber,
+                            subject: $contractSubject,
+                            workTypeCategory: $workTypeCategory,
+                            paymentTerms: $paymentTerms,
+                            contractAmount: $totalAmountWithGp,
+                            gpPercentage: $gpPercentage,
+                            gpAmount: $gpAmount,
+                            warrantyRetentionAmount: $warrantyRetentionAmount,
+                            amountToPay: $amountToPay,
+                            advancePaid: $totalAdvancePaid,
+                            factPaid: $totalFactPaid,
+                            deferredPaid: $totalDeferredPaid,
+                            totalPaid: $totalPaid,
+                            remainingToPay: $remainingToPay,
+                            performedAmount: $totalPerformed,
+                            remainingToPerform: $remainingToPerform,
+                            notes: $act->notes ?? $contract->notes ?? ''
+                        );
+                    }
+                }
+            } else {
+                // Если нет invoices и актов, создаем одну строку с данными контракта
+                $rows[] = $this->buildDetailedReportRow(
+                    registryDate: $contract->date ?? now(),
+                    paymentDate: null,
+                    month: '',
+                    year: '',
+                    organizationName: $organization->name ?? '-',
+                    contractorName: $contractor->name ?? '-',
+                    contractNumber: $contractNumber,
+                    contractDate: $contractDate,
+                    agreementNumber: $agreementSpecNumber,
+                    subject: $contractSubject,
+                    workTypeCategory: $workTypeCategory,
+                    paymentTerms: $paymentTerms,
+                    contractAmount: $totalAmountWithGp,
+                    gpPercentage: $gpPercentage,
+                    gpAmount: $gpAmount,
+                    warrantyRetentionAmount: $warrantyRetentionAmount,
+                    amountToPay: $amountToPay,
+                    advancePaid: $totalAdvancePaid,
+                    factPaid: $totalFactPaid,
+                    deferredPaid: $totalDeferredPaid,
+                    totalPaid: $totalPaid,
+                    remainingToPay: $remainingToPay,
+                    performedAmount: $totalPerformed,
+                    remainingToPerform: $remainingToPerform,
+                    notes: $contract->notes ?? ''
+                );
+            }
+        }
+
+        // Сортировка по дате реестра
+        usort($rows, function ($a, $b) {
+            $dateA = $a['date_registry'] ?? '';
+            $dateB = $b['date_registry'] ?? '';
+            return strcmp($dateB, $dateA); // По убыванию (новые сверху)
+        });
+
+        $result = [
+            'title' => 'Детальный отчет по контрактам холдинга',
+            'holding' => [
+                'id' => $holding->id,
+                'name' => $holding->name,
+            ],
+            'period' => [
+                'from' => $filters['date_from'],
+                'to' => $filters['date_to'],
+            ],
+            'filters' => $filters,
+            'total_rows' => count($rows),
+            'data' => $rows,
+            'generated_at' => now()->toISOString(),
+        ];
+
+        if ($request->input('export_format')) {
+            return $this->exportDetailedContractsReport($result, $request->input('export_format'));
+        }
+
+        return $result;
+    }
+
+    /**
+     * Построить строку детального отчета
+     */
+    private function buildDetailedReportRow(
+        $registryDate,
+        $paymentDate,
+        string $month,
+        string $year,
+        string $organizationName,
+        string $contractorName,
+        string $contractNumber,
+        string $contractDate,
+        string $agreementNumber,
+        string $subject,
+        string $workTypeCategory,
+        string $paymentTerms,
+        float $contractAmount,
+        float $gpPercentage,
+        float $gpAmount,
+        float $warrantyRetentionAmount,
+        float $amountToPay,
+        float $advancePaid,
+        float $factPaid,
+        float $deferredPaid,
+        float $totalPaid,
+        float $remainingToPay,
+        float $performedAmount,
+        float $remainingToPerform,
+        string $notes
+    ): array {
+        $registryDateStr = $registryDate instanceof Carbon 
+            ? $registryDate->format('d.m.Y') 
+            : ($registryDate ? Carbon::parse($registryDate)->format('d.m.Y') : '');
+        
+        $paymentDateStr = $paymentDate instanceof Carbon 
+            ? $paymentDate->format('d.m.Y') 
+            : ($paymentDate ? Carbon::parse($paymentDate)->format('d.m.Y') : '');
+
+        return [
+            'date_registry' => $registryDateStr,
+            'date_payment_performance' => $paymentDateStr,
+            'month' => $month,
+            'year' => $year,
+            'organization_name' => $organizationName,
+            'contractor_name' => $contractorName,
+            'contract_number_date' => "{$contractNumber}, {$contractDate}",
+            'agreement_specification_number' => $agreementNumber,
+            'subject' => $subject,
+            'work_type_category' => $workTypeCategory,
+            'payment_terms' => $paymentTerms,
+            'contract_amount' => round($contractAmount, 2),
+            'gp_percentage' => round($gpPercentage, 3),
+            'gp_amount' => round($gpAmount, 2),
+            'warranty_retention_reference' => round($warrantyRetentionAmount, 2),
+            'amount_to_pay' => round($amountToPay, 2),
+            'advance_paid' => round($advancePaid, 2),
+            'fact_payment_paid' => round($factPaid, 2),
+            'deferred_payment_paid' => round($deferredPaid, 2),
+            'total_paid' => round($totalPaid, 2),
+            'remaining_to_pay' => round($remainingToPay, 2),
+            'performed_amount' => round($performedAmount, 2),
+            'remaining_to_perform' => round($remainingToPerform, 2),
+            'notes' => $notes,
+        ];
+    }
+
+    /**
+     * Экспорт детального отчета
+     */
+    protected function exportDetailedContractsReport(array $data, string $format): StreamedResponse
+    {
+        $headers = [
+            'Дата Реестра',
+            'Дата оплаты /выполнения',
+            'Месяц',
+            'Год',
+            'Юр.лицо',
+            'Контрагент',
+            '№, дата договора',
+            '№ДС/СП',
+            'Наименование работ, услуг',
+            'СМР/Поставка/Прочие',
+            'Условие оплаты по договору',
+            'Сумма по договору/спецификации',
+            '% ГП',
+            'Сумма ГП',
+            'Справочно-10%-отложенный платеж',
+            'Сумма к оплате по договору',
+            'Аванс оплаченный',
+            'Оплата за факт (КС)',
+            'Оплата 10%',
+            'ИТОГО оплачено',
+            'Остаток к оплате',
+            'Выполнение, факт',
+            'Остаток выполнения',
+            'Примечание',
+        ];
+
+        $rows = [];
+        foreach ($data['data'] as $row) {
+            $rows[] = [
+                $row['date_registry'],
+                $row['date_payment_performance'],
+                $row['month'],
+                $row['year'],
+                $row['organization_name'],
+                $row['contractor_name'],
+                $row['contract_number_date'],
+                $row['agreement_specification_number'],
+                $row['subject'],
+                $row['work_type_category'],
+                $row['payment_terms'],
+                $row['contract_amount'],
+                $row['gp_percentage'],
+                $row['gp_amount'],
+                $row['warranty_retention_reference'],
+                $row['amount_to_pay'],
+                $row['advance_paid'],
+                $row['fact_payment_paid'],
+                $row['deferred_payment_paid'],
+                $row['total_paid'],
+                $row['remaining_to_pay'],
+                $row['performed_amount'],
+                $row['remaining_to_perform'],
+                $row['notes'],
+            ];
+        }
+
+        $filename = 'holding_detailed_contracts_report_' . now()->format('Y-m-d_His');
+
+        if ($format === 'csv') {
+            return $this->csvExporter->streamDownload($filename . '.csv', $headers, $rows);
+        }
+
+        return $this->excelExporter->streamDownload($filename . '.xlsx', $headers, $rows);
+    }
 }
 

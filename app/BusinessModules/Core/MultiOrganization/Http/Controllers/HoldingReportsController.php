@@ -78,5 +78,21 @@ class HoldingReportsController extends Controller
             'data' => $result,
         ]);
     }
+
+    public function detailedContracts(HoldingReportRequest $request): JsonResponse|StreamedResponse
+    {
+        $holdingId = $request->attributes->get('current_organization_id');
+        
+        $result = $this->reportService->getDetailedContractsReport($request, $holdingId);
+
+        if ($result instanceof StreamedResponse) {
+            return $result;
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $result,
+        ]);
+    }
 }
 
