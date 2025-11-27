@@ -12,6 +12,7 @@ use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestResource
 use App\BusinessModules\Features\SiteRequests\Http\Resources\SiteRequestCollection;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Admin API контроллер для заявок
@@ -119,11 +120,63 @@ class SiteRequestController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             $userId = auth()->id();
+            $data = $request->validated();
 
+            // Обработка массового создания материалов (поддержка фронтенда)
+            if (isset($data['materials']) && is_array($data['materials'])) {
+                $createdRequests = [];
+                
+                DB::transaction(function () use ($data, $organizationId, $userId, &$createdRequests) {
+                    foreach ($data['materials'] as $material) {
+                        $itemData = $data;
+                        unset($itemData['materials']); // Убираем массив, чтобы не мешал
+
+                        // Маппинг полей материала из массива в корневые поля
+                        $itemData['material_name'] = $material['name'] ?? null;
+                        $itemData['material_quantity'] = $material['quantity'] ?? null;
+                        $itemData['material_unit'] = $material['unit'] ?? null;
+                        $itemData['material_id'] = $material['material_id'] ?? null;
+                        
+                        // Добавляем примечание материала к общим примечаниям
+                        if (!empty($material['note'])) {
+                            $itemData['notes'] = ($itemData['notes'] ? $itemData['notes'] . "\n" : '') . "Примечание к позиции: " . $material['note'];
+                        }
+
+                        // Модифицируем заголовок, чтобы различать заявки в списке
+                        // Например: "Заявка №49 - Доска"
+                        if (!empty($itemData['material_name'])) {
+                            $itemData['title'] = $itemData['title'] . ' - ' . $itemData['material_name'];
+                        }
+
+                        $createdRequests[] = $this->service->create(
+                            $organizationId,
+                            $userId,
+                            $itemData
+                        );
+                    }
+                });
+
+                // Возвращаем результат
+                // Если создано несколько, возвращаем последнюю как основную для редиректа,
+                // но сообщаем о количестве
+                $lastRequest = end($createdRequests);
+                
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Создано заявок: ' . count($createdRequests),
+                    'data' => new SiteRequestResource($lastRequest),
+                    'meta' => [
+                        'batch_size' => count($createdRequests),
+                        'ids' => array_map(fn($r) => $r->id, $createdRequests)
+                    ]
+                ], 201);
+            }
+
+            // Стандартное создание одной заявки
             $siteRequest = $this->service->create(
                 $organizationId,
                 $userId,
-                $request->validated()
+                $data
             );
 
             return response()->json([

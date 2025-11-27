@@ -36,21 +36,41 @@ class StoreSiteRequestRequest extends FormRequest
             'priority' => ['sometimes', new Enum(SiteRequestPriorityEnum::class)],
             'required_date' => ['nullable', 'date', 'after_or_equal:today'],
             'notes' => ['nullable', 'string'],
+            'materials' => ['nullable', 'array'],
         ];
 
         // Правила для материалов
         if ($this->input('request_type') === SiteRequestTypeEnum::MATERIAL_REQUEST->value) {
-            $rules = array_merge($rules, [
-                'material_id' => ['nullable', 'integer'],
-                'material_name' => ['required_without:material_id', 'nullable', 'string', 'max:255'],
-                'material_quantity' => ['required', 'numeric', 'min:0.001'],
-                'material_unit' => ['required', 'string', 'max:50'],
-                'delivery_address' => ['nullable', 'string'],
-                'delivery_time_from' => ['nullable', 'date_format:H:i'],
-                'delivery_time_to' => ['nullable', 'date_format:H:i', 'after:delivery_time_from'],
-                'contact_person_name' => ['nullable', 'string', 'max:255'],
-                'contact_person_phone' => ['nullable', 'string', 'max:50'],
-            ]);
+            // Если передан массив materials
+            if ($this->has('materials') && is_array($this->input('materials'))) {
+                $rules = array_merge($rules, [
+                    'materials.*.material_id' => ['nullable', 'integer'],
+                    'materials.*.name' => ['required_without:materials.*.material_id', 'nullable', 'string', 'max:255'],
+                    'materials.*.quantity' => ['required', 'numeric', 'min:0.001'],
+                    'materials.*.unit' => ['required', 'string', 'max:50'],
+                    'materials.*.note' => ['nullable', 'string'],
+                    
+                    // Общие поля доставки для всей заявки
+                    'delivery_address' => ['nullable', 'string'],
+                    'delivery_time_from' => ['nullable', 'date_format:H:i'],
+                    'delivery_time_to' => ['nullable', 'date_format:H:i', 'after:delivery_time_from'],
+                    'contact_person_name' => ['nullable', 'string', 'max:255'],
+                    'contact_person_phone' => ['nullable', 'string', 'max:50'],
+                ]);
+            } else {
+                // Старая логика для одиночного материала
+                $rules = array_merge($rules, [
+                    'material_id' => ['nullable', 'integer'],
+                    'material_name' => ['required_without:material_id', 'nullable', 'string', 'max:255'],
+                    'material_quantity' => ['required', 'numeric', 'min:0.001'],
+                    'material_unit' => ['required', 'string', 'max:50'],
+                    'delivery_address' => ['nullable', 'string'],
+                    'delivery_time_from' => ['nullable', 'date_format:H:i'],
+                    'delivery_time_to' => ['nullable', 'date_format:H:i', 'after:delivery_time_from'],
+                    'contact_person_name' => ['nullable', 'string', 'max:255'],
+                    'contact_person_phone' => ['nullable', 'string', 'max:50'],
+                ]);
+            }
         }
 
         // Правила для персонала
