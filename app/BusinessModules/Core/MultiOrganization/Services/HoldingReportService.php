@@ -1464,7 +1464,7 @@ class HoldingReportService
             ->with([
                 'organization:id,name',
                 'contractor:id,name',
-                'agreements:id,contract_id,number,date,change_amount',
+                'agreements:id,contract_id,number,agreement_date,change_amount',
                 'specifications:id,name,total_amount',
                 'performanceActs' => function ($query) {
                     $query->where('is_approved', true)
@@ -1547,7 +1547,7 @@ class HoldingReportService
             if ($activeSpecification) {
                 $agreementSpecNumber = $activeSpecification->name ?? '-';
             } elseif ($firstAgreement) {
-                $agreementDate = $firstAgreement->date ? $firstAgreement->date->format('d.m.Y') : '';
+                $agreementDate = $firstAgreement->agreement_date ? $firstAgreement->agreement_date->format('d.m.Y') : '';
                 $agreementSpecNumber = $firstAgreement->number . ($agreementDate ? ", {$agreementDate}" : '');
             }
 
