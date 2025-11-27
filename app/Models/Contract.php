@@ -200,15 +200,19 @@ class Contract extends Model
     }
 
     /**
-     * Рассчитать сумму гарантийного удержания от ГП
-     * Гарантийное удержание рассчитывается от суммы ГП (gp_amount), а не от base_amount
+     * Рассчитать сумму гарантийного удержания от общей суммы контракта
+     * Гарантийное удержание рассчитывается от общей суммы (base_amount + gp_amount)
+     * По умолчанию: 2.5% от общей суммы контракта
      */
     public function getWarrantyRetentionAmountAttribute(): float
     {
+        // Общая сумма контракта = базовая сумма + ГП
+        $baseAmount = $this->base_amount ?? 0;
         $gpAmount = $this->gp_amount ?? 0;
+        $totalContractAmount = $baseAmount + $gpAmount;
         
-        // Если ГП равен нулю, то и гарантийное удержание равно нулю
-        if ($gpAmount == 0) {
+        // Если общая сумма равна нулю, то и гарантийное удержание равно нулю
+        if ($totalContractAmount == 0) {
             return 0.00;
         }
         
@@ -216,18 +220,19 @@ class Contract extends Model
         
         if ($calculationType === GpCalculationTypeEnum::COEFFICIENT) {
             $coefficient = $this->warranty_retention_coefficient ?? 0;
-            // Формула: warranty_retention_amount = gp_amount × (1 - coefficient)
+            // Формула: warranty_retention_amount = total_amount × (1 - coefficient)
             // Коэффициент 1.0 → удержание 0
-            // Коэффициент 0.95 → удержание 5% от ГП
-            // Коэффициент 0.9 → удержание 10% от ГП
-            return round($gpAmount * (1 - $coefficient), 2);
+            // Коэффициент 0.975 → удержание 2.5% от общей суммы
+            // Коэффициент 0.95 → удержание 5% от общей суммы
+            return round($totalContractAmount * (1 - $coefficient), 2);
         }
         
-        $percentage = $this->warranty_retention_percentage ?? 0;
-        if ($percentage != 0 && $gpAmount > 0) {
-            // Расчет: gp_amount * (warranty_retention_percentage / 100)
-            // Например: 100000 * (5 / 100) = 5000
-            return round(($gpAmount * $percentage) / 100, 2);
+        // По умолчанию 2.5% от общей суммы контракта
+        $percentage = $this->warranty_retention_percentage ?? 2.5;
+        if ($percentage != 0 && $totalContractAmount > 0) {
+            // Расчет: total_amount * (warranty_retention_percentage / 100)
+            // Например: 1100000 * (2.5 / 100) = 27500
+            return round(($totalContractAmount * $percentage) / 100, 2);
         }
         
         return 0.00;

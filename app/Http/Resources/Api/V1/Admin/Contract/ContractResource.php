@@ -372,12 +372,12 @@ class ContractResource extends JsonResource
                 ] : null,
                 
                 // Гарантийное удержание (если применяется)
-                'warranty_retention_info' => ($this->warranty_retention_percentage != 0 || $this->warranty_retention_coefficient != 0) && $gpAmount > 0 ? [
-                    'percentage' => (float) ($this->warranty_retention_percentage ?? 0),
+                'warranty_retention_info' => ($this->warranty_retention_percentage != 0 || $this->warranty_retention_coefficient != 0) && $totalAmountCalculated > 0 ? [
+                    'percentage' => (float) ($this->warranty_retention_percentage ?? 2.5),
                     'coefficient' => (float) ($this->warranty_retention_coefficient ?? 0),
-                    'calculation_type' => $this->warranty_retention_calculation_type?->value,
+                    'calculation_type' => $this->warranty_retention_calculation_type?->value ?? 'percentage',
                     'warranty_retention_amount' => (float) ($this->warranty_retention_amount ?? 0),
-                    'gp_amount' => (float) $gpAmount, // Сумма ГП, от которой рассчитывается удержание
+                    'total_contract_amount' => (float) $totalAmountCalculated, // Общая сумма контракта, от которой рассчитывается удержание
                 ] : null,
                 
                 // Субподряд
