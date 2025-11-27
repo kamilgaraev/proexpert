@@ -175,6 +175,10 @@ class ContractResource extends JsonResource
             'gp_percentage' => (float) ($this->gp_percentage ?? 0),
             'gp_amount' => (float) $gpAmount,
             'total_amount_with_gp' => (float) ($this->total_amount ?? 0) + $gpAmount,
+            'warranty_retention_calculation_type' => $this->warranty_retention_calculation_type?->value,
+            'warranty_retention_percentage' => (float) ($this->warranty_retention_percentage ?? 0),
+            'warranty_retention_coefficient' => (float) ($this->warranty_retention_coefficient ?? 0),
+            'warranty_retention_amount' => (float) ($this->warranty_retention_amount ?? 0),
             'planned_advance_amount' => (float) ($this->planned_advance_amount ?? 0),
             'actual_advance_amount' => (float) ($this->actual_advance_amount ?? 0),
             'remaining_advance_amount' => (float) ($this->remaining_advance_amount ?? 0),
@@ -365,6 +369,15 @@ class ContractResource extends JsonResource
                     'calculation_type' => $this->gp_calculation_type?->value,
                     'gp_amount' => (float) $gpAmount,
                     'total_with_gp' => $totalAmountCalculated,
+                ] : null,
+                
+                // Гарантийное удержание (если применяется)
+                'warranty_retention_info' => ($this->warranty_retention_percentage != 0 || $this->warranty_retention_coefficient != 0) && $gpAmount > 0 ? [
+                    'percentage' => (float) ($this->warranty_retention_percentage ?? 0),
+                    'coefficient' => (float) ($this->warranty_retention_coefficient ?? 0),
+                    'calculation_type' => $this->warranty_retention_calculation_type?->value,
+                    'warranty_retention_amount' => (float) ($this->warranty_retention_amount ?? 0),
+                    'gp_amount' => (float) $gpAmount, // Сумма ГП, от которой рассчитывается удержание
                 ] : null,
                 
                 // Субподряд

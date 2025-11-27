@@ -40,6 +40,9 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'gp_percentage' => ['sometimes', 'nullable', 'numeric', 'min:-100', 'max:100'],
             'gp_calculation_type' => ['sometimes', 'nullable', new Enum(GpCalculationTypeEnum::class)],
             'gp_coefficient' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'warranty_retention_calculation_type' => ['sometimes', 'nullable', new Enum(GpCalculationTypeEnum::class)],
+            'warranty_retention_percentage' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:100'],
+            'warranty_retention_coefficient' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:1'],
             'subcontract_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'planned_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'actual_advance_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
@@ -68,8 +71,9 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
         $allowedFields = [
             'project_id', 'contractor_id', 'parent_contract_id', 'number', 'date',
             'subject', 'work_type_category', 'payment_terms', 'base_amount', 'total_amount',
-            'gp_percentage', 'gp_calculation_type', 'gp_coefficient', 'subcontract_amount',
-            'planned_advance_amount', 'actual_advance_amount', 'status', 'start_date',
+            'gp_percentage', 'gp_calculation_type', 'gp_coefficient',
+            'warranty_retention_calculation_type', 'warranty_retention_percentage', 'warranty_retention_coefficient',
+            'subcontract_amount', 'planned_advance_amount', 'actual_advance_amount', 'status', 'start_date',
             'end_date', 'notes'
         ];
         
@@ -141,6 +145,15 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             gp_coefficient: array_key_exists('gp_coefficient', $validatedData)
                 ? ($validatedData['gp_coefficient'] !== null ? (float) $validatedData['gp_coefficient'] : null)
                 : $contract->gp_coefficient,
+            warranty_retention_calculation_type: array_key_exists('warranty_retention_calculation_type', $validatedData)
+                ? ($validatedData['warranty_retention_calculation_type'] ? GpCalculationTypeEnum::from($validatedData['warranty_retention_calculation_type']) : null)
+                : $contract->warranty_retention_calculation_type,
+            warranty_retention_percentage: array_key_exists('warranty_retention_percentage', $validatedData)
+                ? ($validatedData['warranty_retention_percentage'] !== null ? (float) $validatedData['warranty_retention_percentage'] : null)
+                : $contract->warranty_retention_percentage,
+            warranty_retention_coefficient: array_key_exists('warranty_retention_coefficient', $validatedData)
+                ? ($validatedData['warranty_retention_coefficient'] !== null ? (float) $validatedData['warranty_retention_coefficient'] : null)
+                : $contract->warranty_retention_coefficient,
             subcontract_amount: array_key_exists('subcontract_amount', $validatedData)
                 ? ($validatedData['subcontract_amount'] !== null ? (float) $validatedData['subcontract_amount'] : null)
                 : $contract->subcontract_amount,
