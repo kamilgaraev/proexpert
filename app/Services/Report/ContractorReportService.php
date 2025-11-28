@@ -7,11 +7,8 @@ use App\Models\CompletedWork;
 use App\Models\ContractPerformanceAct;
 use App\Models\Contract;
 use App\Models\Contractor;
-use App\BusinessModules\Core\Payments\Models\Invoice;
-use App\BusinessModules\Core\Payments\Models\PaymentDocument;
-use App\BusinessModules\Core\Payments\Enums\InvoiceStatus;
-use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
-// ContractPayment больше не используется - платежи теперь в модуле Payments (payment_documents)
+// Используем таблицу invoices для получения платежей (новая система платежей)
+// Старая таблица payment_documents больше не используется
 use App\Models\Project;
 use App\Models\ReportFile;
 use App\Models\Organization;
@@ -412,27 +409,31 @@ class ContractorReportService
             $totalCompletedAmount = $actsQuery->sum('amount');
         }
 
-        // Получаем платежи из таблицы payment_documents
+        // Получаем платежи из таблицы invoices (новая система платежей)
         if ($includePayments) {
-            $contractIds = $contracts->pluck('id');
+            $contractIds = $contracts->pluck('id')->toArray();
             
-            $paymentsQuery = PaymentDocument::where('source_type', Contract::class)
-                ->whereIn('source_id', $contractIds)
-                ->where('organization_id', $organizationId)
-                ->whereIn('status', [PaymentDocumentStatus::PAID, PaymentDocumentStatus::PARTIALLY_PAID])
-                ->whereNotNull('paid_at');
+            if (!empty($contractIds)) {
+                $paymentsQuery = DB::table('invoices')
+                    ->where('invoiceable_type', 'App\\Models\\Contract')
+                    ->whereIn('invoiceable_id', $contractIds)
+                    ->where('organization_id', $organizationId)
+                    ->whereNull('deleted_at')
+                    ->where('paid_amount', '>', 0) // Только оплаченные счета
+                    ->whereNotNull('paid_at'); // Только счета с датой оплаты
 
-            // Если указана дата начала, фильтруем по ней. Иначе получаем за все время
-            if ($dateFrom) {
-                $paymentsQuery->whereDate('paid_at', '>=', $dateFrom);
+                // Если указана дата начала, фильтруем по дате оплаты
+                if ($dateFrom) {
+                    $paymentsQuery->whereDate('paid_at', '>=', Carbon::parse($dateFrom)->toDateString());
+                }
+
+                // Если указана дата окончания, фильтруем по ней
+                if ($dateTo) {
+                    $paymentsQuery->whereDate('paid_at', '<=', Carbon::parse($dateTo)->toDateString());
+                }
+
+                $totalPaymentAmount = $paymentsQuery->sum('paid_amount') ?? 0;
             }
-
-            // Если указана дата окончания, фильтруем по ней. Иначе получаем за все время
-            if ($dateTo) {
-                $paymentsQuery->whereDate('paid_at', '<=', $dateTo);
-            }
-
-            $totalPaymentAmount = $paymentsQuery->sum('paid_amount');
         }
 
         // Преобразуем enum contractor_type в строку для безопасного использования
@@ -483,22 +484,25 @@ class ContractorReportService
         $acts = $actsQuery->get();
         $completedAmount = $acts->sum('amount');
         
-        // Используем таблицу payment_documents для получения платежей
-        $paymentsQuery = PaymentDocument::where('source_type', Contract::class)
-            ->where('source_id', $contract->id)
+        // Используем таблицу invoices для получения платежей (новая система платежей)
+        $paymentsQuery = DB::table('invoices')
+            ->where('invoiceable_type', 'App\\Models\\Contract')
+            ->where('invoiceable_id', $contract->id)
             ->where('organization_id', $contract->organization_id)
-            ->whereIn('status', [PaymentDocumentStatus::PAID, PaymentDocumentStatus::PARTIALLY_PAID])
-            ->whereNotNull('paid_at');
+            ->whereNull('deleted_at')
+            ->where('paid_amount', '>', 0) // Только оплаченные счета
+            ->whereNotNull('paid_at') // Только счета с датой оплаты
+            ->select('id', 'invoice_number as document_number', 'paid_amount', 'paid_at', 'invoice_type as document_type', 'status', 'payment_purpose', 'notes');
 
         if ($dateFrom) {
-            $paymentsQuery->whereDate('paid_at', '>=', $dateFrom);
+            $paymentsQuery->whereDate('paid_at', '>=', Carbon::parse($dateFrom)->toDateString());
         }
         if ($dateTo) {
-            $paymentsQuery->whereDate('paid_at', '<=', $dateTo);
+            $paymentsQuery->whereDate('paid_at', '<=', Carbon::parse($dateTo)->toDateString());
         }
 
         $payments = $paymentsQuery->get();
-        $paymentAmount = $payments->sum('paid_amount');
+        $paymentAmount = $payments->sum('paid_amount') ?? 0;
         
         $effectiveTotalAmount = $this->calculateSingleContractAmount($contract);
 
