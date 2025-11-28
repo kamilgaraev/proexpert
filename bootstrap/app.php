@@ -6,6 +6,29 @@ use Illuminate\Foundation\Configuration\Middleware;
 use App\Http\Middleware\JwtMiddleware;
 use App\Http\Middleware\SetOrganizationContext;
 
+/**
+ * Конвертирует строку размера (например, "64M", "2G") в байты
+ */
+function convertIniSizeToBytes(string $size): int
+{
+    $size = trim($size);
+    $last = strtolower($size[strlen($size) - 1]);
+    $value = (int)$size;
+    
+    switch ($last) {
+        case 'g':
+            $value *= 1024;
+            // no break
+        case 'm':
+            $value *= 1024;
+            // no break
+        case 'k':
+            $value *= 1024;
+    }
+    
+    return $value;
+}
+
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
@@ -129,6 +152,54 @@ return Application::configure(basePath: dirname(__DIR__))
                     'success' => false,
                     'message' => $e->getMessage() ?: 'Недостаточно средств на балансе для выполнения операции.'
                 ], 402); // 402 Payment Required
+            }
+        });
+
+        // Обработка PostTooLargeException с детальным логированием
+        $exceptions->renderable(function (\Illuminate\Http\Exceptions\PostTooLargeException $e, $request) {
+            // Получаем размер запроса из заголовков
+            $contentLength = $request->header('Content-Length');
+            $contentLengthBytes = $contentLength ? (int)$contentLength : null;
+            $contentLengthMB = $contentLengthBytes ? round($contentLengthBytes / 1024 / 1024, 2) : null;
+
+            // Получаем текущие лимиты PHP
+            $postMaxSize = ini_get('post_max_size');
+            $uploadMaxFilesize = ini_get('upload_max_filesize');
+            $maxFileUploads = ini_get('max_file_uploads');
+
+            // Конвертируем лимиты в байты для сравнения
+            $postMaxSizeBytes = convertIniSizeToBytes($postMaxSize);
+            $uploadMaxFilesizeBytes = convertIniSizeToBytes($uploadMaxFilesize);
+
+            \Log::error('[bootstrap/app.php] PostTooLargeException - Детальная диагностика', [
+                'uri' => $request->getRequestUri(),
+                'method' => $request->method(),
+                'content_length_header' => $contentLength,
+                'content_length_bytes' => $contentLengthBytes,
+                'content_length_mb' => $contentLengthMB,
+                'php_post_max_size' => $postMaxSize,
+                'php_post_max_size_bytes' => $postMaxSizeBytes,
+                'php_upload_max_filesize' => $uploadMaxFilesize,
+                'php_upload_max_filesize_bytes' => $uploadMaxFilesizeBytes,
+                'php_max_file_uploads' => $maxFileUploads,
+                'content_type' => $request->header('Content-Type'),
+                'has_files' => $request->hasFile('*'),
+                'files_count' => count($request->allFiles()),
+                'user_id' => $request->user()?->id,
+                'organization_id' => $request->attributes->get('current_organization_id'),
+            ]);
+
+            if ($request->expectsJson() || $request->is('api/*')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Размер отправляемых данных превышает допустимый лимит.',
+                    'error' => 'POST data is too large',
+                    'details' => [
+                        'request_size_mb' => $contentLengthMB,
+                        'limit_post_max_size' => $postMaxSize,
+                        'limit_upload_max_filesize' => $uploadMaxFilesize,
+                    ]
+                ], 413); // 413 Payload Too Large
             }
         });
         
