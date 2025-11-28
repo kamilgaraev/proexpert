@@ -150,6 +150,12 @@ class SiteRequestsServiceProvider extends ServiceProvider
             Events\SiteRequestAssigned::class,
             Listeners\SendAssignmentNotification::class
         );
+
+        // Автоматическое завершение заявок при оплате платежа
+        Event::listen(
+            \App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid::class,
+            Listeners\CompleteSiteRequestsOnPaymentPaid::class
+        );
     }
 
     /**
