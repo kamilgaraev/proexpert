@@ -51,14 +51,14 @@
 <body>
     <div class="header">
         <div class="title">Унифицированная форма № КС-2</div>
-        <div class="title">АКТ № {{ $act->number }} от {{ $act->act_date->format('d.m.Y') }}</div>
+        <div class="title">АКТ № {{ $act->act_document_number ?? $act->id }} от {{ $act->act_date->format('d.m.Y') }}</div>
         <div>о приемке выполненных работ</div>
     </div>
 
     <div class="info">
-        <p><strong>Заказчик:</strong> {{ $contract->customer_organization ?? '' }}</p>
-        <p><strong>Подрядчик:</strong> {{ $contract->contractor->full_name ?? '' }}</p>
-        <p><strong>Договор:</strong> № {{ $contract->number }} от {{ $contract->contract_date->format('d.m.Y') }}</p>
+        <p><strong>Заказчик:</strong> {{ $contract->project->organization->name ?? $contract->organization->name ?? '' }}</p>
+        <p><strong>Подрядчик:</strong> {{ $contract->contractor->name ?? '' }}</p>
+        <p><strong>Договор:</strong> № {{ $contract->number }} от {{ $contract->date->format('d.m.Y') }}</p>
         <p><strong>Объект:</strong> {{ $contract->project->name ?? '' }}</p>
     </div>
 
@@ -77,15 +77,22 @@
         </thead>
         <tbody>
             @foreach($works as $index => $work)
+            @php
+                // Используем данные из pivot таблицы для акта (included_quantity, included_amount)
+                // или данные самой работы, если pivot нет
+                $includedQuantity = $work->pivot->included_quantity ?? $work->quantity ?? 0;
+                $includedAmount = $work->pivot->included_amount ?? $work->total_amount ?? 0;
+                $unitPrice = $includedQuantity > 0 ? ($includedAmount / $includedQuantity) : ($work->price ?? 0);
+            @endphp
             <tr>
                 <td class="text-center">{{ $index + 1 }}</td>
-                <td>{{ $work->work_type->name ?? $work->description }}</td>
-                <td class="text-center">{{ $work->normative_code ?? '' }}</td>
-                <td class="text-center">{{ $work->measurementUnit->short_name ?? '' }}</td>
-                <td class="text-right">{{ number_format($work->quantity, 2, ',', ' ') }}</td>
-                <td class="text-right">{{ number_format($work->unit_price, 2, ',', ' ') }}</td>
-                <td class="text-right">{{ number_format($work->total_cost, 2, ',', ' ') }}</td>
-                <td>{{ $work->notes ?? '' }}</td>
+                <td>{{ $work->workType->name ?? $work->description ?? '' }}</td>
+                <td class="text-center">{{ $work->workType->code ?? '' }}</td>
+                <td class="text-center">{{ $work->workType->measurementUnit->short_name ?? '' }}</td>
+                <td class="text-right">{{ number_format($includedQuantity, 2, ',', ' ') }}</td>
+                <td class="text-right">{{ number_format($unitPrice, 2, ',', ' ') }}</td>
+                <td class="text-right">{{ number_format($includedAmount, 2, ',', ' ') }}</td>
+                <td>{{ $work->pivot->notes ?? $work->notes ?? '' }}</td>
             </tr>
             @endforeach
             <tr>

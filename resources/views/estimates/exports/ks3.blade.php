@@ -56,14 +56,14 @@
 <body>
     <div class="header">
         <div class="title">Унифицированная форма № КС-3</div>
-        <div class="title">СПРАВКА № {{ $act->number }} от {{ $act->act_date->format('d.m.Y') }}</div>
+        <div class="title">СПРАВКА № {{ $act->act_document_number ?? $act->id }} от {{ $act->act_date->format('d.m.Y') }}</div>
         <div>о стоимости выполненных работ и затрат</div>
     </div>
 
     <div class="info">
-        <p><strong>Заказчик:</strong> {{ $contract->customer_organization ?? '' }}</p>
-        <p><strong>Подрядчик:</strong> {{ $contract->contractor->full_name ?? '' }}</p>
-        <p><strong>Договор:</strong> № {{ $contract->number }} от {{ $contract->contract_date->format('d.m.Y') }}</p>
+        <p><strong>Заказчик:</strong> {{ $contract->project->organization->name ?? $contract->organization->name ?? '' }}</p>
+        <p><strong>Подрядчик:</strong> {{ $contract->contractor->name ?? '' }}</p>
+        <p><strong>Договор:</strong> № {{ $contract->number }} от {{ $contract->date->format('d.m.Y') }}</p>
     </div>
 
     <table>

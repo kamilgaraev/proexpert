@@ -22,7 +22,12 @@ class OfficialFormsExportController extends Controller
             'format' => 'required|in:xlsx,pdf',
         ]);
 
-        $act = ContractPerformanceAct::with(['contract', 'completedWorks'])->findOrFail($actId);
+        $act = ContractPerformanceAct::with([
+            'contract.contractor',
+            'contract.project.organization',
+            'contract.organization',
+            'completedWorks.workType.measurementUnit'
+        ])->findOrFail($actId);
         $contract = $act->contract;
 
         $format = $request->input('format', 'xlsx');
@@ -49,7 +54,12 @@ class OfficialFormsExportController extends Controller
             'format' => 'required|in:xlsx,pdf',
         ]);
 
-        $act = ContractPerformanceAct::with(['contract'])->findOrFail($actId);
+        $act = ContractPerformanceAct::with([
+            'contract.contractor',
+            'contract.project.organization',
+            'contract.organization',
+            'contract.estimate'
+        ])->findOrFail($actId);
         $contract = $act->contract;
 
         $format = $request->input('format', 'xlsx');
@@ -76,7 +86,13 @@ class OfficialFormsExportController extends Controller
             'format' => 'required|in:xlsx,pdf',
         ]);
 
-        $act = ContractPerformanceAct::with(['contract', 'completedWorks'])->findOrFail($actId);
+        $act = ContractPerformanceAct::with([
+            'contract.contractor',
+            'contract.project.organization',
+            'contract.organization',
+            'contract.estimate',
+            'completedWorks.workType.measurementUnit'
+        ])->findOrFail($actId);
         $contract = $act->contract;
 
         $format = $request->input('format', 'xlsx');
@@ -89,7 +105,8 @@ class OfficialFormsExportController extends Controller
             ? $this->exportService->exportKS3ToPdf($act, $contract)
             : $this->exportService->exportKS3ToExcel($act, $contract);
 
-        $zipFilename = "KS-2-3_{$act->number}_{$contract->number}.zip";
+        $actNumber = $act->act_document_number ?? $act->id;
+        $zipFilename = "KS-2-3_{$actNumber}_{$contract->number}.zip";
         $zipPath = storage_path("app/temp/{$zipFilename}");
 
         $zip = new \ZipArchive();

@@ -23,7 +23,8 @@ class OfficialFormsExportService
         $this->setKS2Footer($sheet, $act, $contract);
         $this->applyKS2Styles($sheet);
 
-        $filename = "KS-2_{$act->number}_{$contract->number}.xlsx";
+        $actNumber = $act->act_document_number ?? $act->id;
+        $filename = "KS-2_{$actNumber}_{$contract->number}.xlsx";
         $tempPath = storage_path("app/temp/{$filename}");
 
         if (!file_exists(dirname($tempPath))) {
@@ -46,7 +47,8 @@ class OfficialFormsExportService
         $this->setKS3Footer($sheet, $act, $contract);
         $this->applyKS3Styles($sheet);
 
-        $filename = "KS-3_{$act->number}_{$contract->number}.xlsx";
+        $actNumber = $act->act_document_number ?? $act->id;
+        $filename = "KS-3_{$actNumber}_{$contract->number}.xlsx";
         $tempPath = storage_path("app/temp/{$filename}");
 
         if (!file_exists(dirname($tempPath))) {
@@ -65,7 +67,8 @@ class OfficialFormsExportService
         
         $pdf = Pdf::loadView('estimates.exports.ks2', $data);
         
-        $filename = "KS-2_{$act->number}_{$contract->number}.pdf";
+        $actNumber = $act->act_document_number ?? $act->id;
+        $filename = "KS-2_{$actNumber}_{$contract->number}.pdf";
         $tempPath = storage_path("app/temp/{$filename}");
 
         if (!file_exists(dirname($tempPath))) {
@@ -83,7 +86,8 @@ class OfficialFormsExportService
         
         $pdf = Pdf::loadView('estimates.exports.ks3', $data);
         
-        $filename = "KS-3_{$act->number}_{$contract->number}.pdf";
+        $actNumber = $act->act_document_number ?? $act->id;
+        $filename = "KS-3_{$actNumber}_{$contract->number}.pdf";
         $tempPath = storage_path("app/temp/{$filename}");
 
         if (!file_exists(dirname($tempPath))) {
@@ -100,20 +104,21 @@ class OfficialFormsExportService
         $sheet->setCellValue('A1', 'Унифицированная форма № КС-2');
         $sheet->mergeCells('A1:H1');
         
-        $sheet->setCellValue('A2', 'АКТ № ' . $act->number);
+        $sheet->setCellValue('A2', 'АКТ № ' . ($act->act_document_number ?? $act->id));
         $sheet->setCellValue('F2', 'от ' . $act->act_date->format('d.m.Y'));
         $sheet->mergeCells('A2:E2');
         
         $sheet->setCellValue('A3', 'о приемке выполненных работ');
         $sheet->mergeCells('A3:H3');
 
-        $sheet->setCellValue('A5', 'Заказчик: ' . ($contract->customer_organization ?? ''));
+        $customerName = $contract->project?->organization?->name ?? $contract->organization?->name ?? '';
+        $sheet->setCellValue('A5', 'Заказчик: ' . $customerName);
         $sheet->mergeCells('A5:H5');
         
-        $sheet->setCellValue('A6', 'Подрядчик: ' . ($contract->contractor->full_name ?? ''));
+        $sheet->setCellValue('A6', 'Подрядчик: ' . ($contract->contractor->name ?? ''));
         $sheet->mergeCells('A6:H6');
         
-        $sheet->setCellValue('A7', 'Договор: № ' . $contract->number . ' от ' . $contract->contract_date->format('d.m.Y'));
+        $sheet->setCellValue('A7', 'Договор: № ' . $contract->number . ' от ' . $contract->date->format('d.m.Y'));
         $sheet->mergeCells('A7:H7');
         
         $sheet->setCellValue('A8', 'Объект: ' . ($contract->project->name ?? ''));
@@ -136,16 +141,22 @@ class OfficialFormsExportService
         $totalAmount = 0;
 
         foreach ($act->completedWorks as $index => $work) {
+            // Используем данные из pivot таблицы для акта (included_quantity, included_amount)
+            // или данные самой работы, если pivot нет
+            $includedQuantity = $work->pivot->included_quantity ?? $work->quantity;
+            $includedAmount = $work->pivot->included_amount ?? $work->total_amount;
+            $unitPrice = $includedQuantity > 0 ? ($includedAmount / $includedQuantity) : ($work->price ?? 0);
+            
             $sheet->setCellValue("A{$row}", $index + 1);
-            $sheet->setCellValue("B{$row}", $work->work_type->name ?? $work->description);
-            $sheet->setCellValue("C{$row}", ''); // Номер расценки можно взять из estimate_item если есть
-            $sheet->setCellValue("D{$row}", $work->measurementUnit->short_name ?? '');
-            $sheet->setCellValue("E{$row}", $work->quantity);
-            $sheet->setCellValue("F{$row}", $work->unit_price);
-            $sheet->setCellValue("G{$row}", $work->total_cost);
-            $sheet->setCellValue("H{$row}", $work->notes ?? '');
+            $sheet->setCellValue("B{$row}", $work->workType?->name ?? $work->description ?? '');
+            $sheet->setCellValue("C{$row}", $work->workType?->code ?? ''); // Номер расценки из workType
+            $sheet->setCellValue("D{$row}", $work->workType?->measurementUnit?->short_name ?? '');
+            $sheet->setCellValue("E{$row}", $includedQuantity);
+            $sheet->setCellValue("F{$row}", $unitPrice);
+            $sheet->setCellValue("G{$row}", $includedAmount);
+            $sheet->setCellValue("H{$row}", $work->pivot->notes ?? $work->notes ?? '');
 
-            $totalAmount += $work->total_cost;
+            $totalAmount += $includedAmount;
             $row++;
         }
 
@@ -177,20 +188,21 @@ class OfficialFormsExportService
         $sheet->setCellValue('A1', 'Унифицированная форма № КС-3');
         $sheet->mergeCells('A1:G1');
         
-        $sheet->setCellValue('A2', 'СПРАВКА № ' . $act->number);
+        $sheet->setCellValue('A2', 'СПРАВКА № ' . ($act->act_document_number ?? $act->id));
         $sheet->setCellValue('F2', 'от ' . $act->act_date->format('d.m.Y'));
         $sheet->mergeCells('A2:E2');
         
         $sheet->setCellValue('A3', 'о стоимости выполненных работ и затрат');
         $sheet->mergeCells('A3:G3');
 
-        $sheet->setCellValue('A5', 'Заказчик: ' . ($contract->customer_organization ?? ''));
+        $customerName = $contract->project?->organization?->name ?? $contract->organization?->name ?? '';
+        $sheet->setCellValue('A5', 'Заказчик: ' . $customerName);
         $sheet->mergeCells('A5:G5');
         
-        $sheet->setCellValue('A6', 'Подрядчик: ' . ($contract->contractor->full_name ?? ''));
+        $sheet->setCellValue('A6', 'Подрядчик: ' . ($contract->contractor->name ?? ''));
         $sheet->mergeCells('A6:G6');
         
-        $sheet->setCellValue('A7', 'Договор: № ' . $contract->number . ' от ' . $contract->contract_date->format('d.m.Y'));
+        $sheet->setCellValue('A7', 'Договор: № ' . $contract->number . ' от ' . $contract->date->format('d.m.Y'));
         $sheet->mergeCells('A7:G7');
 
         $row = 9;
@@ -210,22 +222,24 @@ class OfficialFormsExportService
         $totalPeriod = 0;
 
         $estimate = $act->contract->estimate ?? null;
+        $actAmount = (float) ($act->amount ?? 0);
 
         $sheet->setCellValue("A{$row}", '1');
         $sheet->setCellValue("B{$row}", 'Строительные работы');
-        $sheet->setCellValue("C{$row}", $act->total_amount);
-        $sheet->setCellValue("D{$row}", $act->total_amount);
-        $sheet->setCellValue("E{$row}", $act->total_amount);
-        $sheet->setCellValue("F{$row}", $estimate ? ($estimate->total_amount - $act->total_amount) : 0);
+        $sheet->setCellValue("C{$row}", $actAmount);
+        $sheet->setCellValue("D{$row}", $actAmount);
+        $sheet->setCellValue("E{$row}", $actAmount);
+        $estimateTotal = $estimate ? (float) ($estimate->total_amount ?? 0) : 0;
+        $sheet->setCellValue("F{$row}", max(0, $estimateTotal - $actAmount));
         $sheet->setCellValue("G{$row}", '');
 
         $row++;
         $sheet->setCellValue("B{$row}", 'ИТОГО:');
         $sheet->mergeCells("B{$row}:B{$row}");
-        $sheet->setCellValue("C{$row}", $act->total_amount);
-        $sheet->setCellValue("D{$row}", $act->total_amount);
-        $sheet->setCellValue("E{$row}", $act->total_amount);
-        $sheet->setCellValue("F{$row}", $estimate ? ($estimate->total_amount - $act->total_amount) : 0);
+        $sheet->setCellValue("C{$row}", $actAmount);
+        $sheet->setCellValue("D{$row}", $actAmount);
+        $sheet->setCellValue("E{$row}", $actAmount);
+        $sheet->setCellValue("F{$row}", max(0, $estimateTotal - $actAmount));
     }
 
     protected function setKS3Footer($sheet, ContractPerformanceAct $act, Contract $contract): void
@@ -233,7 +247,8 @@ class OfficialFormsExportService
         $lastRow = $sheet->getHighestRow();
         $row = $lastRow + 2;
 
-        $sheet->setCellValue("A{$row}", 'Итого стоимость выполненных работ: ' . number_format($act->total_amount, 2, ',', ' ') . ' руб.');
+        $actAmount = (float) ($act->amount ?? 0);
+        $sheet->setCellValue("A{$row}", 'Итого стоимость выполненных работ: ' . number_format($actAmount, 2, ',', ' ') . ' руб.');
         $sheet->mergeCells("A{$row}:G{$row}");
 
         $row += 2;
@@ -290,24 +305,34 @@ class OfficialFormsExportService
 
     protected function prepareKS2Data(ContractPerformanceAct $act, Contract $contract): array
     {
+        // Загружаем связи для шаблона
+        $act->loadMissing(['completedWorks.workType.measurementUnit', 'contract.contractor', 'contract.project.organization', 'contract.organization']);
+        
+        // Рассчитываем общую сумму из включенных работ в акте
+        $totalAmount = $act->completedWorks->sum(function($work) {
+            return (float) ($work->pivot->included_amount ?? $work->total_amount ?? 0);
+        });
+        
         return [
             'act' => $act,
             'contract' => $contract,
             'works' => $act->completedWorks,
-            'total_amount' => $act->total_amount,
+            'total_amount' => $totalAmount > 0 ? $totalAmount : (float) ($act->amount ?? 0),
         ];
     }
 
     protected function prepareKS3Data(ContractPerformanceAct $act, Contract $contract): array
     {
         $estimate = $contract->estimate ?? null;
+        $actAmount = (float) ($act->amount ?? 0);
+        $estimateTotal = $estimate ? (float) ($estimate->total_amount ?? 0) : 0;
         
         return [
             'act' => $act,
             'contract' => $contract,
             'estimate' => $estimate,
-            'total_amount' => $act->total_amount,
-            'remaining_amount' => $estimate ? ($estimate->total_amount - $act->total_amount) : 0,
+            'total_amount' => $actAmount,
+            'remaining_amount' => max(0, $estimateTotal - $actAmount),
         ];
     }
 }
