@@ -107,13 +107,22 @@ class ContractPerformanceActService
                 $act->recalculateAmount();
             }
 
-            // Сохраняем PDF файл (если загружен)
-            if ($actDTO->pdf_file) {
-                $this->saveActPdfFile($act, $actDTO->pdf_file, $organizationId);
-            }
-
             return $act;
         });
+
+        // Сохраняем PDF файл ВНЕ транзакции, чтобы не блокировать создание акта при ошибках загрузки
+        if ($actDTO->pdf_file) {
+            try {
+                $this->saveActPdfFile($act, $actDTO->pdf_file, $organizationId);
+            } catch (\Exception $e) {
+                // Логируем ошибку, но не блокируем создание акта
+                \Illuminate\Support\Facades\Log::error('[ContractPerformanceActService] Failed to upload PDF after act creation', [
+                    'act_id' => $act->id,
+                    'organization_id' => $organizationId,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
 
         // Загружаем связи для возврата полных данных
         $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
@@ -442,15 +451,72 @@ class ContractPerformanceActService
         try {
             // Загружаем файл в S3
             $organization = \App\Models\Organization::find($organizationId);
+            
+            if (!$organization) {
+                $this->logging->technical('performance_act.pdf_upload.failed', [
+                    'act_id' => $act->id,
+                    'organization_id' => $organizationId,
+                    'reason' => 'Organization not found'
+                ], 'error');
+                \Illuminate\Support\Facades\Log::error('[ContractPerformanceActService] Organization not found', [
+                    'organization_id' => $organizationId,
+                    'act_id' => $act->id
+                ]);
+                return null;
+            }
+
             $directory = "acts/{$act->id}/documents";
+            
+            // Проверяем размер файла перед загрузкой
+            $fileSizeMb = round($pdfFile->getSize() / 1024 / 1024, 2);
+            $maxFileSizeMb = config('file-uploads.max_sizes.pdf_documents', 100);
+            
+            if ($fileSizeMb > $maxFileSizeMb) {
+                $this->logging->technical('performance_act.pdf_upload.failed', [
+                    'act_id' => $act->id,
+                    'organization_id' => $organizationId,
+                    'reason' => "File size too large: {$fileSizeMb}MB (max: {$maxFileSizeMb}MB)",
+                    'file_size_mb' => $fileSizeMb,
+                    'max_size_mb' => $maxFileSizeMb
+                ], 'error');
+                \Illuminate\Support\Facades\Log::error('[ContractPerformanceActService] File size too large', [
+                    'act_id' => $act->id,
+                    'file_size_mb' => $fileSizeMb,
+                    'max_size_mb' => $maxFileSizeMb,
+                    'config_key' => 'file-uploads.max_sizes.pdf_documents'
+                ]);
+                return null;
+            }
+
+            \Illuminate\Support\Facades\Log::info('[ContractPerformanceActService] Starting PDF upload', [
+                'act_id' => $act->id,
+                'organization_id' => $organizationId,
+                'directory' => $directory,
+                'file_size_mb' => $fileSizeMb,
+                'original_name' => $pdfFile->getClientOriginalName()
+            ]);
+
             $path = $this->fileService->upload($pdfFile, $directory, null, 'private', $organization);
 
             if (!$path) {
                 $this->logging->technical('performance_act.pdf_upload.failed', [
                     'act_id' => $act->id,
                     'organization_id' => $organizationId,
-                    'reason' => 'FileService returned false'
+                    'reason' => 'FileService returned false',
+                    'file_size_mb' => $fileSizeMb,
+                    'directory' => $directory,
+                    'original_filename' => $pdfFile->getClientOriginalName()
                 ], 'error');
+                
+                \Illuminate\Support\Facades\Log::error('[ContractPerformanceActService] FileService upload returned false', [
+                    'act_id' => $act->id,
+                    'organization_id' => $organizationId,
+                    'directory' => $directory,
+                    'file_size_mb' => $fileSizeMb,
+                    'original_filename' => $pdfFile->getClientOriginalName()
+                ]);
+                
+                // Не блокируем создание акта - файл можно загрузить позже
                 return null;
             }
 
@@ -481,6 +547,12 @@ class ContractPerformanceActService
                 's3_path' => $path
             ]);
 
+            \Illuminate\Support\Facades\Log::info('[ContractPerformanceActService] PDF uploaded successfully', [
+                'act_id' => $act->id,
+                'file_id' => $file->id,
+                's3_path' => $path
+            ]);
+
             return $file;
 
         } catch (\Exception $e) {
@@ -489,9 +561,19 @@ class ContractPerformanceActService
                 'act_id' => $act->id,
                 'organization_id' => $organizationId,
                 'error' => $e->getMessage(),
-                'exception_class' => get_class($e)
+                'exception_class' => get_class($e),
+                'trace' => $e->getTraceAsString()
             ], 'error');
 
+            \Illuminate\Support\Facades\Log::error('[ContractPerformanceActService] Exception during PDF upload', [
+                'act_id' => $act->id,
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+                'exception_class' => get_class($e),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            // Не блокируем создание акта - файл можно загрузить позже
             return null;
         }
     }
