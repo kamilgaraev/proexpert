@@ -21,8 +21,8 @@ return new class extends Migration
                 COALESCE(SUM(p.budget_amount), 0) as total_budget,
                 
                 COUNT(DISTINCT c.id) as contracts_count,
-                COALESCE(SUM(c.total_amount), 0) as total_contract_amount,
-                COALESCE(SUM(CASE WHEN c.status = 'active' THEN c.total_amount ELSE 0 END), 0) as active_contract_amount,
+                COALESCE(SUM(COALESCE(c.total_amount, 0)), 0) as total_contract_amount,
+                COALESCE(SUM(CASE WHEN c.status = 'active' THEN COALESCE(c.total_amount, 0) ELSE 0 END), 0) as active_contract_amount,
                 
                 COUNT(DISTINCT ou.user_id) as users_count,
                 
