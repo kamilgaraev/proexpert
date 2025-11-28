@@ -190,6 +190,7 @@ class ContractResource extends JsonResource
             'start_date' => $this->start_date,
             'end_date' => $this->end_date,
             'notes' => $this->notes,
+            'is_fixed_amount' => $this->is_fixed_amount ?? true, // По умолчанию true для обратной совместимости
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
 
