@@ -46,7 +46,15 @@ class StoreContractRequest extends FormRequest
             'subject' => ['nullable', 'string'],
             'work_type_category' => ['nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'payment_terms' => ['nullable', 'string'],
-            'base_amount' => ['required', 'numeric', 'min:0'],
+            'is_fixed_amount' => ['nullable', 'boolean'],
+            // base_amount обязателен только для контрактов с фиксированной суммой
+            'base_amount' => [
+                'required_if:is_fixed_amount,true,1',
+                'nullable',
+                'numeric',
+                'min:0',
+            ],
+            // total_amount опционален, рассчитывается автоматически для фиксированных контрактов
             'total_amount' => ['nullable', 'numeric', 'min:0'],
             'gp_percentage' => ['nullable', 'numeric', 'min:-100', 'max:100'],
             'gp_calculation_type' => ['nullable', new Enum(GpCalculationTypeEnum::class)],
@@ -72,12 +80,24 @@ class StoreContractRequest extends FormRequest
 
     public function toDto(): ContractDTO
     {
-        // Логика: base_amount обязателен, total_amount рассчитывается на бэкенде
-        $baseAmount = (float) $this->validated('base_amount');
+        // Определяем, является ли контракт с фиксированной суммой
+        // По умолчанию true для обратной совместимости
+        $isFixedAmount = $this->validated('is_fixed_amount') !== false;
         
-        // total_amount опционален (для обратной совместимости при редактировании)
-        // но при создании рассчитается автоматически в сервисе
-        $totalAmount = $this->validated('total_amount');
+        // base_amount обязателен только для фиксированных контрактов
+        $baseAmount = $this->validated('base_amount') !== null 
+            ? (float) $this->validated('base_amount') 
+            : null;
+        
+        // total_amount опционален, рассчитывается автоматически для фиксированных контрактов
+        $totalAmount = $this->validated('total_amount') !== null 
+            ? (float) $this->validated('total_amount') 
+            : null;
+        
+        // Для фиксированных контрактов: если total_amount не указан, используем base_amount
+        if ($isFixedAmount && $totalAmount === null && $baseAmount !== null) {
+            $totalAmount = $baseAmount;
+        }
         
         return new ContractDTO(
             project_id: $this->validated('project_id'),
@@ -89,7 +109,7 @@ class StoreContractRequest extends FormRequest
             work_type_category: $this->validated('work_type_category') ? ContractWorkTypeCategoryEnum::from($this->validated('work_type_category')) : null,
             payment_terms: $this->validated('payment_terms'),
             base_amount: $baseAmount,
-            total_amount: $totalAmount ? (float) $totalAmount : $baseAmount,
+            total_amount: $totalAmount,
             gp_percentage: $this->validated('gp_percentage') !== null ? (float) $this->validated('gp_percentage') : null,
             gp_calculation_type: $this->validated('gp_calculation_type') ? GpCalculationTypeEnum::from($this->validated('gp_calculation_type')) : null,
             gp_coefficient: $this->validated('gp_coefficient') !== null ? (float) $this->validated('gp_coefficient') : null,
@@ -103,7 +123,8 @@ class StoreContractRequest extends FormRequest
             start_date: $this->validated('start_date') ? \Carbon\Carbon::parse($this->validated('start_date'))->format('Y-m-d') : null,
             end_date: $this->validated('end_date') ? \Carbon\Carbon::parse($this->validated('end_date'))->format('Y-m-d') : null,
             notes: $this->validated('notes'),
-            advance_payments: $this->validated('advance_payments')
+            advance_payments: $this->validated('advance_payments'),
+            is_fixed_amount: $isFixedAmount
         );
     }
 } 

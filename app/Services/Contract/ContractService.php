@@ -129,6 +129,9 @@ class ContractService
                     gp_percentage: $contractDTO->gp_percentage,
                     gp_calculation_type: $contractDTO->gp_calculation_type,
                     gp_coefficient: $contractDTO->gp_coefficient,
+                    warranty_retention_calculation_type: $contractDTO->warranty_retention_calculation_type,
+                    warranty_retention_percentage: $contractDTO->warranty_retention_percentage,
+                    warranty_retention_coefficient: $contractDTO->warranty_retention_coefficient,
                     subcontract_amount: $contractDTO->subcontract_amount,
                     planned_advance_amount: $contractDTO->planned_advance_amount,
                     actual_advance_amount: $contractDTO->actual_advance_amount,
@@ -136,7 +139,8 @@ class ContractService
                     start_date: $contractDTO->start_date,
                     end_date: $contractDTO->end_date,
                     notes: $contractDTO->notes,
-                    advance_payments: $contractDTO->advance_payments
+                    advance_payments: $contractDTO->advance_payments,
+                    is_fixed_amount: $contractDTO->is_fixed_amount
                 );
                 
                 $this->logging->technical('contractor_id auto-filled', [
@@ -156,6 +160,14 @@ class ContractService
         if (!$contractDTO->contractor_id) {
             throw new Exception('Не указан подрядчик для контракта');
         }
+        
+        // Проверка для контрактов с фиксированной суммой: base_amount обязателен
+        if ($contractDTO->is_fixed_amount && $contractDTO->base_amount === null) {
+            throw new Exception('Для контракта с фиксированной суммой необходимо указать базовую сумму (base_amount)');
+        }
+        
+        // Для контрактов с нефиксированной суммой: base_amount и total_amount могут быть null
+        // Сумма будет определяться по фактически выполненным работам/оказанным услугам
         
         // Проверяем доступность подрядчика для организации (через ContractorSharing)
         if (!$this->contractorSharing->canUseContractor($contractDTO->contractor_id, $organizationId)) {

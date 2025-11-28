@@ -35,7 +35,14 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'subject' => ['sometimes', 'nullable', 'string'],
             'work_type_category' => ['sometimes', 'nullable', new Enum(ContractWorkTypeCategoryEnum::class)],
             'payment_terms' => ['sometimes', 'nullable', 'string'],
-            'base_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'is_fixed_amount' => ['sometimes', 'nullable', 'boolean'],
+            // base_amount обязателен только для контрактов с фиксированной суммой
+            'base_amount' => [
+                'sometimes',
+                'nullable',
+                'numeric',
+                'min:0',
+            ],
             'total_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'gp_percentage' => ['sometimes', 'nullable', 'numeric', 'min:-100', 'max:100'],
             'gp_calculation_type' => ['sometimes', 'nullable', new Enum(GpCalculationTypeEnum::class)],
@@ -70,7 +77,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
         
         $allowedFields = [
             'project_id', 'contractor_id', 'parent_contract_id', 'number', 'date',
-            'subject', 'work_type_category', 'payment_terms', 'base_amount', 'total_amount',
+            'subject', 'work_type_category', 'payment_terms', 'is_fixed_amount', 'base_amount', 'total_amount',
             'gp_percentage', 'gp_calculation_type', 'gp_coefficient',
             'warranty_retention_calculation_type', 'warranty_retention_percentage', 'warranty_retention_coefficient',
             'subcontract_amount', 'planned_advance_amount', 'actual_advance_amount', 'status', 'start_date',
@@ -175,7 +182,10 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             notes: array_key_exists('notes', $validatedData) 
                 ? $validatedData['notes'] 
                 : $contract->notes,
-            advance_payments: null
+            advance_payments: null,
+            is_fixed_amount: array_key_exists('is_fixed_amount', $validatedData)
+                ? (bool) $validatedData['is_fixed_amount']
+                : ($contract->is_fixed_amount ?? true) // По умолчанию true для обратной совместимости
         );
     }
 } 

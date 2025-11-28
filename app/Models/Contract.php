@@ -44,6 +44,7 @@ class Contract extends Model
         'end_date',
         'notes',
         'is_onboarding_demo',
+        'is_fixed_amount',
     ];
 
     protected $casts = [
@@ -64,6 +65,7 @@ class Contract extends Model
         'status' => ContractStatusEnum::class,
         'work_type_category' => ContractWorkTypeCategoryEnum::class,
         'is_onboarding_demo' => 'boolean',
+        'is_fixed_amount' => 'boolean',
     ];
 
     public function organization(): BelongsTo
@@ -148,12 +150,18 @@ class Contract extends Model
     /**
      * Получить базовую сумму контракта (без ГП)
      * Если base_amount не задан, возвращаем total_amount (для legacy контрактов)
+     * Для контрактов с нефиксированной суммой может быть null
      */
-    public function getBaseAmountAttribute($value): float
+    public function getBaseAmountAttribute($value): ?float
     {
         // Если base_amount явно установлен в БД, возвращаем его
         if ($value !== null) {
             return (float) $value;
+        }
+        
+        // Для контрактов с нефиксированной суммой возвращаем null
+        if (!$this->is_fixed_amount) {
+            return null;
         }
         
         // Legacy: для старых контрактов без base_amount используем total_amount
@@ -163,9 +171,15 @@ class Contract extends Model
     /**
      * Рассчитать сумму ГП (генподрядного процента)
      * ВАЖНО: ГП рассчитывается от base_amount (базовой суммы), а не от total_amount!
+     * Для контрактов с нефиксированной суммой возвращает 0 (ГП не применим)
      */
     public function getGpAmountAttribute(): float
     {
+        // Для контрактов с нефиксированной суммой ГП не применим
+        if (!$this->is_fixed_amount) {
+            return 0.00;
+        }
+        
         $baseAmount = $this->base_amount ?? 0;
         $calculationType = $this->gp_calculation_type ?? GpCalculationTypeEnum::PERCENTAGE;
         
@@ -191,9 +205,15 @@ class Contract extends Model
     /**
      * Получить итоговую сумму контракта с учетом генподрядного процента
      * total_amount_with_gp = base_amount + gp_amount
+     * Для контрактов с нефиксированной суммой возвращает null
      */
-    public function getTotalAmountWithGpAttribute(): float
+    public function getTotalAmountWithGpAttribute(): ?float
     {
+        // Для контрактов с нефиксированной суммой итоговая сумма не определена
+        if (!$this->is_fixed_amount) {
+            return null;
+        }
+        
         $baseAmount = $this->base_amount ?? 0;
         $gpAmount = $this->gp_amount ?? 0;
         return round($baseAmount + $gpAmount, 2);
@@ -288,9 +308,15 @@ class Contract extends Model
 
     /**
      * Получить оставшуюся сумму по контракту
+     * Для контрактов с нефиксированной суммой возвращает null (остаток не определен)
      */
-    public function getRemainingAmountAttribute(): float
+    public function getRemainingAmountAttribute(): ?float
     {
+        // Для контрактов с нефиксированной суммой остаток не определен
+        if (!$this->is_fixed_amount) {
+            return null;
+        }
+        
         $totalAmount = $this->total_amount ?? 0;
         $completedAmount = $this->completed_works_amount ?? 0;
         return max(0, $totalAmount - $completedAmount);
@@ -298,9 +324,15 @@ class Contract extends Model
 
     /**
      * Получить процент выполнения контракта
+     * Для контрактов с нефиксированной суммой всегда возвращает 0 (процент не применим)
      */
     public function getCompletionPercentageAttribute(): float
     {
+        // Для контрактов с нефиксированной суммой процент выполнения не применим
+        if (!$this->is_fixed_amount) {
+            return 0.0;
+        }
+        
         $totalAmount = $this->total_amount ?? 0;
         $completedAmount = $this->completed_works_amount ?? 0;
         
@@ -312,12 +344,18 @@ class Contract extends Model
 
     /**
      * Проверить, можно ли добавить работу на указанную сумму
+     * Для контрактов с нефиксированной суммой всегда возвращает true (лимита нет)
      */
     public function canAddWork(float $amount): bool
     {
         // Проверяем статус контракта
         if (in_array($this->status, [ContractStatusEnum::COMPLETED, ContractStatusEnum::TERMINATED])) {
             return false;
+        }
+
+        // Для контрактов с нефиксированной суммой нет лимита
+        if (!$this->is_fixed_amount) {
+            return true;
         }
 
         $totalAmount = $this->total_amount ?? 0;

@@ -18,8 +18,8 @@ class ContractDTO
         public readonly ?string $subject,
         public readonly ?ContractWorkTypeCategoryEnum $work_type_category,
         public readonly ?string $payment_terms,
-        public readonly ?float $base_amount, // Базовая сумма ДО учета ГП
-        public readonly float $total_amount, // Итоговая сумма (может быть с учетом ГП)
+        public readonly ?float $base_amount, // Базовая сумма ДО учета ГП (nullable для нефиксированных контрактов)
+        public readonly ?float $total_amount, // Итоговая сумма (nullable для нефиксированных контрактов)
         public readonly ?float $gp_percentage,
         public readonly ?GpCalculationTypeEnum $gp_calculation_type,
         public readonly ?float $gp_coefficient,
@@ -33,7 +33,8 @@ class ContractDTO
         public readonly ?string $start_date, // Y-m-d format
         public readonly ?string $end_date, // Y-m-d format
         public readonly ?string $notes,
-        public readonly ?array $advance_payments = null
+        public readonly ?array $advance_payments = null,
+        public readonly bool $is_fixed_amount = true // По умолчанию фиксированная сумма
     ) {}
 
     public function toArray(): array
@@ -62,6 +63,7 @@ class ContractDTO
             'start_date' => $this->start_date,
             'end_date' => $this->end_date,
             'notes' => $this->notes,
+            'is_fixed_amount' => $this->is_fixed_amount,
         ];
     }
 
