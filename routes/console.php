@@ -178,6 +178,16 @@ Schedule::command('restrictions:lift-expired')
 // PAYMENTS MODULE - Автоматизация платежей
 // ============================================
 
+// Синхронизация invoices с payment_documents (каждую минуту)
+Schedule::command('payments:sync-invoices-documents --limit=50')
+    ->everyMinute()
+    ->withoutOverlapping(55)
+    ->runInBackground()
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled payments:sync-invoices-documents command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-payments-sync-invoices.log'));
+
 // Обработка просроченных платежей (каждый день в 09:00)
 Schedule::job(new ProcessOverduePaymentsJob())
     ->dailyAt('09:00')

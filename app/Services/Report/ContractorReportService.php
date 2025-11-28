@@ -416,7 +416,7 @@ class ContractorReportService
             $contractIds = $contracts->pluck('id')->toArray();
             
             if (!empty($contractIds)) {
-                // Используем модель Invoice для более надежного запроса
+                // Сначала пытаемся получить из новой системы (invoices)
                 $paymentsQuery = Invoice::query()
                     ->where('invoiceable_type', Contract::class)
                     ->whereIn('invoiceable_id', $contractIds)
@@ -452,6 +452,42 @@ class ContractorReportService
                 }
 
                 $totalPaymentAmount = $paymentsQuery->sum('paid_amount') ?? 0;
+                
+                // Если в новой системе нет платежей, проверяем старую систему (payment_documents)
+                if ($totalPaymentAmount == 0) {
+                    // Получаем ID счетов для этих контрактов
+                    $invoiceIds = Invoice::query()
+                        ->where('invoiceable_type', Contract::class)
+                        ->whereIn('invoiceable_id', $contractIds)
+                        ->where('organization_id', $organizationId)
+                        ->pluck('id')
+                        ->toArray();
+                    
+                    if (!empty($invoiceIds)) {
+                        $legacyPaymentsQuery = DB::table('payment_documents')
+                            ->where('source_type', Invoice::class)
+                            ->whereIn('source_id', $invoiceIds)
+                            ->whereIn('status', ['paid', 'submitted']) // Учитываем оплаченные и отправленные
+                            ->where('amount', '>', 0);
+
+                        // Если указана дата начала, фильтруем по дате документа
+                        if ($dateFrom) {
+                            $legacyPaymentsQuery->whereDate('document_date', '>=', Carbon::parse($dateFrom)->toDateString());
+                        }
+
+                        // Если указана дата окончания, фильтруем по ней
+                        if ($dateTo) {
+                            $legacyPaymentsQuery->whereDate('document_date', '<=', Carbon::parse($dateTo)->toDateString());
+                        }
+
+                        $legacyPaymentAmount = $legacyPaymentsQuery->sum('amount') ?? 0;
+                        
+                        // Используем сумму из старой системы, если она больше
+                        if ($legacyPaymentAmount > 0) {
+                            $totalPaymentAmount = $legacyPaymentAmount;
+                        }
+                    }
+                }
             }
         }
 
@@ -542,6 +578,52 @@ class ContractorReportService
         $payments = $paymentsQuery->get();
         $paymentAmount = $payments->sum('paid_amount') ?? 0;
         
+        // Если в новой системе нет платежей, проверяем старую систему (payment_documents)
+        if ($paymentAmount == 0) {
+            // Получаем ID счетов для этого контракта
+            $invoiceIds = Invoice::query()
+                ->where('invoiceable_type', Contract::class)
+                ->where('invoiceable_id', $contract->id)
+                ->where('organization_id', $contract->organization_id)
+                ->pluck('id')
+                ->toArray();
+            
+            if (!empty($invoiceIds)) {
+                $legacyPaymentsQuery = DB::table('payment_documents')
+                    ->where('source_type', Invoice::class)
+                    ->whereIn('source_id', $invoiceIds)
+                    ->whereIn('status', ['paid', 'submitted'])
+                    ->where('amount', '>', 0)
+                    ->select('id', 'document_number', 'amount', 'document_date', 'document_type', 'status', 'payment_purpose', 'notes');
+
+                if ($dateFrom) {
+                    $legacyPaymentsQuery->whereDate('document_date', '>=', Carbon::parse($dateFrom)->toDateString());
+                }
+                if ($dateTo) {
+                    $legacyPaymentsQuery->whereDate('document_date', '<=', Carbon::parse($dateTo)->toDateString());
+                }
+
+                $legacyPayments = $legacyPaymentsQuery->get();
+                
+                if ($legacyPayments->count() > 0) {
+                    // Преобразуем payment_documents в формат, совместимый с invoices
+                    $payments = $legacyPayments->map(function ($payment) {
+                        return (object) [
+                            'id' => $payment->id,
+                            'invoice_number' => $payment->document_number ?? 'N/A',
+                            'paid_amount' => $payment->amount,
+                            'paid_at' => $payment->document_date ? Carbon::parse($payment->document_date) : null,
+                            'invoice_type' => $payment->document_type ?? null,
+                            'status' => $payment->status,
+                            'payment_purpose' => $payment->payment_purpose ?? null,
+                            'notes' => $payment->notes ?? null,
+                        ];
+                    });
+                    $paymentAmount = $legacyPayments->sum('amount') ?? 0;
+                }
+            }
+        }
+        
         $effectiveTotalAmount = $this->calculateSingleContractAmount($contract);
 
         return [
@@ -567,15 +649,35 @@ class ContractorReportService
                 ];
             })->toArray(),
             'payments' => $payments->map(function ($payment) {
+                // Определяем дату платежа
+                $paymentDate = null;
+                if (isset($payment->paid_at) && $payment->paid_at) {
+                    $paymentDate = $payment->paid_at instanceof \Carbon\Carbon 
+                        ? $payment->paid_at->format('Y-m-d') 
+                        : (is_string($payment->paid_at) ? \Carbon\Carbon::parse($payment->paid_at)->format('Y-m-d') : null);
+                } elseif (isset($payment->document_date) && $payment->document_date) {
+                    $paymentDate = $payment->document_date instanceof \Carbon\Carbon 
+                        ? $payment->document_date->format('Y-m-d') 
+                        : (is_string($payment->document_date) ? \Carbon\Carbon::parse($payment->document_date)->format('Y-m-d') : null);
+                } elseif (isset($payment->updated_at) && $payment->updated_at) {
+                    $paymentDate = $payment->updated_at instanceof \Carbon\Carbon 
+                        ? $payment->updated_at->format('Y-m-d') 
+                        : (is_string($payment->updated_at) ? \Carbon\Carbon::parse($payment->updated_at)->format('Y-m-d') : null);
+                }
+                
                 return [
-                    'id' => $payment->id,
-                    'document_number' => $payment->invoice_number,
-                    'amount' => $payment->paid_amount,
-                    'payment_date' => $payment->paid_at?->format('Y-m-d') ?? $payment->updated_at?->format('Y-m-d'),
-                    'document_type' => $payment->invoice_type instanceof \BackedEnum ? $payment->invoice_type->value : $payment->invoice_type,
-                    'status' => $payment->status instanceof \BackedEnum ? $payment->status->value : $payment->status,
-                    'payment_purpose' => $payment->payment_purpose,
-                    'notes' => $payment->notes,
+                    'id' => $payment->id ?? null,
+                    'document_number' => $payment->invoice_number ?? $payment->document_number ?? 'N/A',
+                    'amount' => $payment->paid_amount ?? $payment->amount ?? 0,
+                    'payment_date' => $paymentDate,
+                    'document_type' => ($payment->invoice_type ?? $payment->document_type ?? null) instanceof \BackedEnum 
+                        ? ($payment->invoice_type ?? $payment->document_type)->value 
+                        : ($payment->invoice_type ?? $payment->document_type ?? null),
+                    'status' => ($payment->status ?? null) instanceof \BackedEnum 
+                        ? $payment->status->value 
+                        : ($payment->status ?? null),
+                    'payment_purpose' => $payment->payment_purpose ?? null,
+                    'notes' => $payment->notes ?? null,
                 ];
             })->toArray(),
         ];
