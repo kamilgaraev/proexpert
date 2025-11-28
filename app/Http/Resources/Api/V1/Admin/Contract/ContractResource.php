@@ -154,8 +154,9 @@ class ContractResource extends JsonResource
         // Рассчитываем сумму ГП от base_amount (НЕ от effectiveTotalAmount!)
         $gpAmount = $this->gp_amount; // Используем accessor модели для правильного расчета
         
-        // total_amount (итоговая сумма) = base_amount + gp_amount
-        $totalAmountCalculated = round($modelBaseAmount + $gpAmount, 2);
+        // total_amount (итоговая сумма) = base_amount + agreements_delta + gp_amount
+        // Это правильная формула: базовая сумма + изменения от допсоглашений + ГП
+        $totalAmountCalculated = round($effectiveTotalAmount + $gpAmount, 2);
 
         return [
             'id' => $this->id,
@@ -171,10 +172,10 @@ class ContractResource extends JsonResource
             'work_type_category_label' => $this->work_type_category?->label(),
             'payment_terms' => $this->payment_terms,
             'base_amount' => $modelBaseAmount,
-            'total_amount' => (float) ($this->total_amount ?? 0), // Из БД (источник истины, уже включает ДС)
+            'total_amount' => $totalAmountCalculated, // base_amount + agreements_delta + gp_amount
             'gp_percentage' => (float) ($this->gp_percentage ?? 0),
             'gp_amount' => (float) $gpAmount,
-            'total_amount_with_gp' => (float) ($this->total_amount ?? 0) + $gpAmount,
+            'total_amount_with_gp' => $totalAmountCalculated, // То же самое, что и total_amount
             'warranty_retention_calculation_type' => $this->warranty_retention_calculation_type?->value,
             'warranty_retention_percentage' => (float) ($this->warranty_retention_percentage ?? 0),
             'warranty_retention_coefficient' => (float) ($this->warranty_retention_coefficient ?? 0),
