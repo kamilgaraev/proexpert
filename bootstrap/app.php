@@ -9,24 +9,26 @@ use App\Http\Middleware\SetOrganizationContext;
 /**
  * Конвертирует строку размера (например, "64M", "2G") в байты
  */
-function convertIniSizeToBytes(string $size): int
-{
-    $size = trim($size);
-    $last = strtolower($size[strlen($size) - 1]);
-    $value = (int)$size;
-    
-    switch ($last) {
-        case 'g':
-            $value *= 1024;
-            // no break
-        case 'm':
-            $value *= 1024;
-            // no break
-        case 'k':
-            $value *= 1024;
+if (!function_exists('convertIniSizeToBytes')) {
+    function convertIniSizeToBytes(string $size): int
+    {
+        $size = trim($size);
+        $last = strtolower($size[strlen($size) - 1]);
+        $value = (int)$size;
+        
+        switch ($last) {
+            case 'g':
+                $value *= 1024;
+                // no break
+            case 'm':
+                $value *= 1024;
+                // no break
+            case 'k':
+                $value *= 1024;
+        }
+        
+        return $value;
     }
-    
-    return $value;
 }
 
 return Application::configure(basePath: dirname(__DIR__))
