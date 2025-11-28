@@ -9,6 +9,8 @@ use App\Models\Contract;
 use App\Models\Contractor;
 // Используем таблицу invoices для получения платежей (новая система платежей)
 // Старая таблица payment_documents больше не используется
+use App\BusinessModules\Core\Payments\Models\Invoice;
+use App\BusinessModules\Core\Payments\Enums\InvoiceStatus;
 use App\Models\Project;
 use App\Models\ReportFile;
 use App\Models\Organization;
@@ -414,22 +416,39 @@ class ContractorReportService
             $contractIds = $contracts->pluck('id')->toArray();
             
             if (!empty($contractIds)) {
-                $paymentsQuery = DB::table('invoices')
-                    ->where('invoiceable_type', 'App\\Models\\Contract')
+                // Используем модель Invoice для более надежного запроса
+                $paymentsQuery = Invoice::query()
+                    ->where('invoiceable_type', Contract::class)
                     ->whereIn('invoiceable_id', $contractIds)
                     ->where('organization_id', $organizationId)
-                    ->whereNull('deleted_at')
-                    ->where('paid_amount', '>', 0) // Только оплаченные счета
-                    ->whereNotNull('paid_at'); // Только счета с датой оплаты
+                    ->where('paid_amount', '>', 0) // Только счета с оплаченной суммой
+                    ->whereIn('status', [
+                        InvoiceStatus::PAID,
+                        InvoiceStatus::PARTIALLY_PAID,
+                    ]);
 
-                // Если указана дата начала, фильтруем по дате оплаты
+                // Если указана дата начала, фильтруем по дате оплаты или обновления
                 if ($dateFrom) {
-                    $paymentsQuery->whereDate('paid_at', '>=', Carbon::parse($dateFrom)->toDateString());
+                    $paymentsQuery->where(function ($q) use ($dateFrom) {
+                        $q->whereDate('paid_at', '>=', Carbon::parse($dateFrom)->toDateString())
+                            ->orWhere(function ($subQ) use ($dateFrom) {
+                                // Для частично оплаченных без paid_at используем updated_at
+                                $subQ->whereNull('paid_at')
+                                    ->whereDate('updated_at', '>=', Carbon::parse($dateFrom)->toDateString());
+                            });
+                    });
                 }
 
                 // Если указана дата окончания, фильтруем по ней
                 if ($dateTo) {
-                    $paymentsQuery->whereDate('paid_at', '<=', Carbon::parse($dateTo)->toDateString());
+                    $paymentsQuery->where(function ($q) use ($dateTo) {
+                        $q->whereDate('paid_at', '<=', Carbon::parse($dateTo)->toDateString())
+                            ->orWhere(function ($subQ) use ($dateTo) {
+                                // Для частично оплаченных без paid_at используем updated_at
+                                $subQ->whereNull('paid_at')
+                                    ->whereDate('updated_at', '<=', Carbon::parse($dateTo)->toDateString());
+                            });
+                    });
                 }
 
                 $totalPaymentAmount = $paymentsQuery->sum('paid_amount') ?? 0;
@@ -484,21 +503,40 @@ class ContractorReportService
         $acts = $actsQuery->get();
         $completedAmount = $acts->sum('amount');
         
-        // Используем таблицу invoices для получения платежей (новая система платежей)
-        $paymentsQuery = DB::table('invoices')
-            ->where('invoiceable_type', 'App\\Models\\Contract')
+        // Используем модель Invoice для получения платежей (новая система платежей)
+        $paymentsQuery = Invoice::query()
+            ->where('invoiceable_type', Contract::class)
             ->where('invoiceable_id', $contract->id)
             ->where('organization_id', $contract->organization_id)
-            ->whereNull('deleted_at')
-            ->where('paid_amount', '>', 0) // Только оплаченные счета
-            ->whereNotNull('paid_at') // Только счета с датой оплаты
-            ->select('id', 'invoice_number as document_number', 'paid_amount', 'paid_at', 'invoice_type as document_type', 'status', 'payment_purpose', 'notes');
+            ->where('paid_amount', '>', 0) // Только счета с оплаченной суммой
+            ->whereIn('status', [
+                InvoiceStatus::PAID,
+                InvoiceStatus::PARTIALLY_PAID,
+            ])
+            ->select('id', 'invoice_number', 'paid_amount', 'paid_at', 'invoice_type', 'status', 'payment_purpose', 'notes');
 
+        // Если указана дата начала, фильтруем по дате оплаты или обновления
         if ($dateFrom) {
-            $paymentsQuery->whereDate('paid_at', '>=', Carbon::parse($dateFrom)->toDateString());
+            $paymentsQuery->where(function ($q) use ($dateFrom) {
+                $q->whereDate('paid_at', '>=', Carbon::parse($dateFrom)->toDateString())
+                    ->orWhere(function ($subQ) use ($dateFrom) {
+                        // Для частично оплаченных без paid_at используем updated_at
+                        $subQ->whereNull('paid_at')
+                            ->whereDate('updated_at', '>=', Carbon::parse($dateFrom)->toDateString());
+                    });
+            });
         }
+
+        // Если указана дата окончания, фильтруем по ней
         if ($dateTo) {
-            $paymentsQuery->whereDate('paid_at', '<=', Carbon::parse($dateTo)->toDateString());
+            $paymentsQuery->where(function ($q) use ($dateTo) {
+                $q->whereDate('paid_at', '<=', Carbon::parse($dateTo)->toDateString())
+                    ->orWhere(function ($subQ) use ($dateTo) {
+                        // Для частично оплаченных без paid_at используем updated_at
+                        $subQ->whereNull('paid_at')
+                            ->whereDate('updated_at', '<=', Carbon::parse($dateTo)->toDateString());
+                    });
+            });
         }
 
         $payments = $paymentsQuery->get();
@@ -531,10 +569,10 @@ class ContractorReportService
             'payments' => $payments->map(function ($payment) {
                 return [
                     'id' => $payment->id,
-                    'document_number' => $payment->document_number,
+                    'document_number' => $payment->invoice_number,
                     'amount' => $payment->paid_amount,
-                    'payment_date' => $payment->paid_at?->format('Y-m-d'),
-                    'document_type' => $payment->document_type instanceof \BackedEnum ? $payment->document_type->value : $payment->document_type,
+                    'payment_date' => $payment->paid_at?->format('Y-m-d') ?? $payment->updated_at?->format('Y-m-d'),
+                    'document_type' => $payment->invoice_type instanceof \BackedEnum ? $payment->invoice_type->value : $payment->invoice_type,
                     'status' => $payment->status instanceof \BackedEnum ? $payment->status->value : $payment->status,
                     'payment_purpose' => $payment->payment_purpose,
                     'notes' => $payment->notes,
