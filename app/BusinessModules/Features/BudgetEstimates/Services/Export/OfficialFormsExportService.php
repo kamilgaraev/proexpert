@@ -675,7 +675,7 @@ class OfficialFormsExportService
             'works' => $act->completedWorks,
             'total_amount' => $totalAmount,
             'vat_amount' => $vatAmount,
-            'estimated_cost' => $contractAmount,
+            'contract_amount' => $contractAmount,
             'period_start' => $periodStart,
             'period_end' => $periodEnd,
             'customer_org' => $customerOrg,

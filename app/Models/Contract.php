@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use App\Models\Estimate;
 use App\Enums\Contract\ContractStatusEnum;
 use App\Enums\Contract\ContractWorkTypeCategoryEnum;
 use App\Enums\Contract\GpCalculationTypeEnum;
@@ -99,6 +100,19 @@ class Contract extends Model
     public function completedWorks(): HasMany
     {
         return $this->hasMany(CompletedWork::class);
+    }
+
+    public function estimates(): HasMany
+    {
+        return $this->hasMany(Estimate::class);
+    }
+
+    /**
+     * Получить активную/основную смету договора
+     */
+    public function estimate(): HasOne
+    {
+        return $this->hasOne(Estimate::class)->latestOfMany();
     }
 
     public function agreements(): HasMany
