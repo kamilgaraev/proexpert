@@ -71,14 +71,57 @@ class ContractPerformanceActController extends Controller
         $organizationId = $organization?->id ?? $request->user()?->current_organization_id;
         $projectId = $project;
 
+        // Проверка наличия organizationId
+        if (!$organizationId) {
+            Log::error('performance_act.store.missing_organization', [
+                'project_id' => $projectId,
+                'contract_id' => $contract,
+                'user_id' => $request->user()?->id,
+                'has_organization_attribute' => $organization !== null,
+                'has_user' => $request->user() !== null,
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Не определена организация. Требуется аутентификация и контекст организации.',
+                'error' => 'Organization context is required'
+            ], Response::HTTP_UNAUTHORIZED);
+        }
+
         try {
             $actDTO = $request->toDto();
             $act = $this->actService->createActForContract($contract, $organizationId, $actDTO, $projectId);
             return (new ContractPerformanceActResource($act))
                     ->response()
                     ->setStatusCode(Response::HTTP_CREATED);
+        } catch (\DomainException $e) {
+            // Бизнес-ошибки (валидация, лимиты и т.д.)
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'error' => $e->getMessage()
+            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+        } catch (\InvalidArgumentException $e) {
+            // Ошибки валидации данных
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'error' => $e->getMessage()
+            ], Response::HTTP_BAD_REQUEST);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to create performance act', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+            Log::error('performance_act.store.error', [
+                'project_id' => $projectId,
+                'contract_id' => $contract,
+                'organization_id' => $organizationId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Не удалось создать акт выполненных работ',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 

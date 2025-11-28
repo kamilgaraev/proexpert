@@ -12,6 +12,7 @@ use App\Services\Logging\LoggingService;
 use App\Services\Storage\FileService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Exception;
 
 class ContractPerformanceActService
@@ -61,6 +62,16 @@ class ContractPerformanceActService
 
     public function createActForContract(int $contractId, int $organizationId, ContractPerformanceActDTO $actDTO, ?int $projectId = null): ContractPerformanceAct
     {
+        // Проверка наличия organizationId
+        if (!$organizationId) {
+            $this->logging->technical('performance_act.creation.failed.missing_organization', [
+                'contract_id' => $contractId,
+                'project_id' => $projectId,
+            ], 'error');
+            
+            throw new \InvalidArgumentException('Organization ID is required to create performance act.');
+        }
+
         // BUSINESS: Начало создания акта выполненных работ
         $this->logging->business('performance_act.creation.started', [
             'contract_id' => $contractId,
@@ -72,32 +83,37 @@ class ContractPerformanceActService
 
         $contract = $this->getContractOrFail($contractId, $organizationId, $projectId);
 
-        // Создаем акт
-        $actData = $actDTO->toArray();
-        $actData['contract_id'] = $contract->id;
-        
-        // ИСПРАВЛЕНИЕ: Если нет работ, используем amount из DTO, иначе пересчитаем из работ
-        if (empty($actDTO->completed_works)) {
-            // Если работ нет - используем переданную сумму (или 0 по умолчанию)
-            $actData['amount'] = $actDTO->amount;
-        } else {
-            // Если есть работы - временно 0, будет пересчитано из работ
-            $actData['amount'] = 0;
-        }
+        // Выполняем создание акта в транзакции для безопасности
+        $act = DB::transaction(function () use ($contract, $actDTO, $organizationId) {
+            // Создаем акт
+            $actData = $actDTO->toArray();
+            $actData['contract_id'] = $contract->id;
+            
+            // ИСПРАВЛЕНИЕ: Если нет работ, используем amount из DTO, иначе пересчитаем из работ
+            if (empty($actDTO->completed_works)) {
+                // Если работ нет - используем переданную сумму (или 0 по умолчанию)
+                $actData['amount'] = $actDTO->amount;
+            } else {
+                // Если есть работы - временно 0, будет пересчитано из работ
+                $actData['amount'] = 0;
+            }
 
-        $act = $this->actRepository->create($actData);
+            $act = $this->actRepository->create($actData);
 
-        // Синхронизируем выполненные работы (если есть)
-        if (!empty($actDTO->completed_works)) {
-            $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
-            // Пересчитываем сумму акта на основе включенных работ
-            $act->recalculateAmount();
-        }
+            // Синхронизируем выполненные работы (если есть)
+            if (!empty($actDTO->completed_works)) {
+                $this->syncCompletedWorks($act, $actDTO->getCompletedWorksForSync());
+                // Пересчитываем сумму акта на основе включенных работ
+                $act->recalculateAmount();
+            }
 
-        // Сохраняем PDF файл (если загружен)
-        if ($actDTO->pdf_file) {
-            $this->saveActPdfFile($act, $actDTO->pdf_file, $organizationId);
-        }
+            // Сохраняем PDF файл (если загружен)
+            if ($actDTO->pdf_file) {
+                $this->saveActPdfFile($act, $actDTO->pdf_file, $organizationId);
+            }
+
+            return $act;
+        });
 
         // Загружаем связи для возврата полных данных
         $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
