@@ -5,6 +5,7 @@ use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestContro
 use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestDashboardController;
 use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestCalendarController;
 use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestTemplateController;
+use App\BusinessModules\Features\SiteRequests\Http\Controllers\SiteRequestPaymentController;
 use App\BusinessModules\Features\SiteRequests\Http\Controllers\Mobile\SiteRequestController as MobileSiteRequestController;
 
 /*
@@ -53,6 +54,14 @@ Route::prefix('api/v1/admin/site-requests')
             Route::put('/{id}', [SiteRequestTemplateController::class, 'update'])->name('update');
             Route::delete('/{id}', [SiteRequestTemplateController::class, 'destroy'])->name('destroy');
             Route::post('/{templateId}/create', [SiteRequestTemplateController::class, 'createFromTemplate'])->name('create_from');
+        });
+
+        // ============================================
+        // Платежи из заявок (ПЕРЕД CRUD)
+        // ============================================
+        Route::prefix('payment')->name('payment.')->group(function () {
+            Route::get('/available', [SiteRequestPaymentController::class, 'getAvailableForPayment'])->name('available');
+            Route::post('/create', [SiteRequestPaymentController::class, 'createPayment'])->name('create');
         });
 
         // ============================================

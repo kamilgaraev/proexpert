@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\SiteRequests\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
@@ -71,6 +72,7 @@ class SiteRequest extends Model
         // Метаданные
         'metadata',
         'template_id',
+        'payment_document_id',
     ];
 
     protected $casts = [
@@ -160,6 +162,30 @@ class SiteRequest extends Model
     public function files(): MorphMany
     {
         return $this->morphMany(\App\Models\File::class, 'fileable');
+    }
+
+    /**
+     * Платежи, связанные с этой заявкой (many-to-many)
+     */
+    public function paymentDocuments(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            \App\BusinessModules\Core\Payments\Models\PaymentDocument::class,
+            'payment_document_site_requests',
+            'site_request_id',
+            'payment_document_id'
+        )->withPivot('amount')->withTimestamps();
+    }
+
+    /**
+     * Платеж, созданный из этой заявки (для быстрого доступа, если платеж один)
+     */
+    public function paymentDocument(): BelongsTo
+    {
+        return $this->belongsTo(
+            \App\BusinessModules\Core\Payments\Models\PaymentDocument::class,
+            'payment_document_id'
+        );
     }
 
     // ============================================
@@ -403,6 +429,32 @@ class SiteRequest extends Model
     public function isAssignedTo(int $userId): bool
     {
         return $this->assigned_to === $userId;
+    }
+
+    /**
+     * Проверить наличие связанного платежа
+     */
+    public function hasPaymentDocument(): bool
+    {
+        return $this->paymentDocuments()->exists() || $this->payment_document_id !== null;
+    }
+
+    /**
+     * Проверить возможность создания платежа из заявки
+     */
+    public function canCreatePayment(): bool
+    {
+        // Заявка должна быть в статусе approved
+        if ($this->status !== SiteRequestStatusEnum::APPROVED) {
+            return false;
+        }
+
+        // Заявка не должна быть уже связана с платежом
+        if ($this->hasPaymentDocument()) {
+            return false;
+        }
+
+        return true;
     }
 }
 

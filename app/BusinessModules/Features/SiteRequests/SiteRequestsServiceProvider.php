@@ -72,6 +72,11 @@ class SiteRequestsServiceProvider extends ServiceProvider
         $this->app->singleton(
             Services\SiteRequestCalendarService::class
         );
+
+        // Сервис создания платежей из заявок
+        $this->app->singleton(
+            Services\SiteRequestPaymentService::class
+        );
     }
 
     /**

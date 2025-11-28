@@ -11,6 +11,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -143,6 +144,19 @@ class PaymentDocument extends Model
     public function transactions(): HasMany
     {
         return $this->hasMany(PaymentTransaction::class, 'invoice_id'); // совместимость со старой схемой
+    }
+
+    /**
+     * Заявки, связанные с этим платежом
+     */
+    public function siteRequests(): BelongsToMany
+    {
+        return $this->belongsToMany(
+            \App\BusinessModules\Features\SiteRequests\Models\SiteRequest::class,
+            'payment_document_site_requests',
+            'payment_document_id',
+            'site_request_id'
+        )->withPivot('amount')->withTimestamps();
     }
 
     // ==========================================
@@ -323,6 +337,22 @@ class PaymentDocument extends Model
     public function requiresApproval(): bool
     {
         return $this->document_type->requiresApproval();
+    }
+
+    /**
+     * Проверить наличие связанных заявок
+     */
+    public function hasSiteRequests(): bool
+    {
+        return $this->siteRequests()->exists();
+    }
+
+    /**
+     * Получить количество связанных заявок
+     */
+    public function getSiteRequestsCount(): int
+    {
+        return $this->siteRequests()->count();
     }
 }
 

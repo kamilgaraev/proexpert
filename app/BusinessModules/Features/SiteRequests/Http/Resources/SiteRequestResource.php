@@ -79,6 +79,8 @@ class SiteRequestResource extends JsonResource
             'can_be_edited' => $this->canBeEdited(),
             'can_be_cancelled' => $this->canBeCancelled(),
             'has_calendar_event' => $this->hasCalendarEvent(),
+            'can_create_payment' => $this->canCreatePayment(),
+            'has_payment' => $this->hasPaymentDocument(),
 
             // Связи
             'project' => $this->whenLoaded('project', fn() => [
@@ -108,6 +110,30 @@ class SiteRequestResource extends JsonResource
                 'start_date' => $this->calendarEvent->start_date->format('Y-m-d'),
                 'end_date' => $this->calendarEvent->end_date?->format('Y-m-d'),
                 'color' => $this->calendarEvent->color,
+            ] : null),
+            'payment_documents' => $this->whenLoaded('paymentDocuments', fn() => $this->paymentDocuments->map(fn($payment) => [
+                'id' => $payment->id,
+                'document_number' => $payment->document_number,
+                'document_type' => $payment->document_type->value,
+                'document_type_label' => $payment->document_type->label(),
+                'amount' => (float) $payment->amount,
+                'currency' => $payment->currency,
+                'status' => $payment->status->value,
+                'status_label' => $payment->status->label(),
+                'due_date' => $payment->due_date?->format('Y-m-d'),
+                'created_at' => $payment->created_at->toIso8601String(),
+            ])),
+            'payment_document' => $this->whenLoaded('paymentDocument', fn() => $this->paymentDocument ? [
+                'id' => $this->paymentDocument->id,
+                'document_number' => $this->paymentDocument->document_number,
+                'document_type' => $this->paymentDocument->document_type->value,
+                'document_type_label' => $this->paymentDocument->document_type->label(),
+                'amount' => (float) $this->paymentDocument->amount,
+                'currency' => $this->paymentDocument->currency,
+                'status' => $this->paymentDocument->status->value,
+                'status_label' => $this->paymentDocument->status->label(),
+                'due_date' => $this->paymentDocument->due_date?->format('Y-m-d'),
+                'created_at' => $this->paymentDocument->created_at->toIso8601String(),
             ] : null),
 
             // Даты
