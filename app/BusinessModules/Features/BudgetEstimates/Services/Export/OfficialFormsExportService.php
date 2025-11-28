@@ -5,10 +5,13 @@ namespace App\BusinessModules\Features\BudgetEstimates\Services\Export;
 use App\Models\Estimate;
 use App\Models\Contract;
 use App\Models\ContractPerformanceAct;
+use App\Helpers\NumberToWordsHelper;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Style\Font;
 use Barryvdh\DomPDF\Facade\Pdf;
 
 class OfficialFormsExportService
@@ -101,55 +104,134 @@ class OfficialFormsExportService
 
     protected function setKS2Header($sheet, ContractPerformanceAct $act, Contract $contract): void
     {
-        $sheet->setCellValue('A1', 'Унифицированная форма № КС-2');
-        $sheet->mergeCells('A1:H1');
+        $row = 1;
         
-        $sheet->setCellValue('A2', 'АКТ № ' . ($act->act_document_number ?? $act->id));
-        $sheet->setCellValue('F2', 'от ' . $act->act_date->format('d.m.Y'));
-        $sheet->mergeCells('A2:E2');
+        // Заголовок формы
+        $sheet->setCellValue("A{$row}", 'Унифицированная форма № КС-2');
+        $sheet->mergeCells("A{$row}:H{$row}");
+        $row++;
         
-        $sheet->setCellValue('A3', 'о приемке выполненных работ');
-        $sheet->mergeCells('A3:H3');
-
-        $customerName = $contract->project?->organization?->name ?? $contract->organization?->name ?? '';
-        $sheet->setCellValue('A5', 'Заказчик: ' . $customerName);
-        $sheet->mergeCells('A5:H5');
+        $sheet->setCellValue("A{$row}", 'Утверждена постановлением Госкомстата России от 11.11.99 № 100');
+        $sheet->mergeCells("A{$row}:H{$row}");
+        $row++;
         
-        $sheet->setCellValue('A6', 'Подрядчик: ' . ($contract->contractor->name ?? ''));
-        $sheet->mergeCells('A6:H6');
+        $sheet->setCellValue("A{$row}", 'Форма по ОКУД 322005');
+        $sheet->mergeCells("A{$row}:H{$row}");
+        $row += 2;
         
-        $sheet->setCellValue('A7', 'Договор: № ' . $contract->number . ' от ' . $contract->date->format('d.m.Y'));
-        $sheet->mergeCells('A7:H7');
+        // Секции сторон
+        $customerOrg = $contract->project?->organization ?? $contract->organization;
+        $contractor = $contract->contractor;
         
-        $sheet->setCellValue('A8', 'Объект: ' . ($contract->project->name ?? ''));
-        $sheet->mergeCells('A8:H8');
-
-        $row = 10;
+        // Инвестор (пусто)
+        $sheet->setCellValue("A{$row}", 'Инвестор');
+        $sheet->setCellValue("B{$row}", '');
+        $sheet->mergeCells("B{$row}:H{$row}");
+        $row++;
+        
+        // Заказчик
+        $customerName = $customerOrg?->legal_name ?? $customerOrg?->name ?? '';
+        $customerInn = $customerOrg?->tax_number ?? '';
+        $customerAddress = $this->formatAddress($customerOrg);
+        $sheet->setCellValue("A{$row}", 'Заказчик');
+        $sheet->setCellValue("B{$row}", $customerName . ($customerInn ? ', ИНН ' . $customerInn : '') . ($customerAddress ? ', ' . $customerAddress : ''));
+        $sheet->mergeCells("B{$row}:H{$row}");
+        $row++;
+        
+        // Заказчик (Генподрядчик)
+        $sheet->setCellValue("A{$row}", 'Заказчик (Генподрядчик)');
+        $sheet->setCellValue("B{$row}", $customerName . ($customerInn ? ', ИНН ' . $customerInn : '') . ($customerAddress ? ', ' . $customerAddress : ''));
+        $sheet->mergeCells("B{$row}:H{$row}");
+        $row++;
+        
+        // Подрядчик (Субподрядчик)
+        $contractorName = $contractor?->name ?? '';
+        $contractorInn = $contractor?->inn ?? '';
+        $contractorAddress = $contractor?->legal_address ?? '';
+        $sheet->setCellValue("A{$row}", 'Подрядчик (Субподрядчик)');
+        $sheet->setCellValue("B{$row}", $contractorName . ($contractorInn ? ', ИНН ' . $contractorInn : '') . ($contractorAddress ? ', ' . $contractorAddress : ''));
+        $sheet->mergeCells("B{$row}:H{$row}");
+        $row += 2;
+        
+        // Стройка и Объект
+        $projectName = $contract->project?->name ?? '';
+        $sheet->setCellValue("A{$row}", 'Стройка');
+        $sheet->setCellValue("B{$row}", '');
+        $sheet->mergeCells("B{$row}:H{$row}");
+        $row++;
+        
+        $sheet->setCellValue("A{$row}", 'Объект');
+        $sheet->setCellValue("B{$row}", $projectName);
+        $sheet->mergeCells("B{$row}:H{$row}");
+        $row++;
+        
+        $sheet->setCellValue("A{$row}", 'Вид деятельности по ОКВЭД');
+        $sheet->setCellValue("B{$row}", '');
+        $sheet->mergeCells("B{$row}:H{$row}");
+        $row += 2;
+        
+        // Договор подряда
+        $sheet->setCellValue("A{$row}", 'Договор подряда (контракт)');
+        $row++;
+        $sheet->setCellValue("A{$row}", 'номер');
+        $sheet->setCellValue("B{$row}", $contract->number);
+        $sheet->setCellValue("D{$row}", 'дата');
+        $sheet->setCellValue("E{$row}", $contract->date->format('d.m.Y'));
+        $row++;
+        $sheet->setCellValue("A{$row}", 'Вид операции');
+        $sheet->setCellValue("B{$row}", '');
+        $sheet->mergeCells("B{$row}:H{$row}");
+        $row += 2;
+        
+        // Отчетный период
+        $periodStart = $act->act_date->copy()->startOfMonth();
+        $periodEnd = $act->act_date->copy()->endOfMonth();
+        $sheet->setCellValue("A{$row}", 'Отчетный период');
+        $sheet->setCellValue("B{$row}", 'с ' . $periodStart->format('d.m.Y') . ' по ' . $periodEnd->format('d.m.Y'));
+        $sheet->mergeCells("B{$row}:H{$row}");
+        $row += 2;
+        
+        // Номер документа и дата составления
+        $actNumber = $act->act_document_number ?? str_pad($act->id, 10, '0', STR_PAD_LEFT);
+        $sheet->setCellValue("A{$row}", 'Номер документа');
+        $sheet->setCellValue("B{$row}", $actNumber);
+        $sheet->setCellValue("D{$row}", 'Дата составления');
+        $sheet->setCellValue("E{$row}", $act->act_date->format('d.m.Y'));
+        $row += 2;
+        
+        // Сметная стоимость
+        $estimate = $contract->estimate ?? null;
+        $contractAmount = $contract->is_fixed_amount ? ($contract->total_amount ?? 0) : ($estimate?->total_amount ?? 0);
+        $sheet->setCellValue("A{$row}", 'Сметная (договорная) стоимость в соответствии с договором подряда (субподряда)');
+        $sheet->setCellValue("B{$row}", number_format($contractAmount, 2, ',', ' ') . ' руб.');
+        $sheet->mergeCells("B{$row}:H{$row}");
+        $row += 2;
+        
+        // Заголовок таблицы
         $sheet->setCellValue("A{$row}", '№ п/п');
-        $sheet->setCellValue("B{$row}", 'Наименование работ');
-        $sheet->setCellValue("C{$row}", 'Номер расценки ');
-        $sheet->setCellValue("D{$row}", 'Ед. изм.');
+        $sheet->setCellValue("B{$row}", 'по смете');
+        $sheet->setCellValue("C{$row}", 'Наименование работ');
+        $sheet->setCellValue("D{$row}", 'Единица измерения');
         $sheet->setCellValue("E{$row}", 'Количество');
-        $sheet->setCellValue("F{$row}", 'Цена за ед., руб.');
+        $sheet->setCellValue("F{$row}", 'Цена за единицу, руб.');
         $sheet->setCellValue("G{$row}", 'Стоимость, руб.');
         $sheet->setCellValue("H{$row}", 'Примечание');
     }
 
     protected function setKS2Items($sheet, ContractPerformanceAct $act): void
     {
-        $row = 11;
+        $startRow = $sheet->getHighestRow() + 1;
+        $row = $startRow;
         $totalAmount = 0;
 
         foreach ($act->completedWorks as $index => $work) {
-            // Используем данные из pivot таблицы для акта (included_quantity, included_amount)
-            // или данные самой работы, если pivot нет
-            $includedQuantity = $work->pivot->included_quantity ?? $work->quantity;
-            $includedAmount = $work->pivot->included_amount ?? $work->total_amount;
+            $includedQuantity = $work->pivot->included_quantity ?? $work->quantity ?? 0;
+            $includedAmount = $work->pivot->included_amount ?? $work->total_amount ?? 0;
             $unitPrice = $includedQuantity > 0 ? ($includedAmount / $includedQuantity) : ($work->price ?? 0);
             
             $sheet->setCellValue("A{$row}", $index + 1);
-            $sheet->setCellValue("B{$row}", $work->workType?->name ?? $work->description ?? '');
-            $sheet->setCellValue("C{$row}", $work->workType?->code ?? ''); // Номер расценки из workType
+            $sheet->setCellValue("B{$row}", ''); // по смете
+            $sheet->setCellValue("C{$row}", $work->workType?->name ?? $work->description ?? '');
             $sheet->setCellValue("D{$row}", $work->workType?->measurementUnit?->short_name ?? '');
             $sheet->setCellValue("E{$row}", $includedQuantity);
             $sheet->setCellValue("F{$row}", $unitPrice);
@@ -160,180 +242,499 @@ class OfficialFormsExportService
             $row++;
         }
 
+        // Итого по расценкам
         $sheet->setCellValue("A{$row}", '');
-        $sheet->setCellValue("B{$row}", 'ИТОГО:');
-        $sheet->mergeCells("B{$row}:F{$row}");
+        $sheet->setCellValue("B{$row}", '');
+        $sheet->setCellValue("C{$row}", 'Итого по расценкам');
+        $sheet->mergeCells("C{$row}:F{$row}");
         $sheet->setCellValue("G{$row}", $totalAmount);
+        $row++;
+        
+        // НДС (20%)
+        $vatAmount = round($totalAmount * 0.20, 2);
+        $sheet->setCellValue("A{$row}", '');
+        $sheet->setCellValue("B{$row}", '');
+        $sheet->setCellValue("C{$row}", 'НДС');
+        $sheet->mergeCells("C{$row}:F{$row}");
+        $sheet->setCellValue("G{$row}", $vatAmount);
+        $row++;
+        
+        // Всего по Акту
+        $totalWithVat = $totalAmount; // В примере общая сумма без НДС, НДС отдельно
+        $sheet->setCellValue("A{$row}", '');
+        $sheet->setCellValue("B{$row}", '');
+        $sheet->setCellValue("C{$row}", 'Всего по Акту');
+        $sheet->mergeCells("C{$row}:F{$row}");
+        $sheet->setCellValue("G{$row}", $totalAmount);
+        $row += 2;
+        
+        // Сумма прописью
+        $amountInWords = NumberToWordsHelper::amountToWords($totalAmount);
+        $sheet->setCellValue("A{$row}", 'Сумма прописью по акту: ' . $amountInWords);
+        $sheet->mergeCells("A{$row}:H{$row}");
     }
 
     protected function setKS2Footer($sheet, ContractPerformanceAct $act, Contract $contract): void
     {
         $lastRow = $sheet->getHighestRow();
-        $row = $lastRow + 2;
+        $row = $lastRow + 3;
 
-        $sheet->setCellValue("A{$row}", 'Заказчик:');
+        $sheet->setCellValue("A{$row}", 'Сдал');
         $row++;
-        $sheet->setCellValue("A{$row}", '_____________ / _______________ /');
-        $sheet->setCellValue("E{$row}", '"___" _________ ' . date('Y') . ' г.');
-
+        $sheet->setCellValue("A{$row}", 'Генеральный Директор');
+        $sheet->setCellValue("B{$row}", '_____________');
+        $sheet->setCellValue("C{$row}", '/');
+        $sheet->setCellValue("D{$row}", '_______________');
+        $sheet->setCellValue("E{$row}", '/');
+        $row++;
+        $sheet->setCellValue("B{$row}", '(подпись)');
+        $sheet->setCellValue("D{$row}", '(расшифровка подписи)');
         $row += 2;
-        $sheet->setCellValue("A{$row}", 'Подрядчик:');
+
+        $sheet->setCellValue("A{$row}", 'Принял');
         $row++;
-        $sheet->setCellValue("A{$row}", '_____________ / _______________ /');
-        $sheet->setCellValue("E{$row}", '"___" _________ ' . date('Y') . ' г.');
+        $sheet->setCellValue("A{$row}", 'Генеральный Директор');
+        $sheet->setCellValue("B{$row}", '_____________');
+        $sheet->setCellValue("C{$row}", '/');
+        $sheet->setCellValue("D{$row}", '_______________');
+        $sheet->setCellValue("E{$row}", '/');
+        $row++;
+        $sheet->setCellValue("B{$row}", '(подпись)');
+        $sheet->setCellValue("D{$row}", '(расшифровка подписи)');
     }
 
     protected function setKS3Header($sheet, ContractPerformanceAct $act, Contract $contract): void
     {
-        $sheet->setCellValue('A1', 'Унифицированная форма № КС-3');
-        $sheet->mergeCells('A1:G1');
+        $row = 1;
         
-        $sheet->setCellValue('A2', 'СПРАВКА № ' . ($act->act_document_number ?? $act->id));
-        $sheet->setCellValue('F2', 'от ' . $act->act_date->format('d.m.Y'));
-        $sheet->mergeCells('A2:E2');
+        // Заголовок формы
+        $sheet->setCellValue("A{$row}", 'Унифицированная форма № КС-3');
+        $sheet->mergeCells("A{$row}:G{$row}");
+        $row++;
         
-        $sheet->setCellValue('A3', 'о стоимости выполненных работ и затрат');
-        $sheet->mergeCells('A3:G3');
-
-        $customerName = $contract->project?->organization?->name ?? $contract->organization?->name ?? '';
-        $sheet->setCellValue('A5', 'Заказчик: ' . $customerName);
-        $sheet->mergeCells('A5:G5');
+        $sheet->setCellValue("A{$row}", 'Утверждена постановлением Госкомстата России от 11.11.99 № 100');
+        $sheet->mergeCells("A{$row}:G{$row}");
+        $row++;
         
-        $sheet->setCellValue('A6', 'Подрядчик: ' . ($contract->contractor->name ?? ''));
-        $sheet->mergeCells('A6:G6');
+        $sheet->setCellValue("A{$row}", 'Форма по ОКУД 322005');
+        $sheet->mergeCells("A{$row}:G{$row}");
+        $row += 2;
         
-        $sheet->setCellValue('A7', 'Договор: № ' . $contract->number . ' от ' . $contract->date->format('d.m.Y'));
-        $sheet->mergeCells('A7:G7');
-
-        $row = 9;
-        $sheet->setCellValue("A{$row}", '№ п/п');
-        $sheet->setCellValue("B{$row}", 'Наименование работ и затрат');
-        $sheet->setCellValue("C{$row}", 'Стоимость выполненных работ с начала года, руб.');
-        $sheet->setCellValue("D{$row}", 'в том числе за отчетный период');
-        $sheet->setCellValue("E{$row}", 'Выполнено работ с начала строительства, руб.');
-        $sheet->setCellValue("F{$row}", 'Остаток по смете, руб.');
+        // Секции сторон
+        $customerOrg = $contract->project?->organization ?? $contract->organization;
+        $contractor = $contract->contractor;
+        
+        // Инвестор (пусто)
+        $sheet->setCellValue("A{$row}", 'Инвестор');
+        $sheet->setCellValue("B{$row}", '');
+        $sheet->mergeCells("B{$row}:G{$row}");
+        $row++;
+        
+        // Заказчик
+        $customerName = $customerOrg?->legal_name ?? $customerOrg?->name ?? '';
+        $customerInn = $customerOrg?->tax_number ?? '';
+        $customerAddress = $this->formatAddress($customerOrg);
+        $sheet->setCellValue("A{$row}", 'Заказчик');
+        $sheet->setCellValue("B{$row}", $customerName . ($customerInn ? ', ИНН ' . $customerInn : '') . ($customerAddress ? ', ' . $customerAddress : ''));
+        $sheet->mergeCells("B{$row}:G{$row}");
+        $row++;
+        
+        // Заказчик (Генподрядчик)
+        $sheet->setCellValue("A{$row}", 'Заказчик (Генподрядчик)');
+        $sheet->setCellValue("B{$row}", $customerName . ($customerInn ? ', ИНН ' . $customerInn : '') . ($customerAddress ? ', ' . $customerAddress : ''));
+        $sheet->mergeCells("B{$row}:G{$row}");
+        $row++;
+        
+        // Подрядчик (Субподрядчик)
+        $contractorName = $contractor?->name ?? '';
+        $contractorInn = $contractor?->inn ?? '';
+        $contractorAddress = $contractor?->legal_address ?? '';
+        $sheet->setCellValue("A{$row}", 'Подрядчик (Субподрядчик)');
+        $sheet->setCellValue("B{$row}", $contractorName . ($contractorInn ? ', ИНН ' . $contractorInn : '') . ($contractorAddress ? ', ' . $contractorAddress : ''));
+        $sheet->mergeCells("B{$row}:G{$row}");
+        $row += 2;
+        
+        // Стройка и Объект
+        $projectName = $contract->project?->name ?? '';
+        $sheet->setCellValue("A{$row}", 'Стройка');
+        $sheet->setCellValue("B{$row}", '');
+        $sheet->mergeCells("B{$row}:G{$row}");
+        $row++;
+        
+        $sheet->setCellValue("A{$row}", 'Объект');
+        $sheet->setCellValue("B{$row}", $projectName);
+        $sheet->mergeCells("B{$row}:G{$row}");
+        $row++;
+        
+        $sheet->setCellValue("A{$row}", 'Вид деятельности по ОКВЭД');
+        $sheet->setCellValue("B{$row}", '');
+        $sheet->mergeCells("B{$row}:G{$row}");
+        $row += 2;
+        
+        // Договор подряда
+        $sheet->setCellValue("A{$row}", 'Договор подряда (контракт)');
+        $row++;
+        $sheet->setCellValue("A{$row}", 'номер');
+        $sheet->setCellValue("B{$row}", $contract->number);
+        $sheet->setCellValue("D{$row}", 'дата');
+        $sheet->setCellValue("E{$row}", $contract->date->format('d.m.Y'));
+        $row++;
+        $sheet->setCellValue("A{$row}", 'Вид операции');
+        $sheet->setCellValue("B{$row}", '');
+        $sheet->mergeCells("B{$row}:G{$row}");
+        $row += 2;
+        
+        // Отчетный период
+        $periodStart = $act->act_date->copy()->startOfMonth();
+        $periodEnd = $act->act_date->copy()->endOfMonth();
+        $sheet->setCellValue("A{$row}", 'Отчетный период');
+        $sheet->setCellValue("B{$row}", 'с ' . $periodStart->format('d.m.Y') . ' по ' . $periodEnd->format('d.m.Y'));
+        $sheet->mergeCells("B{$row}:G{$row}");
+        $row += 2;
+        
+        // Номер документа и дата составления
+        $actNumber = $act->act_document_number ?? str_pad($act->id, 10, '0', STR_PAD_LEFT);
+        $sheet->setCellValue("A{$row}", 'Номер документа');
+        $sheet->setCellValue("B{$row}", $actNumber);
+        $sheet->setCellValue("D{$row}", 'Дата составления');
+        $sheet->setCellValue("E{$row}", $act->act_date->format('d.m.Y'));
+        $row += 2;
+        
+        // Заголовок таблицы
+        $sheet->setCellValue("A{$row}", '№ по порядку');
+        $sheet->setCellValue("B{$row}", 'Наименование пусковых комплексов, объектов, видов работ, оборудования, затрат');
+        $sheet->setCellValue("C{$row}", 'Код');
+        $sheet->setCellValue("D{$row}", 'Стоимость выполненных работ и затрат, руб.');
+        $row++;
+        
+        // Подзаголовки колонок стоимости
+        $sheet->setCellValue("D{$row}", 'с начала проведения работ');
+        $sheet->setCellValue("E{$row}", 'с начала года');
+        $sheet->setCellValue("F{$row}", 'в том числе за отчетный период');
         $sheet->setCellValue("G{$row}", 'Примечание');
     }
 
     protected function setKS3Items($sheet, ContractPerformanceAct $act): void
     {
-        $row = 10;
-        $totalAmount = 0;
-        $totalPeriod = 0;
-
-        $estimate = $act->contract->estimate ?? null;
+        $startRow = $sheet->getHighestRow() + 1;
+        $row = $startRow;
+        
+        $contract = $act->contract;
+        $estimate = $contract->estimate ?? null;
         $actAmount = (float) ($act->amount ?? 0);
-
-        $sheet->setCellValue("A{$row}", '1');
-        $sheet->setCellValue("B{$row}", 'Строительные работы');
-        $sheet->setCellValue("C{$row}", $actAmount);
-        $sheet->setCellValue("D{$row}", $actAmount);
-        $sheet->setCellValue("E{$row}", $actAmount);
         $estimateTotal = $estimate ? (float) ($estimate->total_amount ?? 0) : 0;
-        $sheet->setCellValue("F{$row}", max(0, $estimateTotal - $actAmount));
+        
+        // Сумма с начала года (сумма всех актов за текущий год)
+        $yearStart = $act->act_date->copy()->startOfYear();
+        $yearTotal = $contract->performanceActs()
+            ->where('act_date', '>=', $yearStart)
+            ->where('act_date', '<=', $act->act_date)
+            ->sum('amount');
+        
+        // Сумма с начала строительства (сумма всех актов)
+        $totalFromStart = $contract->performanceActs()
+            ->where('act_date', '<=', $act->act_date)
+            ->sum('amount');
+        
+        // Всего работ и затрат
+        $sheet->setCellValue("A{$row}", '1');
+        $sheet->setCellValue("B{$row}", 'Всего работ и затрат, включаемых в стоимость работ');
+        $sheet->setCellValue("C{$row}", '');
+        $sheet->setCellValue("D{$row}", $totalFromStart);
+        $sheet->setCellValue("E{$row}", $yearTotal);
+        $sheet->setCellValue("F{$row}", $actAmount);
         $sheet->setCellValue("G{$row}", '');
-
         $row++;
+        
+        // в том числе:
+        $sheet->setCellValue("B{$row}", 'в том числе:');
+        $sheet->mergeCells("B{$row}:G{$row}");
+        $row++;
+        
+        // Детализация по работам
+        $workIndex = 2;
+        foreach ($act->completedWorks as $work) {
+            $includedAmount = $work->pivot->included_amount ?? $work->total_amount ?? 0;
+            
+            $sheet->setCellValue("A{$row}", $workIndex);
+            $sheet->setCellValue("B{$row}", $work->workType?->name ?? $work->description ?? '');
+            $sheet->setCellValue("C{$row}", $work->workType?->code ?? '');
+            $sheet->setCellValue("D{$row}", $totalFromStart);
+            $sheet->setCellValue("E{$row}", $yearTotal);
+            $sheet->setCellValue("F{$row}", $includedAmount);
+            $sheet->setCellValue("G{$row}", '');
+            
+            $workIndex++;
+            $row++;
+        }
+        
+        // Итого
+        $sheet->setCellValue("A{$row}", '');
         $sheet->setCellValue("B{$row}", 'ИТОГО:');
-        $sheet->mergeCells("B{$row}:B{$row}");
-        $sheet->setCellValue("C{$row}", $actAmount);
-        $sheet->setCellValue("D{$row}", $actAmount);
-        $sheet->setCellValue("E{$row}", $actAmount);
-        $sheet->setCellValue("F{$row}", max(0, $estimateTotal - $actAmount));
+        $sheet->setCellValue("C{$row}", '');
+        $sheet->setCellValue("D{$row}", $totalFromStart);
+        $sheet->setCellValue("E{$row}", $yearTotal);
+        $sheet->setCellValue("F{$row}", $actAmount);
+        $sheet->setCellValue("G{$row}", '');
+        $row++;
+        
+        // Сумма НДС
+        $vatAmount = round($actAmount * 0.20, 2);
+        $sheet->setCellValue("A{$row}", '');
+        $sheet->setCellValue("B{$row}", 'Сумма НДС');
+        $sheet->setCellValue("C{$row}", '');
+        $sheet->setCellValue("D{$row}", '');
+        $sheet->setCellValue("E{$row}", '');
+        $sheet->setCellValue("F{$row}", $vatAmount);
+        $row++;
+        
+        // Всего с учетом НДС
+        $totalWithVat = $actAmount; // В примере общая сумма без НДС
+        $sheet->setCellValue("A{$row}", '');
+        $sheet->setCellValue("B{$row}", 'Всего с учетом НДС');
+        $sheet->setCellValue("C{$row}", '');
+        $sheet->setCellValue("D{$row}", '');
+        $sheet->setCellValue("E{$row}", '');
+        $sheet->setCellValue("F{$row}", $totalWithVat);
     }
 
     protected function setKS3Footer($sheet, ContractPerformanceAct $act, Contract $contract): void
     {
         $lastRow = $sheet->getHighestRow();
-        $row = $lastRow + 2;
+        $row = $lastRow + 3;
 
         $actAmount = (float) ($act->amount ?? 0);
         $sheet->setCellValue("A{$row}", 'Итого стоимость выполненных работ: ' . number_format($actAmount, 2, ',', ' ') . ' руб.');
         $sheet->mergeCells("A{$row}:G{$row}");
+        $row += 3;
 
-        $row += 2;
-        $sheet->setCellValue("A{$row}", 'Заказчик:');
+        $sheet->setCellValue("A{$row}", 'Генеральный Директор');
+        $sheet->setCellValue("B{$row}", '_____________');
+        $sheet->setCellValue("C{$row}", '/');
+        $sheet->setCellValue("D{$row}", '_______________');
+        $sheet->setCellValue("E{$row}", '/');
         $row++;
-        $sheet->setCellValue("A{$row}", '_____________ / _______________ /');
-
-        $row += 2;
-        $sheet->setCellValue("A{$row}", 'Подрядчик:');
-        $row++;
-        $sheet->setCellValue("A{$row}", '_____________ / _______________ /');
+        $sheet->setCellValue("B{$row}", '(подпись)');
+        $sheet->setCellValue("D{$row}", '(расшифровка подписи)');
     }
 
     protected function applyKS2Styles($sheet): void
     {
-        $sheet->getStyle('A1:H1')->getFont()->setBold(true)->setSize(14);
+        $highestRow = $sheet->getHighestRow();
+        $highestColumn = $sheet->getHighestColumn();
+        
+        // Заголовок формы
+        $sheet->getStyle('A1:H1')->getFont()->setBold(true)->setSize(12);
         $sheet->getStyle('A1:H1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         
-        $sheet->getStyle('A2:H2')->getFont()->setBold(true)->setSize(12);
+        // Заголовок таблицы
+        $headerRow = $this->findHeaderRow($sheet, '№ п/п');
+        if ($headerRow) {
+            $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getFont()->setBold(true)->setSize(9);
+            $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
+            $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+            $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getFill()
+                ->setFillType(Fill::FILL_SOLID)
+                ->getStartColor()->setRGB('E0E0E0');
+        }
         
-        $sheet->getStyle('A10:H10')->getFont()->setBold(true);
-        $sheet->getStyle('A10:H10')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        $sheet->getStyle('A10:H10')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-
+        // Границы для всех ячеек с данными
+        $dataStartRow = $headerRow ? $headerRow + 1 : 11;
+        for ($row = $dataStartRow; $row <= $highestRow; $row++) {
+            $sheet->getStyle("A{$row}:H{$row}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        }
+        
+        // Выравнивание числовых колонок
+        $sheet->getStyle("E{$dataStartRow}:G{$highestRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        
+        // Ширина колонок
         $sheet->getColumnDimension('A')->setWidth(8);
-        $sheet->getColumnDimension('B')->setWidth(40);
-        $sheet->getColumnDimension('C')->setWidth(15);
-        $sheet->getColumnDimension('D')->setWidth(10);
+        $sheet->getColumnDimension('B')->setWidth(12);
+        $sheet->getColumnDimension('C')->setWidth(40);
+        $sheet->getColumnDimension('D')->setWidth(15);
         $sheet->getColumnDimension('E')->setWidth(12);
-        $sheet->getColumnDimension('F')->setWidth(15);
-        $sheet->getColumnDimension('G')->setWidth(15);
+        $sheet->getColumnDimension('F')->setWidth(18);
+        $sheet->getColumnDimension('G')->setWidth(18);
         $sheet->getColumnDimension('H')->setWidth(20);
+        
+        // Перенос текста для длинных ячеек
+        $sheet->getStyle("B1:H{$highestRow}")->getAlignment()->setWrapText(true);
     }
 
     protected function applyKS3Styles($sheet): void
     {
-        $sheet->getStyle('A1:G1')->getFont()->setBold(true)->setSize(14);
+        $highestRow = $sheet->getHighestRow();
+        
+        // Заголовок формы
+        $sheet->getStyle('A1:G1')->getFont()->setBold(true)->setSize(12);
         $sheet->getStyle('A1:G1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
         
-        $sheet->getStyle('A2:G2')->getFont()->setBold(true)->setSize(12);
+        // Заголовок таблицы
+        $headerRow = $this->findHeaderRow($sheet, '№ по порядку');
+        if ($headerRow) {
+            $sheet->getStyle("A{$headerRow}:G{$headerRow}")->getFont()->setBold(true)->setSize(9);
+            $sheet->getStyle("A{$headerRow}:G{$headerRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle("A{$headerRow}:G{$headerRow}")->getAlignment()->setVertical(Alignment::VERTICAL_CENTER);
+            $sheet->getStyle("A{$headerRow}:G{$headerRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+            $sheet->getStyle("A{$headerRow}:G{$headerRow}")->getFill()
+                ->setFillType(Fill::FILL_SOLID)
+                ->getStartColor()->setRGB('E0E0E0');
+            
+            // Подзаголовки на следующей строке
+            $subHeaderRow = $headerRow + 1;
+            $sheet->getStyle("D{$subHeaderRow}:G{$subHeaderRow}")->getFont()->setBold(true)->setSize(8);
+            $sheet->getStyle("D{$subHeaderRow}:G{$subHeaderRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $sheet->getStyle("D{$subHeaderRow}:G{$subHeaderRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        }
         
-        $sheet->getStyle('A9:G9')->getFont()->setBold(true);
-        $sheet->getStyle('A9:G9')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
-        $sheet->getStyle('A9:G9')->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
-
-        $sheet->getColumnDimension('A')->setWidth(8);
-        $sheet->getColumnDimension('B')->setWidth(35);
-        $sheet->getColumnDimension('C')->setWidth(15);
-        $sheet->getColumnDimension('D')->setWidth(15);
-        $sheet->getColumnDimension('E')->setWidth(15);
-        $sheet->getColumnDimension('F')->setWidth(15);
+        // Границы для всех ячеек с данными
+        $dataStartRow = $headerRow ? $headerRow + 2 : 10;
+        for ($row = $dataStartRow; $row <= $highestRow; $row++) {
+            $sheet->getStyle("A{$row}:G{$row}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        }
+        
+        // Выравнивание числовых колонок
+        $sheet->getStyle("D{$dataStartRow}:F{$highestRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        
+        // Ширина колонок
+        $sheet->getColumnDimension('A')->setWidth(10);
+        $sheet->getColumnDimension('B')->setWidth(50);
+        $sheet->getColumnDimension('C')->setWidth(12);
+        $sheet->getColumnDimension('D')->setWidth(20);
+        $sheet->getColumnDimension('E')->setWidth(20);
+        $sheet->getColumnDimension('F')->setWidth(20);
         $sheet->getColumnDimension('G')->setWidth(15);
+        
+        // Перенос текста
+        $sheet->getStyle("B{$dataStartRow}:G{$highestRow}")->getAlignment()->setWrapText(true);
+    }
+
+    protected function findHeaderRow($sheet, string $searchText): ?int
+    {
+        $highestRow = $sheet->getHighestRow();
+        for ($row = 1; $row <= $highestRow; $row++) {
+            $cellValue = $sheet->getCell("A{$row}")->getValue();
+            if ($cellValue && strpos($cellValue, $searchText) !== false) {
+                return $row;
+            }
+        }
+        return null;
+    }
+
+    protected function formatAddress($organization): string
+    {
+        if (!$organization) {
+            return '';
+        }
+        
+        $parts = [];
+        if ($organization->postal_code) {
+            $parts[] = $organization->postal_code;
+        }
+        if ($organization->city) {
+            $parts[] = $organization->city . ' г';
+        }
+        if ($organization->address) {
+            $parts[] = $organization->address;
+        }
+        
+        return implode(', ', $parts);
     }
 
     protected function prepareKS2Data(ContractPerformanceAct $act, Contract $contract): array
     {
-        // Загружаем связи для шаблона
-        $act->loadMissing(['completedWorks.workType.measurementUnit', 'contract.contractor', 'contract.project.organization', 'contract.organization']);
+        $act->loadMissing([
+            'completedWorks.workType.measurementUnit',
+            'contract.contractor',
+            'contract.project.organization',
+            'contract.organization',
+            'contract.estimate'
+        ]);
         
-        // Рассчитываем общую сумму из включенных работ в акте
         $totalAmount = $act->completedWorks->sum(function($work) {
             return (float) ($work->pivot->included_amount ?? $work->total_amount ?? 0);
         });
+        
+        $totalAmount = $totalAmount > 0 ? $totalAmount : (float) ($act->amount ?? 0);
+        $vatAmount = round($totalAmount * 0.20, 2);
+        
+        $customerOrg = $contract->project?->organization ?? $contract->organization;
+        $contractor = $contract->contractor;
+        $estimate = $contract->estimate;
+        $contractAmount = $contract->is_fixed_amount ? ($contract->total_amount ?? 0) : ($estimate?->total_amount ?? 0);
+        
+        // Период отчета
+        $actDate = $act->act_date;
+        $periodStart = $actDate->copy()->startOfMonth();
+        $periodEnd = $actDate->copy()->endOfMonth();
         
         return [
             'act' => $act,
             'contract' => $contract,
             'works' => $act->completedWorks,
-            'total_amount' => $totalAmount > 0 ? $totalAmount : (float) ($act->amount ?? 0),
+            'total_amount' => $totalAmount,
+            'vat_amount' => $vatAmount,
+            'estimated_cost' => $contractAmount,
+            'period_start' => $periodStart,
+            'period_end' => $periodEnd,
+            'customer_org' => $customerOrg,
+            'contractor' => $contractor,
+            'project' => $contract->project,
         ];
     }
 
     protected function prepareKS3Data(ContractPerformanceAct $act, Contract $contract): array
     {
-        $estimate = $contract->estimate ?? null;
+        $act->loadMissing([
+            'completedWorks.workType',
+            'contract.contractor',
+            'contract.project.organization',
+            'contract.organization',
+            'contract.estimate',
+            'contract.completedWorks.workType'
+        ]);
+        
+        $estimate = $contract->estimate;
         $actAmount = (float) ($act->amount ?? 0);
         $estimateTotal = $estimate ? (float) ($estimate->total_amount ?? 0) : 0;
+        $vatAmount = round($actAmount * 0.20, 2);
+        
+        // Сумма с начала года (сумма всех актов за текущий год)
+        $yearStart = $act->act_date->copy()->startOfYear();
+        $yearTotal = $contract->performanceActs()
+            ->where('act_date', '>=', $yearStart)
+            ->where('act_date', '<=', $act->act_date)
+            ->sum('amount');
+        
+        // Сумма с начала строительства (сумма всех актов)
+        $totalFromStart = $contract->performanceActs()
+            ->where('act_date', '<=', $act->act_date)
+            ->sum('amount');
+        
+        // Период отчета
+        $actDate = $act->act_date;
+        $periodStart = $actDate->copy()->startOfMonth();
+        $periodEnd = $actDate->copy()->endOfMonth();
+        
+        $customerOrg = $contract->project?->organization ?? $contract->organization;
+        $contractor = $contract->contractor;
         
         return [
             'act' => $act,
             'contract' => $contract,
             'estimate' => $estimate,
+            'works' => $contract->completedWorks ?? collect(),
             'total_amount' => $actAmount,
-            'remaining_amount' => max(0, $estimateTotal - $actAmount),
+            'vat_amount' => $vatAmount,
+            'year_total' => (float) $yearTotal,
+            'total_from_start' => (float) $totalFromStart,
+            'remaining_amount' => max(0, $estimateTotal - $totalFromStart),
+            'period_start' => $periodStart,
+            'period_end' => $periodEnd,
+            'customer_org' => $customerOrg,
+            'contractor' => $contractor,
+            'project' => $contract->project,
         ];
     }
 }
-
