@@ -87,6 +87,26 @@ class FileService
         ]);
 
         try {
+            // Проверяем валидность файла перед загрузкой
+            if (!$file->isValid()) {
+                Log::error('[FileService] upload(): file is not valid', [
+                    'filename' => $file->getClientOriginalName(),
+                    'error' => $file->getError(),
+                    'error_message' => $file->getErrorMessage(),
+                ]);
+                
+                $this->logging->technical('s3.upload.failed', [
+                    'filename' => $file->getClientOriginalName(),
+                    'file_size_mb' => $fileSizeMb,
+                    's3_path' => $fullPath,
+                    'organization_id' => $org?->id,
+                    'reason' => 'UploadedFile is not valid',
+                    'upload_error' => $file->getError(),
+                ], 'error');
+                
+                return false;
+            }
+
             Log::info('[FileService] upload(): starting upload', [
                 'org_prefix' => $orgPrefix,
                 'directory' => $directory, 
@@ -94,14 +114,63 @@ class FileService
                 'full_path' => $fullPath,
                 'org_id' => $org?->id,
                 'visibility' => $visibility,
+                'use_visibility' => $useVisibility,
+                'file_is_valid' => $file->isValid(),
+                'file_real_path' => $file->getRealPath(),
             ]);
 
+            // Получаем путь к временному файлу
+            $realPath = $file->getRealPath();
+            
+            if (!$realPath || !file_exists($realPath)) {
+                Log::error('[FileService] upload(): file path is invalid or file does not exist', [
+                    'real_path' => $realPath,
+                    'filename' => $file->getClientOriginalName(),
+                    'is_uploaded_file' => is_uploaded_file($realPath),
+                ]);
+                
+                $this->logging->technical('s3.upload.failed', [
+                    'filename' => $file->getClientOriginalName(),
+                    'file_size_mb' => $fileSizeMb,
+                    's3_path' => $fullPath,
+                    'organization_id' => $org?->id,
+                    'reason' => 'File path is invalid or file does not exist',
+                    'real_path' => $realPath,
+                ], 'error');
+                
+                return false;
+            }
+
             // Используем полный путь для загрузки  
-            $fileContent = file_get_contents($file->getRealPath());
+            $fileContent = file_get_contents($realPath);
+            
+            // Проверяем, что контент успешно получен
+            if ($fileContent === false || strlen($fileContent) === 0) {
+                Log::error('[FileService] upload(): failed to read file content', [
+                    'real_path' => $realPath,
+                    'file_size' => filesize($realPath),
+                    'file_exists' => file_exists($realPath),
+                    'is_readable' => is_readable($realPath),
+                    'content_length' => $fileContent === false ? 'false' : strlen($fileContent),
+                ]);
+                
+                $this->logging->technical('s3.upload.failed', [
+                    'filename' => $file->getClientOriginalName(),
+                    'file_size_mb' => $fileSizeMb,
+                    's3_path' => $fullPath,
+                    'organization_id' => $org?->id,
+                    'reason' => 'Failed to read file content or content is empty',
+                    'real_path' => $realPath,
+                ], 'error');
+                
+                return false;
+            }
             
             Log::info('[FileService] File content prepared', [
                 'file_size' => strlen($fileContent),
-                'file_path' => $file->getRealPath(),
+                'file_path' => $realPath,
+                'content_length' => strlen($fileContent),
+                'expected_size' => $file->getSize(),
             ]);
             
             // Логируем конфигурацию диска
@@ -113,12 +182,26 @@ class FileService
                 'region' => $diskConfig['region'] ?? 'unknown',
             ]);
             
+            // Всегда передаем явный visibility параметр для Yandex S3
+            // Если $useVisibility null, используем 'private' по умолчанию
+            $visibilityParam = $useVisibility ?? 'private';
+            
             try {
-                if ($useVisibility) {
-                    $result = $disk->put($fullPath, $fileContent, $useVisibility);
-                } else {
-                    $result = $disk->put($fullPath, $fileContent);
-                }
+                
+                Log::info('[FileService] Calling disk->put()', [
+                    'path' => $fullPath,
+                    'content_length' => strlen($fileContent),
+                    'visibility' => $visibilityParam,
+                ]);
+                
+                $result = $disk->put($fullPath, $fileContent, $visibilityParam);
+                
+                Log::info('[FileService] disk->put() result', [
+                    'result' => $result,
+                    'result_type' => gettype($result),
+                    'path' => $fullPath,
+                ]);
+                
             } catch (\Exception $e) {
                 $durationMs = round((microtime(true) - $startTime) * 1000, 2);
                 
@@ -131,12 +214,14 @@ class FileService
                     'duration_ms' => $durationMs,
                     'exception_class' => get_class($e),
                     'exception_message' => $e->getMessage(),
-                    'aws_error_code' => $e instanceof \Aws\Exception\AwsException ? $e->getAwsErrorCode() : null
+                    'aws_error_code' => $e instanceof \Aws\Exception\AwsException ? $e->getAwsErrorCode() : null,
+                    'trace' => $e->getTraceAsString(),
                 ], 'error');
                 
                 Log::error('[FileService] S3 put() exception', [
                     'path' => $fullPath,
                     'error' => $e->getMessage(),
+                    'exception_class' => get_class($e),
                     'trace' => $e->getTraceAsString(),
                 ]);
                 return false;
@@ -184,11 +269,22 @@ class FileService
                 's3_path' => $fullPath,
                 'organization_id' => $org?->id,
                 'duration_ms' => $durationMs,
-                'result' => false
+                'result' => false,
+                'content_length' => strlen($fileContent),
+                'visibility_used' => $visibilityParam,
+                'disk_driver' => $diskConfig['driver'] ?? 'unknown',
+                'bucket' => $diskConfig['bucket'] ?? 'unknown',
             ], 'error');
             
             Log::error('[FileService] upload(): put returned false', [
                 'path' => $fullPath,
+                'content_length' => strlen($fileContent),
+                'visibility_used' => $visibilityParam,
+                'disk_driver' => $diskConfig['driver'] ?? 'unknown',
+                'bucket' => $diskConfig['bucket'] ?? 'unknown',
+                'endpoint' => $diskConfig['endpoint'] ?? 'unknown',
+                'file_real_path' => $realPath,
+                'file_exists' => file_exists($realPath),
             ]);
             return false;
         } catch (\Throwable $e) {
