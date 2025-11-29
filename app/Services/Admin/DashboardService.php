@@ -982,8 +982,12 @@ class DashboardService
             $byStatus = (clone $query)->select('status', DB::raw('COUNT(*) as count'))
                 ->groupBy('status')
                 ->get()
-                ->keyBy('status')
-                ->map(fn($item) => $item->count);
+                ->mapWithKeys(function ($item) {
+                    $statusValue = $item->status instanceof ContractStatusEnum 
+                        ? $item->status->value 
+                        : (string)$item->status;
+                    return [$statusValue => $item->count];
+                });
 
             $totalAmount = (clone $query)->sum('total_amount');
             $avgAmount = $total > 0 ? $totalAmount / $total : 0;
@@ -1081,8 +1085,10 @@ class DashboardService
             $byCategory = (clone $query)->select('category', DB::raw('COUNT(*) as count'))
                 ->groupBy('category')
                 ->get()
-                ->keyBy('category')
-                ->map(fn($item) => $item->count);
+                ->mapWithKeys(function ($item) {
+                    $categoryKey = $item->category ?? 'Без категории';
+                    return [$categoryKey => $item->count];
+                });
 
             return [
                 'total' => $total,
@@ -1109,7 +1115,9 @@ class DashboardService
             $byStatus = $query->select('status', DB::raw('COUNT(*) as count'), DB::raw('SUM(total_amount) as total_amount'))
                 ->groupBy('status')
                 ->get()
-                ->keyBy('status');
+                ->mapWithKeys(function ($item) {
+                    return [(string)$item->status => $item];
+                });
 
             $confirmedAmount = $byStatus->get('confirmed')?->total_amount ?? 0;
             $pendingAmount = $byStatus->get('pending')?->total_amount ?? 0;
@@ -1238,14 +1246,20 @@ class DashboardService
                 ContractStatusEnum::TERMINATED->value => '#ef4444',
             ];
 
+            $statusValues = [];
             foreach ($byStatus as $item) {
-                $statusLabel = match ($item->status) {
+                $statusValue = $item->status instanceof ContractStatusEnum 
+                    ? $item->status->value 
+                    : (string)$item->status;
+                $statusValues[] = $statusValue;
+                
+                $statusLabel = match ($statusValue) {
                     ContractStatusEnum::DRAFT->value => 'Черновики',
                     ContractStatusEnum::ACTIVE->value => 'Активные',
                     ContractStatusEnum::COMPLETED->value => 'Завершенные',
                     ContractStatusEnum::ON_HOLD->value => 'Приостановленные',
                     ContractStatusEnum::TERMINATED->value => 'Расторгнутые',
-                    default => $item->status,
+                    default => $statusValue,
                 };
                 $labels[] = $statusLabel;
                 $data[] = $item->count;
@@ -1258,7 +1272,7 @@ class DashboardService
                     [
                         'label' => 'Контракты',
                         'data' => $data,
-                        'backgroundColor' => array_map(fn($status) => $colors[$status] ?? '#9ca3af', $byStatus->pluck('status')->toArray()),
+                        'backgroundColor' => array_map(fn($status) => $colors[$status] ?? '#9ca3af', $statusValues),
                     ],
                 ],
             ];
