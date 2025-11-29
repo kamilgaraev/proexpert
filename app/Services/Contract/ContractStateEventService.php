@@ -67,6 +67,9 @@ class ContractStateEventService
             if ($triggeredBy instanceof SupplementaryAgreement) {
                 $triggeredByType = SupplementaryAgreement::class;
                 $triggeredById = $triggeredBy->id;
+            } elseif ($triggeredBy instanceof \App\Models\ContractPerformanceAct) {
+                $triggeredByType = \App\Models\ContractPerformanceAct::class;
+                $triggeredById = $triggeredBy->id;
             }
 
             $data = [

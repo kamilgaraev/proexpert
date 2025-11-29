@@ -152,6 +152,10 @@ class AppServiceProvider extends ServiceProvider
         \App\Models\OrganizationModuleActivation::observe(\App\Observers\OrganizationModuleActivationObserver::class);
         \App\Models\Contract::observe(\App\Observers\ContractObserver::class);
         
+        // Contract-related observers for non-fixed amount contracts
+        \App\Models\ContractPerformanceAct::observe(\App\Observers\ContractPerformanceActObserver::class);
+        \App\Models\SupplementaryAgreement::observe(\App\Observers\SupplementaryAgreementObserver::class);
+        
         // Schedule observers
         ScheduleTask::observe(ScheduleTaskObserver::class);
         TaskDependency::observe(TaskDependencyObserver::class);

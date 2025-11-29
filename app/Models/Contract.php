@@ -478,4 +478,38 @@ class Contract extends Model
         $service = app(\App\Services\Contract\ContractStateEventService::class);
         return $service->getTimeline($this, $asOfDate);
     }
+
+    /**
+     * Пересчитать total_amount для контрактов с нефиксированной суммой
+     * total_amount = сумма всех одобренных актов + сумма всех дополнительных соглашений
+     * 
+     * @return float Новая сумма контракта
+     */
+    public function recalculateTotalAmountForNonFixed(): ?float
+    {
+        // Пересчет только для контрактов с нефиксированной суммой
+        if ($this->is_fixed_amount) {
+            return null;
+        }
+
+        // Сумма всех одобренных актов (без учета удаленных)
+        $actsAmount = $this->performanceActs()
+            ->where('is_approved', true)
+            ->sum('amount') ?? 0;
+
+        // Сумма всех дополнительных соглашений (без учета удаленных через soft deletes)
+        $agreementsAmount = $this->agreements()
+            ->sum('change_amount') ?? 0;
+
+        // Итоговая сумма
+        $newTotalAmount = round((float) $actsAmount + (float) $agreementsAmount, 2);
+
+        // Обновляем только если сумма изменилась
+        if (abs((float) ($this->total_amount ?? 0) - $newTotalAmount) > 0.01) {
+            $this->updateQuietly(['total_amount' => $newTotalAmount]);
+            $this->total_amount = $newTotalAmount;
+        }
+
+        return $newTotalAmount;
+    }
 }

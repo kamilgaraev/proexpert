@@ -201,6 +201,12 @@ class ContractService
             unset($contractData['warranty_retention_percentage']);
         }
 
+        // Для контрактов с нефиксированной суммой: если total_amount не указан, устанавливаем 0
+        // Сумма будет пересчитываться автоматически при создании актов и ДС
+        if (!$contractDTO->is_fixed_amount && (!isset($contractData['total_amount']) || $contractData['total_amount'] === null)) {
+            $contractData['total_amount'] = 0;
+        }
+
         try {
             DB::beginTransaction();
             

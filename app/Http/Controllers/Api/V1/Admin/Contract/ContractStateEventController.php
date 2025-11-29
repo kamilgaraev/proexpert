@@ -296,9 +296,51 @@ class ContractStateEventController extends Controller
             case 'amended':
                 $agreementNumber = $event->metadata['agreement_number'] ?? null;
                 $reason = $event->metadata['reason'] ?? null;
+                $triggeredBy = $event->metadata['triggered_by'] ?? null;
+                
+                // Автоматический пересчет из-за акта выполненных работ
+                if ($triggeredBy === 'performance_act') {
+                    $actNumber = $event->metadata['act_document_number'] ?? null;
+                    $oldAmount = $event->metadata['old_total_amount'] ?? null;
+                    $newAmount = $event->metadata['new_total_amount'] ?? null;
+                    
+                    if ($actNumber) {
+                        $formattedDelta = ($event->amount_delta >= 0 ? '+' : '') . number_format($event->amount_delta, 2, '.', ' ');
+                        if ($oldAmount !== null && $newAmount !== null) {
+                            $formattedOldAmount = number_format($oldAmount, 2, '.', ' ');
+                            $formattedNewAmount = number_format($newAmount, 2, '.', ' ');
+                            return "Акт №{$actNumber}: {$formattedOldAmount} → {$formattedNewAmount} руб. ({$formattedDelta} руб.)";
+                        }
+                        return "Акт №{$actNumber}: {$formattedDelta} руб.";
+                    }
+                    $formattedDelta = ($event->amount_delta >= 0 ? '+' : '') . number_format($event->amount_delta, 2, '.', ' ');
+                    return "Акт выполненных работ: {$formattedDelta} руб.";
+                }
+                
+                // Автоматический пересчет из-за дополнительного соглашения
+                if ($triggeredBy === 'supplementary_agreement') {
+                    $oldAmount = $event->metadata['old_total_amount'] ?? null;
+                    $newAmount = $event->metadata['new_total_amount'] ?? null;
+                    
+                    if ($agreementNumber) {
+                        $formattedDelta = ($event->amount_delta >= 0 ? '+' : '') . number_format($event->amount_delta, 2, '.', ' ');
+                        if ($oldAmount !== null && $newAmount !== null) {
+                            $formattedOldAmount = number_format($oldAmount, 2, '.', ' ');
+                            $formattedNewAmount = number_format($newAmount, 2, '.', ' ');
+                            return "ДС №{$agreementNumber}: {$formattedOldAmount} → {$formattedNewAmount} руб. ({$formattedDelta} руб.)";
+                        }
+                        return "ДС №{$agreementNumber}: {$formattedDelta} руб.";
+                    }
+                    $formattedDelta = ($event->amount_delta >= 0 ? '+' : '') . number_format($event->amount_delta, 2, '.', ' ');
+                    return "Дополнительное соглашение: {$formattedDelta} руб.";
+                }
+                
+                // Обычное дополнительное соглашение
                 if ($agreementNumber) {
                     return "Создание дополнительного соглашения №{$agreementNumber} на сумму {$delta} руб.";
                 }
+                
+                // Изменение суммы контракта вручную
                 if ($reason === 'Изменение суммы контракта') {
                     $oldAmount = $event->metadata['old_amount'] ?? null;
                     $newAmount = $event->metadata['new_amount'] ?? null;
@@ -311,6 +353,7 @@ class ContractStateEventController extends Controller
                     $formattedDelta = ($event->amount_delta >= 0 ? '+' : '') . number_format($event->amount_delta, 2, '.', ' ');
                     return "Изменение договора: {$formattedDelta} руб.";
                 }
+                
                 return "Изменение договора: +{$delta} руб.";
             case 'superseded':
                 // Получаем информацию об аннулированном событии
