@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use App\Services\Admin\DashboardService;
+use App\Services\Admin\DashboardExportService;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use App\Models\Contract;
 use App\Models\CompletedWork;
 use App\Models\Project;
@@ -17,10 +19,12 @@ use Carbon\Carbon;
 class DashboardController extends Controller
 {
     protected DashboardService $dashboardService;
+    protected DashboardExportService $exportService;
 
-    public function __construct(DashboardService $dashboardService)
+    public function __construct(DashboardService $dashboardService, DashboardExportService $exportService)
     {
         $this->dashboardService = $dashboardService;
+        $this->exportService = $exportService;
         // Авторизация настроена на уровне роутов через middleware стек
     }
 
@@ -56,21 +60,26 @@ class DashboardController extends Controller
     {
         $metric = $request->input('metric', 'users');
         $period = $request->input('period', 'month');
-        // Если ID организации не передан явно, используем организацию текущего пользователя
         $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
-        $data = $this->dashboardService->getTimeseries($metric, $period, $organizationId);
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        
+        $data = $this->dashboardService->getTimeseries($metric, $period, $organizationId, $projectId);
         return response()->json(['success' => true, 'data' => $data]);
     }
 
     /**
-     * Топ-5 сущностей по активности/объёму
+     * Топ сущностей по активности/объёму
      */
     public function topEntities(Request $request): JsonResponse
     {
         $entity = $request->input('entity', 'projects');
         $period = $request->input('period', 'month');
         $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
-        $data = $this->dashboardService->getTopEntities($entity, $period, $organizationId);
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $limit = (int)$request->input('limit', 5);
+        $sortBy = $request->input('sort_by', 'amount');
+        
+        $data = $this->dashboardService->getTopEntities($entity, $period, $organizationId, $projectId, $limit, $sortBy);
         return response()->json(['success' => true, 'data' => $data]);
     }
 
@@ -82,7 +91,10 @@ class DashboardController extends Controller
         $type = $request->input('type', 'materials');
         $limit = (int)$request->input('limit', 10);
         $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
-        $data = $this->dashboardService->getHistory($type, $limit, $organizationId);
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $status = $request->input('status');
+        
+        $data = $this->dashboardService->getHistory($type, $limit, $organizationId, $projectId, $status);
         return response()->json(['success' => true, 'data' => $data]);
     }
 
@@ -256,35 +268,14 @@ class DashboardController extends Controller
     public function topContracts(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-        
-        // Валидация project_id
-        $request->validate(['project_id' => 'required|integer|min:1']);
-        $projectId = (int)$request->input('project_id');
-        
-        $limit = $request->query('limit', 5);
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $limit = (int)$request->input('limit', 5);
 
-        $contracts = Contract::where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->with(['project:id,name', 'contractor:id,name'])
-            ->orderBy('total_amount', 'desc')
-            ->limit($limit)
-            ->get()
-            ->map(function ($contract) {
-                return [
-                    'id' => $contract->id,
-                    'number' => $contract->number,
-                    'project_name' => $contract->project?->name,
-                    'contractor_name' => $contract->contractor?->name,
-                    'total_amount' => (float) $contract->total_amount,
-                    'completed_works_amount' => $contract->completed_works_amount,
-                    'completion_percentage' => $contract->completion_percentage,
-                    'status' => $contract->status->value,
-                ];
-            });
-
+        $data = $this->dashboardService->getTopContractsByAmount($organizationId, $projectId, $limit);
+        
         return response()->json([
             'success' => true,
-            'data' => $contracts
+            'data' => $data
         ]);
     }
 
@@ -327,6 +318,468 @@ class DashboardController extends Controller
             'success' => true,
             'data' => $activity
         ]);
+    }
+
+    /**
+     * Получить финансовые метрики
+     */
+    public function financialMetrics(Request $request): JsonResponse
+    {
+        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization context is required.'
+            ], 400);
+        }
+
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+
+        $data = $this->dashboardService->getFinancialMetrics($organizationId, $projectId);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить детальную аналитику контрактов
+     */
+    public function contractsAnalytics(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $filters = $request->only(['status', 'contractor_id', 'date_from', 'date_to']);
+
+        $data = $this->dashboardService->getContractsAnalytics($organizationId, $projectId, $filters);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить аналитику проектов
+     */
+    public function projectsAnalytics(Request $request): JsonResponse
+    {
+        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization context is required.'
+            ], 400);
+        }
+
+        $filters = $request->only(['status', 'is_archived']);
+        $data = $this->dashboardService->getProjectsAnalytics($organizationId, $filters);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить аналитику материалов
+     */
+    public function materialsAnalytics(Request $request): JsonResponse
+    {
+        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization context is required.'
+            ], 400);
+        }
+
+        $filters = $request->only(['category', 'is_active']);
+        $data = $this->dashboardService->getMaterialsAnalytics($organizationId, $filters);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить сравнение периодов
+     */
+    public function comparison(Request $request): JsonResponse
+    {
+        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization context is required.'
+            ], 400);
+        }
+
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $period = $request->input('period', 'month');
+
+        $data = $this->dashboardService->getComparisonData($organizationId, $projectId, $period);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить распределение контрактов по статусам
+     */
+    public function contractsByStatus(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+
+        $data = $this->dashboardService->getContractsByStatus($organizationId, $projectId);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить распределение проектов по статусам
+     */
+    public function projectsByStatus(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+
+        $data = $this->dashboardService->getProjectsByStatus($organizationId);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить контракты по подрядчикам
+     */
+    public function contractsByContractor(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $limit = (int)$request->input('limit', 10);
+
+        $data = $this->dashboardService->getContractsByContractor($organizationId, $projectId, $limit);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить материалы по проектам
+     */
+    public function materialsByProject(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $limit = (int)$request->input('limit', 10);
+
+        $data = $this->dashboardService->getMaterialsByProject($organizationId, $limit);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+
+    /**
+     * Получить топ проектов
+     */
+    public function topProjects(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $limit = (int)$request->input('limit', 5);
+
+        $data = $this->dashboardService->getTopProjectsByBudget($organizationId, $limit);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить топ материалов
+     */
+    public function topMaterials(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $limit = (int)$request->input('limit', 5);
+
+        $data = $this->dashboardService->getTopMaterialsByUsage($organizationId, $limit);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить топ подрядчиков
+     */
+    public function topContractors(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $limit = (int)$request->input('limit', 5);
+
+        $data = $this->dashboardService->getTopContractorsByVolume($organizationId, $limit);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить аналитику выполненных работ
+     */
+    public function completedWorksAnalytics(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+
+        $data = $this->dashboardService->getCompletedWorksAnalytics($organizationId, $projectId);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить месячные тренды
+     */
+    public function monthlyTrends(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+
+        $data = $this->dashboardService->getMonthlyTrends($organizationId, $projectId);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить движение финансов
+     */
+    public function financialFlow(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $period = $request->input('period', 'month');
+
+        $data = $this->dashboardService->getFinancialFlow($organizationId, $projectId, $period);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить производительность контрактов
+     */
+    public function contractPerformance(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+
+        $data = $this->dashboardService->getContractPerformance($organizationId, $projectId);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить прогресс проектов
+     */
+    public function projectProgress(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+
+        $data = $this->dashboardService->getProjectProgress($organizationId, $projectId);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить расход материалов
+     */
+    public function materialConsumption(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $period = $request->input('period', 'month');
+
+        $data = $this->dashboardService->getMaterialConsumption($organizationId, $projectId, $period);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить эффективность работ
+     */
+    public function worksEfficiency(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+
+        $data = $this->dashboardService->getWorksEfficiency($organizationId, $projectId);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить материалы по категориям
+     */
+    public function materialsByCategory(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+
+        $data = $this->dashboardService->getMaterialsByCategory($organizationId);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Получить работы по типам
+     */
+    public function worksByType(Request $request): JsonResponse
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+
+        $data = $this->dashboardService->getWorksByType($organizationId, $projectId);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $data
+        ]);
+    }
+
+    /**
+     * Экспорт сводки дашборда
+     */
+    public function exportSummary(Request $request): Response
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $format = $request->input('format', 'excel'); // excel или csv
+
+        if ($format === 'excel') {
+            $filePath = $this->exportService->exportSummary($organizationId, $projectId);
+            $fileName = 'dashboard_summary_' . date('Y-m-d') . '.xlsx';
+            
+            return response()->download($filePath, $fileName, [
+                'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ])->deleteFileAfterSend(true);
+        }
+
+        // CSV формат
+        $summary = $this->dashboardService->getSummary($organizationId, $projectId ?? 0);
+        $data = [];
+        $headers = ['Показатель', 'Значение'];
+
+        foreach ($summary['summary'] as $key => $value) {
+            if (is_array($value)) {
+                foreach ($value as $subKey => $subValue) {
+                    if (!is_array($subValue)) {
+                        $data[] = [ucfirst($key) . ' - ' . ucfirst($subKey), $subValue];
+                    }
+                }
+            } else {
+                $data[] = [ucfirst($key), $value];
+            }
+        }
+
+        $filePath = $this->exportService->exportToCsv($data, $headers);
+        $fileName = 'dashboard_summary_' . date('Y-m-d') . '.csv';
+
+        return response()->download($filePath, $fileName, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ])->deleteFileAfterSend(true);
+    }
+
+    /**
+     * Экспорт контрактов
+     */
+    public function exportContracts(Request $request): Response
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
+        $filters = $request->only(['status']);
+
+        $filePath = $this->exportService->exportContracts($organizationId, $projectId, $filters);
+        $fileName = 'contracts_export_' . date('Y-m-d') . '.xlsx';
+
+        return response()->download($filePath, $fileName, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ])->deleteFileAfterSend(true);
+    }
+
+    /**
+     * Экспорт проектов
+     */
+    public function exportProjects(Request $request): Response
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $filters = $request->only(['status']);
+
+        $filePath = $this->exportService->exportProjects($organizationId, $filters);
+        $fileName = 'projects_export_' . date('Y-m-d') . '.xlsx';
+
+        return response()->download($filePath, $fileName, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ])->deleteFileAfterSend(true);
+    }
+
+    /**
+     * Экспорт материалов
+     */
+    public function exportMaterials(Request $request): Response
+    {
+        $organizationId = Auth::user()->current_organization_id;
+        $filters = $request->only(['category']);
+
+        $filePath = $this->exportService->exportMaterials($organizationId, $filters);
+        $fileName = 'materials_export_' . date('Y-m-d') . '.xlsx';
+
+        return response()->download($filePath, $fileName, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ])->deleteFileAfterSend(true);
     }
 
     /**
