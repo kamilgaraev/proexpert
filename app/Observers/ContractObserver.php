@@ -89,20 +89,29 @@ class ContractObserver
 
             // Пересчитываем сумму
             $oldTotalAmount = $contract->total_amount ?? 0;
-            $newTotalAmount = $contract->recalculateTotalAmountForNonFixed();
+            
+            // Рассчитываем сумму напрямую, без вызова метода модели (чтобы избежать лишних обновлений)
+            $actsAmount = $contract->performanceActs()
+                ->where('is_approved', true)
+                ->sum('amount') ?? 0;
+            
+            $agreementsAmount = $contract->agreements()
+                ->sum('change_amount') ?? 0;
+            
+            $calculatedTotal = round((float) $actsAmount + (float) $agreementsAmount, 2);
+            $difference = abs((float) $oldTotalAmount - $calculatedTotal);
 
-            if ($newTotalAmount !== null) {
-                $difference = abs((float) $oldTotalAmount - $newTotalAmount);
-
-                // Обновляем только если разница значительная (больше 1 копейки)
-                if ($difference > 0.01) {
-                    Log::info('Contract non-fixed total_amount auto-sync', [
-                        'contract_id' => $contract->id,
-                        'old_amount' => $oldTotalAmount,
-                        'new_amount' => $newTotalAmount,
-                        'difference' => $newTotalAmount - $oldTotalAmount,
-                    ]);
-                }
+            // Обновляем только если разница значительная (больше 1 копейки)
+            if ($difference > 0.01) {
+                $contract->updateQuietly(['total_amount' => $calculatedTotal]);
+                $contract->total_amount = $calculatedTotal;
+                
+                Log::info('Contract non-fixed total_amount auto-sync', [
+                    'contract_id' => $contract->id,
+                    'old_amount' => $oldTotalAmount,
+                    'new_amount' => $calculatedTotal,
+                    'difference' => $calculatedTotal - $oldTotalAmount,
+                ]);
             }
         } catch (\Exception $e) {
             // Не критично - логируем и продолжаем

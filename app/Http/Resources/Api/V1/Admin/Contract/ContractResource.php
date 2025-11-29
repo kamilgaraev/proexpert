@@ -154,9 +154,18 @@ class ContractResource extends JsonResource
         // Рассчитываем сумму ГП от base_amount (НЕ от effectiveTotalAmount!)
         $gpAmount = $this->gp_amount; // Используем accessor модели для правильного расчета
         
-        // total_amount (итоговая сумма) = base_amount + agreements_delta + gp_amount
-        // Это правильная формула: базовая сумма + изменения от допсоглашений + ГП
-        $totalAmountCalculated = round($effectiveTotalAmount + $gpAmount, 2);
+        // Для контрактов с нефиксированной суммой: используем total_amount из БД
+        // (он уже пересчитан на основе актов и ДС через Observer'ы)
+        // Для контрактов с фиксированной суммой: рассчитываем = base_amount + agreements_delta + gp_amount
+        $isFixedAmount = $this->is_fixed_amount ?? true;
+        
+        if (!$isFixedAmount) {
+            // Для нефиксированных контрактов используем значение из БД
+            $totalAmountCalculated = (float) ($this->total_amount ?? 0);
+        } else {
+            // Для фиксированных контрактов рассчитываем: базовая сумма + изменения от допсоглашений + ГП
+            $totalAmountCalculated = round($effectiveTotalAmount + $gpAmount, 2);
+        }
 
         return [
             'id' => $this->id,
@@ -172,7 +181,7 @@ class ContractResource extends JsonResource
             'work_type_category_label' => $this->work_type_category?->label(),
             'payment_terms' => $this->payment_terms,
             'base_amount' => $modelBaseAmount,
-            'total_amount' => $totalAmountCalculated, // base_amount + agreements_delta + gp_amount
+            'total_amount' => $totalAmountCalculated, // Для фиксированных: base_amount + agreements_delta + gp_amount; для нефиксированных: из БД
             'gp_percentage' => (float) ($this->gp_percentage ?? 0),
             'gp_amount' => (float) $gpAmount,
             'total_amount_with_gp' => $totalAmountCalculated, // То же самое, что и total_amount
