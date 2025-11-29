@@ -53,7 +53,8 @@ class RecalculateNonFixedContractsTotalCommand extends Command
         $this->newLine();
 
         // Формируем запрос
-        $query = Contract::query()
+        // Отключаем Observer'ы при загрузке, чтобы избежать автоматического обновления
+        $query = Contract::withoutEvents()
             ->where('is_fixed_amount', false)
             ->with(['performanceActs', 'agreements']);
 
@@ -88,7 +89,17 @@ class RecalculateNonFixedContractsTotalCommand extends Command
             try {
                 $oldTotalAmount = $contract->total_amount ?? 0;
                 
-                // Пересчитываем сумму
+                // Рассчитываем сумму вручную для проверки
+                $actsAmount = $contract->performanceActs()
+                    ->where('is_approved', true)
+                    ->sum('amount') ?? 0;
+                
+                $agreementsAmount = $contract->agreements()
+                    ->sum('change_amount') ?? 0;
+                
+                $calculatedTotal = round((float) $actsAmount + (float) $agreementsAmount, 2);
+                
+                // Пересчитываем сумму через метод модели
                 $newTotalAmount = $contract->recalculateTotalAmountForNonFixed();
 
                 if ($newTotalAmount === null) {
@@ -98,27 +109,36 @@ class RecalculateNonFixedContractsTotalCommand extends Command
                     continue;
                 }
 
-                $difference = abs((float) $oldTotalAmount - $newTotalAmount);
+                // Используем рассчитанную сумму для сравнения (не из метода, который мог уже обновить)
+                $difference = abs((float) $oldTotalAmount - $calculatedTotal);
+
+                // Всегда показываем детали для отладки
+                $this->newLine();
+                $this->line("  Контракт #{$contract->id} ({$contract->number}):");
+                $this->line("    Текущая сумма в БД: " . number_format($oldTotalAmount, 2, '.', ' ') . " руб.");
+                $this->line("    Рассчитанная сумма: " . number_format($calculatedTotal, 2, '.', ' ') . " руб.");
+                $this->line("    Сумма одобренных актов: " . number_format($actsAmount, 2, '.', ' ') . " руб.");
+                $this->line("    Сумма ДС: " . number_format($agreementsAmount, 2, '.', ' ') . " руб.");
+                $this->line("    Количество одобренных актов: {$contract->performanceActs->where('is_approved', true)->count()}");
+                $this->line("    Количество ДС: {$contract->agreements->count()}");
+                $this->line("    Разница: " . number_format($difference, 2, '.', ' ') . " руб.");
 
                 if ($difference > 0.01) {
                     if (!$dryRun) {
-                        // Обновляем контракт
-                        $contract->updateQuietly(['total_amount' => $newTotalAmount]);
+                        // Обновляем контракт напрямую
+                        DB::table('contracts')
+                            ->where('id', $contract->id)
+                            ->update(['total_amount' => $calculatedTotal]);
+                        
+                        // Обновляем значение в модели
+                        $contract->total_amount = $calculatedTotal;
                     }
 
                     $updated++;
-                    
-                    if ($this->getOutput()->isVerbose()) {
-                        $this->newLine();
-                        $this->line("  Контракт #{$contract->id} ({$contract->number}):");
-                        $this->line("    Старая сумма: " . number_format($oldTotalAmount, 2, '.', ' ') . " руб.");
-                        $this->line("    Новая сумма: " . number_format($newTotalAmount, 2, '.', ' ') . " руб.");
-                        $this->line("    Разница: " . number_format($difference, 2, '.', ' ') . " руб.");
-                        $this->line("    Актов: {$contract->performanceActs->where('is_approved', true)->count()}");
-                        $this->line("    ДС: {$contract->agreements->count()}");
-                    }
+                    $this->info("    ✅ Будет обновлено на: " . number_format($calculatedTotal, 2, '.', ' ') . " руб.");
                 } else {
                     $skipped++;
+                    $this->comment("    ⏭️  Без изменений (разница < 0.01 руб.)");
                 }
             } catch (\Exception $e) {
                 $errors++;
