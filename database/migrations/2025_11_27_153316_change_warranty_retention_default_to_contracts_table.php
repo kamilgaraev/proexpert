@@ -13,7 +13,8 @@ return new class extends Migration
     {
         Schema::table('contracts', function (Blueprint $table) {
             // Изменяем значение по умолчанию для warranty_retention_percentage с 0 на 2.5
-            $table->decimal('warranty_retention_percentage', 5, 3)->default(2.5)->change();
+            // Важно: явно указываем nullable(), чтобы сохранить возможность NULL значений
+            $table->decimal('warranty_retention_percentage', 5, 3)->nullable()->default(2.5)->change();
         });
     }
 

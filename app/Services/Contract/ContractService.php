@@ -195,6 +195,12 @@ class ContractService
         $contractData = $contractDTO->toArray();
         $contractData['organization_id'] = $organizationId;
 
+        // Если warranty_retention_percentage не указан, не передаем его в массив,
+        // чтобы БД использовала значение по умолчанию (2.5)
+        if (!isset($contractData['warranty_retention_percentage']) || $contractData['warranty_retention_percentage'] === null) {
+            unset($contractData['warranty_retention_percentage']);
+        }
+
         try {
             DB::beginTransaction();
             
@@ -386,6 +392,12 @@ class ContractService
         // Дополнительные проверки перед обновлением
 
         $updateData = $contractDTO->toArray();
+        
+        // Если warranty_retention_percentage не указан или равен null, не передаем его в массив,
+        // чтобы сохранить текущее значение или использовать значение по умолчанию из БД (2.5)
+        if (!isset($updateData['warranty_retention_percentage']) || $updateData['warranty_retention_percentage'] === null) {
+            unset($updateData['warranty_retention_percentage']);
+        }
         
         Log::info('ContractService::updateContract - UPDATE DATA', [
             'contract_id' => $contractId,
