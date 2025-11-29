@@ -29,7 +29,8 @@ class DashboardController extends Controller
     }
 
     /**
-     * Получить сводную информацию для дашборда админки по проекту
+     * Получить полную структуру дашборда (упрощенный подход)
+     * Возвращает все данные дашборда в одной структуре без необходимости настройки виджетов
      */
     public function index(Request $request): JsonResponse
     {
@@ -43,6 +44,35 @@ class DashboardController extends Controller
         }
 
         // Валидация обязательного параметра project_id
+        $request->validate([
+            'project_id' => 'required|integer|min:1',
+        ]);
+        
+        $projectId = (int)$request->input('project_id');
+
+        // Используем упрощенный подход - возвращаем всю структуру дашборда
+        $dashboard = $this->dashboardService->getFullDashboard($organizationId, $projectId);
+        
+        return response()->json([
+            'success' => true,
+            'data' => $dashboard
+        ]);
+    }
+
+    /**
+     * Получить только сводную информацию (для обратной совместимости)
+     */
+    public function summary(Request $request): JsonResponse
+    {
+        $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
+
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Organization context is required.'
+            ], 400);
+        }
+
         $request->validate([
             'project_id' => 'required|integer|min:1',
         ]);

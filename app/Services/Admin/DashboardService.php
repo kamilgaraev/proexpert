@@ -1756,4 +1756,76 @@ class DashboardService
         }
         return Cache::remember($key, $ttl, $callback);
     }
+
+    /**
+     * Получить полную структуру дашборда (упрощенный подход без виджетов)
+     * Возвращает готовую структуру со всеми данными для отображения
+     */
+    public function getFullDashboard(int $organizationId, int $projectId): array
+    {
+        $cacheKey = "dashboard_full_{$organizationId}_{$projectId}";
+        $tags = $this->getCacheTags($organizationId, $projectId);
+
+        return $this->remember($cacheKey, $tags, self::CACHE_TTL_SHORT, function () use ($organizationId, $projectId) {
+            // Основная сводка
+            $summary = $this->getSummary($organizationId, $projectId);
+
+            // Финансовые метрики
+            $financial = $this->getFinancialMetrics($organizationId, $projectId);
+
+            // Аналитика контрактов
+            $contractsAnalytics = $this->getContractsAnalytics($organizationId, $projectId);
+
+            // Графики
+            $contractsByStatus = $this->getContractsByStatus($organizationId, $projectId);
+            $contractsByContractor = $this->getContractsByContractor($organizationId, $projectId, 5);
+            $financialFlow = $this->getFinancialFlow($organizationId, $projectId, 'month');
+
+            // Топ-листы
+            $topContracts = $this->getTopContractsByAmount($organizationId, $projectId, 5);
+            $topContractors = $this->getTopContractorsByVolume($organizationId, 5);
+
+            // Детальная аналитика
+            $contractPerformance = $this->getContractPerformance($organizationId, $projectId);
+            $worksEfficiency = $this->getWorksEfficiency($organizationId, $projectId);
+            $completedWorksAnalytics = $this->getCompletedWorksAnalytics($organizationId, $projectId);
+
+            // Временные ряды
+            $timeseriesContracts = $this->getTimeseries('contracts', 'month', $organizationId, $projectId);
+            $timeseriesWorks = $this->getTimeseries('completed_works', 'month', $organizationId, $projectId);
+
+            // История
+            $recentActivity = $this->getHistory('completed_works', 10, $organizationId, $projectId);
+
+            // Сравнение периодов
+            $comparison = $this->getComparisonData($organizationId, $projectId, 'month');
+
+            return [
+                'summary' => $summary['summary'],
+                'period' => $summary['period'],
+                'financial' => $financial,
+                'contracts' => [
+                    'analytics' => $contractsAnalytics,
+                    'performance' => $contractPerformance,
+                    'by_status' => $contractsByStatus,
+                    'by_contractor' => $contractsByContractor,
+                    'top' => $topContracts,
+                ],
+                'works' => [
+                    'analytics' => $completedWorksAnalytics,
+                    'efficiency' => $worksEfficiency,
+                    'recent' => $recentActivity,
+                ],
+                'contractors' => [
+                    'top' => $topContractors,
+                ],
+                'charts' => [
+                    'contracts_timeseries' => $timeseriesContracts,
+                    'works_timeseries' => $timeseriesWorks,
+                    'financial_flow' => $financialFlow,
+                ],
+                'comparison' => $comparison,
+            ];
+        });
+    }
 } 

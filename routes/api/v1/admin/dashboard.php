@@ -16,8 +16,9 @@ use App\Http\Controllers\Api\V1\Admin\DashboardSettingsController;
 
 Route::middleware('throttle:dashboard')->group(function () {
     
-    // PROJECT BASED DASHBOARD - все эндпоинты требуют project_id
+    // УПРОЩЕННЫЙ ДАШБОРД - один эндпоинт возвращает всю структуру
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard.index'); // ?project_id=123
+    Route::get('/dashboard/summary', [DashboardController::class, 'summary'])->name('dashboard.summary'); // для обратной совместимости
     Route::get('/dashboard/timeseries', [DashboardController::class, 'timeseries'])->name('dashboard.timeseries');
     Route::get('/dashboard/top-entities', [DashboardController::class, 'topEntities'])->name('dashboard.top-entities');
     Route::get('/dashboard/history', [DashboardController::class, 'history'])->name('dashboard.history');
