@@ -111,7 +111,12 @@ class AIAssistantService
                 $response['model']
             );
 
-            $cost = $this->usageTracker->calculateCost($response['tokens_used'], $response['model']);
+            // Передаем детальную информацию о токенах для правильного расчета стоимости
+            $cost = $this->usageTracker->calculateCost(
+                $response['tokens_used'],
+                $response['model'],
+                $response // Передаем весь response для извлечения cache информации
+            );
 
             $this->usageTracker->trackRequest(
                 $organizationId,

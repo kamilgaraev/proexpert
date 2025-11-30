@@ -6,6 +6,7 @@ use Illuminate\Support\ServiceProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\LLMProviderInterface;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\OpenAIProvider;
 use App\BusinessModules\Features\AIAssistant\Services\LLM\YandexGPTProvider;
+use App\BusinessModules\Features\AIAssistant\Services\LLM\DeepSeekProvider;
 
 class AIAssistantServiceProvider extends ServiceProvider
 {
@@ -22,6 +23,7 @@ class AIAssistantServiceProvider extends ServiceProvider
             return match($provider) {
                 'yandex' => $app->make(YandexGPTProvider::class),
                 'openai' => $app->make(OpenAIProvider::class),
+                'deepseek' => $app->make(DeepSeekProvider::class),
                 default => $app->make(YandexGPTProvider::class),
             };
         });

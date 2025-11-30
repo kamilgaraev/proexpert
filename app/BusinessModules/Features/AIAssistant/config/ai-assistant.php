@@ -11,8 +11,8 @@ return [
 
     // LLM Provider Configuration
     'llm' => [
-        // Выбор провайдера: 'yandex' или 'openai'
-        'provider' => env('LLM_PROVIDER', 'yandex'),
+        // Выбор провайдера: 'yandex', 'openai' или 'deepseek'
+        'provider' => env('LLM_PROVIDER', 'deepseek'),
         
         // YandexGPT Configuration
         'yandex' => [
@@ -29,6 +29,14 @@ return [
             'model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
             'max_tokens' => env('OPENAI_MAX_TOKENS', 2000),
             'temperature' => env('OPENAI_TEMPERATURE', 0.7),
+        ],
+        
+        // DeepSeek Configuration (рекомендуется - дешевле и качественно)
+        'deepseek' => [
+            'api_key' => env('DEEPSEEK_API_KEY'),
+            'model' => env('DEEPSEEK_MODEL', 'deepseek-chat'),
+            'max_tokens' => env('DEEPSEEK_MAX_TOKENS', 2000),
+            'temperature' => env('DEEPSEEK_TEMPERATURE', 1),
         ],
     ],
     
