@@ -154,7 +154,17 @@ class PaymentDocumentController extends Controller
 
             try {
                 $document = PaymentDocument::forOrganization($organizationId)
-                    ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor', 'source', 'approvals', 'transactions'])
+                    ->with([
+                        'project', 
+                        'payerOrganization', 
+                        'payeeOrganization', 
+                        'payerContractor', 
+                        'payeeContractor', 
+                        'source', 
+                        'approvals', 
+                        'transactions',
+                        'invoiceable' // Загружаем связанную сущность (Contract, Act и т.д.)
+                    ])
                     ->findOrFail($id);
             } catch (\Error $e) {
                 // Если ошибка при загрузке invoiceable (класс Invoice не найден)
@@ -722,6 +732,33 @@ class PaymentDocumentController extends Controller
             $canApprove = $hasApprovalRequest || $isSuperUser;
         }
 
+        // Определяем contract_id из invoiceable
+        $contractId = null;
+        if ($document->invoiceable_type === 'App\\Models\\Contract' && $document->invoiceable_id) {
+            $contractId = $document->invoiceable_id;
+        }
+        
+        // Форматируем invoiceable для ответа
+        $invoiceable = null;
+        if ($document->invoiceable) {
+            $invoiceable = [
+                'type' => $document->invoiceable_type,
+                'id' => $document->invoiceable_id,
+            ];
+            
+            // Если это Contract, добавляем дополнительную информацию
+            if ($document->invoiceable_type === 'App\\Models\\Contract') {
+                $invoiceable['number'] = $document->invoiceable->number ?? null;
+                $invoiceable['subject'] = $document->invoiceable->subject ?? null;
+            }
+            
+            // Если это Act, добавляем информацию об акте
+            if ($document->invoiceable_type === 'App\\Models\\ContractPerformanceAct') {
+                $invoiceable['number'] = $document->invoiceable->number ?? null;
+                $invoiceable['act_date'] = $document->invoiceable->act_date?->format('Y-m-d') ?? null;
+            }
+        }
+
         return array_merge($basic, [
             'description' => $document->description,
             'payment_purpose' => $document->payment_purpose,
@@ -734,6 +771,8 @@ class PaymentDocumentController extends Controller
                 'correspondent_account' => $document->bank_correspondent_account,
                 'bank_name' => $document->bank_name,
             ],
+            'contract_id' => $contractId, // Прямая ссылка на контракт (если есть)
+            'invoiceable' => $invoiceable, // Polymorphic связь с источником (Contract, Act и т.д.)
             'source' => $document->source ? [
                 'type' => $document->source_type,
                 'id' => $document->source_id,
