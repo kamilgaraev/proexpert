@@ -336,8 +336,7 @@ class PaymentDocumentService
                              $existsQuery->select(\DB::raw(1))
                                  ->from('contract_performance_acts')
                                  ->whereColumn('contract_performance_acts.id', 'payment_documents.invoiceable_id')
-                                 ->where('contract_performance_acts.contract_id', $contractId)
-                                 ->whereNull('contract_performance_acts.deleted_at');
+                                 ->where('contract_performance_acts.contract_id', $contractId);
                          });
                 });
             });
