@@ -24,29 +24,28 @@ return new class extends Migration
         ");
 
         // ШАГ 1: Удаляем внешний ключ (но оставляем колонку invoice_id пока)
-        Schema::table('payment_transactions', function (Blueprint $table) use ($foreignKey) {
-            // Удаляем внешний ключ, если он существует
-            if ($foreignKey && isset($foreignKey->constraint_name)) {
-                try {
-                    $table->dropForeign([$foreignKey->constraint_name]);
-                } catch (\Exception $e) {
-                    // Пробуем стандартные имена
-                    $standardNames = [
-                        'payment_transactions_invoice_id_foreign',
-                        'payment_transactions_invoice_id_fkey'
-                    ];
-                    
-                    foreach ($standardNames as $name) {
-                        try {
-                            $table->dropForeign([$name]);
-                            break;
-                        } catch (\Exception $e2) {
-                            // Продолжаем попытки
-                        }
+        // Используем прямой SQL, так как dropForeign ожидает имя колонки, а не constraint
+        if ($foreignKey && isset($foreignKey->constraint_name)) {
+            try {
+                $constraintName = $foreignKey->constraint_name;
+                DB::statement("ALTER TABLE payment_transactions DROP CONSTRAINT IF EXISTS \"{$constraintName}\" CASCADE");
+            } catch (\Exception $e) {
+                // Пробуем стандартные имена через прямой SQL
+                $standardNames = [
+                    'payment_transactions_invoice_id_foreign',
+                    'payment_transactions_invoice_id_fkey'
+                ];
+                
+                foreach ($standardNames as $name) {
+                    try {
+                        DB::statement("ALTER TABLE payment_transactions DROP CONSTRAINT IF EXISTS \"{$name}\" CASCADE");
+                        break;
+                    } catch (\Exception $e2) {
+                        // Продолжаем попытки
                     }
                 }
             }
-        });
+        }
         
         // ШАГ 2: Заполняем payment_document_id из invoice_id (если колонка invoice_id еще существует)
         if (Schema::hasColumn('payment_transactions', 'payment_document_id') && 
