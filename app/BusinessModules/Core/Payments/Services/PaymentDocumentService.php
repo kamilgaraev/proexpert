@@ -330,8 +330,15 @@ class PaymentDocumentService
                          ->where('invoiceable_id', $contractId);
                 })
                 // Или связь через акт этого контракта
-                ->orWhereHas('invoiceable', function($actQuery) use ($contractId) {
-                    $actQuery->where('contract_id', $contractId);
+                ->orWhere(function($subQ) use ($contractId) {
+                    $subQ->where('invoiceable_type', 'App\\Models\\ContractPerformanceAct')
+                         ->whereExists(function($existsQuery) use ($contractId) {
+                             $existsQuery->select(\DB::raw(1))
+                                 ->from('contract_performance_acts')
+                                 ->whereColumn('contract_performance_acts.id', 'payment_documents.invoiceable_id')
+                                 ->where('contract_performance_acts.contract_id', $contractId)
+                                 ->whereNull('contract_performance_acts.deleted_at');
+                         });
                 });
             });
         }
