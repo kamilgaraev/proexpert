@@ -288,6 +288,20 @@ class ApprovalWorkflowService
                             'document_id' => $document->id,
                             'status' => $document->status->value,
                         ]);
+                        
+                        // Создаем запись утверждения для истории (даже если правил нет)
+                        PaymentApproval::create([
+                            'payment_document_id' => $document->id,
+                            'organization_id' => $document->organization_id,
+                            'approval_role' => 'admin',
+                            'approver_user_id' => $userId,
+                            'approval_level' => 1,
+                            'approval_order' => 1,
+                            'status' => 'approved',
+                            'decision_comment' => 'Утверждено администратором/владельцем организации',
+                            'decided_at' => now(),
+                        ]);
+                        
                         $this->stateMachine->approve($document, $userId);
                         DB::commit();
                         return true;
@@ -558,10 +572,58 @@ class ApprovalWorkflowService
         $rejected = $approvals->where('status', 'rejected')->count();
         $pending = $approvals->where('status', 'pending')->count();
 
+        // Если документ утвержден, но нет записей утверждения - создаем ретроспективную запись
+        if ($document->status === PaymentDocumentStatus::APPROVED && $total === 0) {
+            // Пытаемся найти пользователя, который утвердил документ
+            $approvedByUserId = $document->approved_by_user_id;
+            
+            // Если нет информации о пользователе, пытаемся найти через логи или используем системного пользователя
+            if (!$approvedByUserId) {
+                // Ищем в логах последнего, кто утвердил документ
+                // Или используем первого админа организации как fallback
+                $orgAdmin = User::whereHas('roleAssignments', function ($query) use ($document) {
+                    $query->where('role_slug', 'organization_owner')
+                        ->whereHas('context', function ($q) use ($document) {
+                            $q->where('type', \App\Domain\Authorization\Models\AuthorizationContext::TYPE_ORGANIZATION)
+                              ->where('resource_id', $document->organization_id);
+                        });
+                })->first();
+                
+                $approvedByUserId = $orgAdmin?->id ?? 1; // Fallback на системного пользователя
+            }
+            
+            // Создаем запись для истории (ретроспективно)
+            PaymentApproval::create([
+                'payment_document_id' => $document->id,
+                'organization_id' => $document->organization_id,
+                'approval_role' => 'admin',
+                'approver_user_id' => $approvedByUserId,
+                'approval_level' => 1,
+                'approval_order' => 1,
+                'status' => 'approved',
+                'decision_comment' => 'Утверждено (ретроспективная запись)',
+                'decided_at' => $document->approved_at ?? now(),
+            ]);
+            
+            // Перезагружаем approvals
+            $approvals = $this->getApprovalHistory($document);
+            $total = $approvals->count();
+            $approved = $approvals->where('status', 'approved')->count();
+        }
+
         $currentLevel = null;
         if ($pending > 0) {
             $firstPending = $approvals->where('status', 'pending')->first();
             $currentLevel = $firstPending?->approval_level;
+        }
+
+        // Если документ утвержден, считаем его полностью утвержденным (даже без записей)
+        $isFullyApproved = false;
+        if ($document->status === PaymentDocumentStatus::APPROVED) {
+            $isFullyApproved = true; // Документ в статусе approved = полностью утвержден
+        } else {
+            // Для других статусов проверяем наличие записей
+            $isFullyApproved = $pending === 0 && $rejected === 0 && $total > 0;
         }
 
         return [
@@ -569,9 +631,9 @@ class ApprovalWorkflowService
             'approved' => $approved,
             'rejected' => $rejected,
             'pending' => $pending,
-            'progress_percentage' => $total > 0 ? round(($approved / $total) * 100, 2) : 0,
+            'progress_percentage' => $total > 0 ? round(($approved / $total) * 100, 2) : ($isFullyApproved ? 100 : 0),
             'current_level' => $currentLevel,
-            'is_fully_approved' => $pending === 0 && $rejected === 0 && $total > 0,
+            'is_fully_approved' => $isFullyApproved,
             'is_rejected' => $rejected > 0,
             'approvals' => $approvals->map(fn($a) => [
                 'id' => $a->id,
