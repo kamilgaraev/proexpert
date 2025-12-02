@@ -54,9 +54,72 @@ return new class extends Migration
         
         // Делаем payment_document_id обязательным (отдельно, так как может быть ошибка если колонки нет)
         if (Schema::hasColumn('payment_schedules', 'payment_document_id')) {
-            Schema::table('payment_schedules', function (Blueprint $table) {
-                $table->foreignId('payment_document_id')->nullable(false)->change();
-            });
+            // Проверяем, есть ли NULL значения в payment_document_id
+            $nullCount = DB::table('payment_schedules')
+                ->whereNull('payment_document_id')
+                ->count();
+            
+            if ($nullCount > 0) {
+                // Пытаемся заполнить NULL значения из invoice_id через payment_documents
+                // (данные должны быть мигрированы в миграции 2025_12_20_000007)
+                if (Schema::hasTable('payment_documents')) {
+                    // Находим payment_document_id для каждого invoice_id через таблицу payment_documents
+                    // используя source_id и source_type
+                    DB::statement("
+                        UPDATE payment_schedules ps
+                        SET payment_document_id = (
+                            SELECT pd.id 
+                            FROM payment_documents pd
+                            WHERE pd.source_type = 'App\\\\BusinessModules\\\\Core\\\\Payments\\\\Models\\\\Invoice'
+                            AND pd.source_id = ps.invoice_id
+                            LIMIT 1
+                        )
+                        WHERE ps.payment_document_id IS NULL
+                        AND ps.invoice_id IS NOT NULL
+                        AND EXISTS (
+                            SELECT 1 FROM payment_documents pd2
+                            WHERE pd2.source_type = 'App\\\\BusinessModules\\\\Core\\\\Payments\\\\Models\\\\Invoice'
+                            AND pd2.source_id = ps.invoice_id
+                        )
+                    ");
+                    
+                    // Проверяем снова
+                    $remainingNullCount = DB::table('payment_schedules')
+                        ->whereNull('payment_document_id')
+                        ->count();
+                    
+                    if ($remainingNullCount > 0) {
+                        // Если все еще есть NULL значения, удаляем такие записи
+                        // (они не могут быть связаны с документами - возможно, это старые данные)
+                        DB::table('payment_schedules')
+                            ->whereNull('payment_document_id')
+                            ->delete();
+                    }
+                } else {
+                    // Если таблица payment_documents еще не создана, просто удаляем записи без payment_document_id
+                    // (это означает, что данные еще не мигрированы, но мы все равно удаляем invoice_id)
+                    DB::table('payment_schedules')
+                        ->whereNull('payment_document_id')
+                        ->delete();
+                }
+            }
+            
+            // Теперь делаем колонку обязательной (если все NULL значения обработаны)
+            $finalNullCount = DB::table('payment_schedules')
+                ->whereNull('payment_document_id')
+                ->count();
+            
+            if ($finalNullCount === 0) {
+                Schema::table('payment_schedules', function (Blueprint $table) {
+                    $table->foreignId('payment_document_id')->nullable(false)->change();
+                });
+            } else {
+                // Если все еще есть NULL, оставляем колонку nullable
+                // (это не должно произойти, но на всякий случай)
+                throw new \RuntimeException(
+                    "Cannot make payment_document_id NOT NULL: {$finalNullCount} schedules still have NULL values"
+                );
+            }
         }
         
         // Добавляем индекс для новой связи (если его еще нет)
