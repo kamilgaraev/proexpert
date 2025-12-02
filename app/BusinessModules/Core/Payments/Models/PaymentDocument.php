@@ -90,6 +90,12 @@ class PaymentDocument extends Model
         'scheduled_at',
         'paid_at',
         'overdue_since',
+        'recipient_organization_id',
+        'recipient_notified_at',
+        'recipient_viewed_at',
+        'recipient_confirmed_at',
+        'recipient_confirmation_comment',
+        'recipient_confirmed_by_user_id',
     ];
 
     protected $casts = [
@@ -113,6 +119,9 @@ class PaymentDocument extends Model
         'scheduled_at' => 'datetime',
         'paid_at' => 'datetime',
         'overdue_since' => 'datetime',
+        'recipient_notified_at' => 'datetime',
+        'recipient_viewed_at' => 'datetime',
+        'recipient_confirmed_at' => 'datetime',
     ];
 
     protected $attributes = [
@@ -164,6 +173,16 @@ class PaymentDocument extends Model
     public function contractor(): BelongsTo
     {
         return $this->belongsTo(Contractor::class);
+    }
+
+    public function recipientOrganization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class, 'recipient_organization_id');
+    }
+
+    public function recipientConfirmedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'recipient_confirmed_by_user_id');
     }
 
     public function source(): MorphTo
@@ -384,6 +403,116 @@ class PaymentDocument extends Model
         }
 
         return 'Не указан';
+    }
+
+    /**
+     * Определить ID организации-получателя (если зарегистрирована)
+     * 
+     * Проверяет прямую связь через payee_organization_id или через подрядчика
+     * 
+     * @return int|null ID организации-получателя или null если не зарегистрирована
+     */
+    public function getRecipientOrganizationId(): ?int
+    {
+        // 1. Прямая связь через payee_organization_id
+        if ($this->payee_organization_id) {
+            return $this->payee_organization_id;
+        }
+
+        // 2. Через подрядчика (если подрядчик связан с организацией)
+        if ($this->payee_contractor_id && $this->payeeContractor) {
+            return $this->payeeContractor->source_organization_id;
+        }
+
+        // 3. Через contractor_id (для обратной совместимости)
+        if ($this->contractor_id && $this->contractor) {
+            return $this->contractor->source_organization_id;
+        }
+
+        // 4. Не зарегистрирован
+        return null;
+    }
+
+    /**
+     * Проверить, зарегистрирован ли получатель в системе
+     * 
+     * @return bool true если получатель зарегистрирован как организация
+     */
+    public function hasRegisteredRecipient(): bool
+    {
+        return $this->getRecipientOrganizationId() !== null;
+    }
+
+    /**
+     * Отметить документ как уведомленный получателю
+     * 
+     * Работает только если получатель зарегистрирован
+     * 
+     * @return bool true если успешно отмечено, false если получатель не зарегистрирован
+     */
+    public function markAsNotifiedToRecipient(): bool
+    {
+        if (!$this->hasRegisteredRecipient()) {
+            return false;
+        }
+
+        $this->recipient_notified_at = now();
+        return $this->save();
+    }
+
+    /**
+     * Отметить документ как просмотренный получателем
+     * 
+     * Работает только если получатель зарегистрирован
+     * 
+     * @param int $userId ID пользователя, который просмотрел
+     * @return bool true если успешно отмечено, false если получатель не зарегистрирован
+     */
+    public function markAsViewedByRecipient(int $userId): bool
+    {
+        if (!$this->hasRegisteredRecipient()) {
+            return false;
+        }
+
+        $this->recipient_viewed_at = now();
+        return $this->save();
+    }
+
+    /**
+     * Подтвердить получение платежа получателем
+     * 
+     * Работает только если получатель зарегистрирован и документ в подходящем статусе
+     * 
+     * @param int $userId ID пользователя, который подтверждает
+     * @param string|null $comment Комментарий получателя
+     * @return bool true если успешно подтверждено
+     * @throws \DomainException если получатель не зарегистрирован или статус не подходит
+     */
+    public function confirmByRecipient(int $userId, ?string $comment = null): bool
+    {
+        if (!$this->hasRegisteredRecipient()) {
+            throw new \DomainException('Получатель не зарегистрирован в системе');
+        }
+
+        // Можно подтверждать только документы в статусах approved, scheduled, paid
+        $allowedStatuses = [
+            PaymentDocumentStatus::APPROVED,
+            PaymentDocumentStatus::SCHEDULED,
+            PaymentDocumentStatus::PAID,
+            PaymentDocumentStatus::PARTIALLY_PAID,
+        ];
+
+        if (!in_array($this->status, $allowedStatuses)) {
+            throw new \DomainException(
+                "Документ в статусе '{$this->status->label()}' не может быть подтвержден получателем"
+            );
+        }
+
+        $this->recipient_confirmed_at = now();
+        $this->recipient_confirmation_comment = $comment;
+        $this->recipient_confirmed_by_user_id = $userId;
+
+        return $this->save();
     }
 
     /**

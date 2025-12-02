@@ -154,6 +154,17 @@ Route::prefix('api/v1/admin/payments')
             Route::get('/contractors/{contractorId}', [PaymentRequestController::class, 'fromContractor'])->name('from_contractor');
             Route::get('/statistics', [PaymentRequestController::class, 'statistics'])->name('statistics');
         });
+        
+        // ============================================
+        // Payment Recipients (API для получателей)
+        // ============================================
+        Route::prefix('incoming')->name('incoming.')->group(function () {
+            Route::get('/documents', [\App\BusinessModules\Core\Payments\Http\Controllers\PaymentRecipientController::class, 'index'])->name('documents.index');
+            Route::get('/documents/{documentId}', [\App\BusinessModules\Core\Payments\Http\Controllers\PaymentRecipientController::class, 'show'])->name('documents.show');
+            Route::post('/documents/{documentId}/view', [\App\BusinessModules\Core\Payments\Http\Controllers\PaymentRecipientController::class, 'markAsViewed'])->name('documents.view');
+            Route::post('/documents/{documentId}/confirm', [\App\BusinessModules\Core\Payments\Http\Controllers\PaymentRecipientController::class, 'confirmReceipt'])->name('documents.confirm');
+            Route::get('/statistics', [\App\BusinessModules\Core\Payments\Http\Controllers\PaymentRecipientController::class, 'statistics'])->name('statistics');
+        });
 
         // ============================================
         // Offsets (Взаимозачеты)

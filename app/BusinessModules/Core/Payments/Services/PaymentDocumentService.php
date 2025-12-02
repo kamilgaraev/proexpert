@@ -49,11 +49,15 @@ class PaymentDocumentService
             // Создание документа
             $document = PaymentDocument::create($data);
 
+            // Автоматически определяем и кэшируем получателя-организацию
+            $this->detectAndSetRecipientOrganization($document);
+
             Log::info('payment_document.created', [
                 'document_id' => $document->id,
                 'document_number' => $document->document_number,
                 'document_type' => $document->document_type->value,
                 'amount' => $document->amount,
+                'recipient_org_id' => $document->recipient_organization_id,
             ]);
 
             // Генерируем событие
@@ -225,10 +229,32 @@ class PaymentDocumentService
             $document->remaining_amount = $document->amount - $newPaidAmount;
             $document->save();
 
+            // Загружаем транзакцию как модель для уведомлений
+            $transactionModel = PaymentTransaction::find($transaction);
+            
+            // Отправляем уведомление получателю (если зарегистрирован)
+            if ($transactionModel) {
+                try {
+                    $notificationService = app(\App\BusinessModules\Core\Payments\Services\PaymentRecipientNotificationService::class);
+                    $notificationService->notifyRecipientAboutPayment($document, $transactionModel);
+                } catch (\Exception $e) {
+                    // Не бросаем исключение - отсутствие уведомления не должно ломать регистрацию платежа
+                    Log::warning('payment_document.notify_recipient_failed', [
+                        'document_id' => $document->id,
+                        'transaction_id' => $transaction,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
             // Определяем новый статус
             if ($document->remaining_amount <= 0.01) { // учитываем погрешность
+                // Передаем transactionId в событие через временное свойство
+                $document->setAttribute('_last_transaction_id', $transaction);
                 $this->stateMachine->markPaid($document, $newPaidAmount);
             } else {
+                // Для частичной оплаты тоже нужно событие с transactionId
+                $document->setAttribute('_last_transaction_id', $transaction);
                 $this->stateMachine->markPartiallyPaid($document, $amount);
             }
 
@@ -632,7 +658,45 @@ class PaymentDocumentService
             'vat_rate' => 20,
         ], $additionalData);
 
-        return $this->create($data);
+        $document = $this->create($data);
+        
+        // Автоматически определяем получателя при создании из договора
+        $this->detectAndSetRecipientOrganization($document);
+        
+        return $document;
+    }
+
+    /**
+     * Определить и установить получателя-организацию для документа
+     * 
+     * Проверяет прямую связь через payee_organization_id или через подрядчика
+     * Кэширует результат в recipient_organization_id для быстрого поиска
+     * 
+     * @param PaymentDocument $document Документ
+     * @return void
+     */
+    public function detectAndSetRecipientOrganization(PaymentDocument $document): void
+    {
+        try {
+            $recipientOrgId = $document->getRecipientOrganizationId();
+            
+            if ($recipientOrgId && $document->recipient_organization_id !== $recipientOrgId) {
+                // Кэшируем ID организации-получателя для быстрого поиска
+                $document->recipient_organization_id = $recipientOrgId;
+                $document->saveQuietly(); // Сохраняем без событий, чтобы избежать циклов
+                
+                Log::debug('payment_document.recipient_detected', [
+                    'document_id' => $document->id,
+                    'recipient_org_id' => $recipientOrgId,
+                ]);
+            }
+        } catch (\Exception $e) {
+            // Не бросаем исключение - отсутствие получателя не должно ломать систему
+            Log::warning('payment_document.recipient_detection_failed', [
+                'document_id' => $document->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 }
 

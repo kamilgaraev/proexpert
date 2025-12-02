@@ -806,6 +806,16 @@ class PaymentDocumentController extends Controller
             'metadata' => $document->metadata,
             'notes' => $document->notes,
             'can_be_approved_by_current_user' => $canApprove, // Флаг для фронтенда
+            // Информация о получателе (только если зарегистрирован)
+            'recipient_is_registered' => $document->hasRegisteredRecipient(),
+            'recipient_organization_id' => $document->recipient_organization_id,
+            'recipient_viewed_at' => $document->recipient_viewed_at?->toDateTimeString(),
+            'recipient_confirmed_at' => $document->recipient_confirmed_at?->toDateTimeString(),
+            'recipient_confirmation_comment' => $document->recipient_confirmation_comment,
+            'recipient_confirmed_by' => $document->recipientConfirmedBy ? [
+                'id' => $document->recipientConfirmedBy->id,
+                'name' => $document->recipientConfirmedBy->name,
+            ] : null,
             'workflow' => [
                 'workflow_stage' => $document->workflow_stage,
                 'submitted_at' => $document->submitted_at?->toDateTimeString(),

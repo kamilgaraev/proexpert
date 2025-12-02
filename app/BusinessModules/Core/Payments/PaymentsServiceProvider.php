@@ -63,6 +63,10 @@ class PaymentsServiceProvider extends ServiceProvider
         // New services
         $this->app->bind(PaymentOrderPdfService::class);
         $this->app->bind(BankStatementImportService::class);
+        
+        // Recipient services
+        $this->app->bind(\App\BusinessModules\Core\Payments\Services\PaymentRecipientNotificationService::class);
+        $this->app->bind(\App\BusinessModules\Core\Payments\Services\PaymentConfirmationService::class);
     }
 
     /**
@@ -110,6 +114,24 @@ class PaymentsServiceProvider extends ServiceProvider
     protected function registerEventListeners(): void
     {
         Event::subscribe(\App\BusinessModules\Core\Payments\Listeners\SendPaymentNotifications::class);
+        
+        // Уведомления получателям о создании документов
+        Event::listen(
+            \App\BusinessModules\Core\Payments\Events\PaymentDocumentCreated::class,
+            \App\BusinessModules\Core\Payments\Listeners\NotifyRecipientOnDocumentCreated::class
+        );
+        
+        // Уведомления получателям о регистрации платежей
+        Event::listen(
+            \App\BusinessModules\Core\Payments\Events\PaymentDocumentPaid::class,
+            \App\BusinessModules\Core\Payments\Listeners\NotifyRecipientOnPaymentRegistered::class
+        );
+        
+        // Уведомление создателю о подтверждении получения
+        Event::listen(
+            \App\BusinessModules\Core\Payments\Events\PaymentReceiptConfirmed::class,
+            \App\BusinessModules\Core\Payments\Listeners\NotifyCreatorOnReceiptConfirmed::class
+        );
         
         // Автосоздание счетов из актов (проверит настройку внутри)
         // Нужно зарегистрировать слушание события создания/обновления актов

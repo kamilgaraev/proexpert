@@ -11,6 +11,7 @@
 - **Автоматическая просрочка** и напоминания
 - **Дебиторская/кредиторская задолженность**
 - **Workflow утверждения** платежных документов
+- **Двустороннее взаимодействие** - получатели, зарегистрированные в системе, видят входящие документы и могут подтверждать получение
 
 ## Основные сущности
 
@@ -37,6 +38,7 @@
 
 ## API Endpoints
 
+### Основные операции с документами
 ```
 GET    /api/v1/admin/payments/documents
 POST   /api/v1/admin/payments/documents
@@ -46,11 +48,26 @@ DELETE /api/v1/admin/payments/documents/{id}
 POST   /api/v1/admin/payments/documents/{id}/submit
 POST   /api/v1/admin/payments/documents/{id}/register-payment
 POST   /api/v1/admin/payments/documents/{id}/cancel
+```
 
+### API для получателей (входящие документы)
+```
+GET    /api/v1/admin/payments/incoming/documents
+GET    /api/v1/admin/payments/incoming/documents/{id}
+POST   /api/v1/admin/payments/incoming/documents/{id}/view
+POST   /api/v1/admin/payments/incoming/documents/{id}/confirm
+GET    /api/v1/admin/payments/incoming/statistics
+```
+
+### Транзакции
+```
 GET    /api/v1/admin/payments/transactions
 POST   /api/v1/admin/payments/transactions
 POST   /api/v1/admin/payments/transactions/{id}/refund
+```
 
+### Отчеты
+```
 GET    /api/v1/admin/payments/reports/receivables
 GET    /api/v1/admin/payments/reports/payables
 GET    /api/v1/admin/payments/reports/cash-flow
@@ -66,4 +83,54 @@ GET    /api/v1/admin/payments/reports/aging
 - `payments.transaction.register` - регистрация платежей
 - `payments.transaction.approve` - подтверждение платежей
 - `payments.reports.view` - просмотр отчётов
+
+## Двустороннее взаимодействие
+
+Модуль поддерживает опциональное двустороннее взаимодействие с получателями платежей.
+
+### Определение получателя-организации
+
+Получатель считается зарегистрированным в системе, если:
+1. `payee_organization_id` заполнено (прямая связь)
+2. ИЛИ `payee_contractor_id` → `contractor.source_organization_id` заполнено (через подрядчика)
+
+### Функциональность для зарегистрированных получателей
+
+Если получатель зарегистрирован как организация:
+- ✅ Видит входящие документы через API `/api/v1/admin/payments/incoming/documents`
+- ✅ Получает уведомления о создании документов и регистрации платежей
+- ✅ Может подтверждать получение платежа через API
+- ✅ Видит статистику входящих платежей
+
+### Graceful Degradation
+
+Если получатель НЕ зарегистрирован:
+- ✅ Документ создается и работает как обычно
+- ✅ Уведомления не отправляются (нет кому)
+- ✅ Подтверждение получения недоступно
+- ✅ Система работает в одностороннем режиме (как раньше)
+
+**Важно:** Отсутствие получателя-организации не вызывает ошибок и не ломает логику системы.
+
+### Примеры использования
+
+#### Создание документа для зарегистрированного получателя
+```php
+$document = $service->create([
+    'payee_organization_id' => 123, // Организация зарегистрирована
+    // ... другие поля
+]);
+// Автоматически определится recipient_organization_id
+// Получатель получит уведомление
+```
+
+#### Создание документа для незарегистрированного получателя
+```php
+$document = $service->create([
+    'payee_contractor_id' => 456, // Подрядчик без source_organization_id
+    // ... другие поля
+]);
+// recipient_organization_id останется null
+// Документ работает как обычно, уведомления не отправляются
+```
 
