@@ -539,9 +539,64 @@ class ApprovalWorkflowService
         if ($isAdmin && $organizationId) {
             // Для админа/владельца показываем все pending утверждения организации
             $query->where('organization_id', $organizationId);
+            
+            Log::info('payment_approval.get_pending_for_admin', [
+                'user_id' => $userId,
+                'organization_id' => $organizationId,
+                'is_admin' => $isAdmin,
+            ]);
         } else {
             // Для обычных пользователей - только назначенные им
             $query->where('approver_user_id', $userId);
+            
+            Log::info('payment_approval.get_pending_for_user', [
+                'user_id' => $userId,
+                'organization_id' => $organizationId,
+                'is_admin' => $isAdmin,
+            ]);
+        }
+        
+        // Также для админа показываем документы в статусе pending_approval без записей утверждения
+        // (если правила утверждения не создали записи)
+        if ($isAdmin && $organizationId) {
+            $documentsWithoutApprovals = PaymentDocument::where('organization_id', $organizationId)
+                ->where('status', PaymentDocumentStatus::PENDING_APPROVAL)
+                ->whereDoesntHave('approvals', function ($q) {
+                    $q->where('status', 'pending');
+                })
+                ->get();
+            
+            Log::info('payment_approval.documents_without_approvals', [
+                'organization_id' => $organizationId,
+                'count' => $documentsWithoutApprovals->count(),
+            ]);
+            
+            // Для таких документов создаем виртуальные записи утверждения для админа
+            foreach ($documentsWithoutApprovals as $doc) {
+                // Проверяем, нет ли уже записи для этого документа и пользователя
+                $existingApproval = PaymentApproval::where('payment_document_id', $doc->id)
+                    ->where('approver_user_id', $userId)
+                    ->first();
+                
+                if (!$existingApproval) {
+                    // Создаем запись утверждения для админа
+                    PaymentApproval::create([
+                        'payment_document_id' => $doc->id,
+                        'organization_id' => $doc->organization_id,
+                        'approval_role' => 'admin',
+                        'approver_user_id' => $userId,
+                        'approval_level' => 1,
+                        'approval_order' => 1,
+                        'status' => 'pending',
+                        'decision_comment' => null,
+                    ]);
+                }
+            }
+            
+            // Перезагружаем запрос после создания записей
+            $query = PaymentApproval::with(['paymentDocument', 'organization'])
+                ->where('status', 'pending')
+                ->where('organization_id', $organizationId);
         }
             
         return $query->orderBy('created_at', 'desc')
