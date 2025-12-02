@@ -189,20 +189,63 @@ class ApprovalWorkflowService
 
             $user = User::find($userId);
             
-            // Для проверки роли передаем массив возможных слагов. hasRole принимает один слаг.
-            // Проверяем по очереди или используем кастомную логику для массива
+            // Проверка прав администратора/владельца организации
             $isAdmin = false;
             if ($user) {
-                $rolesToCheck = ['organization_owner', 'admin', 'finance_admin'];
-                foreach ($rolesToCheck as $role) {
-                    if ($user->hasRole($role)) {
-                        $isAdmin = true;
-                        break;
+                $organizationId = $document->organization_id;
+                
+                // 1. Проверка владельца организации (GOD MODE)
+                if ($user->isOrganizationOwner($organizationId)) {
+                    $isAdmin = true;
+                    Log::info('payment_approval.auth_check', [
+                        'user_id' => $userId,
+                        'document_id' => $document->id,
+                        'organization_id' => $organizationId,
+                        'check' => 'isOrganizationOwner',
+                        'result' => true,
+                    ]);
+                }
+                
+                // 2. Проверка системного администратора
+                if (!$isAdmin && $user->isSystemAdmin()) {
+                    $isAdmin = true;
+                    Log::info('payment_approval.auth_check', [
+                        'user_id' => $userId,
+                        'document_id' => $document->id,
+                        'check' => 'isSystemAdmin',
+                        'result' => true,
+                    ]);
+                }
+                
+                // 3. Проверка ролей админа/финдира в контексте организации
+                if (!$isAdmin) {
+                    $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+                    $rolesToCheck = ['admin', 'finance_admin'];
+                    foreach ($rolesToCheck as $role) {
+                        if ($user->hasRole($role, $context->id)) {
+                            $isAdmin = true;
+                            Log::info('payment_approval.auth_check', [
+                                'user_id' => $userId,
+                                'document_id' => $document->id,
+                                'organization_id' => $organizationId,
+                                'check' => "hasRole({$role})",
+                                'result' => true,
+                            ]);
+                            break;
+                        }
                     }
                 }
                 
+                // 4. Проверка конкретного разрешения с контекстом организации
                 if (!$isAdmin) {
-                    $isAdmin = $user->can('payments.transaction.approve');
+                    $isAdmin = $user->can('payments.transaction.approve', ['organization_id' => $organizationId]);
+                    Log::info('payment_approval.auth_check', [
+                        'user_id' => $userId,
+                        'document_id' => $document->id,
+                        'organization_id' => $organizationId,
+                        'check' => 'can(payments.transaction.approve)',
+                        'result' => $isAdmin,
+                    ]);
                 }
             }
 
@@ -411,17 +454,31 @@ class ApprovalWorkflowService
         if ($organizationId) {
             $user = User::find($userId);
             if ($user) {
-                // Проверяем роли владельца или админа в контексте организации
-                $rolesToCheck = ['organization_owner', 'admin', 'finance_admin'];
-                foreach ($rolesToCheck as $role) {
-                    if ($user->hasRole($role)) {
-                        $isAdmin = true;
-                        break;
+                // 1. Проверка владельца организации
+                if ($user->isOrganizationOwner($organizationId)) {
+                    $isAdmin = true;
+                }
+                
+                // 2. Проверка системного администратора
+                if (!$isAdmin && $user->isSystemAdmin()) {
+                    $isAdmin = true;
+                }
+                
+                // 3. Проверка ролей админа/финдира в контексте организации
+                if (!$isAdmin) {
+                    $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($organizationId);
+                    $rolesToCheck = ['admin', 'finance_admin'];
+                    foreach ($rolesToCheck as $role) {
+                        if ($user->hasRole($role, $context->id)) {
+                            $isAdmin = true;
+                            break;
+                        }
                     }
                 }
                 
+                // 4. Проверка конкретного разрешения с контекстом организации
                 if (!$isAdmin) {
-                    $isAdmin = $user->can('payments.transaction.approve');
+                    $isAdmin = $user->can('payments.transaction.approve', ['organization_id' => $organizationId]);
                 }
             }
         }
