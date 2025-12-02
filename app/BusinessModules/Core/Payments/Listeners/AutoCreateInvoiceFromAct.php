@@ -2,7 +2,10 @@
 
 namespace App\BusinessModules\Core\Payments\Listeners;
 
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use App\Models\Act;
 use Illuminate\Support\Facades\Log;
@@ -53,6 +56,8 @@ class AutoCreateInvoiceFromAct
                 'document_type' => PaymentDocumentType::INVOICE->value,
                 'document_date' => $act->act_date ?? now(),
                 'due_date' => $this->calculateDueDate($act),
+                'direction' => InvoiceDirection::OUTGOING->value,
+                'invoice_type' => InvoiceType::ACT->value,
                 
                 // Плательщик - организация (если акт от подрядчика)
                 'payer_organization_id' => $act->organization_id,
@@ -61,16 +66,21 @@ class AutoCreateInvoiceFromAct
                 // Получатель - подрядчик
                 'payee_organization_id' => null,
                 'payee_contractor_id' => $act->contractor_id,
+                'contractor_id' => $act->contractor_id,
                 
                 'amount' => $act->total_amount,
                 'currency' => 'RUB',
                 'vat_rate' => $act->vat_rate ?? 20,
                 
+                'invoiceable_type' => Act::class,
+                'invoiceable_id' => $act->id,
                 'source_type' => Act::class,
                 'source_id' => $act->id,
                 
                 'description' => "Счет на оплату по акту выполненных работ {$act->act_number}",
                 'payment_purpose' => $this->generatePaymentPurpose($act),
+                'status' => PaymentDocumentStatus::SUBMITTED->value,
+                'issued_at' => now(),
                 
                 'metadata' => [
                     'auto_created' => true,
@@ -136,13 +146,13 @@ class AutoCreateInvoiceFromAct
     }
 
     /**
-     * Проверить что счет уже создан
+     * Проверить что документ уже создан
      */
     private function invoiceAlreadyExists(Act $act): bool
     {
         return \App\BusinessModules\Core\Payments\Models\PaymentDocument
-            ::where('source_type', Act::class)
-            ->where('source_id', $act->id)
+            ::where('invoiceable_type', Act::class)
+            ->where('invoiceable_id', $act->id)
             ->exists();
     }
 

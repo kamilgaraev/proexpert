@@ -12,7 +12,7 @@ class PaymentSchedule extends Model
     use HasFactory;
 
     protected $fillable = [
-        'invoice_id',
+        'payment_document_id',
         'installment_number',
         'due_date',
         'amount',
@@ -32,9 +32,9 @@ class PaymentSchedule extends Model
     // RELATIONSHIPS
     // ==========================================
 
-    public function invoice(): BelongsTo
+    public function paymentDocument(): BelongsTo
     {
-        return $this->belongsTo(Invoice::class);
+        return $this->belongsTo(PaymentDocument::class);
     }
 
     public function paymentTransaction(): BelongsTo
@@ -46,9 +46,9 @@ class PaymentSchedule extends Model
     // SCOPES
     // ==========================================
 
-    public function scopeForInvoice($query, int $invoiceId)
+    public function scopeForPaymentDocument($query, int $paymentDocumentId)
     {
-        return $query->where('invoice_id', $invoiceId);
+        return $query->where('payment_document_id', $paymentDocumentId);
     }
 
     public function scopePending($query)

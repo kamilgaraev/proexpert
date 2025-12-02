@@ -79,32 +79,64 @@ class UsageTracker
     /**
      * Рассчитывает стоимость использования LLM
      * 
-     * @param int $tokens Общее количество токенов (для обратной совместимости)
+     * @param int $totalTokens Общее количество токенов (для обратной совместимости)
      * @param string $model Название модели
-     * @param array|null $responseData Детальная информация о токенах (опционально)
+     * @param int|null $inputTokens Количество входных токенов (если доступно)
+     * @param int|null $outputTokens Количество выходных токенов (если доступно)
+     * @param bool $isAsync Использовать асинхронный режим для Yandex моделей
      * @return float Стоимость в рублях
      */
-    public function calculateCost(int $tokens, string $model = 'gpt-4o-mini', ?array $responseData = null): float
+    public function calculateCost(int $totalTokens, string $model, ?int $inputTokens = null, ?int $outputTokens = null, bool $isAsync = false): float
     {
         // Определяем провайдера по названию модели
         $provider = $this->detectProvider($model);
         
-        // Для DeepSeek используем детальную информацию о cache, если доступна
-        if ($provider === 'deepseek' && $responseData) {
-            return $this->calculateDeepSeekCost($responseData);
+        // Если input/output токены не указаны, используем примерное соотношение 75/25
+        $inputTokens = $inputTokens ?? (int) ($totalTokens * 0.75);
+        $outputTokens = $outputTokens ?? ($totalTokens - $inputTokens);
+
+        // Цены за 1000 токенов в рублях (для Yandex) или за 1M токенов в USD (для других)
+        if ($provider === 'yandex') {
+            // Проверяем, это Alice AI или обычный YandexGPT
+            $isAliceAI = str_contains($model, 'aliceai');
+            
+            if ($isAliceAI) {
+                // Alice AI LLM цены
+                if ($isAsync) {
+                    // Асинхронный режим: 0.25₽ за 1K input, 1.00₽ за 1K output
+                    $inputPricePerK = 0.25;
+                    $outputPricePerK = 1.00;
+                } else {
+                    // Синхронный режим: 0.50₽ за 1K input, 2.00₽ за 1K output
+                    $inputPricePerK = 0.50;
+                    $outputPricePerK = 2.00;
+                }
+                
+                return ($inputTokens / 1000 * $inputPricePerK) + 
+                       ($outputTokens / 1000 * $outputPricePerK);
+            } else {
+                // Обычный YandexGPT: ~₽400 за 1M токенов (входные и выходные одинаково)
+                $pricePerMillion = 400;
+                return ($totalTokens / 1000000) * $pricePerMillion;
+            }
         }
         
-        // Для других провайдеров используем стандартный расчет
-        // Разделяем токены на input и output (примерное соотношение 75/25)
-        $inputTokens = (int) ($tokens * 0.75);
-        $outputTokens = $tokens - $inputTokens;
-
-        // Цены за 1M токенов в USD
+        // Для DeepSeek используем специальный расчет (если переданы детальные данные)
+        if ($provider === 'deepseek') {
+            // DeepSeek цены в USD за 1M токенов
+            $inputCacheMissPrice = 0.28;  // $0.28 за 1M (cache miss)
+            $outputPrice = 0.42;           // $0.42 за 1M (output)
+            
+            // Без информации о cache считаем все как cache miss
+            $costUsd = ($inputTokens / 1000000 * $inputCacheMissPrice) + 
+                      ($outputTokens / 1000000 * $outputPrice);
+            
+            $rubPerDollar = 100;
+            return $costUsd * $rubPerDollar;
+        }
+        
+        // OpenAI и другие провайдеры
         $pricing = match($provider) {
-            'yandex' => [
-                'input' => 4.0,    // ~₽400 за 1M токенов = ~$4 (при курсе 100₽/$)
-                'output' => 4.0,
-            ],
             'openai' => [
                 'input' => 0.15,   // GPT-4o-mini: $0.15 за 1M input
                 'output' => 0.60,  // GPT-4o-mini: $0.60 за 1M output
@@ -118,9 +150,7 @@ class UsageTracker
         $costUsd = ($inputTokens / 1000000 * $pricing['input']) + 
                    ($outputTokens / 1000000 * $pricing['output']);
 
-        // Конвертируем в рубли (курс можно вынести в конфиг)
         $rubPerDollar = 100;
-        
         return $costUsd * $rubPerDollar;
     }
 
@@ -168,7 +198,10 @@ class UsageTracker
             return 'deepseek';
         }
         
-        if (str_contains($model, 'yandexgpt') || str_contains($model, 'gpt://')) {
+        // Yandex модели (включая Alice AI)
+        if (str_contains($model, 'yandexgpt') || 
+            str_contains($model, 'aliceai') || 
+            str_contains($model, 'gpt://')) {
             return 'yandex';
         }
         

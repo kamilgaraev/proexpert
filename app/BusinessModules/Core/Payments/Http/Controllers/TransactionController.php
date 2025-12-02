@@ -22,11 +22,16 @@ class TransactionController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             
             $query = PaymentTransaction::where('organization_id', $organizationId)
-                ->with(['invoice']);
+                ->with(['paymentDocument']);
             
             // Фильтры
+            if ($request->has('payment_document_id')) {
+                $query->where('payment_document_id', $request->input('payment_document_id'));
+            }
+            
+            // Поддержка старого параметра для обратной совместимости (если нужно)
             if ($request->has('invoice_id')) {
-                $query->where('invoice_id', $request->input('invoice_id'));
+                $query->where('payment_document_id', $request->input('invoice_id'));
             }
             
             if ($request->has('project_id')) {
@@ -85,7 +90,7 @@ class TransactionController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             
             $transaction = PaymentTransaction::where('organization_id', $organizationId)
-                ->with(['invoice', 'createdByUser', 'approvedByUser'])
+                ->with(['paymentDocument', 'createdByUser', 'approvedByUser'])
                 ->findOrFail($id);
             
             return response()->json([
@@ -253,7 +258,7 @@ class TransactionController extends Controller
             
             // Создать транзакцию возврата
             $refundTransaction = PaymentTransaction::create([
-                'invoice_id' => $originalTransaction->invoice_id,
+                'payment_document_id' => $originalTransaction->payment_document_id,
                 'organization_id' => $organizationId,
                 'project_id' => $originalTransaction->project_id,
                 'amount' => -$refundAmount,
@@ -275,20 +280,17 @@ class TransactionController extends Controller
                 'status' => 'refunded',
             ]);
             
-            // Обновить счёт
-            $invoice = $originalTransaction->invoice;
-            if ($invoice) {
-                $invoice->paid_amount -= $refundAmount;
-                $invoice->remaining_amount += $refundAmount;
+            // Обновить документ
+            $document = $originalTransaction->paymentDocument;
+            if ($document) {
+                $document->paid_amount -= $refundAmount;
+                $document->remaining_amount += $refundAmount;
                 
-                // Обновить статус
-                if ($invoice->remaining_amount >= $invoice->total_amount) {
-                    $invoice->status = $invoice->status === 'paid' ? 'issued' : $invoice->status;
-                } elseif ($invoice->paid_amount > 0) {
-                    $invoice->status = 'partially_paid';
-                }
+                // Обновить статус через сервис
+                $paymentDocumentService = app(\App\BusinessModules\Core\Payments\Services\PaymentDocumentService::class);
+                $paymentDocumentService->updateStatus($document);
                 
-                $invoice->save();
+                $document->save();
             }
             
             return response()->json([

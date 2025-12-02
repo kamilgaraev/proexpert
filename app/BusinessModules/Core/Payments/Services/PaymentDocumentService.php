@@ -2,9 +2,12 @@
 
 namespace App\BusinessModules\Core\Payments\Services;
 
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\BusinessModules\Core\Payments\Events\PaymentDocumentCreated;
 use App\BusinessModules\Core\Payments\Events\PaymentRequestReceived;
 use App\Models\Contract;
@@ -497,6 +500,122 @@ class PaymentDocumentService
             'overdue_count' => $documents->filter(fn($d) => $d->isOverdue())->count(),
             'overdue_amount' => $documents->filter(fn($d) => $d->isOverdue())->sum('remaining_amount'),
         ];
+    }
+
+    /**
+     * Отметить документ как оплаченный
+     */
+    public function markAsPaid(PaymentDocument $document, PaymentTransaction $transaction): void
+    {
+        $document->update([
+            'status' => PaymentDocumentStatus::PAID,
+            'paid_at' => $transaction->transaction_date ?? now(),
+        ]);
+
+        Log::info('payment_document.marked_as_paid', [
+            'document_id' => $document->id,
+            'transaction_id' => $transaction->id,
+        ]);
+    }
+
+    /**
+     * Обновить статус документа на основе оплаченной суммы
+     */
+    public function updateStatus(PaymentDocument $document): void
+    {
+        $oldStatus = $document->status;
+        
+        // Определяем новый статус на основе оплаченной суммы
+        if ($document->remaining_amount <= 0) {
+            $newStatus = PaymentDocumentStatus::PAID;
+        } elseif ($document->paid_amount > 0) {
+            $newStatus = PaymentDocumentStatus::PARTIALLY_PAID;
+        } elseif ($document->status === PaymentDocumentStatus::DRAFT) {
+            // Если документ в черновике, не меняем статус
+            return;
+        } else {
+            // Для других статусов оставляем как есть, если нет оплаты
+            return;
+        }
+
+        if ($oldStatus !== $newStatus) {
+            $document->update(['status' => $newStatus]);
+            
+            Log::info('payment_document.status_updated', [
+                'document_id' => $document->id,
+                'old_status' => $oldStatus->value,
+                'new_status' => $newStatus->value,
+                'paid_amount' => $document->paid_amount,
+                'remaining_amount' => $document->remaining_amount,
+            ]);
+        }
+    }
+
+    /**
+     * Создать документ из акта выполненных работ
+     */
+    public function createFromAct(\App\Models\ContractPerformanceAct $act, InvoiceDirection $direction): PaymentDocument
+    {
+        $contract = $act->contract;
+
+        $data = [
+            'organization_id' => $contract->organization_id,
+            'project_id' => $contract->project_id,
+            'document_type' => PaymentDocumentType::INVOICE,
+            'document_date' => $act->act_date ?? now(),
+            'due_date' => ($act->act_date ?? now())->addDays(30),
+            'direction' => $direction,
+            'invoice_type' => InvoiceType::ACT,
+            'invoiceable_type' => \App\Models\ContractPerformanceAct::class,
+            'invoiceable_id' => $act->id,
+            'amount' => $act->amount ?? 0,
+            'description' => "Счёт по акту №{$act->act_document_number}",
+            'status' => PaymentDocumentStatus::SUBMITTED,
+            'issued_at' => now(),
+            'vat_rate' => 20,
+        ];
+
+        // Определить контрагента
+        if ($direction === InvoiceDirection::OUTGOING) {
+            // Мы должны оплатить подрядчику
+            $data['contractor_id'] = $contract->contractor_id;
+            $data['payee_contractor_id'] = $contract->contractor_id;
+            $data['payer_organization_id'] = $contract->organization_id;
+        } else {
+            // Нам должны оплатить
+            $data['counterparty_organization_id'] = $contract->contractor_id ? 
+                \App\Models\Contractor::find($contract->contractor_id)?->source_organization_id : null;
+            $data['payer_organization_id'] = $data['counterparty_organization_id'];
+            $data['payee_organization_id'] = $contract->organization_id;
+        }
+
+        return $this->create($data);
+    }
+
+    /**
+     * Создать документ из договора
+     */
+    public function createFromContract(Contract $contract, InvoiceType $type, array $additionalData = []): PaymentDocument
+    {
+        $data = array_merge([
+            'organization_id' => $contract->organization_id,
+            'project_id' => $contract->project_id,
+            'document_type' => PaymentDocumentType::INVOICE,
+            'document_date' => now(),
+            'direction' => InvoiceDirection::OUTGOING,
+            'invoice_type' => $type,
+            'invoiceable_type' => Contract::class,
+            'invoiceable_id' => $contract->id,
+            'contractor_id' => $contract->contractor_id,
+            'payee_contractor_id' => $contract->contractor_id,
+            'payer_organization_id' => $contract->organization_id,
+            'description' => "Счёт по договору №{$contract->number}",
+            'status' => PaymentDocumentStatus::SUBMITTED,
+            'issued_at' => now(),
+            'vat_rate' => 20,
+        ], $additionalData);
+
+        return $this->create($data);
     }
 }
 

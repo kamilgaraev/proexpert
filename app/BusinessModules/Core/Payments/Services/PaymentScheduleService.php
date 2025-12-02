@@ -2,7 +2,7 @@
 
 namespace App\BusinessModules\Core\Payments\Services;
 
-use App\BusinessModules\Core\Payments\Models\Invoice;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use Illuminate\Support\Collection;
@@ -13,14 +13,14 @@ class PaymentScheduleService
     /**
      * Создать график платежей
      */
-    public function createSchedule(Invoice $invoice, array $installments): array
+    public function createSchedule(PaymentDocument $document, array $installments): array
     {
         $schedules = [];
         
-        DB::transaction(function () use ($invoice, $installments, &$schedules) {
+        DB::transaction(function () use ($document, $installments, &$schedules) {
             foreach ($installments as $index => $installment) {
                 $schedule = PaymentSchedule::create([
-                    'invoice_id' => $invoice->id,
+                    'payment_document_id' => $document->id,
                     'installment_number' => $index + 1,
                     'due_date' => $installment['due_date'],
                     'amount' => $installment['amount'],
@@ -33,7 +33,7 @@ class PaymentScheduleService
         });
 
         \Log::info('payments.schedule.created', [
-            'invoice_id' => $invoice->id,
+            'payment_document_id' => $document->id,
             'installments_count' => count($schedules),
         ]);
 
@@ -80,10 +80,10 @@ class PaymentScheduleService
     {
         return PaymentSchedule::query()
             ->upcoming($days)
-            ->whereHas('invoice', function ($query) use ($organizationId) {
+            ->whereHas('paymentDocument', function ($query) use ($organizationId) {
                 $query->where('organization_id', $organizationId);
             })
-            ->with('invoice')
+            ->with('paymentDocument')
             ->orderBy('due_date')
             ->get();
     }
@@ -95,10 +95,10 @@ class PaymentScheduleService
     {
         return PaymentSchedule::query()
             ->overdue()
-            ->whereHas('invoice', function ($query) use ($organizationId) {
+            ->whereHas('paymentDocument', function ($query) use ($organizationId) {
                 $query->where('organization_id', $organizationId);
             })
-            ->with('invoice')
+            ->with('paymentDocument')
             ->orderBy('due_date')
             ->get();
     }

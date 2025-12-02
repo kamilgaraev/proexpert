@@ -1,6 +1,5 @@
 <?php
 
-use App\BusinessModules\Core\Payments\Http\Controllers\InvoiceController;
 use App\BusinessModules\Core\Payments\Http\Controllers\DashboardController;
 use App\BusinessModules\Core\Payments\Http\Controllers\TransactionController;
 use App\BusinessModules\Core\Payments\Http\Controllers\ScheduleController;
@@ -42,26 +41,6 @@ Route::prefix('api/v1/admin/payments')
         // ============================================
         Route::get('/templates', [PaymentTemplatesController::class, 'index'])->name('templates.index');
         Route::post('/calculate', [PaymentTemplatesController::class, 'calculate'])->name('calculate');
-        
-        // ============================================
-        // Invoices (Счета)
-        // ============================================
-        Route::prefix('invoices')->name('invoices.')->group(function () {
-            Route::get('/', [InvoiceController::class, 'index'])->name('index');
-            Route::post('/', [InvoiceController::class, 'store'])->name('store');
-            Route::get('/{id}', [InvoiceController::class, 'show'])->name('show');
-            Route::put('/{id}', [InvoiceController::class, 'update'])->name('update');
-            Route::delete('/{id}', [InvoiceController::class, 'destroy'])->name('destroy');
-            
-            // Действия над счётом
-            Route::post('/{id}/issue', [InvoiceController::class, 'issue'])->name('issue');
-            Route::post('/{id}/pay', [InvoiceController::class, 'pay'])->name('pay');
-            Route::post('/{id}/cancel', [InvoiceController::class, 'cancel'])->name('cancel');
-            
-            // Апрувалы
-            Route::post('/{id}/submit-for-approval', [InvoiceController::class, 'submitForApproval'])->name('submit_for_approval');
-            Route::get('/{id}/approval-status', [InvoiceController::class, 'getApprovalStatus'])->name('approval_status');
-        });
         
         // ============================================
         // Transactions (Транзакции)

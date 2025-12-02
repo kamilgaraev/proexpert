@@ -115,7 +115,8 @@ class AIAssistantService
             $cost = $this->usageTracker->calculateCost(
                 $response['tokens_used'],
                 $response['model'],
-                $response // Передаем весь response для извлечения cache информации
+                $response['input_tokens'] ?? null,
+                $response['output_tokens'] ?? null
             );
 
             $this->usageTracker->trackRequest(

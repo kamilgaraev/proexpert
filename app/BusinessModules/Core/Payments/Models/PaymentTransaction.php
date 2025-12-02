@@ -17,7 +17,7 @@ class PaymentTransaction extends Model
     use HasFactory, Immutable;
 
     protected $fillable = [
-        'invoice_id',
+        'payment_document_id',
         'organization_id',
         'project_id',
         'payer_organization_id',
@@ -55,9 +55,9 @@ class PaymentTransaction extends Model
     // RELATIONSHIPS
     // ==========================================
 
-    public function invoice(): BelongsTo
+    public function paymentDocument(): BelongsTo
     {
-        return $this->belongsTo(Invoice::class);
+        return $this->belongsTo(PaymentDocument::class);
     }
 
     public function organization(): BelongsTo
@@ -104,9 +104,9 @@ class PaymentTransaction extends Model
     // SCOPES
     // ==========================================
 
-    public function scopeForInvoice($query, int $invoiceId)
+    public function scopeForPaymentDocument($query, int $paymentDocumentId)
     {
-        return $query->where('invoice_id', $invoiceId);
+        return $query->where('payment_document_id', $paymentDocumentId);
     }
 
     public function scopeForOrganization($query, int $orgId)

@@ -3,7 +3,9 @@
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\BusinessModules\Core\Payments\Models\Invoice;
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use App\Models\Project;
 use Illuminate\Http\JsonResponse;
@@ -41,63 +43,63 @@ class ReportController extends Controller
             $periodFrom = $request->input('period_from');
             $periodTo = $request->input('period_to');
             
-            $query = Invoice::where('organization_id', $organizationId)
-                ->whereBetween('invoice_date', [$periodFrom, $periodTo]);
+            $query = PaymentDocument::where('organization_id', $organizationId)
+                ->whereBetween('document_date', [$periodFrom, $periodTo]);
             
             if ($request->has('project_id')) {
                 $query->where('project_id', $request->input('project_id'));
             }
             
-            $invoices = $query->get();
+            $documents = $query->get();
             
             // Общая статистика
             $summary = [
-                'total_invoiced' => (string) $invoices->sum('total_amount'),
-                'total_paid' => (string) $invoices->sum('paid_amount'),
-                'total_outstanding' => (string) $invoices->sum('remaining_amount'),
-                'invoices_count' => $invoices->count(),
+                'total_invoiced' => (string) $documents->sum('amount'),
+                'total_paid' => (string) $documents->sum('paid_amount'),
+                'total_outstanding' => (string) $documents->sum('remaining_amount'),
+                'documents_count' => $documents->count(),
                 'transactions_count' => PaymentTransaction::where('organization_id', $organizationId)
                     ->whereBetween('transaction_date', [$periodFrom, $periodTo])
                     ->count(),
             ];
             
             // По статусам
-            $byStatus = $invoices->groupBy('status')->map(function ($group) {
+            $byStatus = $documents->groupBy('status')->map(function ($group) {
                 return (string) $group->sum('remaining_amount');
             })->toArray();
             
             // По направлениям
             $byDirection = [
-                'incoming' => (string) $invoices->where('direction', 'incoming')->sum('total_amount'),
-                'outgoing' => (string) $invoices->where('direction', 'outgoing')->sum('total_amount'),
+                'incoming' => (string) $documents->where('direction', InvoiceDirection::INCOMING)->sum('amount'),
+                'outgoing' => (string) $documents->where('direction', InvoiceDirection::OUTGOING)->sum('amount'),
             ];
             
             // По проектам
-            $byProject = $invoices->groupBy('project_id')->map(function ($group, $projectId) {
+            $byProject = $documents->groupBy('project_id')->map(function ($group, $projectId) {
                 $project = $projectId ? Project::find($projectId) : null;
                 return [
                     'project_id' => $projectId,
                     'project_name' => $project?->name ?? 'Без проекта',
-                    'invoiced' => (string) $group->sum('total_amount'),
+                    'invoiced' => (string) $group->sum('amount'),
                     'paid' => (string) $group->sum('paid_amount'),
                     'outstanding' => (string) $group->sum('remaining_amount'),
                 ];
             })->values()->toArray();
             
             // Топ должников
-            $topDebtors = Invoice::where('organization_id', $organizationId)
-                ->where('direction', 'incoming')
-                ->whereIn('status', ['issued', 'partially_paid', 'overdue'])
+            $topDebtors = PaymentDocument::where('organization_id', $organizationId)
+                ->where('direction', InvoiceDirection::INCOMING)
+                ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
                 ->with('counterpartyOrganization')
                 ->get()
                 ->groupBy('counterparty_organization_id')
                 ->map(function ($group) {
                     $org = $group->first()->counterpartyOrganization;
                     return [
-                        'organization_id' => $org->id,
-                        'organization_name' => $org->name,
+                        'organization_id' => $org?->id,
+                        'organization_name' => $org?->name ?? 'Не указано',
                         'debt_amount' => (string) $group->sum('remaining_amount'),
-                        'overdue_invoices_count' => $group->where('status', 'overdue')->count(),
+                        'overdue_documents_count' => $group->filter(fn($d) => $d->isOverdue())->count(),
                     ];
                 })
                 ->sortByDesc('debt_amount')

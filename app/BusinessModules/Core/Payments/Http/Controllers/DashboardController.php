@@ -3,7 +3,9 @@
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\BusinessModules\Core\Payments\Models\Invoice;
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -29,17 +31,17 @@ class DashboardController extends Controller
                     // Основная финансовая сводка
                     'summary' => $this->getSummary($organizationId),
                     
-                    // Счета по статусам (с суммами!)
-                    'invoices_by_status' => $this->getInvoicesByStatus($organizationId),
+                    // Документы по статусам (с суммами!)
+                    'documents_by_status' => $this->getDocumentsByStatus($organizationId),
                     
-                    // Разбивка по типам счетов
-                    'invoices_by_type' => $this->getInvoicesByType($organizationId),
+                    // Разбивка по типам документов
+                    'documents_by_type' => $this->getDocumentsByType($organizationId),
                     
-                    // Просроченные счета (топ-10)
-                    'overdue_invoices' => $this->getOverdueInvoices($organizationId),
+                    // Просроченные документы (топ-10)
+                    'overdue_documents' => $this->getOverdueDocuments($organizationId),
                     
                     // Предстоящие платежи (7 дней)
-                    'upcoming_invoices' => $this->getUpcomingInvoices($organizationId),
+                    'upcoming_documents' => $this->getUpcomingDocuments($organizationId),
                     
                     // Кэш-флоу за период
                     'cash_flow' => $this->getCashFlow($organizationId, $period),
@@ -79,48 +81,52 @@ class DashboardController extends Controller
     private function getSummary(int $organizationId): array
     {
         // Дебиторская задолженность (нам должны)
-        $totalReceivable = Invoice::where('organization_id', $organizationId)
-            ->where('direction', 'incoming')
-            ->whereIn('status', ['issued', 'partially_paid', 'overdue'])
+        $totalReceivable = PaymentDocument::where('organization_id', $organizationId)
+            ->where('direction', InvoiceDirection::INCOMING)
+            ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
             ->sum('remaining_amount');
         
         // Кредиторская задолженность (мы должны)
-        $totalPayable = Invoice::where('organization_id', $organizationId)
-            ->where('direction', 'outgoing')
-            ->whereIn('status', ['issued', 'partially_paid', 'overdue'])
+        $totalPayable = PaymentDocument::where('organization_id', $organizationId)
+            ->where('direction', InvoiceDirection::OUTGOING)
+            ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
             ->sum('remaining_amount');
         
         // Просроченные платежи
-        $overdueAmount = Invoice::where('organization_id', $organizationId)
-            ->where('status', 'overdue')
+        $overdueAmount = PaymentDocument::where('organization_id', $organizationId)
+            ->where('overdue_since', '!=', null)
+            ->orWhere(function ($query) {
+                $query->where('due_date', '<', now())
+                    ->whereIn('status', [PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED]);
+            })
             ->sum('remaining_amount');
         
         // Предстоящие платежи (7 дней)
-        $upcomingPayments7days = Invoice::where('organization_id', $organizationId)
-            ->whereIn('status', ['issued', 'partially_paid'])
+        $upcomingPayments7days = PaymentDocument::where('organization_id', $organizationId)
+            ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
             ->whereBetween('due_date', [now(), now()->addDays(7)])
             ->sum('remaining_amount');
         
         // Оплачено за текущий месяц
-        $paidThisMonth = Invoice::where('organization_id', $organizationId)
+        $paidThisMonth = PaymentDocument::where('organization_id', $organizationId)
             ->whereNotNull('paid_at')
             ->whereBetween('paid_at', [now()->startOfMonth(), now()->endOfMonth()])
             ->sum('paid_amount');
         
         // Выставлено за текущий месяц
-        $issuedThisMonth = Invoice::where('organization_id', $organizationId)
+        $issuedThisMonth = PaymentDocument::where('organization_id', $organizationId)
             ->whereNotNull('issued_at')
             ->whereBetween('issued_at', [now()->startOfMonth(), now()->endOfMonth()])
-            ->sum('total_amount');
+            ->sum('amount');
         
-        // Всего активных счетов
-        $activeInvoicesCount = Invoice::where('organization_id', $organizationId)
-            ->whereIn('status', ['issued', 'partially_paid', 'overdue'])
+        // Всего активных документов
+        $activeInvoicesCount = PaymentDocument::where('organization_id', $organizationId)
+            ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
             ->count();
         
-        // Всего оплаченных счетов
-        $paidInvoicesCount = Invoice::where('organization_id', $organizationId)
-            ->where('status', 'paid')
+        // Всего оплаченных документов
+        $paidInvoicesCount = PaymentDocument::where('organization_id', $organizationId)
+            ->where('status', PaymentDocumentStatus::PAID)
             ->count();
         
         return [
@@ -136,22 +142,22 @@ class DashboardController extends Controller
             'issued_this_month' => (float) $issuedThisMonth,
             
             // Счетчики
-            'active_invoices_count' => $activeInvoicesCount,
-            'paid_invoices_count' => $paidInvoicesCount,
-            'total_invoices_count' => $activeInvoicesCount + $paidInvoicesCount,
+            'active_documents_count' => $activeInvoicesCount,
+            'paid_documents_count' => $paidInvoicesCount,
+            'total_documents_count' => $activeInvoicesCount + $paidInvoicesCount,
         ];
     }
     
     /**
-     * Счета по статусам с суммами
+     * Документы по статусам с суммами
      */
-    private function getInvoicesByStatus(int $organizationId): array
+    private function getDocumentsByStatus(int $organizationId): array
     {
-        $data = Invoice::where('organization_id', $organizationId)
+        $data = PaymentDocument::where('organization_id', $organizationId)
             ->select(
                 'status',
                 DB::raw('COUNT(*) as count'),
-                DB::raw('SUM(total_amount) as total_sum'),
+                DB::raw('SUM(amount) as total_sum'),
                 DB::raw('SUM(paid_amount) as paid_sum'),
                 DB::raw('SUM(remaining_amount) as remaining_sum')
             )
@@ -170,20 +176,20 @@ class DashboardController extends Controller
     }
     
     /**
-     * Разбивка по типам счетов
+     * Разбивка по типам документов
      */
-    private function getInvoicesByType(int $organizationId): array
+    private function getDocumentsByType(int $organizationId): array
     {
-        $data = Invoice::where('organization_id', $organizationId)
+        $data = PaymentDocument::where('organization_id', $organizationId)
             ->select(
-                'invoice_type',
+                'document_type',
                 DB::raw('COUNT(*) as count'),
-                DB::raw('SUM(total_amount) as total_sum'),
+                DB::raw('SUM(amount) as total_sum'),
                 DB::raw('SUM(paid_amount) as paid_sum')
             )
-            ->groupBy('invoice_type')
+            ->groupBy('document_type')
             ->get()
-            ->keyBy(fn($item) => is_object($item->invoice_type) ? $item->invoice_type->value : $item->invoice_type)
+            ->keyBy(fn($item) => is_object($item->document_type) ? $item->document_type->value : $item->document_type)
             ->map(fn($item) => [
                 'count' => $item->count,
                 'total_sum' => (float) $item->total_sum,
@@ -196,28 +202,35 @@ class DashboardController extends Controller
     }
     
     /**
-     * Просроченные счета
+     * Просроченные документы
      */
-    private function getOverdueInvoices(int $organizationId): array
+    private function getOverdueDocuments(int $organizationId): array
     {
-        return Invoice::where('organization_id', $organizationId)
-            ->where('status', 'overdue')
-            ->with(['project:id,name', 'contractor:id,name'])
+        return PaymentDocument::where('organization_id', $organizationId)
+            ->where(function ($query) {
+                $query->whereNotNull('overdue_since')
+                    ->orWhere(function ($q) {
+                        $q->where('due_date', '<', now())
+                            ->whereIn('status', [PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED]);
+                    });
+            })
+            ->with(['project:id,name', 'contractor:id,name', 'counterpartyOrganization:id,name'])
             ->orderBy('due_date', 'asc')
             ->limit(10)
             ->get()
-            ->map(function ($invoice) {
+            ->map(function ($doc) {
                 return [
-                    'id' => $invoice->id,
-                    'invoice_number' => $invoice->invoice_number,
-                    'invoice_type' => is_object($invoice->invoice_type) ? $invoice->invoice_type->value : $invoice->invoice_type,
-                    'direction' => is_object($invoice->direction) ? $invoice->direction->value : $invoice->direction,
-                    'total_amount' => (float) $invoice->total_amount,
-                    'remaining_amount' => (float) $invoice->remaining_amount,
-                    'due_date' => $invoice->due_date,
-                    'days_overdue' => now()->diffInDays($invoice->due_date),
-                    'project_name' => $invoice->project?->name ?? 'Без проекта',
-                    'counterparty' => $invoice->counterpartyOrganization?->name ?? $invoice->contractor?->name ?? 'Не указано',
+                    'id' => $doc->id,
+                    'document_number' => $doc->document_number,
+                    'document_type' => is_object($doc->document_type) ? $doc->document_type->value : $doc->document_type,
+                    'invoice_type' => $doc->invoice_type ? (is_object($doc->invoice_type) ? $doc->invoice_type->value : $doc->invoice_type) : null,
+                    'direction' => $doc->direction ? (is_object($doc->direction) ? $doc->direction->value : $doc->direction) : null,
+                    'amount' => (float) $doc->amount,
+                    'remaining_amount' => (float) $doc->remaining_amount,
+                    'due_date' => $doc->due_date,
+                    'days_overdue' => $doc->due_date ? now()->diffInDays($doc->due_date) : 0,
+                    'project_name' => $doc->project?->name ?? 'Без проекта',
+                    'counterparty' => $doc->counterpartyOrganization?->name ?? $doc->contractor?->name ?? 'Не указано',
                 ];
             })
             ->toArray();
@@ -226,26 +239,27 @@ class DashboardController extends Controller
     /**
      * Предстоящие платежи
      */
-    private function getUpcomingInvoices(int $organizationId): array
+    private function getUpcomingDocuments(int $organizationId): array
     {
-        return Invoice::where('organization_id', $organizationId)
-            ->whereIn('status', ['issued', 'partially_paid'])
+        return PaymentDocument::where('organization_id', $organizationId)
+            ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
             ->whereBetween('due_date', [now(), now()->addDays(7)])
             ->with(['project:id,name', 'contractor:id,name'])
             ->orderBy('due_date', 'asc')
             ->limit(10)
             ->get()
-            ->map(function ($invoice) {
+            ->map(function ($doc) {
                 return [
-                    'id' => $invoice->id,
-                    'invoice_number' => $invoice->invoice_number,
-                    'invoice_type' => is_object($invoice->invoice_type) ? $invoice->invoice_type->value : $invoice->invoice_type,
-                    'direction' => is_object($invoice->direction) ? $invoice->direction->value : $invoice->direction,
-                    'total_amount' => (float) $invoice->total_amount,
-                    'remaining_amount' => (float) $invoice->remaining_amount,
-                    'due_date' => $invoice->due_date,
-                    'days_until_due' => now()->diffInDays($invoice->due_date, false),
-                    'project_name' => $invoice->project?->name ?? 'Без проекта',
+                    'id' => $doc->id,
+                    'document_number' => $doc->document_number,
+                    'document_type' => is_object($doc->document_type) ? $doc->document_type->value : $doc->document_type,
+                    'invoice_type' => $doc->invoice_type ? (is_object($doc->invoice_type) ? $doc->invoice_type->value : $doc->invoice_type) : null,
+                    'direction' => $doc->direction ? (is_object($doc->direction) ? $doc->direction->value : $doc->direction) : null,
+                    'amount' => (float) $doc->amount,
+                    'remaining_amount' => (float) $doc->remaining_amount,
+                    'due_date' => $doc->due_date,
+                    'days_until_due' => $doc->due_date ? now()->diffInDays($doc->due_date, false) : 0,
+                    'project_name' => $doc->project?->name ?? 'Без проекта',
                 ];
             })
             ->toArray();
@@ -260,16 +274,16 @@ class DashboardController extends Controller
         
         // Входящие платежи
         $incoming = PaymentTransaction::where('payment_transactions.organization_id', $organizationId)
-            ->join('invoices', 'payment_transactions.invoice_id', '=', 'invoices.id')
-            ->where('invoices.direction', 'incoming')
+            ->join('payment_documents', 'payment_transactions.payment_document_id', '=', 'payment_documents.id')
+            ->where('payment_documents.direction', InvoiceDirection::INCOMING)
             ->where('payment_transactions.status', 'completed')
             ->where('payment_transactions.transaction_date', '>=', $startDate)
             ->sum('payment_transactions.amount');
         
         // Исходящие платежи
         $outgoing = PaymentTransaction::where('payment_transactions.organization_id', $organizationId)
-            ->join('invoices', 'payment_transactions.invoice_id', '=', 'invoices.id')
-            ->where('invoices.direction', 'outgoing')
+            ->join('payment_documents', 'payment_transactions.payment_document_id', '=', 'payment_documents.id')
+            ->where('payment_documents.direction', InvoiceDirection::OUTGOING)
             ->where('payment_transactions.status', 'completed')
             ->where('payment_transactions.transaction_date', '>=', $startDate)
             ->sum('payment_transactions.amount');
@@ -289,17 +303,17 @@ class DashboardController extends Controller
      */
     private function getTopDebtors(int $organizationId): array
     {
-        return Invoice::where('organization_id', $organizationId)
-            ->where('direction', 'incoming')
-            ->whereIn('status', ['issued', 'partially_paid', 'overdue'])
+        return PaymentDocument::where('organization_id', $organizationId)
+            ->where('direction', InvoiceDirection::INCOMING)
+            ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
             ->select(
                 DB::raw('COALESCE(contractor_id, counterparty_organization_id) as counterparty_id'),
                 DB::raw('CASE 
-                    WHEN contractor_id IS NOT NULL THEN (SELECT name FROM contractors WHERE id = invoices.contractor_id)
-                    ELSE (SELECT name FROM organizations WHERE id = invoices.counterparty_organization_id)
+                    WHEN contractor_id IS NOT NULL THEN (SELECT name FROM contractors WHERE id = payment_documents.contractor_id)
+                    ELSE (SELECT name FROM organizations WHERE id = payment_documents.counterparty_organization_id)
                 END as counterparty_name'),
                 DB::raw('SUM(remaining_amount) as debt'),
-                DB::raw('COUNT(*) as invoices_count')
+                DB::raw('COUNT(*) as documents_count')
             )
             ->groupBy('counterparty_id', 'contractor_id', 'counterparty_organization_id')
             ->orderByDesc('debt')
@@ -308,7 +322,7 @@ class DashboardController extends Controller
             ->map(fn($item) => [
                 'counterparty_name' => $item->counterparty_name ?? 'Не указано',
                 'debt' => (float) $item->debt,
-                'invoices_count' => $item->invoices_count,
+                'documents_count' => $item->documents_count,
             ])
             ->toArray();
     }
@@ -318,17 +332,17 @@ class DashboardController extends Controller
      */
     private function getTopCreditors(int $organizationId): array
     {
-        return Invoice::where('organization_id', $organizationId)
-            ->where('direction', 'outgoing')
-            ->whereIn('status', ['issued', 'partially_paid', 'overdue'])
+        return PaymentDocument::where('organization_id', $organizationId)
+            ->where('direction', InvoiceDirection::OUTGOING)
+            ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
             ->select(
                 DB::raw('COALESCE(contractor_id, counterparty_organization_id) as counterparty_id'),
                 DB::raw('CASE 
-                    WHEN contractor_id IS NOT NULL THEN (SELECT name FROM contractors WHERE id = invoices.contractor_id)
-                    ELSE (SELECT name FROM organizations WHERE id = invoices.counterparty_organization_id)
+                    WHEN contractor_id IS NOT NULL THEN (SELECT name FROM contractors WHERE id = payment_documents.contractor_id)
+                    ELSE (SELECT name FROM organizations WHERE id = payment_documents.counterparty_organization_id)
                 END as counterparty_name'),
                 DB::raw('SUM(remaining_amount) as payable'),
-                DB::raw('COUNT(*) as invoices_count')
+                DB::raw('COUNT(*) as documents_count')
             )
             ->groupBy('counterparty_id', 'contractor_id', 'counterparty_organization_id')
             ->orderByDesc('payable')
@@ -337,7 +351,7 @@ class DashboardController extends Controller
             ->map(fn($item) => [
                 'counterparty_name' => $item->counterparty_name ?? 'Не указано',
                 'payable' => (float) $item->payable,
-                'invoices_count' => $item->invoices_count,
+                'documents_count' => $item->documents_count,
             ])
             ->toArray();
     }
@@ -347,24 +361,24 @@ class DashboardController extends Controller
      */
     private function getByProjects(int $organizationId): array
     {
-        return Invoice::where('invoices.organization_id', $organizationId)
-            ->leftJoin('projects', 'invoices.project_id', '=', 'projects.id')
+        return PaymentDocument::where('payment_documents.organization_id', $organizationId)
+            ->leftJoin('projects', 'payment_documents.project_id', '=', 'projects.id')
             ->select(
-                'invoices.project_id',
+                'payment_documents.project_id',
                 'projects.name as project_name',
-                DB::raw('COUNT(*) as invoices_count'),
-                DB::raw('SUM(invoices.total_amount) as total_sum'),
-                DB::raw('SUM(invoices.paid_amount) as paid_sum'),
-                DB::raw('SUM(invoices.remaining_amount) as remaining_sum')
+                DB::raw('COUNT(*) as documents_count'),
+                DB::raw('SUM(payment_documents.amount) as total_sum'),
+                DB::raw('SUM(payment_documents.paid_amount) as paid_sum'),
+                DB::raw('SUM(payment_documents.remaining_amount) as remaining_sum')
             )
-            ->groupBy('invoices.project_id', 'projects.name')
+            ->groupBy('payment_documents.project_id', 'projects.name')
             ->orderByDesc('total_sum')
             ->limit(10)
             ->get()
             ->map(fn($item) => [
                 'project_id' => $item->project_id,
                 'project_name' => $item->project_name ?? 'Без проекта',
-                'invoices_count' => $item->invoices_count,
+                'documents_count' => $item->documents_count,
                 'total_sum' => (float) $item->total_sum,
                 'paid_sum' => (float) $item->paid_sum,
                 'remaining_sum' => (float) $item->remaining_sum,
@@ -382,13 +396,13 @@ class DashboardController extends Controller
         
         // Группировка по дням
         $trends = PaymentTransaction::where('payment_transactions.organization_id', $organizationId)
-            ->join('invoices', 'payment_transactions.invoice_id', '=', 'invoices.id')
+            ->join('payment_documents', 'payment_transactions.payment_document_id', '=', 'payment_documents.id')
             ->where('payment_transactions.status', 'completed')
             ->where('payment_transactions.transaction_date', '>=', $startDate)
             ->select(
                 DB::raw('DATE(payment_transactions.transaction_date) as date'),
-                DB::raw('SUM(CASE WHEN invoices.direction = \'incoming\' THEN payment_transactions.amount ELSE 0 END) as incoming'),
-                DB::raw('SUM(CASE WHEN invoices.direction = \'outgoing\' THEN payment_transactions.amount ELSE 0 END) as outgoing')
+                DB::raw('SUM(CASE WHEN payment_documents.direction = \'incoming\' THEN payment_transactions.amount ELSE 0 END) as incoming'),
+                DB::raw('SUM(CASE WHEN payment_documents.direction = \'outgoing\' THEN payment_transactions.amount ELSE 0 END) as outgoing')
             )
             ->groupBy('date')
             ->orderBy('date', 'asc')
@@ -415,13 +429,13 @@ class DashboardController extends Controller
             ->whereNull('deleted_at')
             ->sum('total_amount');
         
-        // Сумма выставленных счетов по контрактам
-        $invoicedAmount = Invoice::where('organization_id', $organizationId)
+        // Сумма выставленных документов по контрактам
+        $invoicedAmount = PaymentDocument::where('organization_id', $organizationId)
             ->where('invoiceable_type', 'App\\Models\\Contract')
-            ->sum('total_amount');
+            ->sum('amount');
         
         // Оплаченная сумма по контрактам
-        $paidAmount = Invoice::where('organization_id', $organizationId)
+        $paidAmount = PaymentDocument::where('organization_id', $organizationId)
             ->where('invoiceable_type', 'App\\Models\\Contract')
             ->sum('paid_amount');
         

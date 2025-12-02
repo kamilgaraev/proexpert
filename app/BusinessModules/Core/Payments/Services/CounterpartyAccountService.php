@@ -3,9 +3,9 @@
 namespace App\BusinessModules\Core\Payments\Services;
 
 use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
-use App\BusinessModules\Core\Payments\Enums\InvoiceStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Models\CounterpartyAccount;
-use App\BusinessModules\Core\Payments\Models\Invoice;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use Illuminate\Support\Facades\DB;
 
 class CounterpartyAccountService
@@ -31,18 +31,18 @@ class CounterpartyAccountService
     }
 
     /**
-     * Обновить баланс на основе счёта
+     * Обновить баланс на основе документа
      */
-    public function updateBalanceFromInvoice(Invoice $invoice): void
+    public function updateBalanceFromDocument(PaymentDocument $document): void
     {
-        if (!$invoice->counterparty_organization_id && !$invoice->contractor_id) {
+        if (!$document->counterparty_organization_id && !$document->contractor_id) {
             return;
         }
 
         $account = $this->getOrCreateAccount(
-            $invoice->organization_id,
-            $invoice->counterparty_organization_id,
-            $invoice->contractor_id
+            $document->organization_id,
+            $document->counterparty_organization_id,
+            $document->contractor_id
         );
 
         $this->recalculateBalance($account);
@@ -54,20 +54,20 @@ class CounterpartyAccountService
     public function recalculateBalance(CounterpartyAccount $account): void
     {
         DB::transaction(function () use ($account) {
-            // Дебиторка (нам должны) - incoming unpaid invoices
-            $receivable = Invoice::where('organization_id', $account->organization_id)
+            // Дебиторка (нам должны) - incoming unpaid documents
+            $receivable = PaymentDocument::where('organization_id', $account->organization_id)
                 ->where('direction', InvoiceDirection::INCOMING)
-                ->whereIn('status', [InvoiceStatus::ISSUED, InvoiceStatus::PARTIALLY_PAID, InvoiceStatus::OVERDUE])
+                ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
                 ->where(function ($query) use ($account) {
                     $query->where('counterparty_organization_id', $account->counterparty_organization_id)
                         ->orWhere('contractor_id', $account->counterparty_contractor_id);
                 })
                 ->sum('remaining_amount');
 
-            // Кредиторка (мы должны) - outgoing unpaid invoices
-            $payable = Invoice::where('organization_id', $account->organization_id)
+            // Кредиторка (мы должны) - outgoing unpaid documents
+            $payable = PaymentDocument::where('organization_id', $account->organization_id)
                 ->where('direction', InvoiceDirection::OUTGOING)
-                ->whereIn('status', [InvoiceStatus::ISSUED, InvoiceStatus::PARTIALLY_PAID, InvoiceStatus::OVERDUE])
+                ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
                 ->where(function ($query) use ($account) {
                     $query->where('counterparty_organization_id', $account->counterparty_organization_id)
                         ->orWhere('contractor_id', $account->counterparty_contractor_id);

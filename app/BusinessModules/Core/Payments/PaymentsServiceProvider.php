@@ -4,7 +4,6 @@ namespace App\BusinessModules\Core\Payments;
 
 use App\BusinessModules\Core\Payments\Jobs\ProcessOverdueInvoicesJob;
 use App\BusinessModules\Core\Payments\Services\CounterpartyAccountService;
-use App\BusinessModules\Core\Payments\Services\InvoiceService;
 use App\BusinessModules\Core\Payments\Services\PaymentAccessControl;
 use App\BusinessModules\Core\Payments\Services\PaymentScheduleService;
 use App\BusinessModules\Core\Payments\Services\PaymentTransactionService;
@@ -13,7 +12,6 @@ use App\BusinessModules\Core\Payments\Services\PaymentDocumentStateMachine;
 use App\BusinessModules\Core\Payments\Services\ApprovalWorkflowService;
 use App\BusinessModules\Core\Payments\Services\PaymentValidationService;
 use App\BusinessModules\Core\Payments\Services\PaymentRequestService;
-use App\BusinessModules\Core\Payments\Services\LegacyPaymentAdapter;
 use App\BusinessModules\Core\Payments\Services\PaymentScheduleGenerator;
 use App\BusinessModules\Core\Payments\Services\PaymentAuditService;
 use App\BusinessModules\Core\Payments\Services\PaymentExportService;
@@ -21,9 +19,7 @@ use App\BusinessModules\Core\Payments\Services\Reports\CashFlowReportService;
 use App\BusinessModules\Core\Payments\Services\Reports\AgingAnalysisReportService;
 use App\BusinessModules\Core\Payments\Services\OffsetService;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
-use App\BusinessModules\Core\Payments\Models\Invoice;
 use App\BusinessModules\Core\Payments\Observers\PaymentDocumentObserver;
-use App\BusinessModules\Core\Payments\Observers\InvoiceObserver;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Event;
@@ -54,7 +50,6 @@ class PaymentsServiceProvider extends ServiceProvider
         $this->app->singleton(PaymentPurposeGenerator::class);
         
         // Bind сервисы (новый экземпляр при каждом resolve)
-        $this->app->bind(InvoiceService::class);
         $this->app->bind(PaymentTransactionService::class);
         $this->app->bind(PaymentScheduleService::class);
         $this->app->bind(PaymentDocumentService::class);
@@ -68,9 +63,6 @@ class PaymentsServiceProvider extends ServiceProvider
         // New services
         $this->app->bind(PaymentOrderPdfService::class);
         $this->app->bind(BankStatementImportService::class);
-        
-        // Legacy адаптер
-        $this->app->bind(LegacyPaymentAdapter::class);
     }
 
     /**
@@ -130,7 +122,6 @@ class PaymentsServiceProvider extends ServiceProvider
     protected function registerObservers(): void
     {
         PaymentDocument::observe(PaymentDocumentObserver::class);
-        Invoice::observe(InvoiceObserver::class);
     }
 }
 

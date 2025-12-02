@@ -40,13 +40,12 @@ class PaymentScheduleGenerator
             // Создаем записи графика
             foreach ($installments as $index => $installment) {
                 $schedule = PaymentSchedule::create([
-                    'invoice_id' => $document->id,
+                    'payment_document_id' => $document->id,
                     'installment_number' => $index + 1,
                     'amount' => $installment['amount'],
                     'due_date' => $installment['due_date'],
-                    'description' => $installment['description'] ?? "Платеж №" . ($index + 1),
+                    'notes' => $installment['description'] ?? "Платеж №" . ($index + 1),
                     'status' => 'pending',
-                    'metadata' => $installment['metadata'] ?? [],
                 ]);
 
                 $schedules->push($schedule);

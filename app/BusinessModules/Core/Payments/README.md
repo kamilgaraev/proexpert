@@ -1,6 +1,6 @@
 # Payments Module
 
-Базовый (Core) системный модуль для управления счетами (invoices), платежами (payment transactions), графиками платежей и взаиморасчетами между организациями в холдинге.
+Базовый (Core) системный модуль для управления платежными документами (payment documents), платежами (payment transactions), графиками платежей и взаиморасчетами между организациями в холдинге.
 
 ## Ключевые особенности
 
@@ -10,17 +10,19 @@
 - **Частичные оплаты** и графики платежей
 - **Автоматическая просрочка** и напоминания
 - **Дебиторская/кредиторская задолженность**
+- **Workflow утверждения** платежных документов
 
 ## Основные сущности
 
-### Invoice (Счёт)
-Финансовое обязательство - кто кому должен оплатить
+### PaymentDocument (Платежный документ)
+Единая сущность для всех типов платежных документов: счета, платежные требования, платежные поручения и т.д.
+Поддерживает направление (incoming/outgoing), тип счета (act, advance, progress и т.д.) и polymorphic связь с источниками.
 
 ### PaymentTransaction (Транзакция платежа)
-Фактический платёж - перевод средств
+Фактический платёж - перевод средств, связанный с PaymentDocument
 
 ### PaymentSchedule (График платежей)
-Этапные платежи и рассрочка
+Этапные платежи и рассрочка, связанные с PaymentDocument
 
 ### CounterpartyAccount (Взаиморасчёты)
 Учёт взаимных обязательств между организациями
@@ -28,7 +30,7 @@
 ## Интеграция
 
 Модуль интегрируется с:
-- ActReporting - создание счетов по актам
+- ActReporting - создание документов по актам
 - ContractManagement - графики платежей по договорам
 - BasicWarehouse/AdvancedWarehouse - оплата поставщикам
 - BudgetEstimates - этапные платежи по сметам
@@ -36,13 +38,14 @@
 ## API Endpoints
 
 ```
-GET    /api/v1/admin/payments/invoices
-POST   /api/v1/admin/payments/invoices
-GET    /api/v1/admin/payments/invoices/{id}
-PUT    /api/v1/admin/payments/invoices/{id}
-DELETE /api/v1/admin/payments/invoices/{id}
-POST   /api/v1/admin/payments/invoices/{id}/pay
-POST   /api/v1/admin/payments/invoices/{id}/cancel
+GET    /api/v1/admin/payments/documents
+POST   /api/v1/admin/payments/documents
+GET    /api/v1/admin/payments/documents/{id}
+PUT    /api/v1/admin/payments/documents/{id}
+DELETE /api/v1/admin/payments/documents/{id}
+POST   /api/v1/admin/payments/documents/{id}/submit
+POST   /api/v1/admin/payments/documents/{id}/register-payment
+POST   /api/v1/admin/payments/documents/{id}/cancel
 
 GET    /api/v1/admin/payments/transactions
 POST   /api/v1/admin/payments/transactions
@@ -57,9 +60,9 @@ GET    /api/v1/admin/payments/reports/aging
 ## Permissions
 
 - `payments.view` - просмотр платежей
-- `payments.invoice.create` - создание счетов
-- `payments.invoice.edit` - редактирование счетов
-- `payments.invoice.cancel` - отмена счетов
+- `payments.document.create` - создание документов
+- `payments.document.edit` - редактирование документов
+- `payments.document.cancel` - отмена документов
 - `payments.transaction.register` - регистрация платежей
 - `payments.transaction.approve` - подтверждение платежей
 - `payments.reports.view` - просмотр отчётов

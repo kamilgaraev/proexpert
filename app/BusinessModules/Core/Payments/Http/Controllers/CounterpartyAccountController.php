@@ -3,7 +3,9 @@
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\BusinessModules\Core\Payments\Models\Invoice;
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Organization;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -24,18 +26,18 @@ class CounterpartyAccountController extends Controller
             $counterparty = Organization::findOrFail($counterpartyOrganizationId);
             
             // Наши долги (мы должны контрагенту)
-            $ourDebts = Invoice::where('organization_id', $organizationId)
+            $ourDebts = PaymentDocument::where('organization_id', $organizationId)
                 ->where('counterparty_organization_id', $counterpartyOrganizationId)
-                ->where('direction', 'outgoing')
-                ->whereIn('status', ['issued', 'partially_paid', 'overdue'])
+                ->where('direction', InvoiceDirection::OUTGOING)
+                ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
                 ->orderBy('due_date', 'asc')
                 ->get();
             
             // Их долги (контрагент должен нам)
-            $theirDebts = Invoice::where('organization_id', $organizationId)
+            $theirDebts = PaymentDocument::where('organization_id', $organizationId)
                 ->where('counterparty_organization_id', $counterpartyOrganizationId)
-                ->where('direction', 'incoming')
-                ->whereIn('status', ['issued', 'partially_paid', 'overdue'])
+                ->where('direction', InvoiceDirection::INCOMING)
+                ->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED])
                 ->orderBy('due_date', 'asc')
                 ->get();
             
@@ -44,7 +46,7 @@ class CounterpartyAccountController extends Controller
             $balance = $theirDebtAmount - $ourDebtAmount;
             
             // Последняя транзакция
-            $lastTransaction = Invoice::where('organization_id', $organizationId)
+            $lastTransaction = PaymentDocument::where('organization_id', $organizationId)
                 ->where('counterparty_organization_id', $counterpartyOrganizationId)
                 ->orderBy('updated_at', 'desc')
                 ->first();
@@ -58,23 +60,23 @@ class CounterpartyAccountController extends Controller
                     'receivable' => (string) $theirDebtAmount,
                     'payable' => (string) $ourDebtAmount,
                     'last_transaction_date' => $lastTransaction?->updated_at?->toDateString(),
-                    'invoices' => [
-                        'our_debts' => $ourDebts->map(function ($invoice) {
+                    'documents' => [
+                        'our_debts' => $ourDebts->map(function ($doc) {
                             return [
-                                'id' => $invoice->id,
-                                'invoice_number' => $invoice->invoice_number,
-                                'total_amount' => $invoice->total_amount,
-                                'remaining_amount' => $invoice->remaining_amount,
-                                'due_date' => $invoice->due_date,
+                                'id' => $doc->id,
+                                'document_number' => $doc->document_number,
+                                'amount' => $doc->amount,
+                                'remaining_amount' => $doc->remaining_amount,
+                                'due_date' => $doc->due_date,
                             ];
                         }),
-                        'their_debts' => $theirDebts->map(function ($invoice) {
+                        'their_debts' => $theirDebts->map(function ($doc) {
                             return [
-                                'id' => $invoice->id,
-                                'invoice_number' => $invoice->invoice_number,
-                                'total_amount' => $invoice->total_amount,
-                                'remaining_amount' => $invoice->remaining_amount,
-                                'due_date' => $invoice->due_date,
+                                'id' => $doc->id,
+                                'document_number' => $doc->document_number,
+                                'amount' => $doc->amount,
+                                'remaining_amount' => $doc->remaining_amount,
+                                'due_date' => $doc->due_date,
                             ];
                         }),
                     ],

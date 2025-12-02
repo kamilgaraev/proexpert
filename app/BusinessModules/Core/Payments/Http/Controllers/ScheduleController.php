@@ -3,8 +3,8 @@
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentSchedule;
-use App\BusinessModules\Core\Payments\Models\Invoice;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -21,10 +21,10 @@ class ScheduleController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $query = PaymentSchedule::with(['invoice']);
+            $query = PaymentSchedule::with(['paymentDocument']);
             
-            if ($request->has('invoice_id')) {
-                $query->where('invoice_id', $request->input('invoice_id'));
+            if ($request->has('payment_document_id')) {
+                $query->where('payment_document_id', $request->input('payment_document_id'));
             }
             
             if ($request->has('status')) {
@@ -57,7 +57,7 @@ class ScheduleController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validator = Validator::make($request->all(), [
-            'invoice_id' => 'required|integer|exists:invoices,id',
+            'payment_document_id' => 'required|integer|exists:payment_documents,id',
             'installments' => 'required|array|min:1',
             'installments.*.installment_number' => 'required|integer|min:1',
             'installments.*.due_date' => 'required|date',
@@ -76,17 +76,17 @@ class ScheduleController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             
-            $invoice = Invoice::where('organization_id', $organizationId)
-                ->findOrFail($request->input('invoice_id'));
+            $document = PaymentDocument::where('organization_id', $organizationId)
+                ->findOrFail($request->input('payment_document_id'));
             
             // Проверка суммы
             $totalScheduleAmount = collect($request->input('installments'))
                 ->sum('amount');
             
-            if ($totalScheduleAmount != $invoice->total_amount) {
+            if ($totalScheduleAmount != $document->amount) {
                 return response()->json([
                     'success' => false,
-                    'error' => 'Сумма графика платежей должна равняться сумме счёта',
+                    'error' => 'Сумма графика платежей должна равняться сумме документа',
                 ], 422);
             }
             
@@ -95,7 +95,7 @@ class ScheduleController extends Controller
             DB::transaction(function () use ($request, &$schedules) {
                 foreach ($request->input('installments') as $installment) {
                     $schedule = PaymentSchedule::create([
-                        'invoice_id' => $request->input('invoice_id'),
+                        'payment_document_id' => $request->input('payment_document_id'),
                         'installment_number' => $installment['installment_number'],
                         'due_date' => $installment['due_date'],
                         'amount' => $installment['amount'],
@@ -135,8 +135,8 @@ class ScheduleController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $days = (int) $request->input('days', 30);
             
-            $schedules = PaymentSchedule::with(['invoice', 'invoice.project', 'invoice.contractor'])
-                ->whereHas('invoice', function ($query) use ($organizationId) {
+            $schedules = PaymentSchedule::with(['paymentDocument', 'paymentDocument.project', 'paymentDocument.contractor', 'paymentDocument.counterpartyOrganization'])
+                ->whereHas('paymentDocument', function ($query) use ($organizationId) {
                     $query->where('organization_id', $organizationId);
                 })
                 ->where('status', 'pending')
@@ -146,16 +146,17 @@ class ScheduleController extends Controller
                 ->map(function ($schedule) {
                     return [
                         'id' => $schedule->id,
-                        'invoice_id' => $schedule->invoice_id,
-                        'invoice_number' => $schedule->invoice->invoice_number,
-                        'invoice_type' => is_object($schedule->invoice->invoice_type) ? $schedule->invoice->invoice_type->value : $schedule->invoice->invoice_type,
-                        'direction' => is_object($schedule->invoice->direction) ? $schedule->invoice->direction->value : $schedule->invoice->direction,
+                        'payment_document_id' => $schedule->payment_document_id,
+                        'document_number' => $schedule->paymentDocument->document_number,
+                        'document_type' => is_object($schedule->paymentDocument->document_type) ? $schedule->paymentDocument->document_type->value : $schedule->paymentDocument->document_type,
+                        'invoice_type' => $schedule->paymentDocument->invoice_type ? (is_object($schedule->paymentDocument->invoice_type) ? $schedule->paymentDocument->invoice_type->value : $schedule->paymentDocument->invoice_type) : null,
+                        'direction' => $schedule->paymentDocument->direction ? (is_object($schedule->paymentDocument->direction) ? $schedule->paymentDocument->direction->value : $schedule->paymentDocument->direction) : null,
                         'installment_number' => $schedule->installment_number,
                         'due_date' => $schedule->due_date,
                         'amount' => (float) $schedule->amount,
                         'days_until_due' => now()->diffInDays($schedule->due_date, false),
-                        'project_name' => $schedule->invoice->project?->name ?? 'Без проекта',
-                        'counterparty' => $schedule->invoice->counterpartyOrganization?->name ?? $schedule->invoice->contractor?->name ?? 'Не указано',
+                        'project_name' => $schedule->paymentDocument->project?->name ?? 'Без проекта',
+                        'counterparty' => $schedule->paymentDocument->counterpartyOrganization?->name ?? $schedule->paymentDocument->contractor?->name ?? 'Не указано',
                         'notes' => $schedule->notes,
                     ];
                 });
@@ -298,8 +299,8 @@ class ScheduleController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
             
-            $schedules = PaymentSchedule::with(['invoice', 'invoice.project', 'invoice.contractor'])
-                ->whereHas('invoice', function ($query) use ($organizationId) {
+            $schedules = PaymentSchedule::with(['paymentDocument', 'paymentDocument.project', 'paymentDocument.contractor', 'paymentDocument.counterpartyOrganization'])
+                ->whereHas('paymentDocument', function ($query) use ($organizationId) {
                     $query->where('organization_id', $organizationId);
                 })
                 ->where('status', 'pending')
@@ -309,16 +310,17 @@ class ScheduleController extends Controller
                 ->map(function ($schedule) {
                     return [
                         'id' => $schedule->id,
-                        'invoice_id' => $schedule->invoice_id,
-                        'invoice_number' => $schedule->invoice->invoice_number,
-                        'invoice_type' => is_object($schedule->invoice->invoice_type) ? $schedule->invoice->invoice_type->value : $schedule->invoice->invoice_type,
-                        'direction' => is_object($schedule->invoice->direction) ? $schedule->invoice->direction->value : $schedule->invoice->direction,
+                        'payment_document_id' => $schedule->payment_document_id,
+                        'document_number' => $schedule->paymentDocument->document_number,
+                        'document_type' => is_object($schedule->paymentDocument->document_type) ? $schedule->paymentDocument->document_type->value : $schedule->paymentDocument->document_type,
+                        'invoice_type' => $schedule->paymentDocument->invoice_type ? (is_object($schedule->paymentDocument->invoice_type) ? $schedule->paymentDocument->invoice_type->value : $schedule->paymentDocument->invoice_type) : null,
+                        'direction' => $schedule->paymentDocument->direction ? (is_object($schedule->paymentDocument->direction) ? $schedule->paymentDocument->direction->value : $schedule->paymentDocument->direction) : null,
                         'installment_number' => $schedule->installment_number,
                         'due_date' => $schedule->due_date,
                         'amount' => (float) $schedule->amount,
                         'days_overdue' => now()->diffInDays($schedule->due_date),
-                        'project_name' => $schedule->invoice->project?->name ?? 'Без проекта',
-                        'counterparty' => $schedule->invoice->counterpartyOrganization?->name ?? $schedule->invoice->contractor?->name ?? 'Не указано',
+                        'project_name' => $schedule->paymentDocument->project?->name ?? 'Без проекта',
+                        'counterparty' => $schedule->paymentDocument->counterpartyOrganization?->name ?? $schedule->paymentDocument->contractor?->name ?? 'Не указано',
                         'notes' => $schedule->notes,
                     ];
                 });

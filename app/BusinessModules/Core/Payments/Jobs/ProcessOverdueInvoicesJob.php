@@ -2,9 +2,9 @@
 
 namespace App\BusinessModules\Core\Payments\Jobs;
 
-use App\BusinessModules\Core\Payments\Enums\InvoiceStatus;
-use App\BusinessModules\Core\Payments\Models\Invoice;
-use App\BusinessModules\Core\Payments\Services\InvoiceService;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -19,22 +19,27 @@ class ProcessOverdueInvoicesJob implements ShouldQueue
     /**
      * Execute the job.
      */
-    public function handle(InvoiceService $invoiceService): void
+    public function handle(PaymentDocumentService $documentService): void
     {
-        // Найти все неоплаченные счета с просроченным due_date
-        $overdueInvoices = Invoice::whereIn('status', [
-                InvoiceStatus::ISSUED,
-                InvoiceStatus::PARTIALLY_PAID,
+        // Найти все неоплаченные документы с просроченным due_date
+        $overdueDocuments = PaymentDocument::whereIn('status', [
+                PaymentDocumentStatus::SUBMITTED,
+                PaymentDocumentStatus::APPROVED,
+                PaymentDocumentStatus::PARTIALLY_PAID,
+                PaymentDocumentStatus::SCHEDULED,
             ])
             ->where('due_date', '<', Carbon::now())
+            ->whereNull('overdue_since')
             ->get();
 
-        foreach ($overdueInvoices as $invoice) {
-            $invoiceService->markAsOverdue($invoice);
+        foreach ($overdueDocuments as $document) {
+            $document->update([
+                'overdue_since' => now(),
+            ]);
         }
 
         \Log::info('payments.overdue.processed', [
-            'count' => $overdueInvoices->count(),
+            'count' => $overdueDocuments->count(),
         ]);
     }
 }

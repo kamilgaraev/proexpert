@@ -2,48 +2,49 @@
 
 namespace App\BusinessModules\Core\Payments\Services;
 
-use App\BusinessModules\Core\Payments\Enums\InvoiceStatus;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentTransactionStatus;
-use App\BusinessModules\Core\Payments\Models\Invoice;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Models\PaymentTransaction;
+use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
 use Illuminate\Support\Facades\DB;
 
 class PaymentTransactionService
 {
     public function __construct(
-        private readonly InvoiceService $invoiceService,
+        private readonly PaymentDocumentService $paymentDocumentService,
     ) {}
 
     /**
      * Зарегистрировать платёж
      */
-    public function registerPayment(Invoice $invoice, array $data): PaymentTransaction
+    public function registerPayment(PaymentDocument $document, array $data): PaymentTransaction
     {
         // Валидация суммы
         if ($data['amount'] <= 0) {
             throw new \InvalidArgumentException('Сумма платежа должна быть положительной');
         }
 
-        if ($data['amount'] > $invoice->remaining_amount) {
-            throw new \DomainException('Сумма платежа превышает остаток по счёту');
+        if ($data['amount'] > $document->remaining_amount) {
+            throw new \DomainException('Сумма платежа превышает остаток по документу');
         }
 
-        return DB::transaction(function () use ($invoice, $data) {
+        return DB::transaction(function () use ($document, $data) {
             // Создать транзакцию
             $transaction = PaymentTransaction::create(array_merge($data, [
-                'invoice_id' => $invoice->id,
-                'organization_id' => $invoice->organization_id,
-                'project_id' => $invoice->project_id,
+                'payment_document_id' => $document->id,
+                'organization_id' => $document->organization_id,
+                'project_id' => $document->project_id,
                 'status' => PaymentTransactionStatus::COMPLETED,
                 'created_by_user_id' => auth()->id(),
             ]));
 
-            // Обновить счёт
-            $this->updateInvoiceFromTransaction($invoice, $transaction);
+            // Обновить документ
+            $this->updateDocumentFromTransaction($document, $transaction);
 
             \Log::info('payments.transaction.registered', [
                 'transaction_id' => $transaction->id,
-                'invoice_id' => $invoice->id,
+                'payment_document_id' => $document->id,
                 'amount' => $transaction->amount,
             ]);
 
@@ -70,7 +71,7 @@ class PaymentTransactionService
             'status' => PaymentTransactionStatus::COMPLETED,
         ]);
 
-        $this->updateInvoiceFromTransaction($transaction->invoice, $transaction);
+        $this->updateDocumentFromTransaction($transaction->paymentDocument, $transaction);
 
         return true;
     }
@@ -111,7 +112,7 @@ class PaymentTransactionService
         return DB::transaction(function () use ($transaction, $amount, $reason) {
             // Создать обратную транзакцию
             $refund = PaymentTransaction::create([
-                'invoice_id' => $transaction->invoice_id,
+                'payment_document_id' => $transaction->payment_document_id,
                 'organization_id' => $transaction->organization_id,
                 'project_id' => $transaction->project_id,
                 'amount' => -$amount, // Отрицательная сумма
@@ -128,17 +129,17 @@ class PaymentTransactionService
                 'status' => PaymentTransactionStatus::REFUNDED,
             ]);
 
-            // Обновить счёт
-            $invoice = $transaction->invoice;
-            $invoice->paid_amount -= $amount;
-            $invoice->remaining_amount += $amount;
+            // Обновить документ
+            $document = $transaction->paymentDocument;
+            $document->paid_amount -= $amount;
+            $document->remaining_amount += $amount;
             
-            if ($invoice->status === InvoiceStatus::PAID) {
-                $invoice->status = InvoiceStatus::PARTIALLY_PAID;
-                $invoice->paid_at = null;
+            if ($document->status === PaymentDocumentStatus::PAID) {
+                $document->status = PaymentDocumentStatus::PARTIALLY_PAID;
+                $document->paid_at = null;
             }
             
-            $invoice->save();
+            $document->save();
 
             \Log::info('payments.transaction.refunded', [
                 'original_transaction_id' => $transaction->id,
@@ -151,27 +152,27 @@ class PaymentTransactionService
     }
 
     /**
-     * Обновить счёт после транзакции
+     * Обновить документ после транзакции
      */
-    private function updateInvoiceFromTransaction(Invoice $invoice, PaymentTransaction $transaction): void
+    private function updateDocumentFromTransaction(PaymentDocument $document, PaymentTransaction $transaction): void
     {
         if ($transaction->amount < 0) {
             // Возврат - не обновляем здесь
             return;
         }
 
-        $invoice->paid_amount += $transaction->amount;
-        $invoice->remaining_amount = $invoice->calculateRemainingAmount();
+        $document->paid_amount += $transaction->amount;
+        $document->remaining_amount = $document->calculateRemainingAmount();
 
-        if ($invoice->remaining_amount <= 0) {
-            $invoice->status = InvoiceStatus::PAID;
-            $invoice->paid_at = now();
-            $this->invoiceService->markAsPaid($invoice, $transaction);
-        } elseif ($invoice->paid_amount > 0) {
-            $invoice->status = InvoiceStatus::PARTIALLY_PAID;
+        if ($document->remaining_amount <= 0) {
+            $document->status = PaymentDocumentStatus::PAID;
+            $document->paid_at = now();
+            $this->paymentDocumentService->markAsPaid($document, $transaction);
+        } elseif ($document->paid_amount > 0 && $document->status !== PaymentDocumentStatus::PARTIALLY_PAID) {
+            $document->status = PaymentDocumentStatus::PARTIALLY_PAID;
         }
 
-        $invoice->save();
+        $document->save();
     }
 }
 

@@ -129,11 +129,17 @@ class YandexGPTProvider implements LLMProviderInterface
         $message = $alternative['message'] ?? [];
         $usage = $data['result']['usage'] ?? [];
 
+        $inputTokens = $usage['inputTextTokens'] ?? 0;
+        $outputTokens = $usage['completionTokens'] ?? 0;
+        $totalTokens = $inputTokens + $outputTokens;
+
         return [
             'content' => $message['text'] ?? '',
             'role' => $message['role'] ?? 'assistant',
-            'tokens_used' => ($usage['inputTextTokens'] ?? 0) + ($usage['completionTokens'] ?? 0),
-            'model' => $data['result']['modelVersion'] ?? 'yandexgpt',
+            'tokens_used' => $totalTokens,
+            'input_tokens' => $inputTokens,
+            'output_tokens' => $outputTokens,
+            'model' => $data['result']['modelVersion'] ?? $this->modelUri,
             'finish_reason' => $alternative['status'] ?? 'ALTERNATIVE_STATUS_FINAL',
         ];
     }

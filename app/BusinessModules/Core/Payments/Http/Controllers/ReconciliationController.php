@@ -3,7 +3,8 @@
 namespace App\BusinessModules\Core\Payments\Http\Controllers;
 
 use App\Http\Controllers\Controller;
-use App\BusinessModules\Core\Payments\Models\Invoice;
+use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Organization;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -41,28 +42,28 @@ class ReconciliationController extends Controller
             
             $counterparty = Organization::findOrFail($counterpartyOrganizationId);
             
-            // Получить счета за период
-            $query = Invoice::where('organization_id', $organizationId)
+            // Получить документы за период
+            $query = PaymentDocument::where('organization_id', $organizationId)
                 ->where('counterparty_organization_id', $counterpartyOrganizationId)
-                ->whereBetween('invoice_date', [
+                ->whereBetween('document_date', [
                     $request->input('period_from'),
                     $request->input('period_to'),
                 ]);
             
             if (!$request->input('include_paid', false)) {
-                $query->whereIn('status', ['issued', 'partially_paid', 'overdue']);
+                $query->whereIn('status', [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::APPROVED, PaymentDocumentStatus::PARTIALLY_PAID, PaymentDocumentStatus::SCHEDULED]);
             }
             
-            $invoices = $query->get();
+            $documents = $query->get();
             
             // Рассчитать балансы
-            $ourDebts = $invoices->where('direction', 'outgoing')->sum('remaining_amount');
-            $theirDebts = $invoices->where('direction', 'incoming')->sum('remaining_amount');
+            $ourDebts = $documents->where('direction', 'outgoing')->sum('remaining_amount');
+            $theirDebts = $documents->where('direction', 'incoming')->sum('remaining_amount');
             $balance = $theirDebts - $ourDebts;
             
             // Генерация номера акта сверки
             $reconciliationNumber = 'RECON-' . now()->format('Y') . '-' . str_pad(
-                Invoice::whereYear('created_at', now()->year)->count() + 1,
+                PaymentDocument::whereYear('created_at', now()->year)->count() + 1,
                 3,
                 '0',
                 STR_PAD_LEFT
@@ -75,9 +76,9 @@ class ReconciliationController extends Controller
                 'period_to' => $request->input('period_to'),
                 'our_balance' => (string) -$ourDebts,
                 'their_balance' => (string) $theirDebts,
-                'invoices_count' => $invoices->count(),
-                'transactions_count' => $invoices->sum(function ($invoice) {
-                    return $invoice->transactions()->count();
+                'documents_count' => $documents->count(),
+                'transactions_count' => $documents->sum(function ($doc) {
+                    return $doc->transactions()->count();
                 }),
                 'document_url' => null, // TODO: генерация PDF
             ];

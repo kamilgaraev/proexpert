@@ -2,6 +2,8 @@
 
 namespace App\BusinessModules\Core\Payments\Models;
 
+use App\BusinessModules\Core\Payments\Enums\InvoiceDirection;
+use App\BusinessModules\Core\Payments\Enums\InvoiceType;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\Models\Contractor;
@@ -27,10 +29,16 @@ class PaymentDocument extends Model
         'document_type',
         'document_number',
         'document_date',
+        'direction',
+        'invoice_type',
+        'invoiceable_type',
+        'invoiceable_id',
         'payer_organization_id',
         'payer_contractor_id',
         'payee_organization_id',
         'payee_contractor_id',
+        'counterparty_organization_id',
+        'contractor_id',
         'amount',
         'currency',
         'vat_amount',
@@ -46,6 +54,7 @@ class PaymentDocument extends Model
         'payment_terms_days',
         'description',
         'payment_purpose',
+        'payment_terms',
         'attached_documents',
         'bank_account',
         'bank_bik',
@@ -57,8 +66,10 @@ class PaymentDocument extends Model
         'approved_by_user_id',
         'submitted_at',
         'approved_at',
+        'issued_at',
         'scheduled_at',
         'paid_at',
+        'overdue_since',
     ];
 
     protected $casts = [
@@ -71,13 +82,17 @@ class PaymentDocument extends Model
         'paid_amount' => 'decimal:2',
         'remaining_amount' => 'decimal:2',
         'document_type' => PaymentDocumentType::class,
+        'direction' => InvoiceDirection::class,
+        'invoice_type' => InvoiceType::class,
         'status' => PaymentDocumentStatus::class,
         'attached_documents' => 'array',
         'metadata' => 'array',
         'submitted_at' => 'datetime',
         'approved_at' => 'datetime',
+        'issued_at' => 'datetime',
         'scheduled_at' => 'datetime',
         'paid_at' => 'datetime',
+        'overdue_since' => 'datetime',
     ];
 
     protected $attributes = [
@@ -121,9 +136,24 @@ class PaymentDocument extends Model
         return $this->belongsTo(Contractor::class, 'payee_contractor_id');
     }
 
+    public function counterpartyOrganization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class, 'counterparty_organization_id');
+    }
+
+    public function contractor(): BelongsTo
+    {
+        return $this->belongsTo(Contractor::class);
+    }
+
     public function source(): MorphTo
     {
         return $this->morphTo();
+    }
+
+    public function invoiceable(): MorphTo
+    {
+        return $this->morphTo('invoiceable');
     }
 
     public function createdBy(): BelongsTo
@@ -143,7 +173,7 @@ class PaymentDocument extends Model
 
     public function transactions(): HasMany
     {
-        return $this->hasMany(PaymentTransaction::class, 'invoice_id'); // совместимость со старой схемой
+        return $this->hasMany(PaymentTransaction::class, 'payment_document_id');
     }
 
     /**
@@ -210,6 +240,21 @@ class PaymentDocument extends Model
         return $query->whereIn('status', ['approved', 'scheduled', 'partially_paid']);
     }
 
+    public function scopeIncoming($query)
+    {
+        return $query->where('direction', InvoiceDirection::INCOMING);
+    }
+
+    public function scopeOutgoing($query)
+    {
+        return $query->where('direction', InvoiceDirection::OUTGOING);
+    }
+
+    public function scopeByInvoiceType($query, InvoiceType $type)
+    {
+        return $query->where('invoice_type', $type);
+    }
+
     // ==========================================
     // HELPERS
     // ==========================================
@@ -263,6 +308,10 @@ class PaymentDocument extends Model
      */
     public function isOverdue(): bool
     {
+        if ($this->overdue_since) {
+            return true;
+        }
+        
         return $this->due_date && $this->due_date < Carbon::now() 
             && !in_array($this->status->value, ['paid', 'cancelled', 'rejected']);
     }

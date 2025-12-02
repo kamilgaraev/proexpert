@@ -3,7 +3,7 @@
 namespace App\BusinessModules\Core\Payments\Services;
 
 use App\BusinessModules\Core\MultiOrganization\Contracts\OrganizationScopeInterface;
-use App\BusinessModules\Core\Payments\Models\Invoice;
+use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Organization;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\DB;
 /**
  * Критически важный сервис для project-based изоляции платежей
  * 
- * Обеспечивает безопасный доступ к счетам и транзакциям с учётом:
+ * Обеспечивает безопасный доступ к документам и транзакциям с учётом:
  * - Прав организации
  * - Участия в проектах
  * - Иерархии холдинга
@@ -24,24 +24,24 @@ class PaymentAccessControl
     ) {}
 
     /**
-     * Проверка доступа к счёту
+     * Проверка доступа к документу
      * 
      * @param int $organizationId ID текущей организации
-     * @param Invoice $invoice Счёт для проверки
+     * @param PaymentDocument $document Документ для проверки
      * @return bool Есть ли доступ
      */
-    public function canAccessInvoice(int $organizationId, Invoice $invoice): bool
+    public function canAccessDocument(int $organizationId, PaymentDocument $document): bool
     {
-        // 1. Если счёт принадлежит организации - да
-        if ($invoice->organization_id === $organizationId) {
+        // 1. Если документ принадлежит организации - да
+        if ($document->organization_id === $organizationId) {
             return true;
         }
         
-        // 2. Если счёт привязан к проекту
-        if ($invoice->project_id) {
+        // 2. Если документ привязан к проекту
+        if ($document->project_id) {
             // Проверить участие в проекте через ProjectOrganization
             $isParticipant = DB::table('project_organization')
-                ->where('project_id', $invoice->project_id)
+                ->where('project_id', $document->project_id)
                 ->where('organization_id', $organizationId)
                 ->exists();
             
@@ -51,12 +51,12 @@ class PaymentAccessControl
         }
         
         // 3. Проверка холдинга (головная видит дочерние)
-        if ($this->isInHoldingHierarchy($organizationId, $invoice->organization_id)) {
+        if ($this->isInHoldingHierarchy($organizationId, $document->organization_id)) {
             return true;
         }
         
         // 4. Контрагент (взаиморасчёты)
-        if ($invoice->counterparty_organization_id === $organizationId) {
+        if ($document->counterparty_organization_id === $organizationId) {
             return true;
         }
         
@@ -64,11 +64,21 @@ class PaymentAccessControl
     }
 
     /**
+     * Проверка доступа к счёту (алиас для обратной совместимости)
+     * 
+     * @deprecated Используйте canAccessDocument
+     */
+    public function canAccessInvoice(int $organizationId, PaymentDocument $document): bool
+    {
+        return $this->canAccessDocument($organizationId, $document);
+    }
+
+    /**
      * Применить фильтр доступа к query builder
      * 
-     * КРИТИЧЕСКИ ВАЖНО: ВСЕГДА использовать этот метод при выборке счетов!
+     * КРИТИЧЕСКИ ВАЖНО: ВСЕГДА использовать этот метод при выборке документов!
      * 
-     * @param Builder $query Query builder для Invoice
+     * @param Builder $query Query builder для PaymentDocument
      * @param int $organizationId ID текущей организации
      * @return Builder Модифицированный query
      */
@@ -78,13 +88,13 @@ class PaymentAccessControl
         $orgIds = $this->orgScope->getOrganizationScope($organizationId);
         
         return $query->where(function ($q) use ($organizationId, $orgIds) {
-            // 1. Свои счета
+            // 1. Свои документы
             $q->where('organization_id', $organizationId)
-              // 2. ИЛИ счета контрагентов (взаиморасчёты)
+              // 2. ИЛИ документы контрагентов (взаиморасчёты)
               ->orWhere('counterparty_organization_id', $organizationId)
-              // 3. ИЛИ счета организаций из холдинга
+              // 3. ИЛИ документы организаций из холдинга
               ->orWhereIn('organization_id', $orgIds)
-              // 4. ИЛИ счета по проектам, где участвуем
+              // 4. ИЛИ документы по проектам, где участвуем
               ->orWhereHas('project', function ($projectQuery) use ($organizationId) {
                   $projectQuery->whereHas('organizations', function ($orgQuery) use ($organizationId) {
                       $orgQuery->where('organization_id', $organizationId);
@@ -160,13 +170,13 @@ class PaymentAccessControl
     }
 
     /**
-     * Проверка прав на создание счёта
+     * Проверка прав на создание документа
      * 
      * @param int $organizationId
-     * @param array $data Данные для создания счёта
+     * @param array $data Данные для создания документа
      * @return bool
      */
-    public function canCreateInvoice(int $organizationId, array $data): bool
+    public function canCreateDocument(int $organizationId, array $data): bool
     {
         // Проверяем, что organization_id совпадает с текущей организацией
         if (isset($data['organization_id']) && $data['organization_id'] !== $organizationId) {
@@ -189,31 +199,61 @@ class PaymentAccessControl
     }
 
     /**
-     * Проверка прав на обновление счёта
+     * Проверка прав на создание счёта (алиас для обратной совместимости)
      * 
-     * @param int $organizationId
-     * @param Invoice $invoice
-     * @return bool
+     * @deprecated Используйте canCreateDocument
      */
-    public function canUpdateInvoice(int $organizationId, Invoice $invoice): bool
+    public function canCreateInvoice(int $organizationId, array $data): bool
     {
-        // Обновлять может только организация-владелец
-        return $invoice->organization_id === $organizationId;
+        return $this->canCreateDocument($organizationId, $data);
     }
 
     /**
-     * Проверка прав на удаление счёта
+     * Проверка прав на обновление документа
      * 
      * @param int $organizationId
-     * @param Invoice $invoice
+     * @param PaymentDocument $document
      * @return bool
      */
-    public function canDeleteInvoice(int $organizationId, Invoice $invoice): bool
+    public function canUpdateDocument(int $organizationId, PaymentDocument $document): bool
+    {
+        // Обновлять может только организация-владелец
+        return $document->organization_id === $organizationId;
+    }
+
+    /**
+     * Проверка прав на обновление счёта (алиас для обратной совместимости)
+     * 
+     * @deprecated Используйте canUpdateDocument
+     */
+    public function canUpdateInvoice(int $organizationId, PaymentDocument $document): bool
+    {
+        return $this->canUpdateDocument($organizationId, $document);
+    }
+
+    /**
+     * Проверка прав на удаление документа
+     * 
+     * @param int $organizationId
+     * @param PaymentDocument $document
+     * @return bool
+     */
+    public function canDeleteDocument(int $organizationId, PaymentDocument $document): bool
     {
         // Удалять может только организация-владелец
         // И только если нет транзакций
-        return $invoice->organization_id === $organizationId 
-            && $invoice->transactions()->count() === 0;
+        return $document->organization_id === $organizationId 
+            && $document->transactions()->count() === 0;
+    }
+
+    /**
+     * Проверка прав на удаление счёта (алиас для обратной совместимости)
+     * 
+     * @deprecated Используйте canDeleteDocument
+     */
+    public function canDeleteInvoice(int $organizationId, PaymentDocument $document): bool
+    {
+        return $this->canDeleteDocument($organizationId, $document);
     }
 
     /**
