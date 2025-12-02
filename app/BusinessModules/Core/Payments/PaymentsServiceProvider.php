@@ -87,6 +87,7 @@ class PaymentsServiceProvider extends ServiceProvider
             $this->commands([
                 \App\BusinessModules\Core\Payments\Console\Commands\ResetInvoiceNumberSequences::class,
                 \App\BusinessModules\Core\Payments\Console\Commands\MigrateInvoicesToPaymentDocuments::class,
+                \App\BusinessModules\Core\Payments\Console\Commands\RestoreInvoiceableRelations::class,
                 \App\BusinessModules\Core\Payments\Console\Commands\SendDailyPaymentDigest::class,
             ]);
         }

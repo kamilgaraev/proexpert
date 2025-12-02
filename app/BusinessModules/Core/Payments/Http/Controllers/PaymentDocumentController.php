@@ -783,21 +783,6 @@ class PaymentDocumentController extends Controller
             }
         }
         
-        // Если contract_id все еще null, но есть project_id, пытаемся найти контракт через проект
-        if (!$contractId && $document->project_id) {
-            try {
-                $project = $document->project;
-                if ($project && method_exists($project, 'contracts')) {
-                    // Пытаемся найти контракт через проект (если есть такая связь)
-                    $contract = $project->contracts()->first();
-                    if ($contract) {
-                        $contractId = $contract->id;
-                    }
-                }
-            } catch (\Exception $e) {
-                // Игнорируем ошибки при поиске контракта через проект
-            }
-        }
 
         return array_merge($basic, [
             'description' => $document->description,
