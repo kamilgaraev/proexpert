@@ -321,8 +321,19 @@ class PaymentDocumentService
         }
 
         if (isset($filters['contract_id'])) {
-            $query->where('source_type', 'App\\Models\\Contract')
-                  ->where('source_id', $filters['contract_id']);
+            $contractId = $filters['contract_id'];
+            // Ищем документы, связанные с контрактом напрямую или через акт
+            $query->where(function($q) use ($contractId) {
+                // Прямая связь с контрактом
+                $q->where(function($subQ) use ($contractId) {
+                    $subQ->where('invoiceable_type', 'App\\Models\\Contract')
+                         ->where('invoiceable_id', $contractId);
+                })
+                // Или связь через акт этого контракта
+                ->orWhereHas('invoiceable', function($actQuery) use ($contractId) {
+                    $actQuery->where('contract_id', $contractId);
+                });
+            });
         }
 
         if (isset($filters['date_from'])) {
