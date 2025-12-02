@@ -281,18 +281,36 @@ class User extends Authenticatable implements JWTSubject
 
         $orgId = $organizationId ?? $this->current_organization_id;
         if (!$orgId) {
+            \Log::info('isOrganizationOwner: no orgId', [
+                'user_id' => $this->id,
+                'organization_id' => $organizationId,
+                'current_organization_id' => $this->current_organization_id,
+            ]);
             return false;
         }
 
         // 1. Прямая проверка роли в контексте организации
         $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($orgId);
-        if ($this->hasRole('organization_owner', $context->id)) {
+        $hasDirectRole = $this->hasRole('organization_owner', $context->id);
+        
+        \Log::info('isOrganizationOwner: direct check', [
+            'user_id' => $this->id,
+            'organization_id' => $orgId,
+            'context_id' => $context->id,
+            'has_direct_role' => $hasDirectRole,
+        ]);
+        
+        if ($hasDirectRole) {
             return true;
         }
 
         // 2. Проверка роли в родительских организациях (иерархия)
         $targetOrg = \App\Models\Organization::find($orgId);
         if (!$targetOrg) {
+            \Log::warning('isOrganizationOwner: org not found', [
+                'user_id' => $this->id,
+                'organization_id' => $orgId,
+            ]);
             return false;
         }
 
@@ -308,9 +326,20 @@ class User extends Authenticatable implements JWTSubject
             ->pluck('context.resource_id')
             ->filter();
 
+        \Log::info('isOrganizationOwner: hierarchy check', [
+            'user_id' => $this->id,
+            'target_org_id' => $orgId,
+            'target_org_parent_id' => $targetOrg->parent_organization_id,
+            'owned_org_ids' => $ownedOrgContexts->toArray(),
+        ]);
+
         // Проверяем, является ли целевая организация дочерней от любой организации, где пользователь владелец
         foreach ($ownedOrgContexts as $ownedOrgId) {
             if ($ownedOrgId == $orgId) {
+                \Log::info('isOrganizationOwner: direct match', [
+                    'user_id' => $this->id,
+                    'organization_id' => $orgId,
+                ]);
                 return true; // Прямое совпадение (уже проверили выше, но на всякий случай)
             }
 
@@ -318,12 +347,22 @@ class User extends Authenticatable implements JWTSubject
             $currentOrg = $targetOrg;
             while ($currentOrg && $currentOrg->parent_organization_id) {
                 if ($currentOrg->parent_organization_id == $ownedOrgId) {
+                    \Log::info('isOrganizationOwner: hierarchy match', [
+                        'user_id' => $this->id,
+                        'target_org_id' => $orgId,
+                        'owned_org_id' => $ownedOrgId,
+                        'parent_org_id' => $currentOrg->parent_organization_id,
+                    ]);
                     return true;
                 }
                 $currentOrg = $currentOrg->parentOrganization;
             }
         }
 
+        \Log::info('isOrganizationOwner: no match', [
+            'user_id' => $this->id,
+            'organization_id' => $orgId,
+        ]);
         return false;
     }
 

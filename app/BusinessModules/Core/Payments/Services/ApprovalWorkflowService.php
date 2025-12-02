@@ -263,14 +263,50 @@ class ApprovalWorkflowService
                 }
             }
 
+            // Детальное логирование для отладки
+            Log::info('payment_approval.approve_check', [
+                'user_id' => $userId,
+                'document_id' => $document->id,
+                'document_status' => $document->status->value,
+                'organization_id' => $document->organization_id,
+                'has_approval' => $approval !== null,
+                'is_admin' => $isAdmin,
+                'approval_count' => PaymentApproval::where('payment_document_id', $document->id)->count(),
+                'pending_approval_count' => PaymentApproval::where('payment_document_id', $document->id)
+                    ->where('status', 'pending')
+                    ->count(),
+            ]);
+
             if (!$approval) {
-                // Если даже админ не нашел что утверждать (документ не в статусе pending или нет правил)
-                if ($isAdmin && $document->status === PaymentDocumentStatus::PENDING_APPROVAL) {
-                    // Форс-мажор: документ висит, а апрувов нет. Утверждаем напрямую.
-                    $this->stateMachine->approve($document, $userId);
-                    DB::commit();
-                    return true;
+                // Если админ, но нет записей утверждения - проверяем статус документа
+                if ($isAdmin) {
+                    // Для админа разрешаем утверждение в статусах submitted или pending_approval
+                    if (in_array($document->status, [PaymentDocumentStatus::SUBMITTED, PaymentDocumentStatus::PENDING_APPROVAL])) {
+                        // Форс-мажор: документ висит, а апрувов нет. Утверждаем напрямую.
+                        Log::info('payment_approval.admin_override', [
+                            'user_id' => $userId,
+                            'document_id' => $document->id,
+                            'status' => $document->status->value,
+                        ]);
+                        $this->stateMachine->approve($document, $userId);
+                        DB::commit();
+                        return true;
+                    } else {
+                        Log::warning('payment_approval.admin_cannot_approve_wrong_status', [
+                            'user_id' => $userId,
+                            'document_id' => $document->id,
+                            'status' => $document->status->value,
+                        ]);
+                        throw new \DomainException("Документ находится в статусе '{$document->status->label()}' и не требует утверждения");
+                    }
                 }
+                
+                Log::warning('payment_approval.no_rights', [
+                    'user_id' => $userId,
+                    'document_id' => $document->id,
+                    'is_admin' => $isAdmin,
+                    'has_approval' => false,
+                ]);
                 throw new \DomainException('У вас нет прав на утверждение этого документа или он не требует утверждения');
             }
 
