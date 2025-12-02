@@ -740,22 +740,62 @@ class PaymentDocumentController extends Controller
         
         // Форматируем invoiceable для ответа
         $invoiceable = null;
-        if ($document->invoiceable) {
-            $invoiceable = [
-                'type' => $document->invoiceable_type,
-                'id' => $document->invoiceable_id,
-            ];
-            
-            // Если это Contract, добавляем дополнительную информацию
-            if ($document->invoiceable_type === 'App\\Models\\Contract') {
-                $invoiceable['number'] = $document->invoiceable->number ?? null;
-                $invoiceable['subject'] = $document->invoiceable->subject ?? null;
+        
+        // Пытаемся загрузить invoiceable, если есть тип и ID
+        if ($document->invoiceable_type && $document->invoiceable_id) {
+            try {
+                // Проверяем, не является ли это старым классом Invoice
+                if (!str_contains($document->invoiceable_type, 'Payments\\Models\\Invoice')) {
+                    $invoiceableModel = $document->invoiceable;
+                    
+                    if ($invoiceableModel) {
+                        $invoiceable = [
+                            'type' => $document->invoiceable_type,
+                            'id' => $document->invoiceable_id,
+                        ];
+                        
+                        // Если это Contract, добавляем дополнительную информацию
+                        if ($document->invoiceable_type === 'App\\Models\\Contract') {
+                            $invoiceable['number'] = $invoiceableModel->number ?? null;
+                            $invoiceable['subject'] = $invoiceableModel->subject ?? null;
+                            $contractId = $document->invoiceable_id;
+                        }
+                        
+                        // Если это Act, добавляем информацию об акте
+                        if ($document->invoiceable_type === 'App\\Models\\ContractPerformanceAct') {
+                            $invoiceable['number'] = $invoiceableModel->number ?? null;
+                            $invoiceable['act_date'] = $invoiceableModel->act_date?->format('Y-m-d') ?? null;
+                            // Если акт связан с контрактом, получаем contract_id из акта
+                            if ($invoiceableModel->contract_id) {
+                                $contractId = $invoiceableModel->contract_id;
+                            }
+                        }
+                    }
+                }
+            } catch (\Error | \Exception $e) {
+                // Класс не найден или ошибка загрузки - оставляем null
+                \Log::debug('payment_document.invoiceable_load_failed', [
+                    'document_id' => $document->id,
+                    'invoiceable_type' => $document->invoiceable_type,
+                    'invoiceable_id' => $document->invoiceable_id,
+                    'error' => $e->getMessage(),
+                ]);
             }
-            
-            // Если это Act, добавляем информацию об акте
-            if ($document->invoiceable_type === 'App\\Models\\ContractPerformanceAct') {
-                $invoiceable['number'] = $document->invoiceable->number ?? null;
-                $invoiceable['act_date'] = $document->invoiceable->act_date?->format('Y-m-d') ?? null;
+        }
+        
+        // Если contract_id все еще null, но есть project_id, пытаемся найти контракт через проект
+        if (!$contractId && $document->project_id) {
+            try {
+                $project = $document->project;
+                if ($project && method_exists($project, 'contracts')) {
+                    // Пытаемся найти контракт через проект (если есть такая связь)
+                    $contract = $project->contracts()->first();
+                    if ($contract) {
+                        $contractId = $contract->id;
+                    }
+                }
+            } catch (\Exception $e) {
+                // Игнорируем ошибки при поиске контракта через проект
             }
         }
 
