@@ -96,22 +96,23 @@ class GetContractDetailsAction
             ->orderByDesc('date')
             ->get();
 
-        $invoices = DB::table('invoices')
-            ->where('contract_id', $contract->id)
+        $documents = DB::table('payment_documents')
+            ->where('invoiceable_type', 'App\\Models\\Contract')
+            ->where('invoiceable_id', $contract->id)
             ->whereNull('deleted_at')
             ->select(
                 'id',
-                'number',
-                'date',
-                'total_amount',
+                'document_number as number',
+                'document_date as date',
+                'amount as total_amount',
                 'status',
-                'payment_date'
+                'paid_at as payment_date'
             )
-            ->orderByDesc('date')
+            ->orderByDesc('document_date')
             ->get();
 
-        $totalPaid = $invoices->where('status', 'paid')->sum('total_amount');
-        $totalInvoiced = $invoices->sum('total_amount');
+        $totalPaid = $documents->where('status', 'paid')->sum('total_amount');
+        $totalInvoiced = $documents->sum('total_amount');
         $totalActed = $acts->sum('total_amount');
 
         return [
@@ -172,15 +173,15 @@ class GetContractDetailsAction
                 })->toArray(),
             ],
             'invoices' => [
-                'count' => count($invoices),
-                'list' => $invoices->map(function($invoice) {
+                'count' => count($documents),
+                'list' => $documents->map(function($document) {
                     return [
-                        'id' => $invoice->id,
-                        'number' => $invoice->number,
-                        'date' => $invoice->date,
-                        'amount' => (float)$invoice->total_amount,
-                        'status' => $invoice->status,
-                        'payment_date' => $invoice->payment_date,
+                        'id' => $document->id,
+                        'number' => $document->number,
+                        'date' => $document->date,
+                        'amount' => (float)$document->total_amount,
+                        'status' => $document->status,
+                        'payment_date' => $document->payment_date,
                     ];
                 })->toArray(),
             ],

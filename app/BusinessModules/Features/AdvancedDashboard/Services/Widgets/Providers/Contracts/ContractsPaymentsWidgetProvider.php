@@ -27,8 +27,8 @@ class ContractsPaymentsWidgetProvider extends AbstractWidgetProvider
         $totalReceived = 0;
 
         foreach ($contracts as $contract) {
-            // Используем новую таблицу invoices для расчета оплаченной суммы
-            $paid = DB::table('invoices')
+            // Используем таблицу payment_documents для расчета оплаченной суммы
+            $paid = DB::table('payment_documents')
                 ->where('invoiceable_type', 'App\\Models\\Contract')
                 ->where('invoiceable_id', $contract->id)
                 ->whereNull('deleted_at')

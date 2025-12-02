@@ -152,9 +152,22 @@ class PaymentDocumentController extends Controller
         try {
             $organizationId = $request->attributes->get('current_organization_id');
 
-            $document = PaymentDocument::forOrganization($organizationId)
-                ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor', 'source', 'approvals', 'transactions'])
-                ->findOrFail($id);
+            try {
+                $document = PaymentDocument::forOrganization($organizationId)
+                    ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor', 'source', 'approvals', 'transactions'])
+                    ->findOrFail($id);
+            } catch (\Error $e) {
+                // Если ошибка при загрузке invoiceable (класс Invoice не найден)
+                // Загружаем документ без eager loading invoiceable
+                $document = PaymentDocument::forOrganization($organizationId)
+                    ->with(['project', 'payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor', 'source', 'approvals', 'transactions'])
+                    ->where(function($query) {
+                        $query->whereNull('invoiceable_type')
+                              ->orWhere('invoiceable_type', '!=', 'App\\BusinessModules\\Core\\Payments\\Models\\Invoice')
+                              ->orWhere('invoiceable_type', 'NOT LIKE', '%Payments\\\\Models\\\\Invoice%');
+                    })
+                    ->findOrFail($id);
+            }
 
             return response()->json([
                 'success' => true,

@@ -144,7 +144,7 @@ class FinancialHealthWidgetProvider extends AbstractWidgetProvider
             ->sum(DB::raw('quantity * price'));
 
         // Используем новую таблицу invoices для расчета оплаченной суммы
-        $paidAmount = DB::table('invoices')
+        $paidAmount = DB::table('payment_documents')
             ->where('invoiceable_type', 'App\\Models\\Contract')
             ->whereIn('invoiceable_id', $contracts)
             ->whereNull('deleted_at')

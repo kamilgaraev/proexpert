@@ -22,6 +22,26 @@ use Illuminate\Support\Carbon;
 class PaymentDocument extends Model
 {
     use HasFactory, SoftDeletes;
+    
+    /**
+     * Boot the model
+     */
+    protected static function boot()
+    {
+        parent::boot();
+        
+        // Перехватываем загрузку invoiceable для защиты от удаленного класса Invoice
+        static::retrieved(function ($document) {
+            if ($document->invoiceable_type && 
+                str_contains($document->invoiceable_type, 'Invoice') && 
+                str_contains($document->invoiceable_type, 'Payments\\Models')) {
+                // Очищаем invoiceable_type для старых записей
+                $document->setAttribute('invoiceable_type', null);
+                $document->setAttribute('invoiceable_id', null);
+                $document->setRelation('invoiceable', null);
+            }
+        });
+    }
 
     protected $fillable = [
         'organization_id',
@@ -154,6 +174,24 @@ class PaymentDocument extends Model
     public function invoiceable(): MorphTo
     {
         return $this->morphTo('invoiceable');
+    }
+    
+    /**
+     * Переопределяем getAttribute для безопасной загрузки invoiceable
+     * Защита от удаленного класса Invoice
+     */
+    public function getAttribute($key)
+    {
+        if ($key === 'invoiceable' && $this->relationLoaded('invoiceable')) {
+            $type = $this->attributes['invoiceable_type'] ?? null;
+            
+            // Пропускаем старые ссылки на удаленный класс Invoice
+            if ($type && str_contains($type, 'Invoice') && str_contains($type, 'Payments\\Models')) {
+                return null;
+            }
+        }
+        
+        return parent::getAttribute($key);
     }
 
     public function createdBy(): BelongsTo

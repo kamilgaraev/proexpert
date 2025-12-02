@@ -356,8 +356,8 @@ class HoldingReportService
         $contracts = $query->with('agreements')->get();
         $contractIds = $contracts->pluck('id');
 
-        // Используем новую таблицу invoices
-        $totalPaid = DB::table('invoices')
+        // Используем таблицу payment_documents
+        $totalPaid = DB::table('payment_documents')
             ->where('invoiceable_type', 'App\\Models\\Contract')
             ->whereIn('invoiceable_id', $contractIds)
             ->whereNull('deleted_at')
@@ -448,8 +448,8 @@ class HoldingReportService
             $ownerContracts = $ownerQuery->with('agreements')->get();
             $ownerContractIds = $ownerContracts->pluck('id');
 
-            // Используем новую таблицу invoices
-            $ownerPaid = DB::table('invoices')
+            // Используем таблицу payment_documents
+            $ownerPaid = DB::table('payment_documents')
                 ->where('invoiceable_type', 'App\\Models\\Contract')
                 ->whereIn('invoiceable_id', $ownerContractIds)
                 ->whereNull('deleted_at')
@@ -471,8 +471,8 @@ class HoldingReportService
             $contractorContracts = $contractorQuery->with('agreements')->get();
             $contractorContractIds = $contractorContracts->pluck('id');
 
-            // Используем новую таблицу invoices
-            $contractorPaid = DB::table('invoices')
+            // Используем таблицу payment_documents
+            $contractorPaid = DB::table('payment_documents')
                 ->where('invoiceable_type', 'App\\Models\\Contract')
                 ->whereIn('invoiceable_id', $contractorContractIds)
                 ->whereNull('deleted_at')
@@ -592,8 +592,8 @@ class HoldingReportService
                 continue;
             }
 
-            // Используем новую таблицу invoices
-            $totalPaid = DB::table('invoices')
+            // Используем таблицу payment_documents
+            $totalPaid = DB::table('payment_documents')
                 ->where('invoiceable_type', 'App\\Models\\Contract')
                 ->whereIn('invoiceable_id', $contractIds)
                 ->whereNull('deleted_at')
@@ -767,8 +767,8 @@ class HoldingReportService
                 ->get();
 
             $totalHeadAmount = $this->calculateTotalContractAmount($projectContracts);
-            // Используем новую таблицу invoices
-            $totalHeadPaid = DB::table('invoices')
+            // Используем таблицу payment_documents
+            $totalHeadPaid = DB::table('payment_documents')
                 ->where('invoiceable_type', 'App\\Models\\Contract')
                 ->whereIn('invoiceable_id', $projectContracts->pluck('id'))
                 ->whereNull('deleted_at')
@@ -800,8 +800,8 @@ class HoldingReportService
                     ->get();
 
                 $totalSubAmount = $this->calculateTotalContractAmount($subcontracts);
-                // Используем новую таблицу invoices
-                $totalSubPaid = DB::table('invoices')
+                // Используем таблицу payment_documents
+                $totalSubPaid = DB::table('payment_documents')
                     ->where('invoiceable_type', 'App\\Models\\Contract')
                     ->whereIn('invoiceable_id', $subcontracts->pluck('id'))
                     ->whereNull('deleted_at')
@@ -833,8 +833,8 @@ class HoldingReportService
                             ? round((($contractEffectiveAmount - $totalSubAmount) / $contractEffectiveAmount) * 100, 2) 
                             : 0,
                         'subcontracts' => $subcontracts->map(function ($sub) {
-                            // Используем новую таблицу invoices
-                            $paid = DB::table('invoices')
+                            // Используем таблицу payment_documents
+                            $paid = DB::table('payment_documents')
                                 ->where('invoiceable_type', 'App\\Models\\Contract')
                                 ->where('invoiceable_id', $sub->id)
                                 ->whereNull('deleted_at')
@@ -1477,27 +1477,27 @@ class HoldingReportService
 
         $contracts = $contracts->get();
 
-        // Получаем все invoices для контрактов
+        // Получаем все payment_documents для контрактов
         $contractIds = $contracts->pluck('id')->toArray();
-        $invoices = DB::table('invoices')
+        $documents = DB::table('payment_documents')
             ->where('invoiceable_type', 'App\\Models\\Contract')
             ->whereIn('invoiceable_id', $contractIds)
             ->whereNull('deleted_at')
-            ->orderBy('invoice_date', 'asc')
+            ->orderBy('document_date', 'asc')
             ->get();
 
-        // Группируем invoices по contract_id
-        $invoicesByContract = $invoices->groupBy('invoiceable_id');
+        // Группируем documents по contract_id
+        $documentsByContract = $documents->groupBy('invoiceable_id');
 
-        // Получаем платежи из invoices (данные мигрированы из contract_payments)
+        // Получаем платежи из payment_documents (данные мигрированы из invoices)
         // Группируем по типу invoice_type
-        $advanceInvoices = $invoices->where('invoice_type', 'advance')->groupBy('invoiceable_id');
+        $advanceDocuments = $documents->where('invoice_type', 'advance')->groupBy('invoiceable_id');
         // Оплата по факту (КС) - это ACT и PROGRESS типы
-        $factInvoices = $invoices->whereIn('invoice_type', ['act', 'progress'])->groupBy('invoiceable_id');
+        $factDocuments = $documents->whereIn('invoice_type', ['act', 'progress'])->groupBy('invoiceable_id');
         // Отложенный платеж (10% - гарантийное удержание)
         // Пока используем пустую коллекцию, так как отложенный платеж обычно не оплачивается отдельно
         // Это удержание из суммы, а не отдельный платеж
-        $deferredInvoices = collect()->groupBy('invoiceable_id');
+        $deferredDocuments = collect()->groupBy('invoiceable_id');
 
         $rows = [];
 
@@ -1522,12 +1522,12 @@ class HoldingReportService
             $totalAmountWithGp = $baseAmount + $gpAmount;
             $amountToPay = $totalAmountWithGp - $warrantyRetentionAmount;
 
-            // Суммы платежей из invoices
-            $contractInvoicesForPayment = $invoicesByContract->get($contract->id, collect());
-            $totalAdvancePaid = (float) ($advanceInvoices->get($contract->id, collect())->sum('paid_amount') ?? 0);
-            $totalFactPaid = (float) ($factInvoices->get($contract->id, collect())->sum('paid_amount') ?? 0);
-            $totalDeferredPaid = (float) ($deferredInvoices->get($contract->id, collect())->sum('paid_amount') ?? 0);
-            $totalPaid = (float) $contractInvoicesForPayment->sum('paid_amount');
+            // Суммы платежей из payment_documents
+            $contractDocumentsForPayment = $documentsByContract->get($contract->id, collect());
+            $totalAdvancePaid = (float) ($advanceDocuments->get($contract->id, collect())->sum('paid_amount') ?? 0);
+            $totalFactPaid = (float) ($factDocuments->get($contract->id, collect())->sum('paid_amount') ?? 0);
+            $totalDeferredPaid = (float) ($deferredDocuments->get($contract->id, collect())->sum('paid_amount') ?? 0);
+            $totalPaid = (float) $contractDocumentsForPayment->sum('paid_amount');
 
             // Акты выполнения
             $approvedActs = $contract->performanceActs ?? collect();

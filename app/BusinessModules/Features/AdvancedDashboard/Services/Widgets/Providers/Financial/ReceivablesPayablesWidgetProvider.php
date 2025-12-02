@@ -65,7 +65,7 @@ class ReceivablesPayablesWidgetProvider extends AbstractWidgetProvider
                     ->sum(DB::raw('quantity * price'));
 
                 // Используем новую таблицу invoices для расчета оплаченной суммы
-                $paidAmount = DB::table('invoices')
+                $paidAmount = DB::table('payment_documents')
                     ->where('invoiceable_type', 'App\\Models\\Contract')
                     ->where('invoiceable_id', $contract->id)
                     ->whereNull('deleted_at')

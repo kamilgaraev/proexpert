@@ -174,25 +174,25 @@ class GenerateCustomReportAction
     
     protected function getContractorPaymentsReport(int $organizationId, array $period, array $params): array
     {
-        // Используем новую таблицу invoices вместо contract_payments
-        $data = DB::table('invoices')
+        // Используем таблицу payment_documents вместо invoices
+        $data = DB::table('payment_documents')
             ->join('contracts', function($join) {
-                $join->on('invoices.invoiceable_id', '=', 'contracts.id')
-                     ->where('invoices.invoiceable_type', '=', 'App\\Models\\Contract');
+                $join->on('payment_documents.invoiceable_id', '=', 'contracts.id')
+                     ->where('payment_documents.invoiceable_type', '=', 'App\\Models\\Contract');
             })
             ->join('contractors', 'contracts.contractor_id', '=', 'contractors.id')
             ->leftJoin('projects', 'contracts.project_id', '=', 'projects.id')
             ->where('contracts.organization_id', $organizationId)
-            ->whereBetween('invoices.paid_at', [$period['start'], $period['end']])
+            ->whereBetween('payment_documents.paid_at', [$period['start'], $period['end']])
             ->whereNull('contracts.deleted_at')
-            ->whereNull('invoices.deleted_at')
-            ->whereNotNull('invoices.paid_at')
+            ->whereNull('payment_documents.deleted_at')
+            ->whereNotNull('payment_documents.paid_at')
             ->select(
                 'contractors.name as contractor_name',
                 'contracts.number as contract_number',
                 'projects.name as project_name',
-                DB::raw('SUM(invoices.paid_amount) as total_paid'),
-                DB::raw('COUNT(invoices.id) as payments_count')
+                DB::raw('SUM(payment_documents.paid_amount) as total_paid'),
+                DB::raw('COUNT(payment_documents.id) as payments_count')
             )
             ->groupBy('contractors.id', 'contractors.name', 'contracts.id', 'contracts.number', 'projects.id', 'projects.name')
             ->orderByDesc('total_paid')
@@ -385,18 +385,18 @@ class GenerateCustomReportAction
             ->whereNull('deleted_at')
             ->sum('total_amount');
         
-        // Используем новую таблицу invoices вместо contract_payments
-        $payments = DB::table('invoices')
+        // Используем таблицу payment_documents вместо invoices
+        $payments = DB::table('payment_documents')
             ->join('contracts', function($join) {
-                $join->on('invoices.invoiceable_id', '=', 'contracts.id')
-                     ->where('invoices.invoiceable_type', '=', 'App\\Models\\Contract');
+                $join->on('payment_documents.invoiceable_id', '=', 'contracts.id')
+                     ->where('payment_documents.invoiceable_type', '=', 'App\\Models\\Contract');
             })
             ->where('contracts.organization_id', $organizationId)
-            ->whereBetween('invoices.paid_at', [$period['start'], $period['end']])
+            ->whereBetween('payment_documents.paid_at', [$period['start'], $period['end']])
             ->whereNull('contracts.deleted_at')
-            ->whereNull('invoices.deleted_at')
-            ->whereNotNull('invoices.paid_at')
-            ->sum('invoices.paid_amount');
+            ->whereNull('payment_documents.deleted_at')
+            ->whereNotNull('payment_documents.paid_at')
+            ->sum('payment_documents.paid_amount');
         
         return [
             'report_type' => 'general_financial',

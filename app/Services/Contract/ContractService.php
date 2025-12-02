@@ -516,8 +516,8 @@ class ContractService
         }
 
         // SECURITY: Попытка удаления договора - критично для аудита
-        // Получаем количество платежей из новой таблицы invoices
-        $paymentsCount = DB::table('invoices')
+        // Получаем количество платежей из таблицы payment_documents
+        $paymentsCount = DB::table('payment_documents')
             ->where('invoiceable_type', 'App\\Models\\Contract')
             ->where('invoiceable_id', $contractId)
             ->whereNull('deleted_at')
@@ -682,14 +682,14 @@ class ContractService
         
         $completedWorksAmount = $confirmedWorks->sum('total_amount');
         
-        // Получаем оплаченную сумму и количество платежей из новой таблицы invoices
-        $invoicesQuery = DB::table('invoices')
+        // Получаем оплаченную сумму и количество платежей из таблицы payment_documents
+        $documentsQuery = DB::table('payment_documents')
             ->where('invoiceable_type', 'App\\Models\\Contract')
             ->where('invoiceable_id', $contract->id)
             ->whereNull('deleted_at');
         
-        $totalPaidAmount = $invoicesQuery->sum('paid_amount');
-        $paymentsCount = $invoicesQuery->count();
+        $totalPaidAmount = $documentsQuery->sum('paid_amount');
+        $paymentsCount = $documentsQuery->count();
 
         // --- Расширяем стоимость контракта ---
         $agreementsDelta = $contract->relationLoaded('agreements') ? $contract->agreements->sum('change_amount') : 0;
@@ -976,20 +976,20 @@ class ContractService
             ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']))
             ->sum('contract_performance_acts.amount') ?: 0;
 
-        // Используем новую таблицу invoices вместо устаревшей contract_payments
-        $totalPaidAmount = (float) DB::table('invoices')
+        // Используем таблицу payment_documents вместо устаревшей invoices
+        $totalPaidAmount = (float) DB::table('payment_documents')
             ->join('contracts', function($join) {
-                $join->on('invoices.invoiceable_id', '=', 'contracts.id')
-                     ->where('invoices.invoiceable_type', '=', 'App\\Models\\Contract');
+                $join->on('payment_documents.invoiceable_id', '=', 'contracts.id')
+                     ->where('payment_documents.invoiceable_type', '=', 'App\\Models\\Contract');
             })
             ->when(empty($filters['contractor_context']), fn($q) => $q->where('contracts.organization_id', $organizationId))
             ->whereNull('contracts.deleted_at')
-            ->whereNull('invoices.deleted_at')
+            ->whereNull('payment_documents.deleted_at')
             ->when(!empty($filters['project_id']), fn($q) => $q->where('contracts.project_id', $filters['project_id']))
             ->when(!empty($filters['contractor_id']), fn($q) => $q->where('contracts.contractor_id', $filters['contractor_id']))
             ->when(!empty($filters['status']), fn($q) => $q->where('contracts.status', $filters['status']))
             ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']))
-            ->sum('invoices.paid_amount') ?: 0;
+            ->sum('payment_documents.paid_amount') ?: 0;
 
         $overdueContracts = (clone $query)
             ->where('status', 'active')
