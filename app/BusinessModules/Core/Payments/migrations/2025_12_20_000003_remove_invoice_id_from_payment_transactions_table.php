@@ -23,6 +23,7 @@ return new class extends Migration
             LIMIT 1
         ");
 
+        // ШАГ 1: Удаляем внешний ключ (но оставляем колонку invoice_id пока)
         Schema::table('payment_transactions', function (Blueprint $table) use ($foreignKey) {
             // Удаляем внешний ключ, если он существует
             if ($foreignKey && isset($foreignKey->constraint_name)) {
@@ -45,15 +46,11 @@ return new class extends Migration
                     }
                 }
             }
-            
-            // Удаляем колонку invoice_id, если она существует
-            if (Schema::hasColumn('payment_transactions', 'invoice_id')) {
-                $table->dropColumn('invoice_id');
-            }
         });
         
-        // Делаем payment_document_id обязательным (отдельно, так как может быть ошибка если колонки нет)
-        if (Schema::hasColumn('payment_transactions', 'payment_document_id')) {
+        // ШАГ 2: Заполняем payment_document_id из invoice_id (если колонка invoice_id еще существует)
+        if (Schema::hasColumn('payment_transactions', 'payment_document_id') && 
+            Schema::hasColumn('payment_transactions', 'invoice_id')) {
             // Проверяем, есть ли NULL значения в payment_document_id
             $nullCount = DB::table('payment_transactions')
                 ->whereNull('payment_document_id')
@@ -103,8 +100,10 @@ return new class extends Migration
                         ->delete();
                 }
             }
-            
-            // Теперь делаем колонку обязательной (если все NULL значения обработаны)
+        }
+        
+        // ШАГ 3: Делаем payment_document_id обязательным (если все NULL значения обработаны)
+        if (Schema::hasColumn('payment_transactions', 'payment_document_id')) {
             $finalNullCount = DB::table('payment_transactions')
                 ->whereNull('payment_document_id')
                 ->count();
@@ -121,6 +120,13 @@ return new class extends Migration
                 );
             }
         }
+        
+        // ШАГ 4: Удаляем колонку invoice_id (теперь она больше не нужна)
+        Schema::table('payment_transactions', function (Blueprint $table) {
+            if (Schema::hasColumn('payment_transactions', 'invoice_id')) {
+                $table->dropColumn('invoice_id');
+            }
+        });
         
         // Добавляем индекс для новой связи (если его еще нет)
         $indexExists = DB::selectOne("
