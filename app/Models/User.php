@@ -271,6 +271,7 @@ class User extends Authenticatable implements JWTSubject
 
     /**
      * Является ли пользователь владельцем организации
+     * Проверяет роль в контексте организации и в иерархии (родительские организации)
      */
     public function isOrganizationOwner(?int $organizationId = null): bool
     {
@@ -283,8 +284,47 @@ class User extends Authenticatable implements JWTSubject
             return false;
         }
 
+        // 1. Прямая проверка роли в контексте организации
         $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($orgId);
-        return $this->hasRole('organization_owner', $context->id);
+        if ($this->hasRole('organization_owner', $context->id)) {
+            return true;
+        }
+
+        // 2. Проверка роли в родительских организациях (иерархия)
+        $targetOrg = \App\Models\Organization::find($orgId);
+        if (!$targetOrg) {
+            return false;
+        }
+
+        // Получаем все организации, где у пользователя есть роль organization_owner
+        $ownedOrgContexts = $this->roleAssignments()
+            ->active()
+            ->where('role_slug', 'organization_owner')
+            ->whereHas('context', function ($query) {
+                $query->where('type', \App\Domain\Authorization\Models\AuthorizationContext::TYPE_ORGANIZATION);
+            })
+            ->with('context')
+            ->get()
+            ->pluck('context.resource_id')
+            ->filter();
+
+        // Проверяем, является ли целевая организация дочерней от любой организации, где пользователь владелец
+        foreach ($ownedOrgContexts as $ownedOrgId) {
+            if ($ownedOrgId == $orgId) {
+                return true; // Прямое совпадение (уже проверили выше, но на всякий случай)
+            }
+
+            // Проверяем иерархию: является ли orgId дочерней от ownedOrgId
+            $currentOrg = $targetOrg;
+            while ($currentOrg && $currentOrg->parent_organization_id) {
+                if ($currentOrg->parent_organization_id == $ownedOrgId) {
+                    return true;
+                }
+                $currentOrg = $currentOrg->parentOrganization;
+            }
+        }
+
+        return false;
     }
 
     /**
