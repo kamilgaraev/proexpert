@@ -24,6 +24,8 @@ class Contract extends Model
         'organization_id',
         'project_id',
         'contractor_id',
+        'supplier_id',
+        'contract_category',
         'number',
         'date',
         'subject',
@@ -82,6 +84,14 @@ class Contract extends Model
     public function contractor(): BelongsTo
     {
         return $this->belongsTo(Contractor::class);
+    }
+
+    /**
+     * Поставщик (для договоров поставки)
+     */
+    public function supplier(): BelongsTo
+    {
+        return $this->belongsTo(Supplier::class);
     }
 
     public function performanceActs(): HasMany
@@ -511,5 +521,57 @@ class Contract extends Model
         }
 
         return $newTotalAmount;
+    }
+
+    // ============================================
+    // Procurement Contracts (Договоры поставки)
+    // ============================================
+
+    /**
+     * Scope для договоров поставки
+     */
+    public function scopeProcurementContracts($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereNotNull('supplier_id')
+              ->orWhere('contract_category', 'procurement')
+              ->orWhere('work_type_category', ContractWorkTypeCategoryEnum::SUPPLY->value);
+        });
+    }
+
+    /**
+     * Scope для договоров с подрядчиками (обычные договоры)
+     */
+    public function scopeWorkContracts($query)
+    {
+        return $query->where(function ($q) {
+            $q->whereNotNull('contractor_id')
+              ->where(function ($subQ) {
+                  $subQ->whereNull('supplier_id')
+                       ->orWhere('contract_category', 'work')
+                       ->orWhere(function ($catQ) {
+                           $catQ->whereNull('contract_category')
+                                ->where('work_type_category', '!=', ContractWorkTypeCategoryEnum::SUPPLY->value);
+                       });
+              });
+        });
+    }
+
+    /**
+     * Проверить, является ли договор договором поставки
+     */
+    public function isProcurementContract(): bool
+    {
+        return $this->supplier_id !== null 
+            || $this->contract_category === 'procurement'
+            || $this->work_type_category === ContractWorkTypeCategoryEnum::SUPPLY;
+    }
+
+    /**
+     * Проверить, является ли договор обычным договором с подрядчиком
+     */
+    public function isWorkContract(): bool
+    {
+        return $this->contractor_id !== null && !$this->isProcurementContract();
     }
 }

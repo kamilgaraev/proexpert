@@ -23,6 +23,58 @@ class StoreContractRequest extends FormRequest
     }
 
     /**
+     * Configure the validator instance.
+     */
+    public function withValidator($validator): void
+    {
+        $validator->after(function ($validator) {
+            $supplierId = $this->input('supplier_id');
+            $contractorId = $this->input('contractor_id');
+            $contractCategory = $this->input('contract_category');
+
+            // Если указан supplier_id, проверяем активацию модулей
+            if ($supplierId) {
+                $organizationId = $this->attributes->get('current_organization_id') 
+                    ?? $this->input('organization_id_for_creation');
+
+                if ($organizationId) {
+                    $accessController = app(\App\Modules\Core\AccessController::class);
+
+                    if (!$accessController->hasModuleAccess($organizationId, 'procurement')) {
+                        $validator->errors()->add(
+                            'supplier_id',
+                            'Модуль "Управление закупками" не активирован. Активируйте модуль для создания договоров поставки.'
+                        );
+                    }
+
+                    if (!$accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
+                        $validator->errors()->add(
+                            'supplier_id',
+                            'Модуль "Базовое управление складом" не активирован. Он необходим для работы с договорами поставки.'
+                        );
+                    }
+                }
+            }
+
+            // Проверка: либо contractor_id, либо supplier_id должен быть заполнен
+            if (!$supplierId && !$contractorId) {
+                $validator->errors()->add(
+                    'contractor_id',
+                    'Необходимо указать либо подрядчика (contractor_id), либо поставщика (supplier_id)'
+                );
+            }
+
+            // Нельзя указать оба одновременно
+            if ($supplierId && $contractorId) {
+                $validator->errors()->add(
+                    'supplier_id',
+                    'Нельзя указать одновременно подрядчика и поставщика. Укажите либо contractor_id, либо supplier_id.'
+                );
+            }
+        });
+    }
+
+    /**
      * Get the validation rules that apply to the request.
      *
      * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array|string>
@@ -36,9 +88,12 @@ class StoreContractRequest extends FormRequest
         return [
             'project_id' => ['nullable', 'integer', 'exists:projects,id'],
             // contractor_id обязателен для генподрядчика, опционален для подрядчика (auto-fill)
+            // Для договоров поставки может быть null, если указан supplier_id
             'contractor_id' => $isContractor 
                 ? ['nullable', 'integer', 'exists:contractors,id']
-                : ['required', 'integer', 'exists:contractors,id'],
+                : ['required_without:supplier_id', 'integer', 'exists:contractors,id'],
+            'supplier_id' => ['nullable', 'required_without:contractor_id', 'integer', 'exists:suppliers,id'],
+            'contract_category' => ['nullable', 'string', 'in:work,procurement,service'],
             'parent_contract_id' => ['nullable', 'integer', new ParentContractValid],
             'number' => ['required', 'string', 'max:255'],
             'date' => ['required', 'date'],

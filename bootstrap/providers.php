@@ -6,6 +6,7 @@ return [
     App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider::class,
     App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesServiceProvider::class,
     App\BusinessModules\Features\Notifications\NotificationServiceProvider::class,
+    App\BusinessModules\Features\Procurement\ProcurementServiceProvider::class,
     App\BusinessModules\Features\ScheduleManagement\ScheduleManagementServiceProvider::class,
     App\BusinessModules\Features\SiteRequests\SiteRequestsServiceProvider::class,
     App\Providers\AppServiceProvider::class,

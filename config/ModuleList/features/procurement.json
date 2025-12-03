@@ -1,0 +1,91 @@
+{
+  "name": "Управление закупками",
+  "slug": "procurement",
+  "version": "1.0.0",
+  "type": "feature",
+  "billing_model": "subscription",
+  "category": "procurement",
+  "description": "Система управления процессом закупок материалов: от заявок до оплаты счетов поставщиков и приема материалов на склад",
+  
+  "class_name": "App\\BusinessModules\\Features\\Procurement\\ProcurementModule",
+  "service_provider": "App\\BusinessModules\\Features\\Procurement\\ProcurementServiceProvider",
+  
+  "pricing": {
+    "base_price": 3990,
+    "currency": "RUB",
+    "included_in_plans": ["business", "profi", "enterprise"],
+    "duration_days": 30,
+    "trial_days": 7
+  },
+  
+  "permissions": [
+    "procurement.view",
+    "procurement.manage",
+    "procurement.purchase_requests.view",
+    "procurement.purchase_requests.create",
+    "procurement.purchase_requests.edit",
+    "procurement.purchase_requests.delete",
+    "procurement.purchase_requests.approve",
+    "procurement.purchase_orders.view",
+    "procurement.purchase_orders.create",
+    "procurement.purchase_orders.edit",
+    "procurement.purchase_orders.delete",
+    "procurement.purchase_orders.send",
+    "procurement.supplier_proposals.view",
+    "procurement.supplier_proposals.create",
+    "procurement.supplier_proposals.accept",
+    "procurement.contracts.view",
+    "procurement.contracts.create",
+    "procurement.contracts.edit",
+    "procurement.dashboard.view",
+    "procurement.statistics.view"
+  ],
+  
+  "features": [
+    "Создание заявок на закупку из заявок с объекта",
+    "Управление заказами поставщикам",
+    "Прием и обработка коммерческих предложений",
+    "Создание договоров поставки",
+    "Интеграция с модулем платежей (автоматическое создание счетов)",
+    "Интеграция со складом (автоматический прием материалов)",
+    "Выбор поставщиков и сравнение КП",
+    "Workflow закупок с отслеживанием статусов",
+    "Дашборд и статистика по закупкам",
+    "История всех операций"
+  ],
+  
+  "dependencies": [
+    "organizations",
+    "users",
+    "basic-warehouse",
+    "site-requests"
+  ],
+  
+  "optional_integrations": [
+    "payments",
+    "contract-management"
+  ],
+  
+  "conflicts": [],
+  
+  "limits": {
+    "max_purchase_requests_per_month": null,
+    "max_purchase_orders_per_month": null,
+    "max_supplier_proposals_per_order": 10,
+    "retention_days": 365
+  },
+  
+  "routes": "routes.php",
+  "migrations": "migrations/",
+  
+  "auto_activate": false,
+  "is_system_module": false,
+  "can_deactivate": true,
+  "icon": "shopping-cart",
+  "display_order": 15,
+  
+  "tags": ["procurement", "purchasing", "suppliers", "materials", "warehouse"],
+  
+  "documentation_url": "/docs/modules/procurement"
+}
+
