@@ -3,6 +3,7 @@
 namespace App\BusinessModules\Features\Procurement\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use App\Enums\Contract\ContractStatusEnum;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
@@ -42,7 +43,7 @@ class ProcurementDashboardController extends Controller
                         ->procurementContracts()->count(),
                     'active' => \App\Models\Contract::forOrganization($organizationId)
                         ->procurementContracts()
-                        ->where('status', 'active')->count(),
+                        ->where('status', ContractStatusEnum::ACTIVE->value)->count(),
                 ],
                 'supplier_proposals' => [
                     'total' => \App\BusinessModules\Features\Procurement\Models\SupplierProposal::forOrganization($organizationId)->count(),

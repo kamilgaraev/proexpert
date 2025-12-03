@@ -524,6 +524,18 @@ class Contract extends Model
     }
 
     // ============================================
+    // SCOPES
+    // ============================================
+
+    /**
+     * Scope для организации
+     */
+    public function scopeForOrganization($query, int $organizationId)
+    {
+        return $query->where('organization_id', $organizationId);
+    }
+
+    // ============================================
     // Procurement Contracts (Договоры поставки)
     // ============================================
 
