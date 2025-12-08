@@ -946,11 +946,17 @@ class ContractService
             ->toArray();
 
         $financialData = (clone $query)->select(
-            DB::raw('SUM(COALESCE(total_amount, 0)) as total_amount'),
             DB::raw('SUM(CASE 
-                WHEN gp_calculation_type = \'coefficient\' THEN COALESCE(base_amount, COALESCE(total_amount, 0)) + (COALESCE(base_amount, COALESCE(total_amount, 0)) * (COALESCE(gp_coefficient, 1) - 1))
-                ELSE COALESCE(base_amount, COALESCE(total_amount, 0)) + (COALESCE(base_amount, COALESCE(total_amount, 0)) * COALESCE(gp_percentage, 0) / 100)
-            END) as total_amount_with_gp'),
+                WHEN is_fixed_amount = true THEN COALESCE(base_amount, 0)
+                ELSE COALESCE(total_amount, 0)
+            END) as base_sum'),
+            DB::raw('SUM(CASE 
+                WHEN is_fixed_amount = true AND gp_calculation_type = \'coefficient\' 
+                    THEN COALESCE(base_amount, 0) + (COALESCE(base_amount, 0) * (COALESCE(gp_coefficient, 1) - 1))
+                WHEN is_fixed_amount = true 
+                    THEN COALESCE(base_amount, 0) + (COALESCE(base_amount, 0) * COALESCE(gp_percentage, 0) / 100)
+                ELSE COALESCE(total_amount, 0)
+            END) as total_with_gp'),
             DB::raw('SUM(COALESCE(planned_advance_amount, 0)) as total_planned_advance'),
             DB::raw('SUM(COALESCE(actual_advance_amount, 0)) as total_actual_advance')
         )->first();
@@ -960,8 +966,8 @@ class ContractService
         $completedContracts = $statusCounts['completed'] ?? 0;
         $cancelledContracts = $statusCounts['cancelled'] ?? 0;
 
-        $totalAmount = $financialData->total_amount ?? 0;
-        $totalAmountWithGp = $financialData->total_amount_with_gp ?? 0;
+        $baseSum = $financialData->base_sum ?? 0;
+        $totalAmountWithGp = $financialData->total_with_gp ?? 0;
         $totalPlannedAdvance = $financialData->total_planned_advance ?? 0;
         $totalActualAdvance = $financialData->total_actual_advance ?? 0;
 
@@ -1025,13 +1031,13 @@ class ContractService
                 'cancelled' => $cancelledContracts,
             ],
             'financial' => [
-                'total_amount' => round($totalAmount, 2),
+                'total_amount' => round($baseSum, 2),
                 'total_amount_with_gp' => round($totalAmountWithGp, 2),
                 'total_performed_amount' => round($totalPerformedAmount, 2),
                 'total_paid_amount' => round($totalPaidAmount, 2),
-                'remaining_to_perform' => round($totalAmount - $totalPerformedAmount, 2),
+                'remaining_to_perform' => round($totalAmountWithGp - $totalPerformedAmount, 2),
                 'remaining_to_pay' => round($totalPerformedAmount - $totalPaidAmount, 2),
-                'performance_percentage' => $totalAmount > 0 ? round(($totalPerformedAmount / $totalAmount) * 100, 2) : 0,
+                'performance_percentage' => $totalAmountWithGp > 0 ? round(($totalPerformedAmount / $totalAmountWithGp) * 100, 2) : 0,
                 'payment_percentage' => $totalPerformedAmount > 0 ? round(($totalPaidAmount / $totalPerformedAmount) * 100, 2) : 0,
             ],
             'advances' => [
