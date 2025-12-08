@@ -28,11 +28,42 @@ class PurchaseContractController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $perPage = min($request->input('per_page', 15), 100);
 
-            $contracts = Contract::forOrganization($organizationId)
+            $query = Contract::forOrganization($organizationId)
                 ->procurementContracts()
-                ->with(['supplier', 'project', 'organization'])
-                ->orderBy('created_at', 'desc')
-                ->paginate($perPage);
+                ->with(['supplier', 'project', 'organization']);
+
+            if ($request->has('supplier_id')) {
+                $supplierId = $request->input('supplier_id');
+                if ($supplierId !== null && $supplierId !== '') {
+                    $query->where('supplier_id', (int)$supplierId);
+                }
+            }
+
+            if ($request->has('project_id')) {
+                $projectId = $request->input('project_id');
+                if ($projectId !== null && $projectId !== '') {
+                    $query->where('project_id', (int)$projectId);
+                }
+            }
+
+            if ($request->has('status')) {
+                $status = $request->input('status');
+                if ($status !== null && $status !== '') {
+                    $query->where('status', $status);
+                }
+            }
+
+            $sortBy = $request->input('sort_by', 'created_at');
+            $sortDir = $request->input('sort_dir', 'desc');
+
+            $allowedSortFields = ['created_at', 'updated_at', 'date', 'number', 'total_amount', 'status'];
+            if (in_array($sortBy, $allowedSortFields)) {
+                $query->orderBy($sortBy, $sortDir === 'asc' ? 'asc' : 'desc');
+            } else {
+                $query->orderBy('created_at', 'desc');
+            }
+
+            $contracts = $query->paginate($perPage);
 
             return response()->json([
                 'success' => true,
