@@ -183,17 +183,14 @@ class PaymentDocumentStateMachine
 
         $result = $this->transition($document, PaymentDocumentStatus::PARTIALLY_PAID, "Частичная оплата: {$amount}");
         
-        // Отправляем событие для частичной оплаты тоже (если есть transactionId)
         $transactionId = $document->getAttribute('_last_transaction_id');
         if ($transactionId) {
             event(new PaymentDocumentPaid($document, $amount, $transactionId));
         }
         
         return $result;
+    }
 
-    /**
-     * Отметить как полностью оплаченный
-     */
     public function markPaid(PaymentDocument $document, ?float $finalAmount = null): PaymentDocument
     {
         if ($finalAmount !== null) {
