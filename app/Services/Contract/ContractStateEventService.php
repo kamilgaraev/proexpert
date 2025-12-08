@@ -355,14 +355,61 @@ class ContractStateEventService
         
         // Проверяем согласованность с БД и логируем расхождения для аудита
         $dbTotalAmount = (float) ($contract->total_amount ?? 0);
+        
+        $hasCreatedEvent = $activeEvents->where('event_type', ContractStateEventTypeEnum::CREATED)->isNotEmpty();
+        $amountAffectingEvents = $activeEvents->filter(function ($event) {
+            return !in_array($event->event_type, [ContractStateEventTypeEnum::PAYMENT_CREATED]);
+        });
+        
         if (abs($calculatedAmount - $dbTotalAmount) > 0.01) {
+            $eventsDetails = $activeEvents->map(function ($event) {
+                return [
+                    'id' => $event->id,
+                    'event_type' => $event->event_type->value,
+                    'amount_delta' => $event->amount_delta,
+                    'effective_from' => $event->effective_from?->toDateString(),
+                    'is_filtered' => in_array($event->event_type, [ContractStateEventTypeEnum::PAYMENT_CREATED]),
+                ];
+            })->toArray();
+            
             \Illuminate\Support\Facades\Log::warning('Contract state amount mismatch detected', [
                 'contract_id' => $contract->id,
+                'contract_number' => $contract->number,
                 'db_total_amount' => $dbTotalAmount,
                 'calculated_from_events' => $calculatedAmount,
                 'difference' => $calculatedAmount - $dbTotalAmount,
                 'active_events_count' => $activeEvents->count(),
+                'amount_affecting_events_count' => $amountAffectingEvents->count(),
+                'events_details' => $eventsDetails,
+                'has_created_event' => $hasCreatedEvent,
+                'has_payment_only' => $activeEvents->count() === 1 && $activeEvents->first()->event_type === ContractStateEventTypeEnum::PAYMENT_CREATED,
             ]);
+            
+            if (!$hasCreatedEvent && $dbTotalAmount > 0 && $amountAffectingEvents->isEmpty()) {
+                try {
+                    $this->createContractCreatedEvent($contract);
+                    \Illuminate\Support\Facades\Log::info('Auto-created missing CREATED event for contract', [
+                        'contract_id' => $contract->id,
+                        'contract_number' => $contract->number,
+                        'amount' => $dbTotalAmount,
+                    ]);
+                    
+                    $activeEvents = $this->eventRepository->findActiveEvents($contract->id, ['specification', 'createdBy']);
+                    $calculatedAmount = $activeEvents
+                        ->filter(function ($event) {
+                            return !in_array($event->event_type, [
+                                ContractStateEventTypeEnum::PAYMENT_CREATED
+                            ]);
+                        })
+                        ->sum('amount_delta');
+                    $totalAmount = (float) $calculatedAmount;
+                } catch (Exception $e) {
+                    \Illuminate\Support\Facades\Log::error('Failed to auto-create CREATED event', [
+                        'contract_id' => $contract->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
         }
         
         $activeSpecification = null;
