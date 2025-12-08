@@ -1537,8 +1537,8 @@ class HoldingReportService
             // Остаток к оплате
             $remainingToPay = max(0, $amountToPay - $totalPaid);
 
-            // Получаем invoices для этого контракта
-            $contractInvoices = $invoicesByContract->get($contract->id, collect());
+            // Получаем payment_documents для этого контракта
+            $contractDocuments = $documentsByContract->get($contract->id, collect());
 
             // Получаем активную спецификацию или первое дополнительное соглашение для отображения в №ДС/СП
             $agreementSpecNumber = '-';
@@ -1554,7 +1554,6 @@ class HoldingReportService
                     }
                 }
             } catch (\Exception $e) {
-                // Если метод activeSpecification() не работает, используем первое соглашение
                 $firstAgreement = $contract->agreements->first();
                 if ($firstAgreement) {
                     $agreementDate = $firstAgreement->agreement_date ? $firstAgreement->agreement_date->format('d.m.Y') : '';
@@ -1562,15 +1561,13 @@ class HoldingReportService
                 }
             }
 
-            // Если есть invoices или акты, создаем строки для каждого
-            if ($contractInvoices->isNotEmpty() || $approvedActs->isNotEmpty()) {
-                // Создаем строки для каждого invoice
-                foreach ($contractInvoices as $invoice) {
-                    $invoiceDate = $invoice->invoice_date ? Carbon::parse($invoice->invoice_date) : null;
-                    $paidAt = $invoice->paid_at ? Carbon::parse($invoice->paid_at) : $invoiceDate;
+            if ($contractDocuments->isNotEmpty() || $approvedActs->isNotEmpty()) {
+                foreach ($contractDocuments as $document) {
+                    $documentDate = $document->document_date ? Carbon::parse($document->document_date) : null;
+                    $paidAt = $document->paid_at ? Carbon::parse($document->paid_at) : $documentDate;
                     
                     $rows[] = $this->buildDetailedReportRow(
-                        registryDate: $invoiceDate ?? $contract->date ?? now(),
+                        registryDate: $documentDate ?? $contract->date ?? now(),
                         paymentDate: $paidAt,
                         month: $paidAt ? $paidAt->format('m') : '',
                         year: $paidAt ? $paidAt->format('Y') : '',
@@ -1594,20 +1591,18 @@ class HoldingReportService
                         remainingToPay: $remainingToPay,
                         performedAmount: $totalPerformed,
                         remainingToPerform: $remainingToPerform,
-                        notes: $invoice->notes ?? $contract->notes ?? ''
+                        notes: $document->notes ?? $contract->notes ?? ''
                     );
                 }
 
-                // Создаем строки для каждого акта (если еще не созданы для этого акта)
                 foreach ($approvedActs as $act) {
                     $actDate = $act->act_date 
                         ? Carbon::parse($act->act_date) 
                         : ($contract->date ? Carbon::parse($contract->date) : now());
                     
-                    // Проверяем, есть ли уже строка для этого акта (по дате)
-                    $hasRowForAct = $contractInvoices->contains(function ($invoice) use ($actDate) {
-                        $invoiceDate = $invoice->invoice_date ? Carbon::parse($invoice->invoice_date) : null;
-                        return $invoiceDate && $invoiceDate->format('Y-m-d') === $actDate->format('Y-m-d');
+                    $hasRowForAct = $contractDocuments->contains(function ($document) use ($actDate) {
+                        $documentDate = $document->document_date ? Carbon::parse($document->document_date) : null;
+                        return $documentDate && $documentDate->format('Y-m-d') === $actDate->format('Y-m-d');
                     });
 
                     if (!$hasRowForAct) {
@@ -1641,7 +1636,6 @@ class HoldingReportService
                     }
                 }
             } else {
-                // Если нет invoices и актов, создаем одну строку с данными контракта
                 $rows[] = $this->buildDetailedReportRow(
                     registryDate: $contract->date ?? now(),
                     paymentDate: null,
