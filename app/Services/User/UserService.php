@@ -630,27 +630,24 @@ class UserService
      */
     public function findForemanById(int $foremanUserId, Request $request): ?User
     {
-        $this->ensureUserIsAdmin($request); // Или другая проверка прав, например, can:view-foreman
+        $this->ensureUserIsAdmin($request);
         $organizationId = $request->attributes->get('current_organization_id');
         if(!$organizationId) {
             throw new BusinessLogicException('Контекст организации не определен.', 500);
         }
         $intOrganizationId = (int) $organizationId;
 
-        $user = $this->userRepository->find($foremanUserId);
-
-        if (!$user || !$user->organizations()->where('organization_user.organization_id', $intOrganizationId)->exists()) {
-            return null;
-        }
-
-        // Проверяем, что это действительно прораб (foreman)
         $foremanRoleSlug = 'foreman';
-        if (!$this->authorizationService->hasRole($user, $foremanRoleSlug, $intOrganizationId)) {
-            Log::warning("[UserService::findForemanById] User {$foremanUserId} is not a foreman in org {$intOrganizationId}");
-            // Если мы строго ищем прораба, то это null
-            return null; 
-        }
-        
+        $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($intOrganizationId);
+
+        $user = User::where('id', $foremanUserId)
+            ->whereHas('roleAssignments', function ($q) use ($foremanRoleSlug, $context) {
+                $q->where('role_slug', $foremanRoleSlug);
+                $q->where('context_id', $context->id);
+                $q->where('is_active', true);
+            })
+            ->first();
+
         return $user;
     }
 
