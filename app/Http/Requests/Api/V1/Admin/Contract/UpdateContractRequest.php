@@ -117,6 +117,10 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'start_date' => ['sometimes', 'nullable', 'date'],
             'end_date' => ['sometimes', 'nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['sometimes', 'nullable', 'string'],
+            // Мультипроектные контракты
+            'is_multi_project' => ['sometimes', 'nullable', 'boolean'],
+            'project_ids' => ['sometimes', 'nullable', 'array', 'min:1'],
+            'project_ids.*' => ['integer', 'exists:projects,id'],
         ];
     }
     
@@ -141,7 +145,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'gp_percentage', 'gp_calculation_type', 'gp_coefficient',
             'warranty_retention_calculation_type', 'warranty_retention_percentage', 'warranty_retention_coefficient',
             'subcontract_amount', 'planned_advance_amount', 'actual_advance_amount', 'status', 'start_date',
-            'end_date', 'notes'
+            'end_date', 'notes', 'is_multi_project', 'project_ids'
         ];
         
         $filtered = array_intersect_key($input, array_flip($allowedFields));
@@ -245,7 +249,11 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             advance_payments: null,
             is_fixed_amount: array_key_exists('is_fixed_amount', $validatedData)
                 ? (bool) $validatedData['is_fixed_amount']
-                : ($contract->is_fixed_amount ?? true) // По умолчанию true для обратной совместимости
+                : ($contract->is_fixed_amount ?? true), // По умолчанию true для обратной совместимости
+            is_multi_project: array_key_exists('is_multi_project', $validatedData)
+                ? (bool) $validatedData['is_multi_project']
+                : ($contract->is_multi_project ?? false),
+            project_ids: $validatedData['project_ids'] ?? null
         );
     }
 } 

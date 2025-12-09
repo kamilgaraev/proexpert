@@ -207,6 +207,10 @@ class ContractService
             $contractData['total_amount'] = 0;
         }
 
+        // Сохраняем project_ids для мультипроектных контрактов
+        $projectIds = $contractData['project_ids'] ?? null;
+        unset($contractData['project_ids']);
+
         try {
             DB::beginTransaction();
             
@@ -214,6 +218,24 @@ class ContractService
             unset($contractData['advance_payments']);
             
             $contract = $this->contractRepository->create($contractData);
+            
+            // Синхронизируем проекты для мультипроектного контракта
+            if ($contractDTO->is_multi_project && !empty($projectIds)) {
+                // Валидация: все проекты должны принадлежать организации
+                $validProjects = Project::whereIn('id', $projectIds)
+                    ->where('organization_id', $organizationId)
+                    ->pluck('id')
+                    ->toArray();
+                
+                if (count($validProjects) !== count($projectIds)) {
+                    throw new Exception('Некоторые проекты не найдены или не принадлежат вашей организации');
+                }
+                
+                $contract->syncProjects($projectIds);
+            } elseif (!$contractDTO->is_multi_project && $contractDTO->project_id) {
+                // Для обычного контракта синхронизируем один проект
+                $contract->syncProjects([$contractDTO->project_id]);
+            }
             
             if ($advancePayments && is_array($advancePayments)) {
                 foreach ($advancePayments as $advance) {
@@ -405,6 +427,10 @@ class ContractService
             unset($updateData['warranty_retention_percentage']);
         }
         
+        // Сохраняем project_ids для мультипроектных контрактов
+        $projectIds = $updateData['project_ids'] ?? null;
+        unset($updateData['project_ids']);
+        
         Log::info('ContractService::updateContract - UPDATE DATA', [
             'contract_id' => $contractId,
             'update_data_keys' => array_keys($updateData),
@@ -413,6 +439,8 @@ class ContractService
         ]);
         
         try {
+            DB::beginTransaction();
+            
             $updated = $this->contractRepository->update($contract->id, $updateData);
 
             if (!$updated) {
@@ -421,6 +449,26 @@ class ContractService
             }
 
             $updatedContract = $this->getContractById($contractId, $organizationId);
+            
+            // Синхронизируем проекты для мультипроектного контракта
+            if ($contractDTO->is_multi_project && !empty($projectIds)) {
+                // Валидация: все проекты должны принадлежать организации
+                $validProjects = Project::whereIn('id', $projectIds)
+                    ->where('organization_id', $organizationId)
+                    ->pluck('id')
+                    ->toArray();
+                
+                if (count($validProjects) !== count($projectIds)) {
+                    throw new Exception('Некоторые проекты не найдены или не принадлежат вашей организации');
+                }
+                
+                $updatedContract->syncProjects($projectIds);
+            } elseif (!$contractDTO->is_multi_project && $contractDTO->project_id) {
+                // Для обычного контракта синхронизируем один проект
+                $updatedContract->syncProjects([$contractDTO->project_id]);
+            }
+            
+            DB::commit();
             
             Log::info('ContractService::updateContract - AFTER UPDATE', [
                 'contract_id' => $contractId,
@@ -495,6 +543,8 @@ class ContractService
             return $updatedContract; // Возвращаем свежую модель
 
         } catch (Exception $e) {
+            DB::rollBack();
+            
             // BUSINESS: Неудачное обновление договора
             $this->logging->business('contract.update.failed', [
                 'organization_id' => $organizationId,

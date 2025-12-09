@@ -34,7 +34,9 @@ class ContractDTO
         public readonly ?string $end_date, // Y-m-d format
         public readonly ?string $notes,
         public readonly ?array $advance_payments = null,
-        public readonly bool $is_fixed_amount = true // По умолчанию фиксированная сумма
+        public readonly bool $is_fixed_amount = true, // По умолчанию фиксированная сумма
+        public readonly bool $is_multi_project = false, // Мультипроектный контракт
+        public readonly ?array $project_ids = null // Массив ID проектов для мультипроектных контрактов
     ) {}
 
     public function toArray(): array
@@ -64,6 +66,8 @@ class ContractDTO
             'end_date' => $this->end_date,
             'notes' => $this->notes,
             'is_fixed_amount' => $this->is_fixed_amount,
+            'is_multi_project' => $this->is_multi_project,
+            'project_ids' => $this->project_ids,
         ];
     }
 

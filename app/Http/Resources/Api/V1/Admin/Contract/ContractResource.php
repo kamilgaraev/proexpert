@@ -200,6 +200,15 @@ class ContractResource extends JsonResource
             'end_date' => $this->end_date,
             'notes' => $this->notes,
             'is_fixed_amount' => $this->is_fixed_amount ?? true, // По умолчанию true для обратной совместимости
+            // Мультипроектные контракты
+            'is_multi_project' => $this->is_multi_project ?? false,
+            'project_ids' => $this->is_multi_project 
+                ? $this->whenLoaded('projects', fn() => $this->projects->pluck('id')->toArray(), [])
+                : ($this->project_id ? [$this->project_id] : []),
+            'projects' => $this->when(
+                $this->is_multi_project && $this->relationLoaded('projects'),
+                fn() => ProjectMiniResource::collection($this->projects)
+            ),
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
 
