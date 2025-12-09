@@ -35,7 +35,7 @@ scripts/nginx-config-lk.conf
 /public/docs/mobile_api.json
 app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 
-# Markdown documentation files
+# Markdown documentation file
 *.md
 !README.md
 !CHANGELOG.md
