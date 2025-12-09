@@ -23,7 +23,7 @@ class PurchaseRequestService
     public function find(int $id, int $organizationId): ?PurchaseRequest
     {
         return PurchaseRequest::forOrganization($organizationId)
-            ->with(['siteRequest', 'assignedUser', 'purchaseOrders.supplier'])
+            ->with(['siteRequest.project', 'assignedUser', 'purchaseOrders.supplier'])
             ->find($id);
     }
 
@@ -36,7 +36,7 @@ class PurchaseRequestService
         array $filters = []
     ): LengthAwarePaginator {
         $query = PurchaseRequest::forOrganization($organizationId)
-            ->with(['siteRequest', 'assignedUser', 'purchaseOrders']);
+            ->with(['siteRequest.project', 'assignedUser', 'purchaseOrders']);
 
         // Применяем фильтры
         if (isset($filters['status'])) {

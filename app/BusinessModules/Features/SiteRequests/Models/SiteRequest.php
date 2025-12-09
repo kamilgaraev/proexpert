@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
@@ -185,6 +186,30 @@ class SiteRequest extends Model
         return $this->belongsTo(
             \App\BusinessModules\Core\Payments\Models\PaymentDocument::class,
             'payment_document_id'
+        );
+    }
+
+    /**
+     * Заявки на закупку, созданные на основе этой заявки
+     */
+    public function purchaseRequests(): HasMany
+    {
+        return $this->hasMany(\App\BusinessModules\Features\Procurement\Models\PurchaseRequest::class);
+    }
+
+    /**
+     * Заказы поставщикам (через заявки на закупку)
+     * Позволяет получить все заказы, связанные с этой заявкой с объекта
+     */
+    public function purchaseOrders(): HasManyThrough
+    {
+        return $this->hasManyThrough(
+            \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::class,
+            \App\BusinessModules\Features\Procurement\Models\PurchaseRequest::class,
+            'site_request_id', // Foreign key on purchase_requests table
+            'purchase_request_id', // Foreign key on purchase_orders table
+            'id', // Local key on site_requests table
+            'id' // Local key on purchase_requests table
         );
     }
 

@@ -26,8 +26,17 @@ class PurchaseRequestResource extends JsonResource
             'site_request' => $this->whenLoaded('siteRequest', fn() => [
                 'id' => $this->siteRequest->id,
                 'title' => $this->siteRequest->title,
+                'request_number' => $this->siteRequest->id, // Часто используется как номер
                 'material_name' => $this->siteRequest->material_name,
                 'material_quantity' => $this->siteRequest->material_quantity,
+                'material_unit' => $this->siteRequest->material_unit,
+                'priority' => $this->siteRequest->priority->value,
+                'priority_label' => $this->siteRequest->priority->label(),
+                'required_date' => $this->siteRequest->required_date?->format('Y-m-d'),
+                'project' => $this->siteRequest->project ? [
+                    'id' => $this->siteRequest->project->id,
+                    'name' => $this->siteRequest->project->name,
+                ] : null,
             ]),
             'assigned_user' => $this->whenLoaded('assignedUser', fn() => $this->assignedUser ? [
                 'id' => $this->assignedUser->id,
