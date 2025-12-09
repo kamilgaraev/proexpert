@@ -44,3 +44,5 @@ app/Console/Commands/Authorization/AssignOwnerRolesCommand.php
 *.docx
 *.py
 *.png
+.cursor
+*.txt
