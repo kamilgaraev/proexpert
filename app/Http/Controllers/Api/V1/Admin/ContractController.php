@@ -204,13 +204,27 @@ class ContractController extends Controller
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
         
-        if ($projectId && (int)$contractData->project_id !== (int)$projectId) {
-            Log::warning('Contract project mismatch', [
-                'contract_id' => $contract,
-                'contract_project_id' => (int)$contractData->project_id,
-                'requested_project_id' => (int)$projectId,
-            ]);
-            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+        // Проверка принадлежности контракта к проекту (для обычных и мультипроектных контрактов)
+        if ($projectId) {
+            $belongsToProject = false;
+            
+            if ($contractData->is_multi_project) {
+                // Для мультипроектных контрактов проверяем через pivot таблицу
+                $belongsToProject = $contractData->projects()->where('projects.id', $projectId)->exists();
+            } else {
+                // Для обычных контрактов проверяем project_id
+                $belongsToProject = (int)$contractData->project_id === (int)$projectId;
+            }
+            
+            if (!$belongsToProject) {
+                Log::warning('Contract project mismatch', [
+                    'contract_id' => $contract,
+                    'contract_project_id' => (int)$contractData->project_id,
+                    'is_multi_project' => $contractData->is_multi_project,
+                    'requested_project_id' => (int)$projectId,
+                ]);
+                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            }
         }
         
         // Проверка для подрядчика: может видеть только свои контракты
@@ -326,8 +340,21 @@ class ContractController extends Controller
                 return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
             }
             
-            if ($projectId && (int)$existingContract->project_id !== (int)$projectId) {
-                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            // Проверка принадлежности контракта к проекту (для обычных и мультипроектных контрактов)
+            if ($projectId) {
+                $belongsToProject = false;
+                
+                if ($existingContract->is_multi_project) {
+                    // Для мультипроектных контрактов проверяем через pivot таблицу
+                    $belongsToProject = $existingContract->projects()->where('projects.id', $projectId)->exists();
+                } else {
+                    // Для обычных контрактов проверяем project_id
+                    $belongsToProject = (int)$existingContract->project_id === (int)$projectId;
+                }
+                
+                if (!$belongsToProject) {
+                    return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+                }
             }
             
             $this->contractService->deleteContract($contract, $organizationId);
@@ -357,8 +384,15 @@ class ContractController extends Controller
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
         
-        if ($projectId && (int)$contract->project_id !== (int)$projectId) {
-            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+        // Проверка принадлежности контракта к проекту
+        if ($projectId) {
+            $belongsToProject = $contract->is_multi_project
+                ? $contract->projects()->where('projects.id', $projectId)->exists()
+                : (int)$contract->project_id === (int)$projectId;
+            
+            if (!$belongsToProject) {
+                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            }
         }
 
         $analytics = [
@@ -403,8 +437,15 @@ class ContractController extends Controller
             return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
         }
         
-        if ($projectId && (int)$contract->project_id !== (int)$projectId) {
-            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+        // Проверка принадлежности контракта к проекту
+        if ($projectId) {
+            $belongsToProject = $contract->is_multi_project
+                ? $contract->projects()->where('projects.id', $projectId)->exists()
+                : (int)$contract->project_id === (int)$projectId;
+            
+            if (!$belongsToProject) {
+                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            }
         }
 
         $perPage = $request->query('per_page', 15);
@@ -437,8 +478,15 @@ class ContractController extends Controller
             $fullDetails = $this->contractService->getFullContractDetails($contract, $organizationId);
             $contract = $fullDetails['contract'];
             
-            if ($projectId && $contract->project_id != $projectId) {
-                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            // Проверка принадлежности контракта к проекту
+            if ($projectId) {
+                $belongsToProject = $contract->is_multi_project
+                    ? $contract->projects()->where('projects.id', $projectId)->exists()
+                    : (int)$contract->project_id === (int)$projectId;
+                
+                if (!$belongsToProject) {
+                    return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+                }
             }
             
             return response()->json([
