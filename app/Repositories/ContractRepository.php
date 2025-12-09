@@ -38,7 +38,18 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         }
         
         if (!empty($filters['project_id'])) {
-            $query->where('contracts.project_id', $filters['project_id']);
+            $projectId = $filters['project_id'];
+            $query->where(function($q) use ($projectId) {
+                // Обычные контракты (project_id)
+                $q->where('contracts.project_id', $projectId)
+                  // ИЛИ мультипроектные контракты (через pivot таблицу)
+                  ->orWhereExists(function($sub) use ($projectId) {
+                      $sub->select(DB::raw(1))
+                          ->from('contract_project')
+                          ->whereColumn('contract_project.contract_id', 'contracts.id')
+                          ->where('contract_project.project_id', $projectId);
+                  });
+            });
         }
         
         if (!empty($filters['status'])) {
@@ -254,6 +265,7 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         $query->with([
             'contractor:id,name', 
             'project:id,name',
+            'projects:id,name', // Для мультипроектных контрактов
             'agreements:id,contract_id,change_amount' // Для расчета эффективной суммы контракта
         ]);
 
@@ -430,7 +442,18 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         }
 
         if (!empty($filters['project_id'])) {
-            $query->where('contracts.project_id', $filters['project_id']);
+            $projectId = $filters['project_id'];
+            $query->where(function($q) use ($projectId) {
+                // Обычные контракты (project_id)
+                $q->where('contracts.project_id', $projectId)
+                  // ИЛИ мультипроектные контракты (через pivot таблицу)
+                  ->orWhereExists(function($sub) use ($projectId) {
+                      $sub->select(DB::raw(1))
+                          ->from('contract_project')
+                          ->whereColumn('contract_project.contract_id', 'contracts.id')
+                          ->where('contract_project.project_id', $projectId);
+                  });
+            });
         }
 
         if (count($orgIds) > 1) {
