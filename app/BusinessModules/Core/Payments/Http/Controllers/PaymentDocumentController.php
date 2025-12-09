@@ -298,8 +298,9 @@ class PaymentDocumentController extends Controller
                         ]);
                         
                         // Если сумма не указана и не может быть рассчитана - требуем указать вручную
+                        $contractNumber = $contract->number ?? $contractId;
                         throw new \DomainException(
-                            "Не удалось автоматически определить сумму аванса для контракта №{$contract->number ?? $contractId}. " .
+                            "Не удалось автоматически определить сумму аванса для контракта №{$contractNumber}. " .
                             "Пожалуйста, укажите сумму вручную или проверьте, что у контракта указана сумма (base_amount, total_amount или planned_advance_amount)."
                         );
                     }
