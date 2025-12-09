@@ -11,7 +11,9 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 use App\BusinessModules\Core\Payments\Http\Requests\BulkActionRequest;
+use App\BusinessModules\Core\Payments\Http\Requests\StorePaymentDocumentRequest;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class PaymentDocumentController extends Controller
 {
@@ -199,32 +201,10 @@ class PaymentDocumentController extends Controller
     /**
      * Создать платежный документ
      */
-    public function store(Request $request): JsonResponse
+    public function store(StorePaymentDocumentRequest $request): JsonResponse
     {
         try {
-            $validated = $request->validate([
-                'document_type' => 'required|string|in:payment_request,invoice,payment_order,incoming_payment,expense,offset_act',
-                'document_date' => 'nullable|date',
-                'due_date' => 'nullable|date',
-                'project_id' => 'nullable|integer|exists:projects,id',
-                'payer_organization_id' => 'nullable|integer|exists:organizations,id',
-                'payer_contractor_id' => 'nullable|integer|exists:contractors,id',
-                'payee_organization_id' => 'nullable|integer|exists:organizations,id',
-                'payee_contractor_id' => 'nullable|integer|exists:contractors,id',
-                'amount' => 'required|numeric|min:0.01',
-                'currency' => 'nullable|string|size:3',
-                'vat_rate' => 'nullable|numeric|min:0|max:100',
-                'source_type' => 'nullable|string',
-                'source_id' => 'nullable|integer',
-                'description' => 'nullable|string',
-                'payment_purpose' => 'nullable|string',
-                'bank_account' => 'nullable|string|size:20',
-                'bank_bik' => 'nullable|string|size:9',
-                'bank_correspondent_account' => 'nullable|string|size:20',
-                'bank_name' => 'nullable|string',
-                'attached_documents' => 'nullable|array',
-                'metadata' => 'nullable|array',
-            ]);
+            $validated = $request->validated();
 
             $organizationId = $request->attributes->get('current_organization_id');
             $userId = $request->user()->id;
@@ -239,6 +219,12 @@ class PaymentDocumentController extends Controller
                 'message' => 'Платежный документ создан',
                 'data' => $this->formatDocumentDetailed($document),
             ], 201);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage() ?: 'Данные не прошли валидацию',
+                'errors' => $e->errors(),
+            ], 422);
         } catch (\DomainException | \InvalidArgumentException $e) {
             return response()->json([
                 'success' => false,
