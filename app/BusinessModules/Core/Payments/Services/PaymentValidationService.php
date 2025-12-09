@@ -250,8 +250,11 @@ class PaymentValidationService
             }
 
             // Проверяем статус договора
-            if (!in_array($source->status, ['active', 'executing'])) {
-                throw new \DomainException('Договор должен быть активным');
+            // status может быть как строкой, так и Enum объектом
+            $statusValue = is_object($source->status) ? $source->status->value : $source->status;
+            
+            if (!in_array($statusValue, ['active', 'draft'])) {
+                throw new \DomainException('Договор должен быть активным или в статусе черновика');
             }
         }
     }
