@@ -19,6 +19,11 @@ class StorePaymentDocumentRequest extends FormRequest
      */
     public function rules(): array
     {
+        // Для авансов, привязанных к контракту, сумма может быть опциональной (будет рассчитана автоматически)
+        $isAdvanceWithContract = $this->input('invoice_type') === 'advance' 
+            && (($this->input('source_type') === 'App\\Models\\Contract' && $this->input('source_id'))
+                || $this->input('contract_id'));
+
         return [
             'document_type' => 'required|string|in:payment_request,invoice,payment_order,incoming_payment,expense,offset_act',
             'document_date' => 'nullable|date',
@@ -28,11 +33,13 @@ class StorePaymentDocumentRequest extends FormRequest
             'payer_contractor_id' => 'nullable|integer|exists:contractors,id',
             'payee_organization_id' => 'nullable|integer|exists:organizations,id',
             'payee_contractor_id' => 'nullable|integer|exists:contractors,id',
-            'amount' => 'required|numeric|min:0.01',
+            'amount' => $isAdvanceWithContract ? 'nullable|numeric|min:0' : 'required|numeric|min:0.01',
             'currency' => 'nullable|string|size:3',
             'vat_rate' => 'nullable|numeric|min:0|max:100',
             'source_type' => 'nullable|string',
             'source_id' => 'nullable|integer',
+            'contract_id' => 'nullable|integer|exists:contracts,id',
+            'invoice_type' => 'nullable|string|in:act,advance,progress,final,material_purchase,service,equipment,salary,other',
             'description' => 'nullable|string',
             'payment_purpose' => 'nullable|string',
             'bank_account' => 'nullable|string|size:20',

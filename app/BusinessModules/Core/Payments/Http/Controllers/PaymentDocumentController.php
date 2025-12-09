@@ -212,6 +212,50 @@ class PaymentDocumentController extends Controller
             $validated['organization_id'] = $organizationId;
             $validated['created_by_user_id'] = $userId;
 
+            // Маппинг contract_id в source_id и source_type, если нужно
+            if (isset($validated['contract_id']) && !isset($validated['source_id'])) {
+                $validated['source_id'] = $validated['contract_id'];
+                $validated['source_type'] = 'App\\Models\\Contract';
+            }
+
+            // Автоматический расчет суммы для авансов по контракту
+            $contractId = $validated['source_id'] ?? $validated['contract_id'] ?? null;
+            if (($validated['invoice_type'] ?? null) === 'advance' 
+                && ($validated['source_type'] ?? null) === 'App\\Models\\Contract' 
+                && $contractId
+                && (empty($validated['amount']) || $validated['amount'] == 0)) {
+                
+                $contract = \App\Models\Contract::where('id', $contractId)
+                    ->where('organization_id', $organizationId)
+                    ->first();
+                
+                if ($contract) {
+                    // Используем planned_advance_amount, если он указан
+                    if ($contract->planned_advance_amount && $contract->planned_advance_amount > 0) {
+                        $validated['amount'] = (float) $contract->planned_advance_amount;
+                    } else {
+                        // Для 100% аванса используем общую сумму контракта
+                        // Приоритет: total_amount_with_gp > total_amount > base_amount
+                        $totalAmount = null;
+                        if ($contract->total_amount_with_gp !== null) {
+                            $totalAmount = (float) $contract->total_amount_with_gp;
+                        } elseif ($contract->total_amount) {
+                            $totalAmount = (float) $contract->total_amount;
+                        } elseif ($contract->base_amount) {
+                            $totalAmount = (float) $contract->base_amount;
+                        }
+                        
+                        if ($totalAmount && $totalAmount > 0) {
+                            $validated['amount'] = $totalAmount;
+                        } else {
+                            throw new \DomainException('Не удалось определить сумму контракта для расчета аванса');
+                        }
+                    }
+                } else {
+                    throw new \DomainException('Контракт не найден');
+                }
+            }
+
             $document = $this->service->create($validated);
 
             return response()->json([
