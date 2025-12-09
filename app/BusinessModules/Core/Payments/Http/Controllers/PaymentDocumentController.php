@@ -213,15 +213,29 @@ class PaymentDocumentController extends Controller
             $validated['created_by_user_id'] = $userId;
 
             // Маппинг contract_id в source_id и source_type, если нужно
-            if (isset($validated['contract_id']) && !isset($validated['source_id'])) {
-                $validated['source_id'] = $validated['contract_id'];
-                $validated['source_type'] = 'App\\Models\\Contract';
+            if (isset($validated['contract_id'])) {
+                if (!isset($validated['source_id'])) {
+                    $validated['source_id'] = $validated['contract_id'];
+                    $validated['source_type'] = 'App\\Models\\Contract';
+                }
+                if (!isset($validated['invoiceable_id'])) {
+                    $validated['invoiceable_id'] = $validated['contract_id'];
+                    $validated['invoiceable_type'] = 'App\\Models\\Contract';
+                }
             }
 
             // Автоматический расчет суммы для авансов по контракту
-            $contractId = $validated['source_id'] ?? $validated['contract_id'] ?? null;
+            $contractId = $validated['invoiceable_id'] 
+                ?? $validated['source_id'] 
+                ?? $validated['contract_id'] 
+                ?? null;
+            
+            $isContractRelated = ($validated['invoiceable_type'] ?? null) === 'App\\Models\\Contract'
+                || ($validated['source_type'] ?? null) === 'App\\Models\\Contract'
+                || isset($validated['contract_id']);
+            
             if (($validated['invoice_type'] ?? null) === 'advance' 
-                && ($validated['source_type'] ?? null) === 'App\\Models\\Contract' 
+                && $isContractRelated
                 && $contractId
                 && (empty($validated['amount']) || $validated['amount'] == 0)) {
                 
@@ -229,31 +243,72 @@ class PaymentDocumentController extends Controller
                     ->where('organization_id', $organizationId)
                     ->first();
                 
-                if ($contract) {
-                    // Используем planned_advance_amount, если он указан
-                    if ($contract->planned_advance_amount && $contract->planned_advance_amount > 0) {
-                        $validated['amount'] = (float) $contract->planned_advance_amount;
-                    } else {
-                        // Для 100% аванса используем общую сумму контракта
-                        // Приоритет: total_amount_with_gp > total_amount > base_amount
-                        $totalAmount = null;
-                        if ($contract->total_amount_with_gp !== null) {
-                            $totalAmount = (float) $contract->total_amount_with_gp;
-                        } elseif ($contract->total_amount) {
-                            $totalAmount = (float) $contract->total_amount;
-                        } elseif ($contract->base_amount) {
-                            $totalAmount = (float) $contract->base_amount;
-                        }
-                        
-                        if ($totalAmount && $totalAmount > 0) {
-                            $validated['amount'] = $totalAmount;
-                        } else {
-                            throw new \DomainException('Не удалось определить сумму контракта для расчета аванса');
-                        }
-                    }
-                } else {
-                    throw new \DomainException('Контракт не найден');
+                if (!$contract) {
+                    \Log::warning('payment_document.store.contract_not_found', [
+                        'contract_id' => $contractId,
+                        'organization_id' => $organizationId,
+                        'validated' => $validated,
+                    ]);
+                    throw new \DomainException("Контракт с ID {$contractId} не найден");
                 }
+                
+                \Log::info('payment_document.store.calculating_advance', [
+                    'contract_id' => $contractId,
+                    'planned_advance_amount' => $contract->planned_advance_amount,
+                    'total_amount_with_gp' => $contract->total_amount_with_gp,
+                    'total_amount' => $contract->total_amount,
+                    'base_amount' => $contract->base_amount,
+                ]);
+                
+                // Используем planned_advance_amount, если он указан
+                if ($contract->planned_advance_amount && $contract->planned_advance_amount > 0) {
+                    $validated['amount'] = (float) $contract->planned_advance_amount;
+                } else {
+                    // Для 100% аванса используем общую сумму контракта
+                    // Приоритет: total_amount_with_gp (если доступен) > total_amount > base_amount
+                    $totalAmount = null;
+                    
+                    // Для контрактов с фиксированной суммой используем total_amount_with_gp
+                    if ($contract->is_fixed_amount && $contract->total_amount_with_gp !== null && $contract->total_amount_with_gp > 0) {
+                        $totalAmount = (float) $contract->total_amount_with_gp;
+                    }
+                    // Если total_amount_with_gp недоступен или контракт с нефиксированной суммой
+                    elseif ($contract->total_amount && $contract->total_amount > 0) {
+                        $totalAmount = (float) $contract->total_amount;
+                    } 
+                    // Используем base_amount как последний вариант
+                    elseif ($contract->base_amount && $contract->base_amount > 0) {
+                        $totalAmount = (float) $contract->base_amount;
+                    }
+                    
+                    if ($totalAmount && $totalAmount > 0) {
+                        $validated['amount'] = $totalAmount;
+                    } else {
+                        // Если сумма не может быть определена автоматически, 
+                        // но пользователь не указал сумму - требуем указать её вручную
+                        \Log::warning('payment_document.store.cannot_calculate_advance', [
+                            'contract_id' => $contractId,
+                            'contract_data' => [
+                                'planned_advance_amount' => $contract->planned_advance_amount,
+                                'total_amount_with_gp' => $contract->total_amount_with_gp,
+                                'total_amount' => $contract->total_amount,
+                                'base_amount' => $contract->base_amount,
+                                'is_fixed_amount' => $contract->is_fixed_amount,
+                            ],
+                        ]);
+                        
+                        // Если сумма не указана и не может быть рассчитана - требуем указать вручную
+                        throw new \DomainException(
+                            "Не удалось автоматически определить сумму аванса для контракта №{$contract->number ?? $contractId}. " .
+                            "Пожалуйста, укажите сумму вручную или проверьте, что у контракта указана сумма (base_amount, total_amount или planned_advance_amount)."
+                        );
+                    }
+                }
+                
+                \Log::info('payment_document.store.advance_calculated', [
+                    'contract_id' => $contractId,
+                    'calculated_amount' => $validated['amount'],
+                ]);
             }
 
             $document = $this->service->create($validated);

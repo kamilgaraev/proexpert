@@ -21,8 +21,11 @@ class StorePaymentDocumentRequest extends FormRequest
     {
         // Для авансов, привязанных к контракту, сумма может быть опциональной (будет рассчитана автоматически)
         $isAdvanceWithContract = $this->input('invoice_type') === 'advance' 
-            && (($this->input('source_type') === 'App\\Models\\Contract' && $this->input('source_id'))
-                || $this->input('contract_id'));
+            && (
+                ($this->input('source_type') === 'App\\Models\\Contract' && $this->input('source_id'))
+                || ($this->input('invoiceable_type') === 'App\\Models\\Contract' && $this->input('invoiceable_id'))
+                || $this->input('contract_id')
+            );
 
         return [
             'document_type' => 'required|string|in:payment_request,invoice,payment_order,incoming_payment,expense,offset_act',
@@ -38,6 +41,8 @@ class StorePaymentDocumentRequest extends FormRequest
             'vat_rate' => 'nullable|numeric|min:0|max:100',
             'source_type' => 'nullable|string',
             'source_id' => 'nullable|integer',
+            'invoiceable_type' => 'nullable|string',
+            'invoiceable_id' => 'nullable|integer',
             'contract_id' => 'nullable|integer|exists:contracts,id',
             'invoice_type' => 'nullable|string|in:act,advance,progress,final,material_purchase,service,equipment,salary,other',
             'description' => 'nullable|string',
