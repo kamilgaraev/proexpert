@@ -86,7 +86,7 @@ class StoreContractRequest extends FormRequest
         $isContractor = $projectContext && in_array($projectContext->role->value, ['contractor', 'subcontractor']);
         
         return [
-            'project_id' => ['nullable', 'integer', 'exists:projects,id'],
+            'project_id' => ['nullable', 'integer', 'exists:projects,id', 'required_without:project_ids'],
             // contractor_id обязателен для генподрядчика, опционален для подрядчика (auto-fill)
             // Для договоров поставки может быть null, если указан supplier_id
             'contractor_id' => $isContractor 
@@ -128,6 +128,10 @@ class StoreContractRequest extends FormRequest
             'start_date' => ['nullable', 'date'],
             'end_date' => ['nullable', 'date', 'after_or_equal:start_date'],
             'notes' => ['nullable', 'string'],
+            // Мультипроектные контракты
+            'is_multi_project' => ['nullable', 'boolean'],
+            'project_ids' => ['nullable', 'required_if:is_multi_project,true,1', 'array', 'min:1'],
+            'project_ids.*' => ['integer', 'exists:projects,id'],
             // Временное поле для примера в контроллере, в реальности organization_id не должен приходить из запроса на создание
             'organization_id_for_creation' => ['sometimes', 'integer'] 
         ];
@@ -154,6 +158,10 @@ class StoreContractRequest extends FormRequest
             $totalAmount = $baseAmount;
         }
         
+        // Мультипроектный контракт
+        $isMultiProject = $this->validated('is_multi_project') === true;
+        $projectIds = $this->validated('project_ids');
+        
         return new ContractDTO(
             project_id: $this->validated('project_id'),
             contractor_id: $this->validated('contractor_id'),
@@ -179,7 +187,9 @@ class StoreContractRequest extends FormRequest
             end_date: $this->validated('end_date') ? \Carbon\Carbon::parse($this->validated('end_date'))->format('Y-m-d') : null,
             notes: $this->validated('notes'),
             advance_payments: $this->validated('advance_payments'),
-            is_fixed_amount: $isFixedAmount
+            is_fixed_amount: $isFixedAmount,
+            is_multi_project: $isMultiProject,
+            project_ids: $projectIds
         );
     }
 } 

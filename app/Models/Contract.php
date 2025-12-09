@@ -48,6 +48,7 @@ class Contract extends Model
         'notes',
         'is_onboarding_demo',
         'is_fixed_amount',
+        'is_multi_project',
     ];
 
     protected $casts = [
@@ -69,6 +70,7 @@ class Contract extends Model
         'work_type_category' => ContractWorkTypeCategoryEnum::class,
         'is_onboarding_demo' => 'boolean',
         'is_fixed_amount' => 'boolean',
+        'is_multi_project' => 'boolean',
     ];
 
     public function organization(): BelongsTo
@@ -79,6 +81,15 @@ class Contract extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /**
+     * Проекты, к которым привязан контракт (для мультипроектных контрактов)
+     */
+    public function projects(): BelongsToMany
+    {
+        return $this->belongsToMany(Project::class, 'contract_project')
+                    ->withTimestamps();
     }
 
     public function contractor(): BelongsTo
@@ -585,5 +596,41 @@ class Contract extends Model
     public function isWorkContract(): bool
     {
         return $this->contractor_id !== null && !$this->isProcurementContract();
+    }
+
+    /**
+     * Получить список ID проектов для контракта
+     * Для мультипроектных контрактов возвращает массив ID из pivot таблицы
+     * Для обычных контрактов возвращает массив с одним project_id
+     */
+    public function getProjectIds(): array
+    {
+        if ($this->is_multi_project) {
+            return $this->projects()->pluck('projects.id')->toArray();
+        }
+        
+        return $this->project_id ? [$this->project_id] : [];
+    }
+
+    /**
+     * Синхронизировать проекты для контракта
+     * @param array $projectIds - массив ID проектов
+     */
+    public function syncProjects(array $projectIds): void
+    {
+        if ($this->is_multi_project) {
+            $this->projects()->sync($projectIds);
+        } else {
+            // Для обычного контракта устанавливаем первый проект из массива
+            $this->project_id = !empty($projectIds) ? $projectIds[0] : null;
+            $this->save();
+            
+            // Синхронизируем pivot таблицу для консистентности
+            if ($this->project_id) {
+                $this->projects()->sync([$this->project_id]);
+            } else {
+                $this->projects()->sync([]);
+            }
+        }
     }
 }
