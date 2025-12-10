@@ -2,129 +2,242 @@
 
 namespace App\Console\Commands;
 
-use Illuminate\Console\Command;
+use App\Jobs\GeocodeProjectJob;
 use App\Models\Project;
-use App\Services\GeocodingService;
+use App\Services\Geo\Geocoding\GeocodeService;
+use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 
 class GeocodeProjectsCommand extends Command
 {
-    protected $signature = 'projects:geocode 
-                            {--force : Force re-geocode all projects even if they already have coordinates}
-                            {--organization= : Geocode projects only for specific organization ID}
-                            {--limit= : Limit the number of projects to geocode}
-                            {--delay=1 : Delay in seconds between geocoding requests}';
+    /**
+     * The name and signature of the console command.
+     *
+     * @var string
+     */
+    protected $signature = 'geocode:projects
+                            {--organization= : Organization ID to geocode}
+                            {--project= : Specific project ID to geocode}
+                            {--status=pending : Geocoding status filter (pending, failed, all)}
+                            {--limit= : Maximum number of projects to process}
+                            {--queue : Use queue for background processing}
+                            {--sync : Process synchronously (not recommended for large batches)}
+                            {--force : Re-geocode even if already geocoded}';
 
-    protected $description = 'Geocode project addresses to get latitude and longitude coordinates';
+    /**
+     * The console command description.
+     *
+     * @var string
+     */
+    protected $description = 'Geocode projects by their addresses using multiple providers (DaData, Yandex, Nominatim)';
 
-    private GeocodingService $geocodingService;
-
-    public function __construct(GeocodingService $geocodingService)
+    /**
+     * Execute the console command.
+     */
+    public function handle(GeocodeService $geocodeService): int
     {
-        parent::__construct();
-        $this->geocodingService = $geocodingService;
-    }
+        $this->info('Starting geocoding process...');
+        $this->newLine();
 
-    public function handle(): int
-    {
+        // Build query
+        $query = Project::query()->whereNotNull('address');
+
+        // Filter by organization
+        if ($organizationId = $this->option('organization')) {
+            $query->where('organization_id', $organizationId);
+            $this->info("Filtering by organization ID: {$organizationId}");
+        }
+
+        // Filter by specific project
+        if ($projectId = $this->option('project')) {
+            $query->where('id', $projectId);
+            $this->info("Processing single project ID: {$projectId}");
+        }
+
+        // Filter by status
+        $status = $this->option('status');
         $force = $this->option('force');
-        $organizationId = $this->option('organization');
-        $limit = $this->option('limit');
-        $delay = (int) $this->option('delay');
-
-        $query = Project::whereNotNull('address');
 
         if (!$force) {
-            $query->where(function ($q) {
-                $q->whereNull('latitude')
-                  ->orWhereNull('longitude');
-            });
+            if ($status === 'all') {
+                // Process all projects with addresses
+            } elseif ($status === 'pending') {
+                $query->where(function ($q) {
+                    $q->where('geocoding_status', 'pending')
+                        ->orWhereNull('geocoding_status')
+                        ->orWhere(function ($q2) {
+                            $q2->whereNull('latitude')->whereNull('longitude');
+                        });
+                });
+            } elseif ($status === 'failed') {
+                $query->where('geocoding_status', 'failed');
+            } else {
+                $query->where('geocoding_status', $status);
+            }
+            $this->info("Geocoding status filter: {$status}");
+        } else {
+            $this->warn("Force mode: will re-geocode all projects");
         }
 
-        if ($organizationId) {
-            $query->where('organization_id', $organizationId);
-        }
-
-        if ($limit) {
+        // Apply limit
+        if ($limit = $this->option('limit')) {
             $query->limit((int) $limit);
+            $this->info("Limit: {$limit} projects");
         }
 
         $projects = $query->get();
         $total = $projects->count();
 
         if ($total === 0) {
-            $this->info('No projects to geocode.');
+            $this->warn('No projects found matching criteria.');
             return self::SUCCESS;
         }
 
-        $this->info("Found {$total} project(s) to geocode.");
+        $this->info("Found {$total} projects to geocode");
+        $this->newLine();
 
-        $bar = $this->output->createProgressBar($total);
+        // Confirm before proceeding
+        if (!$this->option('sync') && !$this->option('queue')) {
+            if (!$this->confirm("Process {$total} projects?", true)) {
+                $this->info('Cancelled.');
+                return self::SUCCESS;
+            }
+        }
+
+        // Process projects
+        $useQueue = $this->option('queue') || (!$this->option('sync') && $total > 10);
+        $useSync = $this->option('sync');
+
+        if ($useQueue && !$useSync) {
+            $this->info('Using queue for background processing...');
+            $this->processWithQueue($projects);
+        } else {
+            $this->info('Processing synchronously...');
+            $this->processSync($projects, $geocodeService);
+        }
+
+        $this->newLine();
+        $this->info('Geocoding process completed!');
+
+        // Show statistics if organization specified
+        if ($organizationId) {
+            $this->newLine();
+            $this->showStatistics($geocodeService, $organizationId);
+        }
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * Process projects using queue
+     */
+    private function processWithQueue($projects): void
+    {
+        $bar = $this->output->createProgressBar($projects->count());
+        $bar->setFormat('verbose');
         $bar->start();
 
-        $successCount = 0;
-        $failedCount = 0;
-        $skippedCount = 0;
+        $dispatched = 0;
+        $chunkSize = config('geocoding.batch.chunk_size', 100);
+        $delayBetweenChunks = config('geocoding.batch.delay_between_chunks', 1000) / 1000; // Convert to seconds
+
+        foreach ($projects->chunk($chunkSize) as $chunk) {
+            foreach ($chunk as $project) {
+                GeocodeProjectJob::dispatch($project->id);
+                $dispatched++;
+                $bar->advance();
+            }
+
+            // Delay between chunks to respect rate limits
+            if ($delayBetweenChunks > 0) {
+                usleep((int)($delayBetweenChunks * 1000000));
+            }
+        }
+
+        $bar->finish();
+        $this->newLine();
+        $this->info("Dispatched {$dispatched} geocoding jobs to queue");
+    }
+
+    /**
+     * Process projects synchronously
+     */
+    private function processSync($projects, GeocodeService $geocodeService): void
+    {
+        $bar = $this->output->createProgressBar($projects->count());
+        $bar->setFormat('verbose');
+        $bar->start();
+
+        $success = 0;
+        $failed = 0;
+        $skipped = 0;
+
+        $rateLimit = config('geocoding.batch.rate_limit', 10);
+        $delay = 1.0 / $rateLimit; // Delay between requests in seconds
 
         foreach ($projects as $project) {
-            if (!$force && $project->latitude && $project->longitude) {
-                $skippedCount++;
+            // Skip manual geocoded projects
+            if ($project->geocoding_status === 'manual' && !$this->option('force')) {
+                $skipped++;
                 $bar->advance();
                 continue;
             }
 
             try {
-                $result = $this->geocodingService->geocode($project->address);
+                $result = $geocodeService->geocodeAndSave($project);
 
                 if ($result) {
-                    DB::table('projects')
-                        ->where('id', $project->id)
-                        ->update([
-                            'latitude' => $result['latitude'],
-                            'longitude' => $result['longitude'],
-                            'geocoded_at' => now(),
-                        ]);
-
-                    $successCount++;
-                    
-                    if ($this->option('verbose')) {
-                        $this->newLine();
-                        $this->info("✓ Project #{$project->id}: {$result['latitude']}, {$result['longitude']}");
-                    }
+                    $success++;
                 } else {
-                    $failedCount++;
-                    $this->newLine();
-                    $this->warn("Failed to geocode project #{$project->id}: {$project->name}");
-                    $this->line("  Address: {$project->address}");
+                    $failed++;
+                }
+
+                // Rate limiting
+                if ($delay > 0) {
+                    usleep((int)($delay * 1000000));
                 }
             } catch (\Exception $e) {
-                $failedCount++;
-                $this->newLine();
-                $this->error("Error geocoding project #{$project->id}: {$e->getMessage()}");
-                $this->line("  Address: {$project->address}");
+                $failed++;
+                $this->error("\nFailed to geocode project {$project->id}: {$e->getMessage()}");
             }
 
             $bar->advance();
-
-            if ($delay > 0 && $successCount < $total) {
-                sleep($delay);
-            }
         }
 
         $bar->finish();
-        $this->newLine(2);
+        $this->newLine();
+        $this->newLine();
 
-        $this->info("Geocoding completed!");
+        // Summary
         $this->table(
             ['Status', 'Count'],
             [
-                ['Success', $successCount],
-                ['Failed', $failedCount],
-                ['Skipped', $skippedCount],
-                ['Total', $total],
+                ['Success', $success],
+                ['Failed', $failed],
+                ['Skipped', $skipped],
+                ['Total', $projects->count()],
             ]
         );
+    }
 
-        return self::SUCCESS;
+    /**
+     * Show geocoding statistics
+     */
+    private function showStatistics(GeocodeService $geocodeService, int $organizationId): void
+    {
+        $stats = $geocodeService->getStatistics($organizationId);
+
+        $this->info('Geocoding Statistics:');
+        $this->table(
+            ['Metric', 'Value'],
+            [
+                ['Total Projects', $stats['total']],
+                ['Geocoded', $stats['geocoded']],
+                ['Pending', $stats['pending']],
+                ['Failed', $stats['failed']],
+                ['Manual', $stats['manual']],
+                ['Geocoded %', $stats['geocoded_percentage'] . '%'],
+            ]
+        );
     }
 }

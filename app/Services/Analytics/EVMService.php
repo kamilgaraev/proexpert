@@ -8,16 +8,56 @@ use App\Models\CompletedWork;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 
 class EVMService
 {
+    private const CACHE_TTL = 600; // 10 minutes
+    private const CACHE_PREFIX = 'project_metrics:';
+
     /**
-     * Calculate EVM metrics for a project
+     * Calculate EVM metrics for a project with caching
      *
-     * @param Project $project
+     * @param Project|int $project Project model or project ID
      * @return array
      */
-    public function calculateMetrics(Project $project): array
+    public function calculateMetrics(Project|int $project): array
+    {
+        $projectId = $project instanceof Project ? $project->id : $project;
+        
+        // Try to get from cache first
+        $cacheKey = self::CACHE_PREFIX . $projectId;
+        
+        $cached = Cache::get($cacheKey);
+        if ($cached !== null) {
+            Log::debug('EVM metrics cache hit', ['project_id' => $projectId]);
+            return $cached;
+        }
+
+        // Load project if ID was passed
+        if (!($project instanceof Project)) {
+            $project = Project::find($projectId);
+            if (!$project) {
+                throw new \InvalidArgumentException("Project {$projectId} not found");
+            }
+        }
+
+        Log::debug('EVM metrics cache miss, calculating', ['project_id' => $projectId]);
+
+        // Calculate metrics
+        $metrics = $this->calculateMetricsInternal($project);
+
+        // Cache the result
+        Cache::put($cacheKey, $metrics, self::CACHE_TTL);
+
+        return $metrics;
+    }
+
+    /**
+     * Internal method to calculate metrics
+     */
+    private function calculateMetricsInternal(Project $project): array
     {
         // 1. Basic Data Points
         $bac = (float) $project->budget_amount;
@@ -46,6 +86,9 @@ class EVMService
         $remainingWork = $bac - $ev;
         $tcpi = $remainingBudget > 0 ? round($remainingWork / $remainingBudget, 2) : 0.0;
 
+        // 5. Health status
+        $health = $this->calculateHealth($spi, $cpi);
+
         return [
             'bac' => $bac,
             'pv' => $pv,
@@ -58,8 +101,57 @@ class EVMService
             'eac' => $eac,
             'vac' => $vac,
             'tcpi' => $tcpi,
+            'health' => $health,
             'generated_at' => now()->toIso8601String(),
         ];
+    }
+
+    /**
+     * Calculate project health status
+     */
+    private function calculateHealth(float $spi, float $cpi): string
+    {
+        if ($spi < 0.8 || $cpi < 0.8) {
+            return 'critical';
+        }
+        
+        if ($spi < 0.95 || $cpi < 0.95) {
+            return 'warning';
+        }
+        
+        return 'good';
+    }
+
+    /**
+     * Invalidate cache for a project
+     */
+    public function invalidateCache(int $projectId): void
+    {
+        $cacheKey = self::CACHE_PREFIX . $projectId;
+        Cache::forget($cacheKey);
+        Log::debug('EVM metrics cache invalidated', ['project_id' => $projectId]);
+    }
+
+    /**
+     * Batch calculate metrics for multiple projects
+     */
+    public function batchCalculateMetrics(array $projectIds): array
+    {
+        $results = [];
+        
+        foreach ($projectIds as $projectId) {
+            try {
+                $results[$projectId] = $this->calculateMetrics($projectId);
+            } catch (\Exception $e) {
+                Log::error('Failed to calculate EVM metrics for project', [
+                    'project_id' => $projectId,
+                    'error' => $e->getMessage(),
+                ]);
+                $results[$projectId] = null;
+            }
+        }
+        
+        return $results;
     }
 
     /**

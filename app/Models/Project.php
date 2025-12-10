@@ -47,6 +47,7 @@ class Project extends Model
         'latitude',
         'longitude',
         'geocoded_at',
+        'geocoding_status',
         'description',
         'customer',
         'designer',
@@ -130,6 +131,14 @@ class Project extends Model
                 'metadata'
             ])
             ->withTimestamps();
+    }
+
+    /**
+     * Получить структурированный адрес проекта
+     */
+    public function projectAddress()
+    {
+        return $this->hasOne(ProjectAddress::class);
     }
     
     /**
