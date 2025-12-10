@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Admin\Geo;
 
 use App\Http\Controllers\Controller;
+use App\Models\Project;
 use App\Services\Geo\TileService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -66,24 +67,61 @@ class MapTileController extends Controller
     public function getProjects(Request $request): JsonResponse
     {
         $organizationId = Auth::user()->current_organization_id;
-
-        // For backward compatibility, get all projects without tiling
-        // This is less efficient but simpler for initial implementation
-        
-        $bounds = $this->parseBounds($request);
         $filters = $request->input('filters', []);
 
         try {
-            // Use tile service with a large tile covering the bounds
-            // Or implement a simpler method to get all projects
-            $tile = $this->tileService->getTile($organizationId, 1, 0, 0, [
-                'layer' => 'projects',
-                'filters' => $filters,
-            ]);
+            // Получаем проекты напрямую из БД без тайловой системы
+            $query = Project::where('organization_id', $organizationId)
+                ->whereNotNull('latitude')
+                ->whereNotNull('longitude');
+
+            // Применяем фильтры
+            if (!empty($filters['status'])) {
+                $query->where('status', $filters['status']);
+            }
+
+            if (!empty($filters['health'])) {
+                // Health фильтр требует расчета EVM метрик
+                // Пока пропускаем, можно добавить позже
+            }
+
+            if (isset($filters['budget_min'])) {
+                $query->where('budget_amount', '>=', $filters['budget_min']);
+            }
+
+            if (isset($filters['budget_max'])) {
+                $query->where('budget_amount', '<=', $filters['budget_max']);
+            }
+
+            $projects = $query->get();
+
+            // Преобразуем в GeoJSON
+            $features = [];
+            foreach ($projects as $project) {
+                $features[] = [
+                    'type' => 'Feature',
+                    'geometry' => [
+                        'type' => 'Point',
+                        'coordinates' => [(float) $project->longitude, (float) $project->latitude],
+                    ],
+                    'properties' => [
+                        'id' => $project->id,
+                        'name' => $project->name,
+                        'address' => $project->address,
+                        'status' => $project->status,
+                        'budget' => (float) ($project->budget_amount ?? 0),
+                        'start_date' => $project->start_date?->format('Y-m-d'),
+                        'end_date' => $project->end_date?->format('Y-m-d'),
+                    ],
+                ];
+            }
 
             return response()->json([
                 'success' => true,
-                'data' => $tile,
+                'data' => [
+                    'type' => 'FeatureCollection',
+                    'features' => $features,
+                ],
             ]);
         } catch (\Exception $e) {
             return response()->json([
