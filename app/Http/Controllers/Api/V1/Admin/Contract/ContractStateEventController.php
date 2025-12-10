@@ -29,6 +29,25 @@ class ContractStateEventController extends Controller
         $this->stateCalculatorService = $stateCalculatorService;
     }
 
+    private function validateProjectContext(Request $request, $contract): bool
+    {
+        $projectId = $request->route('project');
+        
+        if (!$projectId) {
+            return true;
+        }
+
+        if ($contract->is_multi_project) {
+            return $contract->projects()->where('projects.id', $projectId)->exists();
+        }
+
+        if ((int)$contract->project_id !== (int)$projectId) {
+            return false;
+        }
+        
+        return true;
+    }
+
     /**
      * Получить историю событий для договора
      */
@@ -47,6 +66,13 @@ class ContractStateEventController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Контракт не найден или нет доступа'
+                ], Response::HTTP_NOT_FOUND);
+            }
+
+            if (!$this->validateProjectContext($request, $contractModel)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не принадлежит текущему проекту'
                 ], Response::HTTP_NOT_FOUND);
             }
 
@@ -118,6 +144,13 @@ class ContractStateEventController extends Controller
                 ], Response::HTTP_NOT_FOUND);
             }
 
+            if (!$this->validateProjectContext($request, $contractModel)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не принадлежит текущему проекту'
+                ], Response::HTTP_NOT_FOUND);
+            }
+
             if (!$contractModel->usesEventSourcing()) {
                 return response()->json([
                     'success' => true,
@@ -178,6 +211,13 @@ class ContractStateEventController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Контракт не найден или нет доступа'
+                ], Response::HTTP_NOT_FOUND);
+            }
+
+            if (!$this->validateProjectContext($request, $contractModel)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не принадлежит текущему проекту'
                 ], Response::HTTP_NOT_FOUND);
             }
 
@@ -247,6 +287,13 @@ class ContractStateEventController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Контракт не найден или нет доступа'
+                ], Response::HTTP_NOT_FOUND);
+            }
+
+            if (!$this->validateProjectContext($request, $contractModel)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Контракт не принадлежит текущему проекту'
                 ], Response::HTTP_NOT_FOUND);
             }
 

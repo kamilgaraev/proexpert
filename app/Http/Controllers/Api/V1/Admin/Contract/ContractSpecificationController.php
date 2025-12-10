@@ -37,9 +37,19 @@ class ContractSpecificationController extends Controller
     private function validateProjectContext(Request $request, $contract): bool
     {
         $projectId = $request->route('project');
-        if ($projectId && (int)$contract->project_id !== (int)$projectId) {
+        
+        if (!$projectId) {
+            return true;
+        }
+
+        if ($contract->is_multi_project) {
+            return $contract->projects()->where('projects.id', $projectId)->exists();
+        }
+
+        if ((int)$contract->project_id !== (int)$projectId) {
             return false;
         }
+        
         return true;
     }
 
@@ -72,11 +82,20 @@ class ContractSpecificationController extends Controller
             }
             
             // Проверяем принадлежность проекту
-            if ($projectId && (int)$contractExists->project_id !== (int)$projectId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт принадлежит другому проекту'
-                ], Response::HTTP_NOT_FOUND);
+            if ($projectId) {
+                $belongsToProject = false;
+                if ($contractExists->is_multi_project) {
+                    $belongsToProject = $contractExists->projects()->where('projects.id', $projectId)->exists();
+                } else {
+                    $belongsToProject = (int)$contractExists->project_id === (int)$projectId;
+                }
+
+                if (!$belongsToProject) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Контракт принадлежит другому проекту'
+                    ], Response::HTTP_NOT_FOUND);
+                }
             }
             
             // Проверяем доступ к контракту
@@ -141,16 +160,25 @@ class ContractSpecificationController extends Controller
             }
             
             // Проверяем принадлежность проекту ДО проверки организации
-            if ($projectId && (int)$contractExists->project_id !== (int)$projectId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт принадлежит другому проекту',
-                    'debug' => [
-                        'contract_id' => $contract,
-                        'contract_project_id' => $contractExists->project_id,
-                        'requested_project_id' => $projectId
-                    ]
-                ], Response::HTTP_NOT_FOUND);
+            if ($projectId) {
+                $belongsToProject = false;
+                if ($contractExists->is_multi_project) {
+                    $belongsToProject = $contractExists->projects()->where('projects.id', $projectId)->exists();
+                } else {
+                    $belongsToProject = (int)$contractExists->project_id === (int)$projectId;
+                }
+
+                if (!$belongsToProject) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Контракт принадлежит другому проекту',
+                        'debug' => [
+                            'contract_id' => $contract,
+                            'is_multi_project' => $contractExists->is_multi_project,
+                            'requested_project_id' => $projectId
+                        ]
+                    ], Response::HTTP_NOT_FOUND);
+                }
             }
             
             // Теперь проверяем доступ через сервис
@@ -304,17 +332,26 @@ class ContractSpecificationController extends Controller
             }
             
             // Проверяем принадлежность проекту
-            if ($projectId && (int)$contractExists->project_id !== (int)$projectId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт принадлежит другому проекту'
-                ], Response::HTTP_NOT_FOUND);
+            if ($projectId) {
+                $belongsToProject = false;
+                if ($contractExists->is_multi_project) {
+                    $belongsToProject = $contractExists->projects()->where('projects.id', $projectId)->exists();
+                } else {
+                    $belongsToProject = (int)$contractExists->project_id === (int)$projectId;
+                }
+
+                if (!$belongsToProject) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Контракт принадлежит другому проекту'
+                    ], Response::HTTP_NOT_FOUND);
+                }
             }
             
             // Проверяем доступ к контракту
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
-            if (!$contract) {
+            if (!$contractModel) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Нет доступа к контракту'
@@ -441,17 +478,26 @@ class ContractSpecificationController extends Controller
             }
             
             // Проверяем принадлежность проекту
-            if ($projectId && (int)$contractExists->project_id !== (int)$projectId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт принадлежит другому проекту'
-                ], Response::HTTP_NOT_FOUND);
+            if ($projectId) {
+                $belongsToProject = false;
+                if ($contractExists->is_multi_project) {
+                    $belongsToProject = $contractExists->projects()->where('projects.id', $projectId)->exists();
+                } else {
+                    $belongsToProject = (int)$contractExists->project_id === (int)$projectId;
+                }
+
+                if (!$belongsToProject) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Контракт принадлежит другому проекту'
+                    ], Response::HTTP_NOT_FOUND);
+                }
             }
             
             // Проверяем доступ к контракту
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
-            if (!$contract) {
+            if (!$contractModel) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Нет доступа к контракту'
