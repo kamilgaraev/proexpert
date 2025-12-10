@@ -39,9 +39,20 @@ class ContractPerformanceActController extends Controller
     private function validateProjectContext(Request $request, $act): bool
     {
         $projectId = $request->route('project');
-        if ($projectId && $act->contract && (int)$act->contract->project_id !== (int)$projectId) {
+        
+        if (!$projectId || !$act->contract) {
+            return true;
+        }
+
+        if ($act->contract->is_multi_project) {
+            // Для мультипроектных контрактов проверяем связь через отношение projects
+            return $act->contract->projects()->where('projects.id', $projectId)->exists();
+        }
+
+        if ((int)$act->contract->project_id !== (int)$projectId) {
             return false;
         }
+        
         return true;
     }
 
@@ -136,15 +147,15 @@ class ContractPerformanceActController extends Controller
 
         try {
             $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
-            if (!$act) {
+            if (!$actModel) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
             
-            if (!$this->validateProjectContext($request, $act)) {
+            if (!$this->validateProjectContext($request, $actModel)) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
             
-            return new ContractPerformanceActResource($act);
+            return new ContractPerformanceActResource($actModel);
         } catch (Exception $e) {
             return response()->json(['message' => 'Failed to retrieve performance act', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
         }
@@ -241,15 +252,15 @@ class ContractPerformanceActController extends Controller
             }
 
             $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
-            if (!$act) {
+            if (!$actModel) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
             
-            if (!$this->validateProjectContext($request, $act)) {
+            if (!$this->validateProjectContext($request, $actModel)) {
                 return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
             }
 
-            $act->load([
+            $actModel->load([
                 'contract.project', 
                 'contract.contractor',
                 'contract.organization',
@@ -259,12 +270,12 @@ class ContractPerformanceActController extends Controller
             ]);
 
             $data = [
-                'act' => $act,
-                'contract' => $act->contract,
-                'project' => $act->contract->project ?? (object)['name' => 'Не указан'],
-                'contractor' => $act->contract->contractor ?? (object)['name' => 'Не указан'],
-                'works' => $act->completedWorks ?? collect(),
-                'total_amount' => $act->amount ?? 0,
+                'act' => $actModel,
+                'contract' => $actModel->contract,
+                'project' => $actModel->contract->project ?? (object)['name' => 'Не указан'],
+                'contractor' => $actModel->contract->contractor ?? (object)['name' => 'Не указан'],
+                'works' => $actModel->completedWorks ?? collect(),
+                'total_amount' => $actModel->amount ?? 0,
                 'generated_at' => now()->format('d.m.Y H:i')
             ];
 
