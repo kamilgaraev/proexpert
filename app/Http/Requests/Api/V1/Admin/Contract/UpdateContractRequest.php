@@ -238,10 +238,10 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
                 ? ContractStatusEnum::from($validatedData['status']) 
                 : $contract->status,
             start_date: array_key_exists('start_date', $validatedData) 
-                ? (\Carbon\Carbon::parse($validatedData['start_date'])->format('Y-m-d'))
+                ? ($validatedData['start_date'] !== null ? \Carbon\Carbon::parse($validatedData['start_date'])->format('Y-m-d') : null)
                 : ($contract->start_date ? $contract->start_date->format('Y-m-d') : null),
             end_date: array_key_exists('end_date', $validatedData) 
-                ? (\Carbon\Carbon::parse($validatedData['end_date'])->format('Y-m-d'))
+                ? ($validatedData['end_date'] !== null ? \Carbon\Carbon::parse($validatedData['end_date'])->format('Y-m-d') : null)
                 : ($contract->end_date ? $contract->end_date->format('Y-m-d') : null),
             notes: array_key_exists('notes', $validatedData) 
                 ? $validatedData['notes'] 
