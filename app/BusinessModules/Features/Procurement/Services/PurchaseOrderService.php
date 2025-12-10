@@ -117,6 +117,95 @@ class PurchaseOrderService
     }
 
     /**
+     * Получить материалы от поставщика
+     * 
+     * @param PurchaseOrder $order
+     * @param int $warehouseId ID склада для приема материалов
+     * @param array $items Массив позиций с данными о полученных материалах
+     *        [['item_id' => 1, 'quantity_received' => 10, 'price' => 100.50], ...]
+     * @param int $userId ID пользователя, принимающего материалы
+     * @return PurchaseOrder
+     */
+    public function receiveMaterials(
+        PurchaseOrder $order,
+        int $warehouseId,
+        array $items,
+        int $userId
+    ): PurchaseOrder {
+        // Проверяем что заказ может быть доставлен
+        if (!in_array($order->status, [
+            PurchaseOrderStatusEnum::CONFIRMED,
+            PurchaseOrderStatusEnum::IN_DELIVERY
+        ])) {
+            throw new \DomainException('Материалы можно принять только для подтвержденных заказов или заказов в доставке');
+        }
+
+        DB::beginTransaction();
+        try {
+            // Обновляем статус заказа на "Доставлен"
+            $order->update([
+                'status' => PurchaseOrderStatusEnum::DELIVERED,
+            ]);
+
+            // Отправляем событие для обновления склада
+            event(new \App\BusinessModules\Features\Procurement\Events\MaterialReceivedFromSupplier(
+                $order,
+                $warehouseId,
+                $items,
+                $userId
+            ));
+
+            DB::commit();
+
+            \Log::info('procurement.materials_received', [
+                'purchase_order_id' => $order->id,
+                'warehouse_id' => $warehouseId,
+                'items_count' => count($items),
+                'user_id' => $userId,
+            ]);
+
+            return $order->fresh(['items', 'supplier', 'purchaseRequest']);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('procurement.materials_receive_failed', [
+                'purchase_order_id' => $order->id,
+                'error' => $e->getMessage(),
+            ]);
+            throw $e;
+        }
+    }
+
+    /**
+     * Перевести заказ в статус "В доставке"
+     */
+    public function markInDelivery(PurchaseOrder $order): PurchaseOrder
+    {
+        if ($order->status !== PurchaseOrderStatusEnum::CONFIRMED) {
+            throw new \DomainException('Только подтвержденные заказы могут быть переведены в доставку');
+        }
+
+        DB::beginTransaction();
+        try {
+            $order->update([
+                'status' => PurchaseOrderStatusEnum::IN_DELIVERY,
+            ]);
+
+            DB::commit();
+
+            $this->invalidateCache($order->organization_id);
+
+            \Log::info('procurement.purchase_order.in_delivery', [
+                'purchase_order_id' => $order->id,
+            ]);
+
+            return $order->fresh();
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
+        }
+    }
+
+    /**
      * Создать договор поставки из заказа
      */
     public function createContractFromOrder(PurchaseOrder $order): Contract

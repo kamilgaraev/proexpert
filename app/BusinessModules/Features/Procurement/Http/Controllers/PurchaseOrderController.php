@@ -236,5 +236,88 @@ class PurchaseOrderController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Получить материалы от поставщика
+     */
+    public function receiveMaterials(Request $request, int $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'warehouse_id' => 'required|integer|exists:organization_warehouses,id',
+                'items' => 'required|array|min:1',
+                'items.*.item_id' => 'required|integer|exists:purchase_order_items,id',
+                'items.*.quantity_received' => 'required|numeric|min:0',
+                'items.*.price' => 'required|numeric|min:0',
+            ]);
+
+            $organizationId = $request->attributes->get('current_organization_id');
+            $order = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
+                ->findOrFail($id);
+
+            $received = $this->service->receiveMaterials(
+                $order,
+                $validated['warehouse_id'],
+                $validated['items'],
+                auth()->id()
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Материалы успешно получены',
+                'data' => new PurchaseOrderResource($received),
+            ]);
+        } catch (\DomainException $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 422);
+        } catch (\Exception $e) {
+            \Log::error('procurement.purchase_orders.receive_materials.error', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось получить материалы',
+            ], 500);
+        }
+    }
+
+    /**
+     * Перевести заказ в статус "В доставке"
+     */
+    public function markInDelivery(Request $request, int $id): JsonResponse
+    {
+        try {
+            $organizationId = $request->attributes->get('current_organization_id');
+            $order = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
+                ->findOrFail($id);
+
+            $updated = $this->service->markInDelivery($order);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Заказ переведен в доставку',
+                'data' => new PurchaseOrderResource($updated),
+            ]);
+        } catch (\DomainException $e) {
+            return response()->json([
+                'success' => false,
+                'error' => $e->getMessage(),
+            ], 422);
+        } catch (\Exception $e) {
+            \Log::error('procurement.purchase_orders.mark_in_delivery.error', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'error' => 'Не удалось перевести заказ в доставку',
+            ], 500);
+        }
+    }
 }
 

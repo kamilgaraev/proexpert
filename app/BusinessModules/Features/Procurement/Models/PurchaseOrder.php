@@ -97,6 +97,14 @@ class PurchaseOrder extends Model
         return $this->hasMany(SupplierProposal::class);
     }
 
+    /**
+     * Позиции заказа (материалы)
+     */
+    public function items(): HasMany
+    {
+        return $this->hasMany(PurchaseOrderItem::class);
+    }
+
     // ============================================
     // SCOPES
     // ============================================

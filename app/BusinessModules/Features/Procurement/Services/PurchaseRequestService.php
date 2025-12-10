@@ -108,6 +108,9 @@ class PurchaseRequestService
      */
     public function create(int $organizationId, array $data): PurchaseRequest
     {
+        // Проверяем лимиты организации
+        $this->checkLimits($organizationId);
+
         DB::beginTransaction();
         try {
             $requestNumber = $this->generateRequestNumber($organizationId);
@@ -132,6 +135,39 @@ class PurchaseRequestService
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
+        }
+    }
+
+    /**
+     * Проверить лимиты организации
+     */
+    private function checkLimits(int $organizationId): void
+    {
+        $module = app(\App\BusinessModules\Features\Procurement\ProcurementModule::class);
+        $limits = $module->getLimits();
+
+        // Проверяем лимит заявок на закупку в месяц
+        if ($limits['max_purchase_requests_per_month']) {
+            $count = PurchaseRequest::forOrganization($organizationId)
+                ->whereMonth('created_at', now()->month)
+                ->whereYear('created_at', now()->year)
+                ->count();
+
+            if ($count >= $limits['max_purchase_requests_per_month']) {
+                throw new \DomainException('Достигнут лимит заявок на закупку в текущем месяце');
+            }
+        }
+
+        // Проверяем лимит заказов поставщикам в месяц
+        if ($limits['max_purchase_orders_per_month']) {
+            $ordersCount = \App\BusinessModules\Features\Procurement\Models\PurchaseOrder::forOrganization($organizationId)
+                ->whereMonth('created_at', now()->month)
+                ->whereYear('created_at', now()->year)
+                ->count();
+
+            if ($ordersCount >= $limits['max_purchase_orders_per_month']) {
+                throw new \DomainException('Достигнут лимит заказов поставщикам в текущем месяце');
+            }
         }
     }
 
