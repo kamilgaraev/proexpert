@@ -5,9 +5,9 @@ namespace App\Services\Analytics;
 use App\Models\Project;
 use App\Models\Contract;
 use App\Models\CompletedWork;
-use App\Models\ContractPayment;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class EVMService
 {
@@ -120,15 +120,15 @@ class EVMService
 
     /**
      * Calculate Actual Cost (AC)
-     * Sum of payments made
+     * Sum of payments made (using new payment_documents structure)
      * 
      * @param Project $project
      * @return float
      */
     private function calculateAC(Project $project): float
     {
-        // AC is usually tracked via payments or actual invoices
-        // We link payments to contracts, and contracts to projects
+        // AC is tracked via payment_documents (new payment system)
+        // Payment documents are linked to contracts via polymorphic relation
         
         // Get contract IDs for this project
         $contractIds = Contract::where('project_id', $project->id)->pluck('id');
@@ -137,8 +137,12 @@ class EVMService
             return 0.0;
         }
 
-        return (float) ContractPayment::whereIn('contract_id', $contractIds)
-            ->sum('amount');
+        // Sum paid_amount from payment_documents where invoiceable_type = Contract
+        return (float) DB::table('payment_documents')
+            ->where('invoiceable_type', 'App\\Models\\Contract')
+            ->whereIn('invoiceable_id', $contractIds)
+            ->whereNull('deleted_at')
+            ->sum('paid_amount');
     }
 }
 
