@@ -20,7 +20,8 @@ class UpdateWarehouseOnMaterialReceipt
     public function handle(MaterialReceivedFromSupplier $event): void
     {
         $order = $event->purchaseOrder;
-        $materials = $event->materials;
+        $warehouseId = $event->warehouseId;
+        $items = $event->items;
 
         // Проверяем активацию модуля basic-warehouse
         if (!$this->accessController->hasModuleAccess($order->organization_id, 'basic-warehouse')) {
@@ -46,28 +47,69 @@ class UpdateWarehouseOnMaterialReceipt
         try {
             $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
 
-            foreach ($materials as $material) {
-                $warehouseService->receiveAsset([
-                    'organization_id' => $order->organization_id,
-                    'project_id' => $order->purchaseRequest?->siteRequest?->project_id,
-                    'material_id' => $material['material_id'] ?? null,
-                    'material_name' => $material['name'] ?? $order->purchaseRequest?->siteRequest?->material_name,
-                    'quantity' => $material['quantity'] ?? 0,
-                    'unit' => $material['unit'] ?? 'шт',
-                    'source_type' => 'procurement',
-                    'source_id' => $order->id,
-                    'notes' => "Прием материалов по заказу поставщику: {$order->order_number}",
+            foreach ($items as $itemData) {
+                // Получаем PurchaseOrderItem
+                $orderItem = \App\BusinessModules\Features\Procurement\Models\PurchaseOrderItem::find($itemData['item_id']);
+
+                if (!$orderItem || !$orderItem->material_id) {
+                    \Log::warning('procurement.material_not_found', [
+                        'item_id' => $itemData['item_id'],
+                        'purchase_order_id' => $order->id,
+                    ]);
+                    continue;
+                }
+
+                // ПРАВИЛЬНЫЙ вызов с 6 параметрами
+                $warehouseService->receiveAsset(
+                    $order->organization_id,           // int $organizationId
+                    $warehouseId,                      // int $warehouseId
+                    $orderItem->material_id,           // int $materialId
+                    $itemData['quantity_received'],   // float $quantity
+                    $itemData['price'],                // float $price
+                    [                                  // array $metadata
+                        'project_id' => $order->purchaseRequest?->siteRequest?->project_id,
+                        'user_id' => $event->userId,
+                        'document_number' => $order->order_number,
+                        'reason' => "Прием материалов по заказу поставщику #{$order->order_number}",
+                        'source_type' => 'procurement',
+                        'source_id' => $order->id,
+                        'purchase_order_item_id' => $orderItem->id,
+                    ]
+                );
+
+                \Log::info('procurement.warehouse.item_received', [
+                    'purchase_order_id' => $order->id,
+                    'order_item_id' => $orderItem->id,
+                    'material_id' => $orderItem->material_id,
+                    'quantity' => $itemData['quantity_received'],
+                    'price' => $itemData['price'],
+                    'warehouse_id' => $warehouseId,
+                ]);
+            }
+
+            // Обновляем метаданные SiteRequest если есть
+            $siteRequest = $order->purchaseRequest?->siteRequest;
+            if ($siteRequest) {
+                $siteRequest->update([
+                    'metadata' => array_merge($siteRequest->metadata ?? [], [
+                        'materials_received' => true,
+                        'received_at' => now()->toDateTimeString(),
+                        'warehouse_id' => $warehouseId,
+                        'purchase_order_id' => $order->id,
+                    ]),
                 ]);
             }
 
             \Log::info('procurement.warehouse.updated', [
                 'purchase_order_id' => $order->id,
-                'materials_count' => count($materials),
+                'warehouse_id' => $warehouseId,
+                'items_count' => count($items),
             ]);
         } catch (\Exception $e) {
             \Log::error('procurement.warehouse.update_failed', [
                 'purchase_order_id' => $order->id,
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
         }
     }

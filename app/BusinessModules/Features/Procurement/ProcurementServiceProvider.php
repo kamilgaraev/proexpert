@@ -68,6 +68,10 @@ class ProcurementServiceProvider extends ServiceProvider
         $this->app->singleton(
             Services\PurchaseContractService::class
         );
+
+        $this->app->singleton(
+            Services\CatalogIntegrationService::class
+        );
     }
 
     /**
@@ -129,6 +133,27 @@ class ProcurementServiceProvider extends ServiceProvider
             Events\MaterialReceivedFromSupplier::class,
             Listeners\UpdateWarehouseOnMaterialReceipt::class
         );
+
+        // Уведомления
+        Event::listen(
+            Events\PurchaseRequestCreated::class,
+            [Listeners\SendProcurementNotifications::class, 'handleRequestCreated']
+        );
+        
+        Event::listen(
+            Events\PurchaseRequestApproved::class,
+            [Listeners\SendProcurementNotifications::class, 'handleRequestApproved']
+        );
+        
+        Event::listen(
+            Events\PurchaseOrderSent::class,
+            [Listeners\SendProcurementNotifications::class, 'handleOrderSent']
+        );
+        
+        Event::listen(
+            Events\MaterialReceivedFromSupplier::class,
+            [Listeners\SendProcurementNotifications::class, 'handleMaterialsReceived']
+        );
     }
 
     /**
@@ -136,8 +161,10 @@ class ProcurementServiceProvider extends ServiceProvider
      */
     protected function registerObservers(): void
     {
-        // Observers будут зарегистрированы после создания моделей
-        // Пока оставляем заглушку
+        // Регистрируем audit observer для всех моделей закупок
+        Models\PurchaseRequest::observe(Observers\ProcurementAuditObserver::class);
+        Models\PurchaseOrder::observe(Observers\ProcurementAuditObserver::class);
+        Models\SupplierProposal::observe(Observers\ProcurementAuditObserver::class);
     }
 }
 

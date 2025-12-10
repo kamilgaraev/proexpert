@@ -9,6 +9,7 @@ use App\BusinessModules\Features\SiteRequests\Enums\SiteRequestTypeEnum;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestCreated;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestUpdated;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestStatusChanged;
+use App\BusinessModules\Features\SiteRequests\Events\SiteRequestApproved;
 use App\BusinessModules\Features\SiteRequests\Events\SiteRequestAssigned;
 use App\BusinessModules\Features\SiteRequests\SiteRequestsModule;
 use Illuminate\Support\Facades\DB;
@@ -91,6 +92,11 @@ class SiteRequestService
 
         // Отправляем событие
         event(new SiteRequestCreated($request));
+
+        // Резервируем материалы на складе если это заявка на материалы
+        if ($request->request_type === SiteRequestTypeEnum::MATERIAL_REQUEST && $request->material_id) {
+            $this->tryReserveMaterial($request, $organizationId);
+        }
 
         \Log::info('site_request.created', [
             'request_id' => $request->id,
@@ -196,6 +202,19 @@ class SiteRequestService
 
         // Отправляем событие
         event(new SiteRequestStatusChanged($request, $oldStatus, $newStatus, $userId));
+
+        // Если статус изменился на approved, отправляем специальное событие
+        if ($newStatus === SiteRequestStatusEnum::APPROVED->value) {
+            event(new SiteRequestApproved($request->fresh(), $userId));
+        }
+
+        // Снимаем резервирование при отмене или отклонении заявки
+        if (in_array($newStatus, [
+            SiteRequestStatusEnum::CANCELLED->value,
+            SiteRequestStatusEnum::REJECTED->value,
+        ])) {
+            $this->unreserveMaterial($request->fresh());
+        }
 
         \Log::info('site_request.status_changed', [
             'request_id' => $request->id,
@@ -395,6 +414,125 @@ class SiteRequestService
 
         // Проверяем лимит шаблонов - не применимо для заявок
         // Лимиты на заявки неограничены в подписке
+    }
+
+    /**
+     * Попытаться зарезервировать материал на складе
+     */
+    private function tryReserveMaterial(SiteRequest $request, int $organizationId): void
+    {
+        $accessController = app(\App\Modules\Core\AccessController::class);
+        
+        if (!$accessController->hasModuleAccess($organizationId, 'basic-warehouse')) {
+            \Log::info('site_request.skip_reservation', [
+                'request_id' => $request->id,
+                'reason' => 'Модуль склада не активирован',
+            ]);
+            return;
+        }
+
+        try {
+            $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
+            $warehouse = $warehouseService->getOrCreateCentralWarehouse($organizationId);
+
+            $balance = $warehouseService->getAssetBalance(
+                $organizationId,
+                $warehouse->id,
+                $request->material_id
+            );
+
+            if ($balance && $balance->available_quantity >= $request->material_quantity) {
+                $balance->reserve($request->material_quantity);
+
+                // Сохраняем информацию о резервировании в metadata
+                $request->update([
+                    'metadata' => array_merge($request->metadata ?? [], [
+                        'material_reserved' => true,
+                        'reserved_warehouse_id' => $warehouse->id,
+                        'reserved_quantity' => $request->material_quantity,
+                        'reserved_at' => now()->toDateTimeString(),
+                    ]),
+                ]);
+
+                \Log::info('site_request.material_reserved', [
+                    'request_id' => $request->id,
+                    'material_id' => $request->material_id,
+                    'quantity' => $request->material_quantity,
+                    'warehouse_id' => $warehouse->id,
+                ]);
+            } else {
+                \Log::warning('site_request.insufficient_stock', [
+                    'request_id' => $request->id,
+                    'material_id' => $request->material_id,
+                    'requested_quantity' => $request->material_quantity,
+                    'available_quantity' => $balance ? $balance->available_quantity : 0,
+                ]);
+            }
+        } catch (\Exception $e) {
+            // Не прерываем создание заявки если резервирование не удалось
+            \Log::warning('site_request.reservation_failed', [
+                'request_id' => $request->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Снять резервирование материала при отмене/отклонении заявки
+     */
+    private function unreserveMaterial(SiteRequest $request): void
+    {
+        $metadata = $request->metadata ?? [];
+
+        if (!($metadata['material_reserved'] ?? false)) {
+            return;
+        }
+
+        $accessController = app(\App\Modules\Core\AccessController::class);
+        
+        if (!$accessController->hasModuleAccess($request->organization_id, 'basic-warehouse')) {
+            return;
+        }
+
+        try {
+            $warehouseService = app(\App\BusinessModules\Features\BasicWarehouse\Services\WarehouseService::class);
+            $warehouseId = $metadata['reserved_warehouse_id'] ?? null;
+            $quantity = $metadata['reserved_quantity'] ?? null;
+
+            if (!$warehouseId || !$quantity || !$request->material_id) {
+                return;
+            }
+
+            $balance = $warehouseService->getAssetBalance(
+                $request->organization_id,
+                $warehouseId,
+                $request->material_id
+            );
+
+            if ($balance && $balance->reserved_quantity >= $quantity) {
+                $balance->unreserve($quantity);
+
+                // Обновляем metadata
+                $request->update([
+                    'metadata' => array_merge($metadata, [
+                        'material_reserved' => false,
+                        'unreserved_at' => now()->toDateTimeString(),
+                    ]),
+                ]);
+
+                \Log::info('site_request.material_unreserved', [
+                    'request_id' => $request->id,
+                    'material_id' => $request->material_id,
+                    'quantity' => $quantity,
+                    'warehouse_id' => $warehouseId,
+                ]);
+            }
+        } catch (\Exception $e) {
+            \Log::error('site_request.unreservation_failed', [
+                'request_id' => $request->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     /**

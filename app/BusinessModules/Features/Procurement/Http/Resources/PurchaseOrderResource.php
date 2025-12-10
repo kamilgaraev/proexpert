@@ -44,6 +44,7 @@ class PurchaseOrderResource extends JsonResource
                 'number' => $this->contract->number,
             ] : null),
             'proposals' => $this->whenLoaded('proposals', fn() => SupplierProposalResource::collection($this->proposals)),
+            'items' => $this->whenLoaded('items', fn() => PurchaseOrderItemResource::collection($this->items)),
             'created_at' => $this->created_at->toIso8601String(),
             'updated_at' => $this->updated_at->toIso8601String(),
         ];

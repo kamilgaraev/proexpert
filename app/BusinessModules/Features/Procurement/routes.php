@@ -43,6 +43,8 @@ Route::prefix('api/v1/admin/procurement')
             Route::get('/{id}', [PurchaseOrderController::class, 'show'])->name('show');
             Route::post('/{id}/send', [PurchaseOrderController::class, 'send'])->name('send');
             Route::post('/{id}/confirm', [PurchaseOrderController::class, 'confirm'])->name('confirm');
+            Route::post('/{id}/mark-in-delivery', [PurchaseOrderController::class, 'markInDelivery'])->name('mark_in_delivery');
+            Route::post('/{id}/receive-materials', [PurchaseOrderController::class, 'receiveMaterials'])->name('receive_materials');
             Route::post('/{id}/create-contract', [PurchaseOrderController::class, 'createContract'])->name('create_contract');
         });
         
