@@ -66,11 +66,12 @@ class DashboardService
             $currentPeriod = Carbon::now()->startOfMonth();
             $previousPeriod = $currentPeriod->copy()->subMonth();
 
-            // Текущий период
-            $current = $this->calculateSummaryForPeriod($organizationId, $projectId, $currentPeriod, Carbon::now());
+            // Получаем ВСЕ данные проекта (без фильтра по периоду)
+            $projectSummary = $this->getProjectSummary($organizationId, $projectId);
             
-            // Предыдущий период
-            $previous = $this->calculateSummaryForPeriod($organizationId, $projectId, $previousPeriod, $previousPeriod->copy()->endOfMonth());
+            // Получаем данные за периоды для сравнения
+            $currentPeriodData = $this->calculateSummaryForPeriod($organizationId, $projectId, $currentPeriod, Carbon::now());
+            $previousPeriodData = $this->calculateSummaryForPeriod($organizationId, $projectId, $previousPeriod, $previousPeriod->copy()->endOfMonth());
 
             // Финансовые метрики
             $financial = $this->calculateFinancialMetrics($organizationId, $projectId);
@@ -78,41 +79,41 @@ class DashboardService
             return [
                 'summary' => [
                     'contracts' => [
-                        'total' => $current['contracts']['total'],
-                        'active' => $current['contracts']['active'],
-                        'completed' => $current['contracts']['completed'],
-                        'draft' => $current['contracts']['draft'],
-                        'total_amount' => $current['contracts']['total_amount'],
-                        'completed_amount' => $current['contracts']['completed_amount'],
-                        'completion_percentage' => $current['contracts']['completion_percentage'],
+                        'total' => $projectSummary['contracts']['total'],
+                        'active' => $projectSummary['contracts']['active'],
+                        'completed' => $projectSummary['contracts']['completed'],
+                        'draft' => $projectSummary['contracts']['draft'],
+                        'total_amount' => $projectSummary['contracts']['total_amount'],
+                        'completed_amount' => $projectSummary['contracts']['completed_amount'],
+                        'completion_percentage' => $projectSummary['contracts']['completion_percentage'],
                         'change_from_previous' => [
-                            'total' => $current['contracts']['total'] - $previous['contracts']['total'],
+                            'total' => $currentPeriodData['contracts']['total'] - $previousPeriodData['contracts']['total'],
                             'percentage' => $this->calculatePercentageChange(
-                                $previous['contracts']['total'],
-                                $current['contracts']['total']
+                                $previousPeriodData['contracts']['total'],
+                                $currentPeriodData['contracts']['total']
                             ),
                         ],
                     ],
                     'projects' => [
                         'total' => 1, // Один конкретный проект
-                        'users_count' => $current['users_count'],
-                        'completion_percentage' => $current['project_completion'],
+                        'users_count' => $projectSummary['users_count'],
+                        'completion_percentage' => $projectSummary['project_completion'],
                     ],
                     'materials' => [
-                        'total' => $current['materials']['total'],
+                        'total' => $projectSummary['materials']['total'],
                         'change_from_previous' => [
-                            'total' => $current['materials']['total'] - $previous['materials']['total'],
+                            'total' => $currentPeriodData['materials']['total'] - $previousPeriodData['materials']['total'],
                         ],
                     ],
                     'suppliers' => [
-                        'total' => $current['suppliers']['total'],
+                        'total' => $projectSummary['suppliers']['total'],
                     ],
                     'completed_works' => [
-                        'total' => $current['completed_works']['total'],
-                        'confirmed' => $current['completed_works']['confirmed'],
-                        'total_amount' => $current['completed_works']['total_amount'],
+                        'total' => $projectSummary['completed_works']['total'],
+                        'confirmed' => $projectSummary['completed_works']['confirmed'],
+                        'total_amount' => $projectSummary['completed_works']['total_amount'],
                         'change_from_previous' => [
-                            'total' => $current['completed_works']['total'] - $previous['completed_works']['total'],
+                            'total' => $currentPeriodData['completed_works']['total'] - $previousPeriodData['completed_works']['total'],
                         ],
                     ],
                     'financial' => $financial,
@@ -126,14 +127,14 @@ class DashboardService
     }
 
     /**
-     * Рассчитать сводку за период
+     * Получить сводку по проекту (все данные без фильтра по периоду)
      */
-    private function calculateSummaryForPeriod(int $organizationId, int $projectId, Carbon $start, Carbon $end): array
+    private function getProjectSummary(int $organizationId, int $projectId): array
     {
-        // Контракты
+        // Контракты проекта (ВСЕ, без фильтра по дате)
         $contractsQuery = Contract::where('organization_id', $organizationId)
             ->where('project_id', $projectId)
-            ->whereBetween('created_at', [$start, $end]);
+            ->whereNull('deleted_at');
 
         $contractsTotal = (clone $contractsQuery)->count();
         $contractsActive = (clone $contractsQuery)->where('status', ContractStatusEnum::ACTIVE->value)->count();
@@ -141,27 +142,25 @@ class DashboardService
         $contractsDraft = (clone $contractsQuery)->where('status', ContractStatusEnum::DRAFT->value)->count();
 
         // Суммы контрактов
-        $contractsAmount = Contract::where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->sum('total_amount');
+        $contractsAmount = (clone $contractsQuery)->sum('total_amount');
 
-        // Выполненные работы
+        // Выполненные работы (ВСЕ, без фильтра по дате)
         $completedWorksAmount = DB::table('completed_works')
             ->where('organization_id', $organizationId)
             ->where('project_id', $projectId)
             ->where('status', 'confirmed')
-            ->whereBetween('created_at', [$start, $end])
+            ->whereNull('deleted_at')
             ->sum('total_amount');
 
         $completedWorksTotal = CompletedWork::where('organization_id', $organizationId)
             ->where('project_id', $projectId)
-            ->whereBetween('created_at', [$start, $end])
+            ->whereNull('deleted_at')
             ->count();
 
         $completedWorksConfirmed = CompletedWork::where('organization_id', $organizationId)
             ->where('project_id', $projectId)
             ->where('status', 'confirmed')
-            ->whereBetween('created_at', [$start, $end])
+            ->whereNull('deleted_at')
             ->count();
 
         // Процент выполнения контрактов
@@ -175,14 +174,14 @@ class DashboardService
             ->distinct('user_id')
             ->count('user_id');
 
-        // Материалы
+        // Материалы (ВСЕ по организации, не только по проекту)
         $materialsTotal = Material::where('organization_id', $organizationId)
-            ->whereBetween('created_at', [$start, $end])
+            ->whereNull('deleted_at')
             ->count();
 
-        // Поставщики
+        // Поставщики (ВСЕ по организации)
         $suppliersTotal = Supplier::where('organization_id', $organizationId)
-            ->whereBetween('created_at', [$start, $end])
+            ->whereNull('deleted_at')
             ->count();
 
         // Процент выполнения проекта (упрощенный расчет)
@@ -215,22 +214,101 @@ class DashboardService
     }
 
     /**
+     * Рассчитать сводку за период (для сравнения периодов)
+     */
+    private function calculateSummaryForPeriod(int $organizationId, int $projectId, Carbon $start, Carbon $end): array
+    {
+        // Контракты, созданные в периоде
+        $contractsQuery = Contract::where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->whereBetween('created_at', [$start, $end])
+            ->whereNull('deleted_at');
+
+        $contractsTotal = (clone $contractsQuery)->count();
+        $contractsActive = (clone $contractsQuery)->where('status', ContractStatusEnum::ACTIVE->value)->count();
+        $contractsCompleted = (clone $contractsQuery)->where('status', ContractStatusEnum::COMPLETED->value)->count();
+        $contractsDraft = (clone $contractsQuery)->where('status', ContractStatusEnum::DRAFT->value)->count();
+
+        // Выполненные работы, созданные в периоде
+        $completedWorksAmount = DB::table('completed_works')
+            ->where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('status', 'confirmed')
+            ->whereBetween('created_at', [$start, $end])
+            ->whereNull('deleted_at')
+            ->sum('total_amount');
+
+        $completedWorksTotal = CompletedWork::where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->whereBetween('created_at', [$start, $end])
+            ->whereNull('deleted_at')
+            ->count();
+
+        $completedWorksConfirmed = CompletedWork::where('organization_id', $organizationId)
+            ->where('project_id', $projectId)
+            ->where('status', 'confirmed')
+            ->whereBetween('created_at', [$start, $end])
+            ->whereNull('deleted_at')
+            ->count();
+
+        // Материалы, созданные в периоде
+        $materialsTotal = Material::where('organization_id', $organizationId)
+            ->whereBetween('created_at', [$start, $end])
+            ->whereNull('deleted_at')
+            ->count();
+
+        // Поставщики, созданные в периоде
+        $suppliersTotal = Supplier::where('organization_id', $organizationId)
+            ->whereBetween('created_at', [$start, $end])
+            ->whereNull('deleted_at')
+            ->count();
+
+        return [
+            'contracts' => [
+                'total' => $contractsTotal,
+                'active' => $contractsActive,
+                'completed' => $contractsCompleted,
+                'draft' => $contractsDraft,
+                'total_amount' => 0, // Не используется для сравнения
+                'completed_amount' => 0, // Не используется для сравнения
+                'completion_percentage' => 0, // Не используется для сравнения
+            ],
+            'users_count' => 0, // Не используется для сравнения
+            'project_completion' => 0, // Не используется для сравнения
+            'materials' => [
+                'total' => $materialsTotal,
+            ],
+            'suppliers' => [
+                'total' => $suppliersTotal,
+            ],
+            'completed_works' => [
+                'total' => $completedWorksTotal,
+                'confirmed' => $completedWorksConfirmed,
+                'total_amount' => (float) $completedWorksAmount,
+            ],
+        ];
+    }
+
+    /**
      * Рассчитать финансовые метрики
      */
     private function calculateFinancialMetrics(int $organizationId, int $projectId): array
     {
         $contractsAmount = Contract::where('organization_id', $organizationId)
             ->where('project_id', $projectId)
+            ->whereNull('deleted_at')
             ->sum('total_amount');
 
         $completedWorksAmount = DB::table('completed_works')
             ->where('organization_id', $organizationId)
             ->where('project_id', $projectId)
             ->where('status', 'confirmed')
+            ->whereNull('deleted_at')
             ->sum('total_amount');
 
         $contractsCount = Contract::where('organization_id', $organizationId)
             ->where('project_id', $projectId)
+            ->whereNull('deleted_at')
             ->count();
 
         return [
