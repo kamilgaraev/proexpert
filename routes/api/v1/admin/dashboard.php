@@ -3,6 +3,8 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Admin\DashboardController;
 use App\Http\Controllers\Api\V1\Admin\DashboardSettingsController;
+use App\Http\Controllers\Api\V1\Admin\DashboardEVMController;
+use App\Http\Controllers\Api\V1\Admin\DashboardMapController;
 
 /*
 |--------------------------------------------------------------------------
@@ -24,6 +26,13 @@ Route::middleware('throttle:dashboard')->group(function () {
     Route::get('/dashboard/history', [DashboardController::class, 'history'])->name('dashboard.history');
     Route::get('/dashboard/limits', [DashboardController::class, 'limits'])->name('dashboard.limits');
     
+    // EVM Metrics (Earned Value Management)
+    Route::get('/dashboard/evm/metrics', [DashboardEVMController::class, 'metrics'])->name('dashboard.evm.metrics');
+    Route::get('/dashboard/evm/forecast', [DashboardEVMController::class, 'forecast'])->name('dashboard.evm.forecast');
+    
+    // Map Data
+    Route::get('/dashboard/map', [DashboardMapController::class, 'index'])->name('dashboard.map');
+
     // Endpoints для контрактов проекта (требуют project_id)
     Route::get('/dashboard/contracts/requiring-attention', [DashboardController::class, 'contractsRequiringAttention'])
         ->name('dashboard.contracts.requiring-attention'); // ?project_id=123
@@ -80,6 +89,6 @@ Route::middleware('throttle:dashboard')->group(function () {
         Route::put('/settings', [DashboardSettingsController::class, 'put']);
         Route::delete('/settings', [DashboardSettingsController::class, 'delete']);
         Route::get('/settings/defaults', [DashboardSettingsController::class, 'defaults']);
-    });
+        });
     
 });
