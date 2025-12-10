@@ -45,8 +45,17 @@ class AgreementController extends Controller
         }
         
         // Проверяем project context
-        if ($projectId && (int)$contract->project_id !== (int)$projectId) {
-            return ['valid' => false, 'message' => 'Соглашение не принадлежит указанному проекту'];
+        if ($projectId) {
+            $belongsToProject = false;
+            if ($contract->is_multi_project) {
+                $belongsToProject = $contract->projects()->where('projects.id', $projectId)->exists();
+            } else {
+                $belongsToProject = (int)$contract->project_id === (int)$projectId;
+            }
+
+            if (!$belongsToProject) {
+                return ['valid' => false, 'message' => 'Соглашение не принадлежит указанному проекту'];
+            }
         }
         
         return ['valid' => true];
@@ -73,11 +82,20 @@ class AgreementController extends Controller
             }
             
             // Проверяем принадлежность проекту
-            if ($projectId && (int)$contractModel->project_id !== (int)$projectId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не принадлежит указанному проекту'
-                ], Response::HTTP_NOT_FOUND);
+            if ($projectId) {
+                $belongsToProject = false;
+                if ($contractModel->is_multi_project) {
+                    $belongsToProject = $contractModel->projects()->where('projects.id', $projectId)->exists();
+                } else {
+                    $belongsToProject = (int)$contractModel->project_id === (int)$projectId;
+                }
+
+                if (!$belongsToProject) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Контракт не принадлежит указанному проекту'
+                    ], Response::HTTP_NOT_FOUND);
+                }
             }
             
             $paginator = $this->service->paginateByContract($contractId, $perPage);

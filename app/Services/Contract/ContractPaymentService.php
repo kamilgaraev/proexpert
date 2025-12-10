@@ -92,8 +92,18 @@ class ContractPaymentService
         }
         
         // Если указан projectId, проверяем, что контракт принадлежит этому проекту
-        if ($projectId !== null && $contract->project_id !== $projectId) {
-            throw new Exception("Contract with ID {$contractId} does not belong to project {$projectId}. Contract belongs to project {$contract->project_id}.");
+        if ($projectId !== null) {
+            if ($contract->is_multi_project) {
+                // Для мультипроектных контрактов проверяем наличие проекта в списке связанных
+                // Используем exists() для оптимизации запроса
+                $isLinked = $contract->projects()->where('projects.id', $projectId)->exists();
+                
+                if (!$isLinked) {
+                    throw new Exception("Multi-project contract with ID {$contractId} is not linked to project {$projectId}.");
+                }
+            } elseif ($contract->project_id !== $projectId) {
+                throw new Exception("Contract with ID {$contractId} does not belong to project {$projectId}. Contract belongs to project {$contract->project_id}.");
+            }
         }
         
         return $contract;
