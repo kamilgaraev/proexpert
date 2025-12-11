@@ -811,7 +811,18 @@ class ReportService
             );
 
         if ($request->filled('project_id')) {
-            $query->where('contracts.project_id', $request->query('project_id'));
+            $projectId = $request->query('project_id');
+            $query->where(function($q) use ($projectId) {
+                // Обычные контракты (project_id)
+                $q->where('contracts.project_id', $projectId)
+                  // ИЛИ мультипроектные контракты (через pivot таблицу)
+                  ->orWhereExists(function($sub) use ($projectId) {
+                      $sub->select(DB::raw(1))
+                          ->from('contract_project')
+                          ->whereColumn('contract_project.contract_id', 'contracts.id')
+                          ->where('contract_project.project_id', $projectId);
+                  });
+            });
         }
         if ($request->filled('contractor_id')) {
             $query->where('contracts.contractor_id', $request->query('contractor_id'));
@@ -936,7 +947,18 @@ class ReportService
             $query->where('contractors.id', $request->query('contractor_id'));
         }
         if ($request->filled('project_id')) {
-            $query->where('contracts.project_id', $request->query('project_id'));
+            $projectId = $request->query('project_id');
+            $query->where(function($q) use ($projectId) {
+                // Обычные контракты (project_id)
+                $q->where('contracts.project_id', $projectId)
+                  // ИЛИ мультипроектные контракты (через pivot таблицу)
+                  ->orWhereExists(function($sub) use ($projectId) {
+                      $sub->select(DB::raw(1))
+                          ->from('contract_project')
+                          ->whereColumn('contract_project.contract_id', 'contracts.id')
+                          ->where('contract_project.project_id', $projectId);
+                  });
+            });
         }
         if ($request->filled('date_from')) {
             $query->where('contracts.date', '>=', $request->query('date_from'));

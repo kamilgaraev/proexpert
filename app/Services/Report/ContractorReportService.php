@@ -76,8 +76,18 @@ class ContractorReportService
         ])
             ->join('contracts', 'contractors.id', '=', 'contracts.contractor_id')
             ->where('contractors.organization_id', $organizationId)
-            ->where('contracts.project_id', $projectId)
-            ->where('contracts.organization_id', $organizationId);
+            ->where('contracts.organization_id', $organizationId)
+            ->where(function($q) use ($projectId) {
+                // Обычные контракты (project_id)
+                $q->where('contracts.project_id', $projectId)
+                  // ИЛИ мультипроектные контракты (через pivot таблицу)
+                  ->orWhereExists(function($sub) use ($projectId) {
+                      $sub->select(DB::raw(1))
+                          ->from('contract_project')
+                          ->whereColumn('contract_project.contract_id', 'contracts.id')
+                          ->where('contract_project.project_id', $projectId);
+                  });
+            });
 
         // Применяем фильтры
         if ($contractorIds) {
@@ -243,8 +253,18 @@ class ContractorReportService
 
         // Получаем контракты подрядчика по проекту
         $contractsQuery = Contract::where('contractor_id', $contractorId)
-            ->where('project_id', $projectId)
             ->where('organization_id', $organizationId)
+            ->where(function($q) use ($projectId) {
+                // Обычные контракты (project_id)
+                $q->where('project_id', $projectId)
+                  // ИЛИ мультипроектные контракты (через pivot таблицу)
+                  ->orWhereExists(function($sub) use ($projectId) {
+                      $sub->select(DB::raw(1))
+                          ->from('contract_project')
+                          ->whereColumn('contract_project.contract_id', 'contracts.id')
+                          ->where('contract_project.project_id', $projectId);
+                  });
+            })
             ->with(['completedWorks', 'agreements']);
 
         $contracts = $contractsQuery->get();
@@ -372,8 +392,18 @@ class ContractorReportService
     ): array {
         // Получаем контракты подрядчика по проекту
         $contractsQuery = Contract::where('contractor_id', $contractor->id)
-            ->where('project_id', $projectId)
             ->where('organization_id', $organizationId)
+            ->where(function($q) use ($projectId) {
+                // Обычные контракты (project_id)
+                $q->where('project_id', $projectId)
+                  // ИЛИ мультипроектные контракты (через pivot таблицу)
+                  ->orWhereExists(function($sub) use ($projectId) {
+                      $sub->select(DB::raw(1))
+                          ->from('contract_project')
+                          ->whereColumn('contract_project.contract_id', 'contracts.id')
+                          ->where('contract_project.project_id', $projectId);
+                  });
+            })
             ->with('agreements');
 
         if ($contractStatus) {

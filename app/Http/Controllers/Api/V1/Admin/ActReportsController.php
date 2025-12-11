@@ -63,8 +63,20 @@ class ActReportsController extends Controller
             }
 
             if ($request->filled('project_id')) {
-                $query->whereHas('contract', function ($q) use ($request) {
-                    $q->where('project_id', $request->project_id);
+                $projectId = $request->project_id;
+                $query->whereHas('contract', function ($q) use ($projectId) {
+                    // Ищем акты как по обычным контрактам, так и по мультипроектным
+                    $q->where(function($subQ) use ($projectId) {
+                        // Обычные контракты (поле project_id)
+                        $subQ->where('project_id', $projectId)
+                            // ИЛИ мультипроектные контракты (через pivot таблицу contract_project)
+                            ->orWhereExists(function($existsQ) use ($projectId) {
+                                $existsQ->select(DB::raw(1))
+                                    ->from('contract_project')
+                                    ->whereColumn('contract_project.contract_id', 'contracts.id')
+                                    ->where('contract_project.project_id', $projectId);
+                            });
+                    });
                 });
             }
 
