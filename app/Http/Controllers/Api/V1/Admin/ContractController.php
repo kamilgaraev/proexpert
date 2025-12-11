@@ -289,8 +289,20 @@ class ContractController extends Controller
             ]);
             
             // Строгая проверка: контракт должен принадлежать проекту из URL
-            if ($projectId && (int)$existingContract->project_id !== (int)$projectId) {
-                return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
+            if ($projectId) {
+                $belongsToProject = false;
+                
+                if ($existingContract->is_multi_project) {
+                    // Для мультипроектных контрактов проверяем через pivot таблицу
+                    $belongsToProject = $existingContract->projects()->where('projects.id', $projectId)->exists();
+                } else {
+                    // Для обычных контрактов проверяем project_id
+                    $belongsToProject = (int)$existingContract->project_id === (int)$projectId;
+                }
+                
+                if (!$belongsToProject) {
+                    return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
+                }
             }
             
             $organizationId = $existingContract->organization_id;
