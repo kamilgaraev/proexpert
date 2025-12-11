@@ -143,9 +143,9 @@ class EstimatePositionCatalogService
                 throw new \RuntimeException('Position not found');
             }
 
-            if (!$position->canBeDeleted()) {
-                throw new \DomainException('Позиция используется в сметах и не может быть удалена');
-            }
+            // if (!$position->canBeDeleted()) {
+            //     throw new \DomainException('Позиция используется в сметах и не может быть удалена');
+            // }
 
             $position->delete();
 

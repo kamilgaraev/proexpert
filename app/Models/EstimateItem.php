@@ -139,7 +139,7 @@ class EstimateItem extends Model
 
     public function catalogItem(): BelongsTo
     {
-        return $this->belongsTo(EstimatePositionCatalog::class, 'catalog_item_id');
+        return $this->belongsTo(EstimatePositionCatalog::class, 'catalog_item_id')->withTrashed();
     }
 
     public function resources(): HasMany
