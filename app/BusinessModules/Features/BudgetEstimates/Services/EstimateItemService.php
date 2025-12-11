@@ -25,6 +25,10 @@ class EstimateItemService
                 $data['position_number'] = $this->repository->getNextPositionNumber($estimate->id);
             }
             
+            if ((isset($data['overhead_amount']) || isset($data['profit_amount'])) && !isset($data['is_manual'])) {
+                $data['is_manual'] = true;
+            }
+            
             $item = $this->repository->create($data);
             
             $this->calculationService->calculateItemTotal($item, $estimate);
@@ -84,6 +88,10 @@ class EstimateItemService
     public function updateItem(EstimateItem $item, array $data): EstimateItem
     {
         return DB::transaction(function () use ($item, $data) {
+            if ((isset($data['overhead_amount']) || isset($data['profit_amount'])) && !isset($data['is_manual'])) {
+                $data['is_manual'] = true;
+            }
+
             $this->repository->update($item, $data);
             
             $estimate = $item->estimate;
@@ -179,6 +187,10 @@ class EstimateItemService
                 
                 if (!isset($itemData['position_number'])) {
                     $itemData['position_number'] = $this->repository->getNextPositionNumber($estimate->id);
+                }
+                
+                if ((isset($itemData['overhead_amount']) || isset($itemData['profit_amount'])) && !isset($itemData['is_manual'])) {
+                    $itemData['is_manual'] = true;
                 }
                 
                 $item = $this->repository->create($itemData);
