@@ -205,8 +205,18 @@ class EVMService
      */
     private function calculateEV(Project $project): float
     {
-        // Получаем ID всех контрактов проекта
-        $contractIds = Contract::where('project_id', $project->id)->pluck('id');
+        // Получаем ID всех контрактов проекта (включая мультипроектные)
+        $contractIds = Contract::where(function($q) use ($project) {
+            // Обычные контракты (project_id)
+            $q->where('project_id', $project->id)
+              // ИЛИ мультипроектные контракты (через pivot таблицу)
+              ->orWhereExists(function($sub) use ($project) {
+                  $sub->select(DB::raw(1))
+                      ->from('contract_project')
+                      ->whereColumn('contract_project.contract_id', 'contracts.id')
+                      ->where('contract_project.project_id', $project->id);
+              });
+        })->pluck('id');
         
         if ($contractIds->isEmpty()) {
             return 0.0;
@@ -245,8 +255,18 @@ class EVMService
         // AC is tracked via payment_documents (new payment system)
         // Payment documents are linked to contracts via polymorphic relation
         
-        // Get contract IDs for this project
-        $contractIds = Contract::where('project_id', $project->id)->pluck('id');
+        // Get contract IDs for this project (включая мультипроектные)
+        $contractIds = Contract::where(function($q) use ($project) {
+            // Обычные контракты (project_id)
+            $q->where('project_id', $project->id)
+              // ИЛИ мультипроектные контракты (через pivot таблицу)
+              ->orWhereExists(function($sub) use ($project) {
+                  $sub->select(DB::raw(1))
+                      ->from('contract_project')
+                      ->whereColumn('contract_project.contract_id', 'contracts.id')
+                      ->where('contract_project.project_id', $project->id);
+              });
+        })->pluck('id');
         
         if ($contractIds->isEmpty()) {
             return 0.0;
