@@ -335,6 +335,9 @@ class ContractPerformanceActService
                 ],
                 'performed_by' => request()->user()?->id
             ]);
+            
+            // Инвалидируем кэш EVM метрик при изменении состава работ в акте
+            $this->invalidateEVMCache($act);
         }
     }
 
@@ -585,6 +588,36 @@ class ContractPerformanceActService
 
             // Не блокируем создание акта - файл можно загрузить позже
             return null;
+        }
+    }
+
+    /**
+     * Инвалидировать кэш EVM метрик проекта
+     */
+    protected function invalidateEVMCache(ContractPerformanceAct $act): void
+    {
+        try {
+            $contract = $act->contract;
+            
+            if (!$contract || !$contract->project_id) {
+                return;
+            }
+
+            $evmService = app(\App\Services\Analytics\EVMService::class);
+            $evmService->invalidateCache($contract->project_id);
+            
+            $this->logging->technical('evm.cache.invalidated', [
+                'project_id' => $contract->project_id,
+                'contract_id' => $contract->id,
+                'act_id' => $act->id,
+                'reason' => 'performance_act_works_modified'
+            ]);
+        } catch (\Exception $e) {
+            // Не критично - логируем и продолжаем
+            $this->logging->technical('evm.cache.invalidation_failed', [
+                'act_id' => $act->id,
+                'error' => $e->getMessage()
+            ], 'warning');
         }
     }
 } 

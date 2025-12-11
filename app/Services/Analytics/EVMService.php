@@ -212,10 +212,25 @@ class EVMService
             return 0.0;
         }
 
-        // Суммируем утвержденные акты выполненных работ по всем контрактам проекта
-        return (float) ContractPerformanceAct::whereIn('contract_id', $contractIds)
-            ->where('is_approved', true) // Только утвержденные акты учитываются как Earned Value
-            ->sum('amount');
+        // Получаем все утвержденные акты с загруженными работами
+        $approvedActs = ContractPerformanceAct::whereIn('contract_id', $contractIds)
+            ->where('is_approved', true)
+            ->with('completedWorks') // Загружаем связанные работы
+            ->get();
+
+        $totalAmount = 0;
+        
+        foreach ($approvedActs as $act) {
+            // Если у акта есть связанные работы - считаем по included_amount из промежуточной таблицы
+            if ($act->completedWorks->count() > 0) {
+                $totalAmount += $act->completedWorks->sum('pivot.included_amount');
+            } else {
+                // Если работы не связаны - используем поле amount (для совместимости со старыми актами)
+                $totalAmount += $act->amount ?? 0;
+            }
+        }
+        
+        return (float) $totalAmount;
     }
 
     /**

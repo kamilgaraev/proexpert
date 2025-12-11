@@ -16,6 +16,9 @@ class ProjectAllocationController extends Controller
 {
     /**
      * Распределить материал со склада на проект
+     * 
+     * ИСТОЧНИК ИСТИНЫ: СКЛАД (warehouse_balances)
+     * Нельзя распределить материал, которого нет на складе!
      */
     public function allocate(Request $request): JsonResponse
     {
@@ -31,24 +34,44 @@ class ProjectAllocationController extends Controller
 
         DB::beginTransaction();
         try {
-            // Проверяем остаток на складе
+            // КРИТИЧЕСКАЯ ПРОВЕРКА: Материал ДОЛЖЕН существовать на складе
             $balance = WarehouseBalance::where('organization_id', $organizationId)
                 ->where('warehouse_id', $validated['warehouse_id'])
                 ->where('material_id', $validated['material_id'])
                 ->lockForUpdate()
-                ->firstOrFail();
+                ->first();
 
-            // Проверяем сколько уже распределено
-            $totalAllocated = WarehouseProjectAllocation::where('warehouse_id', $validated['warehouse_id'])
-                ->where('material_id', $validated['material_id'])
-                ->sum('allocated_quantity');
-
-            $availableForAllocation = $balance->available_quantity - $totalAllocated;
-
-            if ($validated['quantity'] > $availableForAllocation) {
+            // Если материала НЕТ на складе - ЗАПРЕЩАЕМ распределение
+            if (!$balance) {
+                DB::rollBack();
                 return response()->json([
                     'success' => false,
-                    'message' => "Недостаточно материала для распределения. Доступно: {$availableForAllocation}",
+                    'message' => 'Материал не найден на складе. Сначала оприходуйте материал на склад через операцию "Приход".',
+                    'error_code' => 'MATERIAL_NOT_IN_WAREHOUSE',
+                ], 422);
+            }
+
+            // Проверяем, что есть доступное количество
+            if ($balance->available_quantity <= 0) {
+                DB::rollBack();
+                return response()->json([
+                    'success' => false,
+                    'message' => 'На складе нет доступного количества этого материала.',
+                    'error_code' => 'INSUFFICIENT_STOCK',
+                    'available_quantity' => 0,
+                ], 422);
+            }
+
+            // Проверяем доступность для распределения с учетом уже распределенного
+            $availabilityCheck = $balance->checkAllocationAvailability($validated['quantity']);
+            
+            if (!$availabilityCheck['can_allocate']) {
+                DB::rollBack();
+                return response()->json([
+                    'success' => false,
+                    'message' => "Недостаточно материала для распределения. Доступно для распределения: {$availabilityCheck['available_for_allocation']}",
+                    'error_code' => 'INSUFFICIENT_AVAILABLE_QUANTITY',
+                    'details' => $availabilityCheck,
                 ], 422);
             }
 
@@ -80,6 +103,13 @@ class ProjectAllocationController extends Controller
                 'data' => $allocation->load(['project', 'material', 'warehouse']),
                 'message' => 'Материал успешно распределен на проект',
             ], 201);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Материал не найден на складе. Сначала оприходуйте материал.',
+                'error_code' => 'MATERIAL_NOT_IN_WAREHOUSE',
+            ], 422);
         } catch (\Exception $e) {
             DB::rollBack();
             throw $e;
