@@ -147,6 +147,8 @@ class EstimatePositionCatalogService
             //     throw new \DomainException('Позиция используется в сметах и не может быть удалена');
             // }
 
+            // Помечаем как неактивную перед удалением для надежности
+            $position->update(['is_active' => false]);
             $position->delete();
 
             Log::info('estimate_position_catalog.deleted', [
