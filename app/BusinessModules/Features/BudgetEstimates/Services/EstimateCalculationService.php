@@ -20,8 +20,13 @@ class EstimateCalculationService
     {
         $directCosts = $item->quantity * $item->unit_price;
         
-        $overheadAmount = $directCosts * ($estimate->overhead_rate / 100);
-        $profitAmount = $directCosts * ($estimate->profit_rate / 100);
+        if ($item->is_manual) {
+            $overheadAmount = $item->overhead_amount;
+            $profitAmount = $item->profit_amount;
+        } else {
+            $overheadAmount = $directCosts * ($estimate->overhead_rate / 100);
+            $profitAmount = $directCosts * ($estimate->profit_rate / 100);
+        }
         
         $totalAmount = $directCosts + $overheadAmount + $profitAmount;
         
