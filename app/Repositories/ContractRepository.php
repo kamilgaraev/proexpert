@@ -457,9 +457,9 @@ class ContractRepository extends BaseRepository implements ContractRepositoryInt
         }
 
         if (count($orgIds) > 1) {
-            $query->with(['organization:id,name,is_holding', 'contractor:id,name', 'project:id,name']);
+            $query->with(['organization:id,name,is_holding', 'contractor:id,name', 'project:id,name', 'projects:id,name']);
         } else {
-            $query->with(['contractor:id,name', 'project:id,name']);
+            $query->with(['contractor:id,name', 'project:id,name', 'projects:id,name']);
         }
 
         return $query->orderBy('contracts.date', 'desc')->paginate($perPage);
