@@ -37,11 +37,10 @@ class EstimatePositionCatalogObserver
      */
     public function deleting(EstimatePositionCatalog $catalogItem): bool
     {
-        // Проверить, можно ли удалить позицию
-        if (!$catalogItem->canBeDeleted()) {
-            // Вернуть false, чтобы прервать удаление
-            return false;
-        }
+        // Проверка отключена, чтобы разрешить Soft Delete используемых позиций
+        // if (!$catalogItem->canBeDeleted()) {
+        //     return false;
+        // }
 
         return true;
     }
