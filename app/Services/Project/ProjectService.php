@@ -391,11 +391,51 @@ class ProjectService
         }
 
         try {
-            // Статистика по материалам
-            $materialStats = DB::table('material_usage_logs as mul')
-                ->where('mul.project_id', $id)
-                ->selectRaw("\n                    COUNT(DISTINCT mul.material_id) as unique_materials_count,\n                    SUM(CASE WHEN mul.operation_type = 'receipt' THEN mul.quantity ELSE 0 END) as total_received,\n                    SUM(CASE WHEN mul.operation_type = 'write_off' THEN mul.quantity ELSE 0 END) as total_used,\n                    SUM(CASE WHEN mul.operation_type = 'receipt' THEN mul.total_price ELSE 0 END) as total_received_value,\n                    SUM(CASE WHEN mul.operation_type = 'write_off' THEN mul.total_price ELSE 0 END) as total_used_value\n                ")
+            // ===== ИСТОЧНИК ИСТИНЫ: СКЛАД (warehouse_balances + warehouse_movements) =====
+            // Статистика по материалам - берем из движений склада, связанных с проектом
+            $materialStats = DB::table('warehouse_movements as wm')
+                ->join('warehouse_balances as wb', function($join) {
+                    $join->on('wm.warehouse_id', '=', 'wb.warehouse_id')
+                         ->on('wm.material_id', '=', 'wb.material_id')
+                         ->on('wm.organization_id', '=', 'wb.organization_id');
+                })
+                ->where('wm.project_id', $id)
+                ->selectRaw("
+                    COUNT(DISTINCT wm.material_id) as unique_materials_count,
+                    SUM(CASE WHEN wm.movement_type = 'receipt' THEN wm.quantity ELSE 0 END) as total_received,
+                    SUM(CASE WHEN wm.movement_type = 'write_off' THEN wm.quantity ELSE 0 END) as total_used,
+                    SUM(CASE WHEN wm.movement_type = 'receipt' THEN (wm.quantity * wm.price) ELSE 0 END) as total_received_value,
+                    SUM(CASE WHEN wm.movement_type = 'write_off' THEN (wm.quantity * wm.price) ELSE 0 END) as total_used_value
+                ")
                 ->first();
+            
+            // Если нет движений по проекту, проверяем распределения (но без финансовых данных)
+            if (!$materialStats || $materialStats->unique_materials_count == 0) {
+                $allocationStats = DB::table('warehouse_project_allocations as wpa')
+                    ->join('warehouse_balances as wb', function($join) {
+                        $join->on('wpa.warehouse_id', '=', 'wb.warehouse_id')
+                             ->on('wpa.material_id', '=', 'wb.material_id')
+                             ->on('wpa.organization_id', '=', 'wb.organization_id');
+                    })
+                    ->where('wpa.project_id', $id)
+                    ->selectRaw("
+                        COUNT(DISTINCT wpa.material_id) as unique_materials_count,
+                        SUM(wpa.allocated_quantity) as total_allocated,
+                        SUM(wpa.allocated_quantity * wb.average_price) as allocated_value
+                    ")
+                    ->first();
+                
+                // Используем данные распределений, если есть
+                if ($allocationStats && $allocationStats->unique_materials_count > 0) {
+                    $materialStats = (object)[
+                        'unique_materials_count' => $allocationStats->unique_materials_count,
+                        'total_received' => 0,
+                        'total_used' => 0,
+                        'total_received_value' => 0,
+                        'total_used_value' => 0,
+                    ];
+                }
+            }
 
             // Статистика по выполненным работам
             $workStats = DB::table('completed_works as cw')
@@ -420,11 +460,12 @@ class ProjectService
                 ->orderBy('a.act_date', 'desc')
                 ->get();
 
-            // Последние операции
-            $lastMaterialOperation = DB::table('material_usage_logs')
+            // Последние операции - ИСТОЧНИК ИСТИНЫ: СКЛАД
+            $lastMaterialOperation = DB::table('warehouse_movements')
                 ->where('project_id', $id)
-                ->orderBy('usage_date', 'desc')
-                ->first(['usage_date', 'operation_type']);
+                ->whereIn('movement_type', ['receipt', 'write_off'])
+                ->orderBy('movement_date', 'desc')
+                ->first(['movement_date', 'movement_type']);
 
             $lastWorkCompletion = DB::table('completed_works')
                 ->where('project_id', $id)
@@ -441,8 +482,8 @@ class ProjectService
                     'current_balance' => ($materialStats->total_received ?? 0) - ($materialStats->total_used ?? 0),
                     'total_received_value' => $materialStats->total_received_value ?? 0,
                     'total_used_value' => $materialStats->total_used_value ?? 0,
-                    'last_operation_date' => $lastMaterialOperation->usage_date ?? null,
-                    'last_operation_type' => $lastMaterialOperation->operation_type ?? null
+                    'last_operation_date' => $lastMaterialOperation->movement_date ?? null,
+                    'last_operation_type' => $lastMaterialOperation->movement_type ?? null
                 ],
                 'works' => [
                     'total_works_count' => $workStats->total_works_count ?? 0,
