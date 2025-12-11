@@ -542,6 +542,14 @@ class ProjectService
 
             return [
                 'data' => collect($paginatedResults->items())->map(function($item) {
+                    $warehouseAvailable = (float)$item->warehouse_available_total;
+                    $allocated = (float)$item->allocated_quantity;
+                    
+                    // КРИТИЧНО: Проверяем валидность данных
+                    // Если материал распределен, но его НЕТ на складе - это некорректные данные!
+                    $isValid = $warehouseAvailable > 0;
+                    $hasWarning = !$isValid && $allocated > 0;
+                    
                     return [
                         'allocation_id' => $item->allocation_id,
                         'material_id' => $item->material_id,
@@ -550,13 +558,17 @@ class ProjectService
                         'unit' => $item->unit,
                         'warehouse_name' => $item->warehouse_name,
                         'warehouse_id' => $item->warehouse_id,
-                        'allocated_quantity' => (float)$item->allocated_quantity, // Распределено на проект
-                        'warehouse_available_total' => (float)$item->warehouse_available_total, // Доступно на всех складах
+                        'allocated_quantity' => $allocated, // Распределено на проект
+                        'warehouse_available_total' => $warehouseAvailable, // Доступно на всех складах
                         'average_price' => (float)$item->average_price,
-                        'allocated_value' => (float)$item->allocated_quantity * (float)$item->average_price,
+                        'allocated_value' => $allocated * (float)$item->average_price,
                         'last_operation_date' => $item->last_operation_date,
                         'allocated_by' => $item->allocated_by,
                         'notes' => $item->notes,
+                        // Флаги валидности данных
+                        'is_valid' => $isValid,
+                        'has_warning' => $hasWarning,
+                        'warning_message' => $hasWarning ? 'Материал распределен на проект, но отсутствует на складе. Требуется оприходование!' : null,
                     ];
                 }),
                 'links' => [
