@@ -1411,7 +1411,7 @@ class ReportService
                 'projects.start_date',
                 'projects.end_date',
                 DB::raw('(SELECT COALESCE(SUM(total_amount), 0) FROM contracts WHERE project_id = projects.id AND contracts.organization_id = ' . $organizationId . ') as contractor_costs'),
-                DB::raw('(SELECT COALESCE(SUM(total_price), 0) FROM material_usage_logs WHERE project_id = projects.id AND material_usage_logs.organization_id = ' . $organizationId . ' AND operation_type = \'receipt\') as material_costs')
+                DB::raw('(SELECT COALESCE(SUM(quantity * price), 0) FROM warehouse_movements WHERE project_id = projects.id AND warehouse_movements.organization_id = ' . $organizationId . ' AND movement_type = \'receipt\') as material_costs')
             );
 
         if ($request->filled('project_id')) {
