@@ -3,6 +3,7 @@
 namespace App\Observers;
 
 use App\Models\ContractPerformanceAct;
+use App\Services\Analytics\EVMService;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -17,6 +18,7 @@ class ContractPerformanceActObserver
     public function created(ContractPerformanceAct $act): void
     {
         $this->recalculateContractTotal($act);
+        $this->invalidateEVMCache($act);
     }
 
     /**
@@ -27,6 +29,7 @@ class ContractPerformanceActObserver
         // Пересчитываем только если изменилась сумма или статус одобрения
         if ($act->wasChanged(['amount', 'is_approved'])) {
             $this->recalculateContractTotal($act);
+            $this->invalidateEVMCache($act);
         }
     }
 
@@ -36,6 +39,7 @@ class ContractPerformanceActObserver
     public function deleted(ContractPerformanceAct $act): void
     {
         $this->recalculateContractTotal($act);
+        $this->invalidateEVMCache($act);
     }
 
     /**
@@ -109,6 +113,35 @@ class ContractPerformanceActObserver
             Log::warning('Failed to recalculate contract total_amount from act', [
                 'act_id' => $act->id,
                 'contract_id' => $act->contract_id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Инвалидировать кеш EVM метрик проекта
+     */
+    private function invalidateEVMCache(ContractPerformanceAct $act): void
+    {
+        try {
+            $contract = $act->contract;
+            
+            if (!$contract || !$contract->project_id) {
+                return;
+            }
+
+            $evmService = app(EVMService::class);
+            $evmService->invalidateCache($contract->project_id);
+            
+            Log::debug('EVM cache invalidated for project due to performance act change', [
+                'project_id' => $contract->project_id,
+                'contract_id' => $contract->id,
+                'act_id' => $act->id,
+            ]);
+        } catch (\Exception $e) {
+            // Не критично - логируем и продолжаем
+            Log::warning('Failed to invalidate EVM cache for performance act', [
+                'act_id' => $act->id,
                 'error' => $e->getMessage(),
             ]);
         }
