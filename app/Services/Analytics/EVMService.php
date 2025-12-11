@@ -4,7 +4,7 @@ namespace App\Services\Analytics;
 
 use App\Models\Project;
 use App\Models\Contract;
-use App\Models\CompletedWork;
+use App\Models\ContractPerformanceAct;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -198,16 +198,24 @@ class EVMService
 
     /**
      * Calculate Earned Value (EV)
-     * Sum of confirmed completed works
+     * Sum of approved performance acts (документально подтвержденные работы)
      * 
      * @param Project $project
      * @return float
      */
     private function calculateEV(Project $project): float
     {
-        return (float) CompletedWork::where('project_id', $project->id)
-            ->where('status', 'confirmed') // Only confirmed works count as Earned
-            ->sum('total_amount');
+        // Получаем ID всех контрактов проекта
+        $contractIds = Contract::where('project_id', $project->id)->pluck('id');
+        
+        if ($contractIds->isEmpty()) {
+            return 0.0;
+        }
+
+        // Суммируем утвержденные акты выполненных работ по всем контрактам проекта
+        return (float) ContractPerformanceAct::whereIn('contract_id', $contractIds)
+            ->where('is_approved', true) // Только утвержденные акты учитываются как Earned Value
+            ->sum('amount');
     }
 
     /**
