@@ -12,6 +12,8 @@ enum ContractWorkTypeCategoryEnum: string
     case CONSULTATION = 'consultation'; // Консультационные услуги
     case SUPPLY = 'supply'; // Поставка
     case SERVICES = 'services'; // Услуги
+    case EQUIPMENT = 'equipment'; // Техника
+    case MATERIALS = 'materials'; // ТМЦ (Товарно-материальные ценности)
     case RENT = 'rent'; // Аренда
     case OTHER = 'other'; // Прочие
 

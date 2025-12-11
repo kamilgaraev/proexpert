@@ -13,6 +13,8 @@ return [
         'consultation' => 'Консультационные услуги',
         'supply' => 'Поставка',
         'services' => 'Услуги',
+        'equipment' => 'Техника',
+        'materials' => 'ТМЦ',
         'rent' => 'Аренда',
         'other' => 'Прочие',
     ],
