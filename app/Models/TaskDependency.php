@@ -122,7 +122,7 @@ class TaskDependency extends Model
         return 'valid';
     }
 
-    protected function createsCycle(): bool
+    public function createsCycle(): bool
     {
         // Рекурсивная проверка на циклические зависимости
         return $this->checkCycleRecursive($this->successor_task_id, [$this->predecessor_task_id]);
