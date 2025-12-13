@@ -65,22 +65,26 @@ class StoreSupplementaryAgreementRequest extends FormRequest
     }
 
     /**
-     * Дополнительная валидация: должно быть указано хотя бы одно из полей
+     * Дополнительная валидация
+     * 
+     * BUSINESS LOGIC:
+     * Дополнительное соглашение может быть создано в следующих сценариях:
+     * 1. С изменением суммы контракта (change_amount != 0)
+     * 2. С аннулированием предыдущих ДС (supersede_agreement_ids)
+     * 3. Без изменения суммы - для изменения неценовых условий:
+     *    - Изменение сроков выполнения работ
+     *    - Замена материалов/работ на эквивалентные
+     *    - Изменение реквизитов, контактных лиц
+     *    - Изменение спецификации без изменения стоимости
+     *    - Изменение графика платежей
+     *    - Изменение условий гарантии и т.д.
+     * 
+     * В любом случае должен быть указан subject_changes (предмет изменений) - это обязательное поле.
      */
     public function withValidator($validator)
     {
-        $validator->after(function ($validator) {
-            $hasChangeAmount = $this->filled('change_amount');
-            $hasSupersedeIds = $this->filled('supersede_agreement_ids') && !empty($this->input('supersede_agreement_ids'));
-
-            // Если ничего не указано - ошибка
-            if (!$hasChangeAmount && !$hasSupersedeIds) {
-                $validator->errors()->add(
-                    'change_amount',
-                    'Необходимо указать либо изменение суммы (change_amount), либо список ДС для аннулирования (supersede_agreement_ids).'
-                );
-            }
-        });
+        // Валидация убрана - subject_changes является обязательным и достаточным
+        // для создания ДС без изменения суммы или аннулирования других ДС
     }
 
     public function toDto(): SupplementaryAgreementDTO
