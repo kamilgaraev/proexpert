@@ -64,7 +64,7 @@ class PurchaseRequestService
      */
     public function createFromSiteRequest(SiteRequest $siteRequest, ?int $assignedTo = null): PurchaseRequest
     {
-        if ($siteRequest->request_type->value !== 'material') {
+        if ($siteRequest->request_type->value !== 'material_request') {
             throw new \DomainException('Заявка на закупку может быть создана только из заявки на материалы');
         }
 
