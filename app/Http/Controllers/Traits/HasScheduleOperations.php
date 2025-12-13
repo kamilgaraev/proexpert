@@ -14,6 +14,7 @@ use App\Models\ScheduleTask;
 use App\Models\TaskDependency;
 use App\Exceptions\Schedule\ScheduleNotFoundException;
 use App\Exceptions\Schedule\CircularDependencyException;
+use App\Exceptions\Schedule\ScheduleValidationException;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
@@ -114,10 +115,14 @@ trait HasScheduleOperations
                 'data' => $criticalPath
             ]);
         } catch (CircularDependencyException $e) {
+            Log::warning('Обнаружены циклические зависимости при расчете критического пути', [
+                'schedule_id' => $scheduleId,
+                'cycle_tasks' => $e->getCycleTasks()
+            ]);
             return response()->json([
                 'message' => $e->getMessage(),
                 'cycle_tasks' => $e->getCycleTasks()
-            ], $e->getCode());
+            ], 422);
         } catch (\Exception $e) {
             Log::error('Ошибка при расчете критического пути', [
                 'schedule_id' => $scheduleId,
@@ -125,7 +130,7 @@ trait HasScheduleOperations
                 'trace' => $e->getTraceAsString()
             ]);
             return response()->json([
-                'message' => 'Ошибка при расчете критического пути: ' . $e->getMessage()
+                'message' => 'Внутренняя ошибка сервера при расчете критического пути'
             ], 500);
         }
     }
@@ -146,10 +151,11 @@ trait HasScheduleOperations
         } catch (\Exception $e) {
             Log::error('Ошибка при сохранении базового плана', [
                 'schedule_id' => $scheduleId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
             return response()->json([
-                'message' => 'Ошибка при сохранении базового плана: ' . $e->getMessage()
+                'message' => 'Внутренняя ошибка сервера при сохранении базового плана'
             ], 500);
         }
     }
@@ -170,10 +176,11 @@ trait HasScheduleOperations
         } catch (\Exception $e) {
             Log::error('Ошибка при очистке базового плана', [
                 'schedule_id' => $scheduleId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
             return response()->json([
-                'message' => 'Ошибка при очистке базового плана: ' . $e->getMessage()
+                'message' => 'Внутренняя ошибка сервера при очистке базового плана'
             ], 500);
         }
     }
@@ -249,6 +256,16 @@ trait HasScheduleOperations
                 'message' => 'Задача успешно создана',
                 'data' => $task
             ], 201);
+        } catch (ScheduleValidationException $e) {
+            Log::warning('[ScheduleTask] Ошибка валидации задачи', [
+                'schedule_id' => $scheduleId,
+                'errors' => $e->getErrors(),
+                'error' => $e->getMessage()
+            ]);
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors' => $e->getErrors()
+            ], 422);
         } catch (\Exception $e) {
             Log::error('[ScheduleTask] ОШИБКА при создании задачи', [
                 'schedule_id' => $scheduleId,
@@ -262,12 +279,7 @@ trait HasScheduleOperations
             ]);
             
             return response()->json([
-                'message' => 'Ошибка при создании задачи: ' . $e->getMessage(),
-                'error_details' => [
-                    'class' => get_class($e),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                ]
+                'message' => 'Внутренняя ошибка сервера при создании задачи'
             ], 500);
         }
     }
@@ -344,13 +356,34 @@ trait HasScheduleOperations
                     ]
                 ]
             ], 201);
-        } catch (\Exception $e) {
-            Log::error('Ошибка при создании зависимости', [
+        } catch (CircularDependencyException $e) {
+            Log::warning('Попытка создания циклической зависимости', [
                 'schedule_id' => $scheduleId,
+                'cycle_tasks' => $e->getCycleTasks(),
                 'error' => $e->getMessage()
             ]);
             return response()->json([
-                'message' => 'Ошибка при создании зависимости: ' . $e->getMessage()
+                'message' => $e->getMessage(),
+                'cycle_tasks' => $e->getCycleTasks()
+            ], 422);
+        } catch (ScheduleValidationException $e) {
+            Log::warning('Ошибка валидации зависимости', [
+                'schedule_id' => $scheduleId,
+                'errors' => $e->getErrors(),
+                'error' => $e->getMessage()
+            ]);
+            return response()->json([
+                'message' => $e->getMessage(),
+                'errors' => $e->getErrors()
+            ], 422);
+        } catch (\Exception $e) {
+            Log::error('Ошибка при создании зависимости', [
+                'schedule_id' => $scheduleId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return response()->json([
+                'message' => 'Внутренняя ошибка сервера при создании зависимости'
             ], 500);
         }
     }
@@ -404,10 +437,11 @@ trait HasScheduleOperations
         } catch (\Exception $e) {
             Log::error('Ошибка при получении конфликтов ресурсов', [
                 'schedule_id' => $scheduleId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
             return response()->json([
-                'message' => 'Ошибка при получении конфликтов ресурсов: ' . $e->getMessage()
+                'message' => 'Внутренняя ошибка сервера при получении конфликтов ресурсов'
             ], 500);
         }
     }
