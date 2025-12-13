@@ -28,6 +28,30 @@ class SupplementaryAgreementService
         protected LoggingService $logging
     ) {}
 
+    /**
+     * Создать дополнительное соглашение
+     * 
+     * BUSINESS LOGIC:
+     * Дополнительное соглашение может быть создано в следующих сценариях:
+     * 
+     * 1. С изменением суммы контракта (change_amount != 0)
+     *    - Увеличение объема работ
+     *    - Дополнительные работы
+     *    - Снижение стоимости
+     * 
+     * 2. С аннулированием предыдущих ДС (supersede_agreement_ids)
+     *    - Отмена/замена ранее подписанных ДС
+     *    - Может быть с изменением суммы или без
+     * 
+     * 3. Без изменения суммы и без аннулирования (только subject_changes)
+     *    - Изменение сроков выполнения работ
+     *    - Замена материалов на эквивалентные
+     *    - Изменение реквизитов, контактных лиц
+     *    - Изменение спецификации без изменения стоимости
+     *    - Изменение графика платежей
+     *    - Изменение условий гарантии
+     *    - В этом случае события НЕ создаются, т.к. финансовое состояние контракта не меняется
+     */
     public function create(SupplementaryAgreementDTO $dto): SupplementaryAgreement
     {
         $agreement = $this->repository->create($dto->toArray());
@@ -99,7 +123,9 @@ class SupplementaryAgreementService
                     $contract->total_amount = $calculatedAmount;
                     $contract->save();
                 }
-                // Если только supersede_agreement_ids без change_amount - события уже созданы выше
+                // Если нет ни change_amount, ни supersede_agreement_ids:
+                // ДС создано для изменения неценовых условий (сроки, спецификация и т.д.)
+                // События НЕ создаются, т.к. финансовое состояние контракта не меняется
             } catch (Exception $e) {
                 // КРИТИЧЕСКАЯ ОШИБКА - откатываем транзакцию и пробрасываем исключение
                 \Illuminate\Support\Facades\Log::error('Failed to create supplementary agreement events', [
@@ -119,6 +145,8 @@ class SupplementaryAgreementService
                 $contract->total_amount = ($contract->total_amount ?? 0) + (float) $dto->change_amount;
                 $contract->save();
             }
+            // Если нет change_amount - ДС создано для изменения неценовых условий
+            
             // Если указан supersede_agreement_ids для legacy контракта - это не поддерживается без Event Sourcing
             if (!empty($dto->supersede_agreement_ids)) {
                 \Illuminate\Support\Facades\Log::warning('Attempted to supersede agreements for legacy contract without Event Sourcing', [
