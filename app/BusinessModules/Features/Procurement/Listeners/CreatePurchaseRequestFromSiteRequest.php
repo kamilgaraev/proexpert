@@ -25,7 +25,7 @@ class CreatePurchaseRequestFromSiteRequest
         $siteRequest = $event->siteRequest;
 
         // Проверяем, что это заявка на материалы
-        if ($siteRequest->request_type->value !== 'material') {
+        if ($siteRequest->request_type->value !== 'material_request') {
             return;
         }
 
