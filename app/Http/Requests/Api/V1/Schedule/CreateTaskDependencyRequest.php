@@ -31,7 +31,11 @@ class CreateTaskDependencyRequest extends FormRequest
             ],
             'lag_days' => 'nullable|integer',
             'lag_hours' => 'nullable|numeric|min:-999|max:999',
-            'lag_type' => 'nullable|string|max:20',
+            'lag_type' => [
+                'nullable',
+                'string',
+                Rule::in(['days', 'hours', 'percent'])
+            ],
             'description' => 'nullable|string|max:1000',
             'is_hard_constraint' => 'nullable|boolean',
             'priority' => 'nullable',
@@ -51,6 +55,7 @@ class CreateTaskDependencyRequest extends FormRequest
             'successor_task_id.different' => 'Последующая задача должна отличаться от предшествующей',
             'dependency_type.required' => 'Тип зависимости обязателен',
             'dependency_type.in' => 'Недопустимый тип зависимости. Допустимые: FS, SS, FF, SF',
+            'lag_type.in' => 'Недопустимый тип единицы измерения лага. Допустимые: days, hours, percent',
             'lag_hours.min' => 'Задержка не может быть меньше -999 часов',
             'lag_hours.max' => 'Задержка не может быть больше 999 часов',
             'description.max' => 'Описание не должно превышать 1000 символов',
@@ -111,7 +116,7 @@ class CreateTaskDependencyRequest extends FormRequest
         $this->merge([
             'lag_days' => $this->lag_days ?? 0,
             'lag_hours' => $this->lag_hours ?? 0.0,
-            'lag_type' => $this->lag_type ?? 'working_days',
+            'lag_type' => $this->lag_type ?? 'days',
             'is_hard_constraint' => $this->is_hard_constraint ?? false,
             'priority' => is_numeric($this->priority) ? (int) $this->priority : \App\Enums\Schedule\PriorityEnum::from($this->priority ?? 'normal')->weight(),
         ]);
