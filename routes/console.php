@@ -165,6 +165,16 @@ Schedule::command('subscriptions:renew --days-ahead=1')
     })
     ->appendOutputTo(storage_path('logs/schedule-subscriptions-renew.log'));
 
+// Автоматическое продление модулей с автооплатой (каждые 5 минут)
+Schedule::command('modules:renew --days-ahead=1')
+    ->everyFiveMinutes()
+    ->withoutOverlapping(240)
+    ->runInBackground()
+    ->onFailure(function () {
+        Log::channel('stderr')->error('Scheduled modules:renew command failed.');
+    })
+    ->appendOutputTo(storage_path('logs/schedule-modules-renew.log'));
+
 // Автоматическое снятие истекших ограничений доступа
 Schedule::command('restrictions:lift-expired')
     ->hourly()
