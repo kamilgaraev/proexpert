@@ -58,7 +58,11 @@ return new class extends Migration
      */
     protected function createActBasedAllocation($contract, $projects, float $totalActsAmount): void
     {
-        foreach ($projects as $project) {
+        $totalContractAmount = (float) $contract->total_amount;
+        $allocatedTotal = 0;
+        $projectsArray = $projects->values()->all();
+        
+        foreach ($projectsArray as $index => $project) {
             $projectActsAmount = DB::table('contract_performance_acts')
                 ->where('contract_id', $contract->id)
                 ->where('project_id', $project->id)
@@ -66,13 +70,19 @@ return new class extends Migration
                 ->sum('amount');
 
             if ($projectActsAmount > 0) {
-                $percentage = ($projectActsAmount / $totalActsAmount) * 100;
+                // Для последнего проекта с актами - считаем остаток для точности
+                if ($index === count($projectsArray) - 1) {
+                    $allocatedAmount = $totalContractAmount - $allocatedTotal;
+                } else {
+                    $allocatedAmount = round(($projectActsAmount / $totalActsAmount) * $totalContractAmount, 2);
+                    $allocatedTotal += $allocatedAmount;
+                }
 
                 ContractProjectAllocation::create([
                     'contract_id' => $contract->id,
                     'project_id' => $project->id,
-                    'allocation_type' => ContractAllocationTypeEnum::PERCENTAGE->value,
-                    'allocated_percentage' => round($percentage, 2),
+                    'allocation_type' => ContractAllocationTypeEnum::FIXED->value,
+                    'allocated_amount' => $allocatedAmount,
                     'notes' => 'Автоматически создано при миграции на основе актов',
                     'is_active' => true,
                 ]);

@@ -144,17 +144,34 @@ class ContractAllocationService
             return $this->createAutoEqualDistribution($contract);
         }
 
-        $allocationsData = $projects->map(function ($project) use ($actsByProject, $totalActs, $totalContractAmount) {
+        // ИСПРАВЛЕНИЕ: Используем FIXED суммы вместо процентов для точности
+        $allocationsData = [];
+        $allocatedTotal = 0;
+        $projectsList = $projects->values();
+        
+        foreach ($projectsList as $index => $project) {
             $projectActs = $actsByProject->get($project->id, 0);
-            $percentage = ($projectActs / $totalActs) * 100;
+            
+            // Для последнего проекта - считаем как остаток (избегаем погрешности округления)
+            if ($index === $projectsList->count() - 1) {
+                $allocatedAmount = $totalContractAmount - $allocatedTotal;
+            } else {
+                // Для остальных - пропорционально актам
+                $allocatedAmount = round(($projectActs / $totalActs) * $totalContractAmount, 2);
+                $allocatedTotal += $allocatedAmount;
+            }
 
-            return [
+            $allocationsData[] = [
                 'project_id' => $project->id,
-                'allocation_type' => ContractAllocationTypeEnum::PERCENTAGE->value,
-                'allocated_percentage' => round($percentage, 2),
-                'notes' => 'Распределение на основе выполненных работ (актов)',
+                'allocation_type' => ContractAllocationTypeEnum::FIXED->value,
+                'allocated_amount' => $allocatedAmount,
+                'notes' => sprintf(
+                    'Распределение на основе актов (%.2f млн из %.2f млн)', 
+                    $projectActs / 1000000, 
+                    $totalActs / 1000000
+                ),
             ];
-        })->toArray();
+        }
 
         return $this->syncAllocations($contract, $allocationsData);
     }
