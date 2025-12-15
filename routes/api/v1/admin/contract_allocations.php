@@ -6,8 +6,9 @@ use App\Http\Controllers\Api\V1\Admin\ContractAllocationController;
 /**
  * Маршруты для управления распределением контрактов по проектам
  * 
- * Префикс: /api/v1/admin
- * Middleware: auth:api, organization.context
+ * ВАЖНО: Этот файл подключается внутри группы с префиксом /api/v1/admin
+ * и всеми необходимыми middleware из routes/api.php
+ * Поэтому здесь НЕ нужно повторять префикс и middleware
  */
 
 // Управление распределениями контракта
