@@ -18,6 +18,7 @@ class ContractPerformanceActResource extends JsonResource
         return [
             'id' => $this->id,
             'contract_id' => $this->contract_id,
+            'project_id' => $this->project_id,
             'contract_number' => $this->whenLoaded('contract', fn() => $this->contract->number),
             'contract_date' => $this->whenLoaded('contract', fn() => $this->contract->date),
             'contract_subject' => $this->whenLoaded('contract', fn() => $this->contract->subject),
