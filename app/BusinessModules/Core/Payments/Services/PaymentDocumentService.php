@@ -164,6 +164,38 @@ class PaymentDocumentService
     }
 
     /**
+     * Утвердить документ
+     */
+    public function approve(PaymentDocument $document, ?int $approvedByUserId = null): PaymentDocument
+    {
+        DB::beginTransaction();
+
+        try {
+            // Утверждаем документ через state machine
+            $this->stateMachine->approve($document, $approvedByUserId);
+
+            Log::info('payment_document.approved', [
+                'document_id' => $document->id,
+                'document_number' => $document->document_number,
+                'approved_by_user_id' => $approvedByUserId,
+            ]);
+
+            DB::commit();
+            return $document->fresh();
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            Log::error('payment_document.approve_failed', [
+                'document_id' => $document->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            throw $e;
+        }
+    }
+
+    /**
      * Запланировать платеж
      */
     public function schedule(PaymentDocument $document, ?\DateTime $scheduledAt = null): PaymentDocument
@@ -359,7 +391,7 @@ class PaymentDocumentService
                 ->orWhere(function($subQ) use ($contractId) {
                     $subQ->where('invoiceable_type', 'App\\Models\\ContractPerformanceAct')
                          ->whereExists(function($existsQuery) use ($contractId) {
-                             $existsQuery->select(\DB::raw(1))
+                             $existsQuery->select(DB::raw(1))
                                  ->from('contract_performance_acts')
                                  ->whereColumn('contract_performance_acts.id', 'payment_documents.invoiceable_id')
                                  ->where('contract_performance_acts.contract_id', $contractId);
