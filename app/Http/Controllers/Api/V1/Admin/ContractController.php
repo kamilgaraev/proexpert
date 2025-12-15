@@ -188,12 +188,13 @@ class ContractController extends Controller
             'user_id' => $user->id
         ]);
         
-        $contractData = $this->contractService->getContractById($contract, $organizationId);
+        $contractData = $this->contractService->getContractById($contract, $organizationId, $projectId);
         
         Log::info('ContractController@show after service', [
             'found' => $contractData !== null,
             'contract_org_id' => $contractData?->organization_id,
             'contract_project_id' => $contractData?->project_id,
+            'filtered_by_project_id' => $projectId,
         ]);
         
         if (!$contractData) {
@@ -487,7 +488,7 @@ class ContractController extends Controller
         $projectId = $project;
 
         try {
-            $fullDetails = $this->contractService->getFullContractDetails($contract, $organizationId);
+            $fullDetails = $this->contractService->getFullContractDetails($contract, $organizationId, $projectId);
             $contract = $fullDetails['contract'];
             
             // Проверка принадлежности контракта к проекту
