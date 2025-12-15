@@ -44,7 +44,11 @@ class UpdateContractPerformanceActRequest extends FormRequest
         // $this->input() вернет null, если поле отсутствует, что совместимо с DTO.
         $validatedData = $this->validated(); // Получаем только валидированные данные
 
+        // Получаем project_id из маршрута
+        $projectId = $this->route('project') ?? null;
+
         return new ContractPerformanceActDTO(
+            project_id: $projectId,
             act_document_number: $validatedData['act_document_number'] ?? null,
             act_date: $validatedData['act_date'], // 'required' if present
             description: $validatedData['description'] ?? null,

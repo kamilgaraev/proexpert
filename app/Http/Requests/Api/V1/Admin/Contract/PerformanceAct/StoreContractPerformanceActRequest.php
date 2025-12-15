@@ -51,7 +51,11 @@ class StoreContractPerformanceActRequest extends FormRequest
 
     public function toDto(): ContractPerformanceActDTO
     {
+        // Получаем project_id из маршрута
+        $projectId = $this->route('project') ?? null;
+        
         return new ContractPerformanceActDTO(
+            project_id: $projectId,
             act_document_number: $this->validated('act_document_number'),
             act_date: $this->validated('act_date'),
             description: $this->validated('description'),

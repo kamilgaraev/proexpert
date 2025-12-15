@@ -452,10 +452,11 @@ class ProjectService
 
             $userStats = (object) ['assigned_users_count' => $teamMembers->count()];
 
-            // Акты выполненных работ по проекту через контракты
+            // Акты выполненных работ по проекту
+            // Фильтруем напрямую по project_id для корректной работы с мультипроектными контрактами
             $acts = DB::table('contract_performance_acts as a')
                 ->join('contracts as c', 'c.id', '=', 'a.contract_id')
-                ->where('c.project_id', $id)
+                ->where('a.project_id', $id)
                 ->select(['a.id', 'a.contract_id', 'a.act_document_number', 'a.act_date', 'a.amount', 'a.is_approved'])
                 ->orderBy('a.act_date', 'desc')
                 ->get();

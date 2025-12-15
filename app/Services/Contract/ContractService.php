@@ -1027,7 +1027,8 @@ class ContractService
             ->when(empty($filters['contractor_context']), fn($q) => $q->where('contracts.organization_id', $organizationId))
             ->whereNull('contracts.deleted_at')
             ->where('contract_performance_acts.is_approved', true)
-            ->when(!empty($filters['project_id']), fn($q) => $q->where('contracts.project_id', $filters['project_id']))
+            // Фильтруем акты по project_id напрямую для корректной работы с мультипроектными контрактами
+            ->when(!empty($filters['project_id']), fn($q) => $q->where('contract_performance_acts.project_id', $filters['project_id']))
             ->when(!empty($filters['contractor_id']), fn($q) => $q->where('contracts.contractor_id', $filters['contractor_id']))
             ->when(!empty($filters['status']), fn($q) => $q->where('contracts.status', $filters['status']))
             ->when(!empty($filters['work_type_category']), fn($q) => $q->where('contracts.work_type_category', $filters['work_type_category']))

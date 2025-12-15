@@ -183,7 +183,7 @@ class HoldingReportService
         $this->applyContractFilters($query, $filters);
 
         $totalQuery = clone $query;
-        $summary = $this->calculateContractsSummary($totalQuery);
+        $summary = $this->calculateContractsSummary($totalQuery, $filters);
 
         $byOrganization = $this->getContractsByOrganization($selectedOrgIds, $filters);
 
@@ -288,7 +288,18 @@ class HoldingReportService
         }
 
         if ($filters['project_id']) {
-            $query->where('project_id', $filters['project_id']);
+            $projectId = $filters['project_id'];
+            $query->where(function($q) use ($projectId) {
+                // Обычные контракты (поле project_id)
+                $q->where('project_id', $projectId)
+                  // ИЛИ мультипроектные контракты (через pivot таблицу contract_project)
+                  ->orWhereExists(function($sub) use ($projectId) {
+                      $sub->select(DB::raw(1))
+                          ->from('contract_project')
+                          ->whereColumn('contract_project.contract_id', 'contracts.id')
+                          ->where('contract_project.project_id', $projectId);
+                  });
+            });
         }
 
         if ($filters['date_from']) {
@@ -351,7 +362,7 @@ class HoldingReportService
         ];
     }
 
-    protected function calculateContractsSummary($query): array
+    protected function calculateContractsSummary($query, array $filters = []): array
     {
         $contracts = $query->with('agreements')->get();
         $contractIds = $contracts->pluck('id');
@@ -363,10 +374,16 @@ class HoldingReportService
             ->whereNull('deleted_at')
             ->sum('paid_amount');
 
-        $totalActs = DB::table('contract_performance_acts')
+        // Суммируем акты с учетом фильтра по project_id для мультипроектных контрактов
+        $actsQuery = DB::table('contract_performance_acts')
             ->whereIn('contract_id', $contractIds)
-            ->where('is_approved', true)
-            ->sum('amount');
+            ->where('is_approved', true);
+        
+        if (!empty($filters['project_id'])) {
+            $actsQuery->where('project_id', $filters['project_id']);
+        }
+        
+        $totalActs = $actsQuery->sum('amount');
 
         $totalAmount = $this->calculateTotalContractAmount($contracts);
         $totalGp = $contracts->sum(function ($contract) {
@@ -455,10 +472,16 @@ class HoldingReportService
                 ->whereNull('deleted_at')
                 ->sum('paid_amount');
 
-            $ownerActs = DB::table('contract_performance_acts')
+            // Суммируем акты с учетом фильтра по project_id для мультипроектных контрактов
+            $ownerActsQuery = DB::table('contract_performance_acts')
                 ->whereIn('contract_id', $ownerContractIds)
-                ->where('is_approved', true)
-                ->sum('amount');
+                ->where('is_approved', true);
+            
+            if (!empty($filters['project_id'])) {
+                $ownerActsQuery->where('project_id', $filters['project_id']);
+            }
+            
+            $ownerActs = $ownerActsQuery->sum('amount');
 
             $ownerAmount = $this->calculateTotalContractAmount($ownerContracts);
 
@@ -478,10 +501,16 @@ class HoldingReportService
                 ->whereNull('deleted_at')
                 ->sum('paid_amount');
 
-            $contractorActs = DB::table('contract_performance_acts')
+            // Суммируем акты с учетом фильтра по project_id для мультипроектных контрактов
+            $contractorActsQuery = DB::table('contract_performance_acts')
                 ->whereIn('contract_id', $contractorContractIds)
-                ->where('is_approved', true)
-                ->sum('amount');
+                ->where('is_approved', true);
+            
+            if (!empty($filters['project_id'])) {
+                $contractorActsQuery->where('project_id', $filters['project_id']);
+            }
+            
+            $contractorActs = $contractorActsQuery->sum('amount');
 
             $contractorAmount = $this->calculateTotalContractAmount($contractorContracts);
 
@@ -579,12 +608,26 @@ class HoldingReportService
 
         $contractorsData = [];
         foreach ($contractors as $contractor) {
-            $contractIds = DB::table('contracts')
+            $contractIdsQuery = DB::table('contracts')
                 ->where('contractor_id', $contractor->id)
                 ->whereIn('organization_id', $orgIds)
-                ->whereNull('deleted_at')
-                ->pluck('id')
-                ->toArray();
+                ->whereNull('deleted_at');
+            
+            // Применяем фильтр по project_id для мультипроектных контрактов
+            if (!empty($filters['project_id'])) {
+                $projectId = $filters['project_id'];
+                $contractIdsQuery->where(function($q) use ($projectId) {
+                    $q->where('project_id', $projectId)
+                      ->orWhereExists(function($sub) use ($projectId) {
+                          $sub->select(DB::raw(1))
+                              ->from('contract_project')
+                              ->whereColumn('contract_project.contract_id', 'contracts.id')
+                              ->where('contract_project.project_id', $projectId);
+                      });
+                });
+            }
+            
+            $contractIds = $contractIdsQuery->pluck('id')->toArray();
 
             $totalAmount = $this->calculateContractAmountFromDb($contractIds);
 
@@ -599,10 +642,16 @@ class HoldingReportService
                 ->whereNull('deleted_at')
                 ->sum('paid_amount');
 
-            $totalActs = DB::table('contract_performance_acts')
+            // Суммируем акты с учетом фильтра по project_id для мультипроектных контрактов
+            $totalActsQuery = DB::table('contract_performance_acts')
                 ->whereIn('contract_id', $contractIds)
-                ->where('is_approved', true)
-                ->sum('amount');
+                ->where('is_approved', true);
+            
+            if (!empty($filters['project_id'])) {
+                $totalActsQuery->where('project_id', $filters['project_id']);
+            }
+            
+            $totalActs = $totalActsQuery->sum('amount');
 
             $contractorsData[] = [
                 'contractor_id' => $contractor->id,

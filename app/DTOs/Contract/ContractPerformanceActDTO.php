@@ -5,7 +5,8 @@ namespace App\DTOs\Contract; // Помещаем в общую папку DTO д
 class ContractPerformanceActDTO
 {
     public function __construct(
-        // contract_id будет браться из маршрута или устанавливаться в сервисе
+        // contract_id и project_id будут браться из маршрута или устанавливаться в сервисе
+        public readonly ?int $project_id,
         public readonly ?string $act_document_number,
         public readonly string $act_date, // Y-m-d format
         public readonly ?string $description,
@@ -19,6 +20,7 @@ class ContractPerformanceActDTO
     public function toArray(): array
     {
         return [
+            'project_id' => $this->project_id,
             'act_document_number' => $this->act_document_number,
             'act_date' => $this->act_date,
             'amount' => $this->amount,
