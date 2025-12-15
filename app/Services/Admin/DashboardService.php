@@ -149,14 +149,12 @@ class DashboardService
             ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
             ->where('contracts.organization_id', $organizationId)
             ->where('contract_performance_acts.project_id', $projectId)
-            ->whereNull('contract_performance_acts.deleted_at')
             ->sum('contract_performance_acts.amount');
 
         $completedWorksTotal = DB::table('contract_performance_acts')
             ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
             ->where('contracts.organization_id', $organizationId)
             ->where('contract_performance_acts.project_id', $projectId)
-            ->whereNull('contract_performance_acts.deleted_at')
             ->count();
 
         $completedWorksConfirmed = DB::table('contract_performance_acts')
@@ -164,7 +162,6 @@ class DashboardService
             ->where('contracts.organization_id', $organizationId)
             ->where('contract_performance_acts.project_id', $projectId)
             ->where('contract_performance_acts.is_approved', true)
-            ->whereNull('contract_performance_acts.deleted_at')
             ->count();
 
         // Процент выполнения контрактов
@@ -239,7 +236,6 @@ class DashboardService
             ->where('contracts.organization_id', $organizationId)
             ->where('contract_performance_acts.project_id', $projectId)
             ->whereBetween('contract_performance_acts.created_at', [$start, $end])
-            ->whereNull('contract_performance_acts.deleted_at')
             ->sum('contract_performance_acts.amount');
 
         $completedWorksTotal = DB::table('contract_performance_acts')
@@ -247,7 +243,6 @@ class DashboardService
             ->where('contracts.organization_id', $organizationId)
             ->where('contract_performance_acts.project_id', $projectId)
             ->whereBetween('contract_performance_acts.created_at', [$start, $end])
-            ->whereNull('contract_performance_acts.deleted_at')
             ->count();
 
         $completedWorksConfirmed = DB::table('contract_performance_acts')
@@ -256,7 +251,6 @@ class DashboardService
             ->where('contract_performance_acts.project_id', $projectId)
             ->where('contract_performance_acts.is_approved', true)
             ->whereBetween('contract_performance_acts.created_at', [$start, $end])
-            ->whereNull('contract_performance_acts.deleted_at')
             ->count();
 
         // Материалы, созданные в периоде
@@ -312,7 +306,6 @@ class DashboardService
             ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
             ->where('contracts.organization_id', $organizationId)
             ->where('contract_performance_acts.project_id', $projectId)
-            ->whereNull('contract_performance_acts.deleted_at')
             ->sum('contract_performance_acts.amount');
 
         $contractsCount = Contract::where('organization_id', $organizationId)
@@ -503,8 +496,7 @@ class DashboardService
             // Текущий период
             $query = DB::table('contract_performance_acts')
                 ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
-                ->whereBetween('contract_performance_acts.created_at', [$current, $periodEnd])
-                ->whereNull('contract_performance_acts.deleted_at');
+                ->whereBetween('contract_performance_acts.created_at', [$current, $periodEnd]);
             
             if ($organizationId) {
                 $query->where('contracts.organization_id', $organizationId);
@@ -519,8 +511,7 @@ class DashboardService
             $previousPeriodEnd = $this->getPeriodEnd($previousStart, $period);
             $previousQuery = DB::table('contract_performance_acts')
                 ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
-                ->whereBetween('contract_performance_acts.created_at', [$previousStart, $previousPeriodEnd])
-                ->whereNull('contract_performance_acts.deleted_at');
+                ->whereBetween('contract_performance_acts.created_at', [$previousStart, $previousPeriodEnd]);
             
             if ($organizationId) {
                 $previousQuery->where('contracts.organization_id', $organizationId);
@@ -769,7 +760,7 @@ class DashboardService
         // Оптимизация: используем подзапрос для сортировки по completion только если нужно
         if ($sortBy === 'completion') {
             // Выполненные работы = Акты выполненных работ (КС-2)
-            $query->addSelect(DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE contract_performance_acts.contract_id = contracts.id AND contract_performance_acts.deleted_at IS NULL) as completed_amount_calc'))
+            $query->addSelect(DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE contract_performance_acts.contract_id = contracts.id) as completed_amount_calc'))
                 ->orderByDesc('completed_amount_calc');
         } else {
             $query->orderByDesc('total_amount');
@@ -1059,8 +1050,7 @@ class DashboardService
             // Выполненные работы = Акты выполненных работ (КС-2)
             $worksQuery = DB::table('contract_performance_acts')
                 ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
-                ->where('contracts.organization_id', $organizationId)
-                ->whereNull('contract_performance_acts.deleted_at');
+                ->where('contracts.organization_id', $organizationId);
             
             if ($projectId) {
                 $worksQuery->where('contract_performance_acts.project_id', $projectId);
@@ -1131,7 +1121,6 @@ class DashboardService
             $completedWorksAmount = DB::table('contract_performance_acts')
                 ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
                 ->where('contracts.organization_id', $organizationId)
-                ->whereNull('contract_performance_acts.deleted_at')
                 ->when($projectId, fn($q) => $q->where('contract_performance_acts.project_id', $projectId))
                 ->sum('contract_performance_acts.amount');
 
@@ -1246,8 +1235,7 @@ class DashboardService
             // Выполненные работы = Акты выполненных работ (КС-2)
             $query = DB::table('contract_performance_acts')
                 ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
-                ->where('contracts.organization_id', $organizationId)
-                ->whereNull('contract_performance_acts.deleted_at');
+                ->where('contracts.organization_id', $organizationId);
             
             if ($projectId) {
                 $query->where('contract_performance_acts.project_id', $projectId);
@@ -1746,8 +1734,7 @@ class DashboardService
             // Выполненные работы = Акты выполненных работ (КС-2)
             $query = DB::table('contract_performance_acts')
                 ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
-                ->where('contracts.organization_id', $organizationId)
-                ->whereNull('contract_performance_acts.deleted_at');
+                ->where('contracts.organization_id', $organizationId);
             
             if ($projectId) {
                 $query->where('contract_performance_acts.project_id', $projectId);
