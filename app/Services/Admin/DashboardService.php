@@ -144,23 +144,27 @@ class DashboardService
         // Суммы контрактов
         $contractsAmount = (clone $contractsQuery)->sum('total_amount');
 
-        // Выполненные работы (ВСЕ, без фильтра по дате)
-        $completedWorksAmount = DB::table('completed_works')
-            ->where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->where('status', 'confirmed')
-            ->whereNull('deleted_at')
-            ->sum('total_amount');
+        // Выполненные работы = Акты выполненных работ (КС-2)
+        $completedWorksAmount = DB::table('contract_performance_acts')
+            ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+            ->where('contracts.organization_id', $organizationId)
+            ->where('contract_performance_acts.project_id', $projectId)
+            ->whereNull('contract_performance_acts.deleted_at')
+            ->sum('contract_performance_acts.amount');
 
-        $completedWorksTotal = CompletedWork::where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->whereNull('deleted_at')
+        $completedWorksTotal = DB::table('contract_performance_acts')
+            ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+            ->where('contracts.organization_id', $organizationId)
+            ->where('contract_performance_acts.project_id', $projectId)
+            ->whereNull('contract_performance_acts.deleted_at')
             ->count();
 
-        $completedWorksConfirmed = CompletedWork::where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->where('status', 'confirmed')
-            ->whereNull('deleted_at')
+        $completedWorksConfirmed = DB::table('contract_performance_acts')
+            ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+            ->where('contracts.organization_id', $organizationId)
+            ->where('contract_performance_acts.project_id', $projectId)
+            ->where('contract_performance_acts.is_approved', true)
+            ->whereNull('contract_performance_acts.deleted_at')
             ->count();
 
         // Процент выполнения контрактов
@@ -229,26 +233,30 @@ class DashboardService
         $contractsCompleted = (clone $contractsQuery)->where('status', ContractStatusEnum::COMPLETED->value)->count();
         $contractsDraft = (clone $contractsQuery)->where('status', ContractStatusEnum::DRAFT->value)->count();
 
-        // Выполненные работы, созданные в периоде
-        $completedWorksAmount = DB::table('completed_works')
-            ->where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->where('status', 'confirmed')
-            ->whereBetween('created_at', [$start, $end])
-            ->whereNull('deleted_at')
-            ->sum('total_amount');
+        // Выполненные работы = Акты выполненных работ (КС-2), созданные в периоде
+        $completedWorksAmount = DB::table('contract_performance_acts')
+            ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+            ->where('contracts.organization_id', $organizationId)
+            ->where('contract_performance_acts.project_id', $projectId)
+            ->whereBetween('contract_performance_acts.created_at', [$start, $end])
+            ->whereNull('contract_performance_acts.deleted_at')
+            ->sum('contract_performance_acts.amount');
 
-        $completedWorksTotal = CompletedWork::where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->whereBetween('created_at', [$start, $end])
-            ->whereNull('deleted_at')
+        $completedWorksTotal = DB::table('contract_performance_acts')
+            ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+            ->where('contracts.organization_id', $organizationId)
+            ->where('contract_performance_acts.project_id', $projectId)
+            ->whereBetween('contract_performance_acts.created_at', [$start, $end])
+            ->whereNull('contract_performance_acts.deleted_at')
             ->count();
 
-        $completedWorksConfirmed = CompletedWork::where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->where('status', 'confirmed')
-            ->whereBetween('created_at', [$start, $end])
-            ->whereNull('deleted_at')
+        $completedWorksConfirmed = DB::table('contract_performance_acts')
+            ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+            ->where('contracts.organization_id', $organizationId)
+            ->where('contract_performance_acts.project_id', $projectId)
+            ->where('contract_performance_acts.is_approved', true)
+            ->whereBetween('contract_performance_acts.created_at', [$start, $end])
+            ->whereNull('contract_performance_acts.deleted_at')
             ->count();
 
         // Материалы, созданные в периоде
@@ -299,12 +307,13 @@ class DashboardService
             ->whereNull('deleted_at')
             ->sum('total_amount');
 
-        $completedWorksAmount = DB::table('completed_works')
-            ->where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
-            ->where('status', 'confirmed')
-            ->whereNull('deleted_at')
-            ->sum('total_amount');
+        // Выполненные работы = Акты выполненных работ (КС-2)
+        $completedWorksAmount = DB::table('contract_performance_acts')
+            ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+            ->where('contracts.organization_id', $organizationId)
+            ->where('contract_performance_acts.project_id', $projectId)
+            ->whereNull('contract_performance_acts.deleted_at')
+            ->sum('contract_performance_acts.amount');
 
         $contractsCount = Contract::where('organization_id', $organizationId)
             ->where('project_id', $projectId)
@@ -480,18 +489,63 @@ class DashboardService
      */
     private function getCompletedWorksTimeseries(?int $organizationId, ?int $projectId, Carbon $start, Carbon $end, string $period): array
     {
-        $query = CompletedWork::query()
-            ->whereBetween('created_at', [$start, $end]);
+        // Выполненные работы = Акты выполненных работ (КС-2)
+        $labels = [];
+        $values = [];
+        $previousValues = [];
 
-        if ($organizationId) {
-            $query->where('organization_id', $organizationId);
+        $current = $start->copy();
+        $previousStart = $start->copy()->sub($this->getPeriodDuration($period));
+
+        while ($current <= $end) {
+            $periodEnd = $this->getPeriodEnd($current, $period);
+            
+            // Текущий период
+            $query = DB::table('contract_performance_acts')
+                ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+                ->whereBetween('contract_performance_acts.created_at', [$current, $periodEnd])
+                ->whereNull('contract_performance_acts.deleted_at');
+            
+            if ($organizationId) {
+                $query->where('contracts.organization_id', $organizationId);
+            }
+            if ($projectId) {
+                $query->where('contract_performance_acts.project_id', $projectId);
+            }
+            
+            $count = $query->count();
+
+            // Предыдущий период для сравнения
+            $previousPeriodEnd = $this->getPeriodEnd($previousStart, $period);
+            $previousQuery = DB::table('contract_performance_acts')
+                ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+                ->whereBetween('contract_performance_acts.created_at', [$previousStart, $previousPeriodEnd])
+                ->whereNull('contract_performance_acts.deleted_at');
+            
+            if ($organizationId) {
+                $previousQuery->where('contracts.organization_id', $organizationId);
+            }
+            if ($projectId) {
+                $previousQuery->where('contract_performance_acts.project_id', $projectId);
+            }
+            
+            $previousCount = $previousQuery->count();
+
+            $labels[] = $this->formatPeriodLabel($current, $period);
+            $values[] = $count;
+            $previousValues[] = $previousCount;
+
+            $current = $this->getNextPeriod($current, $period);
+            $previousStart = $previousStart->copy()->add($this->getPeriodDuration($period));
         }
 
-        if ($projectId) {
-            $query->where('project_id', $projectId);
-        }
-
-        return $this->groupByPeriod($query, 'created_at', $period, $start, $end);
+        return [
+            'labels' => $labels,
+            'values' => $values,
+            'previous_values' => $previousValues,
+            'metric' => 'completed_works',
+            'period' => $period,
+        ];
     }
 
     /**
@@ -714,7 +768,8 @@ class DashboardService
 
         // Оптимизация: используем подзапрос для сортировки по completion только если нужно
         if ($sortBy === 'completion') {
-            $query->addSelect(DB::raw('(SELECT COALESCE(SUM(total_amount), 0) FROM completed_works WHERE contract_id = contracts.id AND status = \'confirmed\') as completed_amount_calc'))
+            // Выполненные работы = Акты выполненных работ (КС-2)
+            $query->addSelect(DB::raw('(SELECT COALESCE(SUM(amount), 0) FROM contract_performance_acts WHERE contract_performance_acts.contract_id = contracts.id AND contract_performance_acts.deleted_at IS NULL) as completed_amount_calc'))
                 ->orderByDesc('completed_amount_calc');
         } else {
             $query->orderByDesc('total_amount');
@@ -1001,15 +1056,17 @@ class DashboardService
             $activeContractsAmount = (clone $contractsQuery)->where('status', ContractStatusEnum::ACTIVE->value)->sum('total_amount');
             $completedContractsAmount = (clone $contractsQuery)->where('status', ContractStatusEnum::COMPLETED->value)->sum('total_amount');
 
-            $worksQuery = DB::table('completed_works')
-                ->where('organization_id', $organizationId)
-                ->where('status', 'confirmed');
+            // Выполненные работы = Акты выполненных работ (КС-2)
+            $worksQuery = DB::table('contract_performance_acts')
+                ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+                ->where('contracts.organization_id', $organizationId)
+                ->whereNull('contract_performance_acts.deleted_at');
             
             if ($projectId) {
-                $worksQuery->where('project_id', $projectId);
+                $worksQuery->where('contract_performance_acts.project_id', $projectId);
             }
 
-            $completedWorksAmount = $worksQuery->sum('total_amount');
+            $completedWorksAmount = $worksQuery->sum('contract_performance_acts.amount');
 
             return [
                 'total_contracts_amount' => (float) $totalContractsAmount,
@@ -1070,11 +1127,13 @@ class DashboardService
             $totalAmount = (clone $query)->sum('total_amount');
             $avgAmount = $total > 0 ? $totalAmount / $total : 0;
 
-            $completedWorksAmount = DB::table('completed_works')
-                ->where('organization_id', $organizationId)
-                ->where('status', 'confirmed')
-                ->when($projectId, fn($q) => $q->where('project_id', $projectId))
-                ->sum('total_amount');
+            // Выполненные работы = Акты выполненных работ (КС-2)
+            $completedWorksAmount = DB::table('contract_performance_acts')
+                ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+                ->where('contracts.organization_id', $organizationId)
+                ->whereNull('contract_performance_acts.deleted_at')
+                ->when($projectId, fn($q) => $q->where('contract_performance_acts.project_id', $projectId))
+                ->sum('contract_performance_acts.amount');
 
             return [
                 'total' => $total,
@@ -1184,36 +1243,45 @@ class DashboardService
         $tags = $this->getCacheTags($organizationId, $projectId);
 
         return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($organizationId, $projectId) {
-            $query = CompletedWork::where('organization_id', $organizationId);
+            // Выполненные работы = Акты выполненных работ (КС-2)
+            $query = DB::table('contract_performance_acts')
+                ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+                ->where('contracts.organization_id', $organizationId)
+                ->whereNull('contract_performance_acts.deleted_at');
+            
             if ($projectId) {
-                $query->where('project_id', $projectId);
+                $query->where('contract_performance_acts.project_id', $projectId);
             }
 
-            $total = $query->count();
-            $byStatus = $query->select('status', DB::raw('COUNT(*) as count'), DB::raw('SUM(total_amount) as total_amount'))
-                ->groupBy('status')
-                ->get()
-                ->mapWithKeys(function ($item) {
-                    return [(string)$item->status => $item];
-                });
-
-            $confirmedAmount = $byStatus->get('confirmed')?->total_amount ?? 0;
-            $pendingAmount = $byStatus->get('pending')?->total_amount ?? 0;
+            $total = (clone $query)->count();
+            
+            // Подсчет по статусам (is_approved: true = confirmed, false/null = pending)
+            $confirmedCount = (clone $query)->where('contract_performance_acts.is_approved', true)->count();
+            $confirmedAmount = (clone $query)->where('contract_performance_acts.is_approved', true)->sum('contract_performance_acts.amount');
+            
+            $pendingCount = (clone $query)->where(function($q) {
+                $q->where('contract_performance_acts.is_approved', false)
+                  ->orWhereNull('contract_performance_acts.is_approved');
+            })->count();
+            $pendingAmount = (clone $query)->where(function($q) {
+                $q->where('contract_performance_acts.is_approved', false)
+                  ->orWhereNull('contract_performance_acts.is_approved');
+            })->sum('contract_performance_acts.amount');
 
             return [
                 'total' => $total,
                 'by_status' => [
                     'confirmed' => [
-                        'count' => $byStatus->get('confirmed')?->count ?? 0,
+                        'count' => $confirmedCount,
                         'amount' => (float) $confirmedAmount,
                     ],
                     'pending' => [
-                        'count' => $byStatus->get('pending')?->count ?? 0,
+                        'count' => $pendingCount,
                         'amount' => (float) $pendingAmount,
                     ],
                     'rejected' => [
-                        'count' => $byStatus->get('rejected')?->count ?? 0,
-                        'amount' => (float) ($byStatus->get('rejected')?->total_amount ?? 0),
+                        'count' => 0,
+                        'amount' => 0,
                     ],
                 ],
                 'total_amount' => (float) ($confirmedAmount + $pendingAmount),
@@ -1675,18 +1743,26 @@ class DashboardService
         $tags = $this->getCacheTags($organizationId, $projectId);
 
         return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($organizationId, $projectId) {
-            $query = CompletedWork::where('organization_id', $organizationId);
+            // Выполненные работы = Акты выполненных работ (КС-2)
+            $query = DB::table('contract_performance_acts')
+                ->join('contracts', 'contract_performance_acts.contract_id', '=', 'contracts.id')
+                ->where('contracts.organization_id', $organizationId)
+                ->whereNull('contract_performance_acts.deleted_at');
+            
             if ($projectId) {
-                $query->where('project_id', $projectId);
+                $query->where('contract_performance_acts.project_id', $projectId);
             }
 
-            $total = $query->count();
-            $confirmed = (clone $query)->where('status', 'confirmed')->count();
-            $pending = (clone $query)->where('status', 'pending')->count();
-            $rejected = (clone $query)->where('status', 'rejected')->count();
+            $total = (clone $query)->count();
+            $confirmed = (clone $query)->where('contract_performance_acts.is_approved', true)->count();
+            $pending = (clone $query)->where(function($q) {
+                $q->where('contract_performance_acts.is_approved', false)
+                  ->orWhereNull('contract_performance_acts.is_approved');
+            })->count();
+            $rejected = 0; // Акты не имеют статуса rejected
 
-            $confirmedAmount = (clone $query)->where('status', 'confirmed')->sum('total_amount');
-            $totalAmount = $query->sum('total_amount');
+            $confirmedAmount = (clone $query)->where('contract_performance_acts.is_approved', true)->sum('contract_performance_acts.amount');
+            $totalAmount = (clone $query)->sum('contract_performance_acts.amount');
 
             return [
                 'total' => $total,

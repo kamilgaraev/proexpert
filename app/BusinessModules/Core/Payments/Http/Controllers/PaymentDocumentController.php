@@ -6,10 +6,13 @@ use App\BusinessModules\Core\Payments\Enums\PaymentDocumentStatus;
 use App\BusinessModules\Core\Payments\Enums\PaymentDocumentType;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\BusinessModules\Core\Payments\Services\PaymentDocumentService;
+use App\BusinessModules\Core\Payments\Services\Integrations\BudgetControlService;
+use App\BusinessModules\Core\Payments\Services\Export\PaymentOrderPdfService;
+use App\BusinessModules\Core\Payments\Services\PaymentPurposeGenerator;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-
+use Illuminate\Support\Facades\Log;
 use App\BusinessModules\Core\Payments\Http\Requests\BulkActionRequest;
 use App\BusinessModules\Core\Payments\Http\Requests\StorePaymentDocumentRequest;
 use Illuminate\Support\Facades\DB;
@@ -18,7 +21,10 @@ use Illuminate\Validation\ValidationException;
 class PaymentDocumentController extends Controller
 {
     public function __construct(
-        private readonly PaymentDocumentService $service
+        private readonly PaymentDocumentService $service,
+        private readonly BudgetControlService $budgetControl,
+        private readonly PaymentOrderPdfService $pdfExport,
+        private readonly PaymentPurposeGenerator $purposeGenerator
     ) {}
 
     /**
@@ -75,7 +81,7 @@ class PaymentDocumentController extends Controller
                     } catch (\Exception $e) {
                         $results['failed']++;
                         $results['errors'][] = "ID {$document->id}: Ошибка обработки";
-                        \Log::error('bulk_action.item_error', [
+                        Log::error('bulk_action.item_error', [
                             'id' => $document->id,
                             'action' => $action,
                             'error' => $e->getMessage()
@@ -91,7 +97,7 @@ class PaymentDocumentController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('payment_document.bulk_action.error', [
+            Log::error('payment_document.bulk_action.error', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
@@ -135,7 +141,7 @@ class PaymentDocumentController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
-            \Log::error('payment_document.index.error', [
+            Log::error('payment_document.index.error', [
                 'error' => $e->getMessage(),
             ]);
 
@@ -186,7 +192,7 @@ class PaymentDocumentController extends Controller
                 'data' => $this->formatDocumentDetailed($document),
             ]);
         } catch (\Exception $e) {
-            \Log::error('payment_document.show.error', [
+            Log::error('payment_document.show.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
@@ -244,7 +250,7 @@ class PaymentDocumentController extends Controller
                     ->first();
                 
                 if (!$contract) {
-                    \Log::warning('payment_document.store.contract_not_found', [
+                    Log::warning('payment_document.store.contract_not_found', [
                         'contract_id' => $contractId,
                         'organization_id' => $organizationId,
                         'validated' => $validated,
@@ -252,7 +258,7 @@ class PaymentDocumentController extends Controller
                     throw new \DomainException("Контракт с ID {$contractId} не найден");
                 }
                 
-                \Log::info('payment_document.store.calculating_advance', [
+                Log::info('payment_document.store.calculating_advance', [
                     'contract_id' => $contractId,
                     'planned_advance_amount' => $contract->planned_advance_amount,
                     'total_amount_with_gp' => $contract->total_amount_with_gp,
@@ -286,7 +292,7 @@ class PaymentDocumentController extends Controller
                     } else {
                         // Если сумма не может быть определена автоматически, 
                         // но пользователь не указал сумму - требуем указать её вручную
-                        \Log::warning('payment_document.store.cannot_calculate_advance', [
+                        Log::warning('payment_document.store.cannot_calculate_advance', [
                             'contract_id' => $contractId,
                             'contract_data' => [
                                 'planned_advance_amount' => $contract->planned_advance_amount,
@@ -306,7 +312,7 @@ class PaymentDocumentController extends Controller
                     }
                 }
                 
-                \Log::info('payment_document.store.advance_calculated', [
+                Log::info('payment_document.store.advance_calculated', [
                     'contract_id' => $contractId,
                     'calculated_amount' => $validated['amount'],
                 ]);
@@ -331,7 +337,7 @@ class PaymentDocumentController extends Controller
                 'error' => $e->getMessage(),
             ], 422);
         } catch (\Exception $e) {
-            \Log::error('payment_document.store.error', [
+            Log::error('payment_document.store.error', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
@@ -382,7 +388,7 @@ class PaymentDocumentController extends Controller
                 'error' => $e->getMessage(),
             ], 422);
         } catch (\Exception $e) {
-            \Log::error('payment_document.update.error', [
+            Log::error('payment_document.update.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
@@ -419,7 +425,7 @@ class PaymentDocumentController extends Controller
                 'error' => $e->getMessage(),
             ], 422);
         } catch (\Exception $e) {
-            \Log::error('payment_document.submit.error', [
+            Log::error('payment_document.submit.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
@@ -438,7 +444,9 @@ class PaymentDocumentController extends Controller
     {
         try {
             $organizationId = $request->attributes->get('current_organization_id');
-            $document = PaymentDocument::forOrganization($organizationId)->findOrFail($id);
+            $document = PaymentDocument::forOrganization($organizationId)
+                ->with(['payerOrganization', 'payeeOrganization', 'payerContractor', 'payeeContractor'])
+                ->findOrFail($id);
 
             $pdfContent = $this->pdfExport->generate($document);
 
@@ -447,9 +455,10 @@ class PaymentDocumentController extends Controller
                 'Content-Disposition' => 'inline; filename="payment_order_' . $document->document_number . '.pdf"',
             ]);
         } catch (\Exception $e) {
-            \Log::error('payment_document.print_order.error', [
+            Log::error('payment_document.print_order.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
             ]);
             
             return response()->view('errors.500', [], 500);
@@ -475,6 +484,11 @@ class PaymentDocumentController extends Controller
                 'purpose' => $purpose,
             ]);
         } catch (\Exception $e) {
+            Log::error('payment_document.generate_purpose.error', [
+                'document_type' => $validated['document_type'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
+
             return response()->json([
                 'success' => false,
                 'error' => $e->getMessage(),
@@ -512,7 +526,7 @@ class PaymentDocumentController extends Controller
                 'error' => $e->getMessage(),
             ], 422);
         } catch (\Exception $e) {
-            \Log::error('payment_document.schedule.error', [
+            Log::error('payment_document.schedule.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
@@ -559,7 +573,7 @@ class PaymentDocumentController extends Controller
                 'error' => $e->getMessage(),
             ], 422);
         } catch (\Exception $e) {
-            \Log::error('payment_document.register_payment.error', [
+            Log::error('payment_document.register_payment.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
@@ -597,7 +611,7 @@ class PaymentDocumentController extends Controller
                 'error' => $e->getMessage(),
             ], 422);
         } catch (\Exception $e) {
-            \Log::error('payment_document.cancel.error', [
+            Log::error('payment_document.cancel.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
@@ -630,7 +644,7 @@ class PaymentDocumentController extends Controller
                 'error' => $e->getMessage(),
             ], 422);
         } catch (\Exception $e) {
-            \Log::error('payment_document.destroy.error', [
+            Log::error('payment_document.destroy.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
@@ -660,7 +674,7 @@ class PaymentDocumentController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
-            \Log::error('payment_document.overdue.error', [
+            Log::error('payment_document.overdue.error', [
                 'error' => $e->getMessage(),
             ]);
 
@@ -692,7 +706,7 @@ class PaymentDocumentController extends Controller
                 ],
             ]);
         } catch (\Exception $e) {
-            \Log::error('payment_document.upcoming.error', [
+            Log::error('payment_document.upcoming.error', [
                 'error' => $e->getMessage(),
             ]);
 
@@ -717,7 +731,7 @@ class PaymentDocumentController extends Controller
                 'data' => $stats,
             ]);
         } catch (\Exception $e) {
-            \Log::error('payment_document.statistics.error', [
+            Log::error('payment_document.statistics.error', [
                 'error' => $e->getMessage(),
             ]);
 
@@ -785,7 +799,7 @@ class PaymentDocumentController extends Controller
             $context = ['organization_id' => $orgId];
             
             // Логирование для отладки
-            \Log::info('DEBUG_AUTH: Checking rights for doc ' . $document->id, [
+            Log::info('DEBUG_AUTH: Checking rights for doc ' . $document->id, [
                 'user_id' => $user->id,
                 'org_id' => $orgId,
                 'is_system_admin' => $user->isSystemAdmin(),
@@ -805,7 +819,7 @@ class PaymentDocumentController extends Controller
             if (!$isSuperUser) {
                 $canApprovePermission = $user->can('payments.transaction.approve', $context);
                 
-                \Log::info('DEBUG_AUTH: Checking permission payments.transaction.approve', [
+                Log::info('DEBUG_AUTH: Checking permission payments.transaction.approve', [
                     'result' => $canApprovePermission,
                     'context' => $context
                 ]);
@@ -860,7 +874,7 @@ class PaymentDocumentController extends Controller
                 }
             } catch (\Error | \Exception $e) {
                 // Класс не найден или ошибка загрузки - оставляем null
-                \Log::debug('payment_document.invoiceable_load_failed', [
+                Log::debug('payment_document.invoiceable_load_failed', [
                     'document_id' => $document->id,
                     'invoiceable_type' => $document->invoiceable_type,
                     'invoiceable_id' => $document->invoiceable_id,
