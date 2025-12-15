@@ -21,24 +21,27 @@ return new class extends Migration
         // Заполняем project_id для существующих актов
         // Для обычных контрактов берем project_id из таблицы contracts
         DB::statement('
-            UPDATE contract_performance_acts cpa
-            INNER JOIN contracts c ON cpa.contract_id = c.id
-            SET cpa.project_id = c.project_id
-            WHERE c.is_multi_project = 0 AND c.project_id IS NOT NULL
+            UPDATE contract_performance_acts
+            SET project_id = contracts.project_id
+            FROM contracts
+            WHERE contract_performance_acts.contract_id = contracts.id
+                AND contracts.is_multi_project = false
+                AND contracts.project_id IS NOT NULL
         ');
 
         // Для мультипроектных контрактов берем первый project_id из таблицы contract_project
-        // (идеально было бы уточнить у пользователя, но возьмем первый)
         DB::statement('
-            UPDATE contract_performance_acts cpa
-            INNER JOIN contracts c ON cpa.contract_id = c.id
+            UPDATE contract_performance_acts
+            SET project_id = cp.project_id
+            FROM contracts c
             INNER JOIN (
                 SELECT contract_id, MIN(project_id) as project_id
                 FROM contract_project
                 GROUP BY contract_id
             ) cp ON c.id = cp.contract_id
-            SET cpa.project_id = cp.project_id
-            WHERE c.is_multi_project = 1 AND cpa.project_id IS NULL
+            WHERE contract_performance_acts.contract_id = c.id
+                AND c.is_multi_project = true
+                AND contract_performance_acts.project_id IS NULL
         ');
     }
 
