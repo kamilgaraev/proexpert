@@ -278,7 +278,7 @@ class ContractorReportService
         ];
 
         foreach ($contracts as $contract) {
-            $contractData = $this->getContractDetailData($contract, $dateFrom, $dateTo);
+            $contractData = $this->getContractDetailData($contract, $dateFrom, $dateTo, $projectId);
             $contractsData[] = $contractData;
 
             $totalSummary['total_contract_amount'] += $contractData['total_amount'];
@@ -423,7 +423,9 @@ class ContractorReportService
             $contractIds = $contracts->pluck('id');
             
             // Считаем сумму по актам выполненных работ (ContractPerformanceAct)
+            // Фильтруем по project_id, чтобы для мультипроектных контрактов брались только акты этого проекта
             $actsQuery = ContractPerformanceAct::whereIn('contract_id', $contractIds)
+                ->where('project_id', $projectId)
                 ->where('is_approved', true);
 
             // Если указана дата начала, фильтруем по ней
@@ -505,12 +507,17 @@ class ContractorReportService
     /**
      * Получить детальные данные по контракту.
      */
-    private function getContractDetailData(Contract $contract, ?string $dateFrom, ?string $dateTo): array
+    private function getContractDetailData(Contract $contract, ?string $dateFrom, ?string $dateTo, ?int $projectId = null): array
     {
         $contract->load('agreements');
         
         // Получаем акты выполненных работ
+        // Для мультипроектных контрактов фильтруем по project_id
         $actsQuery = $contract->performanceActs()->where('is_approved', true);
+        
+        if ($projectId !== null) {
+            $actsQuery->where('project_id', $projectId);
+        }
 
         // Если указана дата начала, фильтруем по ней
         if ($dateFrom) {

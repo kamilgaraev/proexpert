@@ -14,6 +14,7 @@ class ContractPerformanceAct extends Model
 
     protected $fillable = [
         'contract_id',
+        'project_id',
         'act_document_number',
         'act_date',
         'amount',
@@ -32,6 +33,11 @@ class ContractPerformanceAct extends Model
     public function contract(): BelongsTo
     {
         return $this->belongsTo(Contract::class);
+    }
+
+    public function project(): BelongsTo
+    {
+        return $this->belongsTo(Project::class);
     }
 
     /**

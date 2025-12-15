@@ -425,14 +425,17 @@ class OfficialFormsExportService
         $estimateTotal = $estimate ? (float) ($estimate->total_amount ?? 0) : 0;
         
         // Сумма с начала года (сумма всех актов за текущий год)
+        // Для мультипроектных контрактов фильтруем по project_id
         $yearStart = $act->act_date->copy()->startOfYear();
         $yearTotal = $contract->performanceActs()
+            ->where('project_id', $act->project_id)
             ->where('act_date', '>=', $yearStart)
             ->where('act_date', '<=', $act->act_date)
             ->sum('amount');
         
-        // Сумма с начала строительства (сумма всех актов)
+        // Сумма с начала строительства (сумма всех актов этого проекта)
         $totalFromStart = $contract->performanceActs()
+            ->where('project_id', $act->project_id)
             ->where('act_date', '<=', $act->act_date)
             ->sum('amount');
         
@@ -701,14 +704,17 @@ class OfficialFormsExportService
         $vatAmount = round($actAmount * 0.20, 2);
         
         // Сумма с начала года (сумма всех актов за текущий год)
+        // Для мультипроектных контрактов фильтруем по project_id
         $yearStart = $act->act_date->copy()->startOfYear();
         $yearTotal = $contract->performanceActs()
+            ->where('project_id', $act->project_id)
             ->where('act_date', '>=', $yearStart)
             ->where('act_date', '<=', $act->act_date)
             ->sum('amount');
         
-        // Сумма с начала строительства (сумма всех актов)
+        // Сумма с начала строительства (сумма всех актов этого проекта)
         $totalFromStart = $contract->performanceActs()
+            ->where('project_id', $act->project_id)
             ->where('act_date', '<=', $act->act_date)
             ->sum('amount');
         

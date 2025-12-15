@@ -62,6 +62,12 @@ class ContractPerformanceActService
     public function getAllActsForContract(int $contractId, int $organizationId, array $filters = [], ?int $projectId = null): Collection
     {
         $this->getContractOrFail($contractId, $organizationId, $projectId); // Проверка, что контракт существует и принадлежит организации
+        
+        // Добавляем фильтр по project_id если он передан
+        if ($projectId !== null) {
+            $filters['project_id'] = $projectId;
+        }
+        
         $acts = $this->actRepository->getActsForContract($contractId, $filters);
         
         // Загружаем связи для каждого акта
@@ -94,10 +100,20 @@ class ContractPerformanceActService
         $contract = $this->getContractOrFail($contractId, $organizationId, $projectId);
 
         // Выполняем создание акта в транзакции для безопасности
-        $act = DB::transaction(function () use ($contract, $actDTO, $organizationId) {
+        $act = DB::transaction(function () use ($contract, $actDTO, $organizationId, $projectId) {
             // Создаем акт
             $actData = $actDTO->toArray();
             $actData['contract_id'] = $contract->id;
+            
+            // Если project_id не был передан в DTO, но передан в метод - используем его
+            if (!isset($actData['project_id']) || $actData['project_id'] === null) {
+                $actData['project_id'] = $projectId;
+            }
+            
+            // Если всё ещё нет project_id - используем из контракта (для обычных контрактов)
+            if (!isset($actData['project_id']) || $actData['project_id'] === null) {
+                $actData['project_id'] = $contract->project_id;
+            }
             
             // ИСПРАВЛЕНИЕ: Если нет работ, используем amount из DTO, иначе пересчитаем из работ
             if (empty($actDTO->completed_works)) {
@@ -168,8 +184,14 @@ class ContractPerformanceActService
     {
         $this->getContractOrFail($contractId, $organizationId, $projectId);
         $act = $this->actRepository->find($actId);
-        // Убедимся, что акт принадлежит указанному контракту
+        
+        // Убедимся, что акт принадлежит указанному контракту и проекту
         if ($act && $act->contract_id === $contractId) {
+            // Если указан projectId, проверяем что акт относится к этому проекту
+            if ($projectId !== null && $act->project_id !== $projectId) {
+                return null;
+            }
+            
             // Загружаем связи для возврата полных данных
             $act->load(['completedWorks.workType', 'completedWorks.user', 'files.user']);
             return $act;
@@ -190,17 +212,19 @@ class ContractPerformanceActService
         $this->getContractOrFail($contractId, $organizationId, $projectId);
         $act = $this->actRepository->find($actId);
 
-        if (!$act || $act->contract_id !== $contractId) {
+        if (!$act || $act->contract_id !== $contractId || ($projectId !== null && $act->project_id !== $projectId)) {
             // TECHNICAL: Попытка обновить несуществующий или чужой акт
             $this->logging->technical('performance_act.update.failed.not_found', [
                 'act_id' => $actId,
                 'contract_id' => $contractId,
+                'project_id' => $projectId,
                 'organization_id' => $organizationId,
                 'act_exists' => $act !== null,
-                'contract_matches' => $act ? ($act->contract_id === $contractId) : false
+                'contract_matches' => $act ? ($act->contract_id === $contractId) : false,
+                'project_matches' => $act && $projectId ? ($act->project_id === $projectId) : true
             ], 'warning');
 
-            throw new Exception('Performance act not found or does not belong to the specified contract.');
+            throw new Exception('Performance act not found or does not belong to the specified contract or project.');
         }
 
         $oldData = [
@@ -383,19 +407,21 @@ class ContractPerformanceActService
         $this->getContractOrFail($contractId, $organizationId, $projectId);
         $act = $this->actRepository->find($actId);
 
-        if (!$act || $act->contract_id !== $contractId) {
+        if (!$act || $act->contract_id !== $contractId || ($projectId !== null && $act->project_id !== $projectId)) {
             // SECURITY: Попытка удалить чужой акт - подозрительная активность
             $this->logging->security('performance_act.deletion.unauthorized', [
                 'act_id' => $actId,
                 'contract_id' => $contractId,
+                'project_id' => $projectId,
                 'organization_id' => $organizationId,
                 'act_exists' => $act !== null,
                 'contract_matches' => $act ? ($act->contract_id === $contractId) : false,
+                'project_matches' => $act && $projectId ? ($act->project_id === $projectId) : true,
                 'user_id' => request()->user()?->id,
                 'attempted_by_ip' => request()->ip()
             ], 'warning');
             
-            throw new Exception('Performance act not found or does not belong to the specified contract.');
+            throw new Exception('Performance act not found or does not belong to the specified contract or project.');
         }
 
         // Сохраняем данные для логирования до удаления

@@ -18,7 +18,12 @@ class ContractPerformanceActRepository extends BaseRepository implements Contrac
     {
         $query = $this->model->query()->where('contract_id', $contractId);
 
-        // Example filter
+        // Фильтр по проекту (для мультипроектных контрактов)
+        if (isset($filters['project_id'])) {
+            $query->where('project_id', $filters['project_id']);
+        }
+
+        // Фильтр по статусу утверждения
         if (isset($filters['is_approved'])) {
             $query->where('is_approved', $filters['is_approved']);
         }
@@ -27,11 +32,17 @@ class ContractPerformanceActRepository extends BaseRepository implements Contrac
         return $query->get();
     }
 
-    public function getTotalAmountForContract(int $contractId): float
+    public function getTotalAmountForContract(int $contractId, ?int $projectId = null): float
     {
-        return (float) $this->model->query()
+        $query = $this->model->query()
             ->where('contract_id', $contractId)
-            ->where('is_approved', true) // Typically, we sum only approved acts
-            ->sum('amount');
+            ->where('is_approved', true); // Typically, we sum only approved acts
+        
+        // Если указан проект, фильтруем по нему
+        if ($projectId !== null) {
+            $query->where('project_id', $projectId);
+        }
+        
+        return (float) $query->sum('amount');
     }
 } 
