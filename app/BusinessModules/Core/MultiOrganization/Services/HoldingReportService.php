@@ -366,13 +366,21 @@ class HoldingReportService
     {
         $contracts = $query->with('agreements')->get();
         $contractIds = $contracts->pluck('id');
+        $projectId = $filters['project_id'] ?? null;
 
-        // Используем таблицу payment_documents
-        $totalPaid = DB::table('payment_documents')
+        // Рассчитываем платежи с учетом аллокаций для мультипроектных контрактов
+        $documents = DB::table('payment_documents')
             ->where('invoiceable_type', 'App\\Models\\Contract')
             ->whereIn('invoiceable_id', $contractIds)
             ->whereNull('deleted_at')
-            ->sum('paid_amount');
+            ->get();
+
+        $totalPaid = 0;
+        foreach ($contracts as $contract) {
+            $contractDocuments = $documents->where('invoiceable_id', $contract->id);
+            $payments = $this->calculatePaymentsForProject($contractDocuments, $contract, $projectId);
+            $totalPaid += $payments['total'];
+        }
 
         // Суммируем акты с учетом фильтра по project_id для мультипроектных контрактов
         $actsQuery = DB::table('contract_performance_acts')
@@ -385,10 +393,14 @@ class HoldingReportService
         
         $totalActs = $actsQuery->sum('amount');
 
-        $totalAmount = $this->calculateTotalContractAmount($contracts);
-        $totalGp = $contracts->sum(function ($contract) {
-            return $contract->gp_amount ?? 0;
-        });
+        // Расчет total_amount с учетом аллокаций
+        $totalAmount = $this->calculateTotalContractAmount($contracts, $projectId);
+        
+        // Расчет GP с учетом аллокаций
+        $totalGp = 0;
+        foreach ($contracts as $contract) {
+            $totalGp += $this->calculateGpAmountForProject($contract, $projectId);
+        }
 
         return [
             'total_contracts' => $contracts->count(),
@@ -401,11 +413,11 @@ class HoldingReportService
             'payment_percentage' => $totalAmount > 0 ? round(($totalPaid / $totalAmount) * 100, 2) : 0,
             'total_planned_advance' => round($contracts->sum('planned_advance_amount'), 2),
             'total_actual_advance' => round($contracts->sum('actual_advance_amount'), 2),
-            'by_status' => $contracts->groupBy('status')->map(function ($group, $status) {
+            'by_status' => $contracts->groupBy('status')->map(function ($group, $status) use ($projectId) {
                 return [
                     'status' => $status,
                     'count' => $group->count(),
-                    'total_amount' => round($this->calculateTotalContractAmount($group), 2),
+                    'total_amount' => round($this->calculateTotalContractAmount($group, $projectId), 2),
                 ];
             })->values(),
         ];
@@ -458,6 +470,7 @@ class HoldingReportService
     {
         $organizations = Organization::whereIn('id', $orgIds)->get();
         $result = [];
+        $projectId = $filters['project_id'] ?? null;
 
         foreach ($organizations as $org) {
             $ownerQuery = Contract::where('organization_id', $org->id);
@@ -465,12 +478,19 @@ class HoldingReportService
             $ownerContracts = $ownerQuery->with('agreements')->get();
             $ownerContractIds = $ownerContracts->pluck('id');
 
-            // Используем таблицу payment_documents
-            $ownerPaid = DB::table('payment_documents')
+            // Рассчитываем платежи с учетом аллокаций
+            $documents = DB::table('payment_documents')
                 ->where('invoiceable_type', 'App\\Models\\Contract')
                 ->whereIn('invoiceable_id', $ownerContractIds)
                 ->whereNull('deleted_at')
-                ->sum('paid_amount');
+                ->get();
+
+            $ownerPaid = 0;
+            foreach ($ownerContracts as $contract) {
+                $contractDocuments = $documents->where('invoiceable_id', $contract->id);
+                $payments = $this->calculatePaymentsForProject($contractDocuments, $contract, $projectId);
+                $ownerPaid += $payments['total'];
+            }
 
             // Суммируем акты с учетом фильтра по project_id для мультипроектных контрактов
             $ownerActsQuery = DB::table('contract_performance_acts')
@@ -483,7 +503,7 @@ class HoldingReportService
             
             $ownerActs = $ownerActsQuery->sum('amount');
 
-            $ownerAmount = $this->calculateTotalContractAmount($ownerContracts);
+            $ownerAmount = $this->calculateTotalContractAmount($ownerContracts, $projectId);
 
             $contractorQuery = Contract::whereIn('organization_id', $orgIds)
                 ->where('organization_id', '!=', $org->id)
@@ -494,12 +514,19 @@ class HoldingReportService
             $contractorContracts = $contractorQuery->with('agreements')->get();
             $contractorContractIds = $contractorContracts->pluck('id');
 
-            // Используем таблицу payment_documents
-            $contractorPaid = DB::table('payment_documents')
+            // Рассчитываем платежи с учетом аллокаций
+            $contractorDocuments = DB::table('payment_documents')
                 ->where('invoiceable_type', 'App\\Models\\Contract')
                 ->whereIn('invoiceable_id', $contractorContractIds)
                 ->whereNull('deleted_at')
-                ->sum('paid_amount');
+                ->get();
+
+            $contractorPaid = 0;
+            foreach ($contractorContracts as $contract) {
+                $contractDocs = $contractorDocuments->where('invoiceable_id', $contract->id);
+                $payments = $this->calculatePaymentsForProject($contractDocs, $contract, $projectId);
+                $contractorPaid += $payments['total'];
+            }
 
             // Суммируем акты с учетом фильтра по project_id для мультипроектных контрактов
             $contractorActsQuery = DB::table('contract_performance_acts')
@@ -512,7 +539,7 @@ class HoldingReportService
             
             $contractorActs = $contractorActsQuery->sum('amount');
 
-            $contractorAmount = $this->calculateTotalContractAmount($contractorContracts);
+            $contractorAmount = $this->calculateTotalContractAmount($contractorContracts, $projectId);
 
             $allContracts = $ownerContracts->merge($contractorContracts);
             $totalAmount = $ownerAmount + $contractorAmount;
@@ -1145,14 +1172,51 @@ class HoldingReportService
                 foreach ($contracts as $contract) {
                     $contractor = $contract->contractor;
                     $payments = $contract->payments;
-                    $acts = $contract->performanceActs->where('is_approved', true);
-                    $works = $contract->completedWorks->where('status', 'confirmed');
+                    
+                    // Для мультипроектных контрактов фильтруем акты и работы по текущему проекту
+                    if ($contract->is_multi_project) {
+                        $acts = $contract->performanceActs
+                            ->where('is_approved', true)
+                            ->where('project_id', $project->id);
+                        $works = $contract->completedWorks
+                            ->where('status', 'confirmed')
+                            ->where('project_id', $project->id);
+                    } else {
+                        $acts = $contract->performanceActs->where('is_approved', true);
+                        $works = $contract->completedWorks->where('status', 'confirmed');
+                    }
 
-                    $totalPaid = $payments->sum('amount');
+                    // Рассчитываем суммы с учетом аллокаций
+                    $baseAmount = $this->calculateContractAmountForProject($contract, $project->id);
+                    $gpAmount = $this->calculateGpAmountForProject($contract, $project->id);
+                    
+                    // Рассчитываем дополнительные соглашения пропорционально
+                    $agreementsDelta = 0;
+                    $fullAgreementsDelta = $contract->agreements->sum('change_amount') ?? 0;
+                    if ($contract->is_multi_project && $fullAgreementsDelta != 0) {
+                        $fullBaseAmount = (float) ($contract->base_amount ?? 0);
+                        if ($fullBaseAmount > 0) {
+                            $proportion = $baseAmount / $fullBaseAmount;
+                            $agreementsDelta = $fullAgreementsDelta * $proportion;
+                        }
+                    } else {
+                        $agreementsDelta = $fullAgreementsDelta;
+                    }
+                    
+                    $contractEffectiveAmount = $baseAmount + $gpAmount + $agreementsDelta;
+                    
+                    // Получаем платежи из payment_documents
+                    $documentsCollection = DB::table('payment_documents')
+                        ->where('invoiceable_type', 'App\\Models\\Contract')
+                        ->where('invoiceable_id', $contract->id)
+                        ->whereNull('deleted_at')
+                        ->get();
+                    
+                    $paymentsData = $this->calculatePaymentsForProject($documentsCollection, $contract, $project->id);
+                    $totalPaid = $paymentsData['total'];
+                    
                     $totalActs = $acts->sum('amount');
                     $totalWorks = $works->sum('total_amount');
-                    
-                    $contractEffectiveAmount = (float)$contract->total_amount + ($contract->agreements->sum('change_amount') ?? 0);
 
                     $contractData = [
                         'contract_id' => $contract->id,
@@ -1178,7 +1242,7 @@ class HoldingReportService
                         
                         'financial' => [
                             'total_amount' => round($contractEffectiveAmount, 2),
-                            'gp_amount' => round($contract->gp_amount ?? 0, 2),
+                            'gp_amount' => round($gpAmount, 2),
                             'gp_percentage' => round($contract->gp_percentage ?? 0, 2),
                             'subcontract_amount' => round($contract->subcontract_amount ?? 0, 2),
                             'planned_advance' => round($contract->planned_advance_amount ?? 0, 2),
@@ -1430,20 +1494,46 @@ class HoldingReportService
     /**
      * Рассчитать сумму контрактов с учетом дополнительных соглашений (для коллекций Eloquent).
      */
-    private function calculateTotalContractAmount($contracts): float
+    private function calculateTotalContractAmount($contracts, ?int $projectId = null): float
     {
         $total = 0;
         foreach ($contracts as $contract) {
-            $baseAmount = (float) ($contract->total_amount ?? 0);
-            $agreementsDelta = 0;
+            // Получаем base_amount с учетом аллокаций
+            $baseAmount = $this->calculateContractAmountForProject($contract, $projectId);
             
+            // Получаем GP с учетом аллокаций
+            $gpAmount = $this->calculateGpAmountForProject($contract, $projectId);
+            
+            // Для мультипроектных контрактов с аллокациями учитываем дополнительные соглашения пропорционально
+            $agreementsDelta = 0;
             if ($contract->relationLoaded('agreements')) {
-                $agreementsDelta = $contract->agreements->sum('change_amount') ?? 0;
+                $fullAgreementsDelta = $contract->agreements->sum('change_amount') ?? 0;
+                
+                // Если контракт мультипроектный и есть фильтр по проекту, применяем пропорцию
+                if ($contract->is_multi_project && $projectId !== null && $fullAgreementsDelta != 0) {
+                    $fullBaseAmount = (float) ($contract->base_amount ?? 0);
+                    if ($fullBaseAmount > 0) {
+                        $proportion = $baseAmount / $fullBaseAmount;
+                        $agreementsDelta = $fullAgreementsDelta * $proportion;
+                    }
+                } else {
+                    $agreementsDelta = $fullAgreementsDelta;
+                }
             } elseif (isset($contract->agreements)) {
-                $agreementsDelta = $contract->agreements->sum('change_amount') ?? 0;
+                $fullAgreementsDelta = $contract->agreements->sum('change_amount') ?? 0;
+                
+                if ($contract->is_multi_project && $projectId !== null && $fullAgreementsDelta != 0) {
+                    $fullBaseAmount = (float) ($contract->base_amount ?? 0);
+                    if ($fullBaseAmount > 0) {
+                        $proportion = $baseAmount / $fullBaseAmount;
+                        $agreementsDelta = $fullAgreementsDelta * $proportion;
+                    }
+                } else {
+                    $agreementsDelta = $fullAgreementsDelta;
+                }
             }
             
-            $total += $baseAmount + $agreementsDelta;
+            $total += $baseAmount + $gpAmount + $agreementsDelta;
         }
         return $total;
     }
@@ -1563,23 +1653,31 @@ class HoldingReportService
                 ? $contract->payment_terms 
                 : (is_array($contract->payment_terms) ? json_encode($contract->payment_terms, JSON_UNESCAPED_UNICODE) : '-');
             
-            // Финансовые данные контракта
-            $baseAmount = (float) ($contract->base_amount ?? 0);
+            // Определяем projectId из фильтров для расчета аллокаций
+            $projectIdForCalculation = $filters['project_id'] ?? null;
+            
+            // Финансовые данные контракта с учетом аллокаций
+            $baseAmount = $this->calculateContractAmountForProject($contract, $projectIdForCalculation);
             $gpPercentage = (float) ($contract->gp_percentage ?? 0);
-            $gpAmount = (float) ($contract->gp_amount ?? 0);
-            $warrantyRetentionAmount = (float) ($contract->warranty_retention_amount ?? 0);
+            $gpAmount = $this->calculateGpAmountForProject($contract, $projectIdForCalculation);
+            $warrantyRetentionAmount = $this->calculateWarrantyRetentionForProject($contract, $projectIdForCalculation);
             $totalAmountWithGp = $baseAmount + $gpAmount;
             $amountToPay = $totalAmountWithGp - $warrantyRetentionAmount;
 
-            // Суммы платежей из payment_documents
+            // Суммы платежей из payment_documents с учетом аллокаций
             $contractDocumentsForPayment = $documentsByContract->get($contract->id, collect());
-            $totalAdvancePaid = (float) ($advanceDocuments->get($contract->id, collect())->sum('paid_amount') ?? 0);
-            $totalFactPaid = (float) ($factDocuments->get($contract->id, collect())->sum('paid_amount') ?? 0);
-            $totalDeferredPaid = (float) ($deferredDocuments->get($contract->id, collect())->sum('paid_amount') ?? 0);
-            $totalPaid = (float) $contractDocumentsForPayment->sum('paid_amount');
+            $payments = $this->calculatePaymentsForProject($contractDocumentsForPayment, $contract, $projectIdForCalculation);
+            $totalAdvancePaid = $payments['advance'];
+            $totalFactPaid = $payments['fact'];
+            $totalDeferredPaid = $payments['deferred'];
+            $totalPaid = $payments['total'];
 
-            // Акты выполнения
+            // Акты выполнения с учетом проекта для мультипроектных контрактов
             $approvedActs = $contract->performanceActs ?? collect();
+            if ($contract->is_multi_project && $projectIdForCalculation) {
+                // Для мультипроектных контрактов берем только акты по текущему проекту
+                $approvedActs = $approvedActs->where('project_id', $projectIdForCalculation);
+            }
             $totalPerformed = (float) $approvedActs->sum('amount');
             $remainingToPerform = max(0, $totalAmountWithGp - $totalPerformed);
 
@@ -1808,6 +1906,183 @@ class HoldingReportService
             'performed_amount' => round($performedAmount, 2),
             'remaining_to_perform' => round($remainingToPerform, 2),
             'notes' => $notes,
+        ];
+    }
+
+    /**
+     * Рассчитывает сумму контракта с учетом аллокаций для конкретного проекта
+     */
+    protected function calculateContractAmountForProject(Contract $contract, ?int $projectId = null): float
+    {
+        $fullAmount = (float) ($contract->base_amount ?? 0);
+
+        // Если контракт не мультипроектный или проект не указан, возвращаем полную сумму
+        if (!$contract->is_multi_project || $projectId === null) {
+            return $fullAmount;
+        }
+
+        // Проверяем наличие явной аллокации
+        $allocation = $contract->allocationForProject($projectId);
+        
+        if ($allocation) {
+            return $allocation->calculateAllocatedAmount();
+        }
+
+        // Если явной аллокации нет, используем пропорциональное распределение на основе КС-2
+        $totalActsAmount = DB::table('contract_performance_acts')
+            ->where('contract_id', $contract->id)
+            ->where('is_approved', true)
+            ->sum('amount');
+
+        // Если нет актов, делим поровну между проектами
+        if ($totalActsAmount == 0) {
+            $projectsCount = $contract->projects()->count();
+            return $projectsCount > 0 ? $fullAmount / $projectsCount : $fullAmount;
+        }
+
+        // Рассчитываем пропорцию на основе актов данного проекта
+        $projectActsAmount = DB::table('contract_performance_acts')
+            ->where('contract_id', $contract->id)
+            ->where('project_id', $projectId)
+            ->where('is_approved', true)
+            ->sum('amount');
+
+        $proportion = $projectActsAmount / $totalActsAmount;
+
+        return $fullAmount * $proportion;
+    }
+
+    /**
+     * Рассчитывает GP amount с учетом аллокаций для конкретного проекта
+     */
+    protected function calculateGpAmountForProject(Contract $contract, ?int $projectId = null): float
+    {
+        $fullGpAmount = (float) ($contract->gp_amount ?? 0);
+
+        // Если контракт не мультипроектный или проект не указан, возвращаем полную сумму
+        if (!$contract->is_multi_project || $projectId === null) {
+            return $fullGpAmount;
+        }
+
+        // Если есть аллокация, используем пропорцию base_amount
+        $baseAmount = (float) ($contract->base_amount ?? 0);
+        if ($baseAmount == 0) {
+            return 0;
+        }
+
+        $allocatedBaseAmount = $this->calculateContractAmountForProject($contract, $projectId);
+        $proportion = $allocatedBaseAmount / $baseAmount;
+
+        return $fullGpAmount * $proportion;
+    }
+
+    /**
+     * Рассчитывает warranty retention amount с учетом аллокаций для конкретного проекта
+     */
+    protected function calculateWarrantyRetentionForProject(Contract $contract, ?int $projectId = null): float
+    {
+        $fullWarrantyRetention = (float) ($contract->warranty_retention_amount ?? 0);
+
+        // Если контракт не мультипроектный или проект не указан, возвращаем полную сумму
+        if (!$contract->is_multi_project || $projectId === null) {
+            return $fullWarrantyRetention;
+        }
+
+        // Используем пропорцию от base_amount + gp_amount
+        $fullTotalAmount = (float) ($contract->base_amount ?? 0) + (float) ($contract->gp_amount ?? 0);
+        if ($fullTotalAmount == 0) {
+            return 0;
+        }
+
+        $allocatedBaseAmount = $this->calculateContractAmountForProject($contract, $projectId);
+        $allocatedGpAmount = $this->calculateGpAmountForProject($contract, $projectId);
+        $allocatedTotalAmount = $allocatedBaseAmount + $allocatedGpAmount;
+        
+        $proportion = $allocatedTotalAmount / $fullTotalAmount;
+
+        return $fullWarrantyRetention * $proportion;
+    }
+
+    /**
+     * Рассчитывает платежи с учетом аллокаций для конкретного проекта
+     */
+    protected function calculatePaymentsForProject(
+        $documents, 
+        Contract $contract, 
+        ?int $projectId = null
+    ): array {
+        $totalAdvancePaid = 0;
+        $totalFactPaid = 0;
+        $totalDeferredPaid = 0;
+        $totalPaid = 0;
+
+        // Если контракт не мультипроектный или проект не указан, используем полные суммы
+        if (!$contract->is_multi_project || $projectId === null) {
+            $totalAdvancePaid = (float) $documents->where('invoice_type', 'advance')->sum('paid_amount');
+            $totalFactPaid = (float) $documents->whereIn('invoice_type', ['act', 'progress'])->sum('paid_amount');
+            $totalDeferredPaid = 0; // Пока не используется
+            $totalPaid = (float) $documents->sum('paid_amount');
+
+            return [
+                'advance' => $totalAdvancePaid,
+                'fact' => $totalFactPaid,
+                'deferred' => $totalDeferredPaid,
+                'total' => $totalPaid,
+            ];
+        }
+
+        // Для мультипроектных контрактов проверяем аллокацию платежей
+        $allocation = $contract->allocationForProject($projectId);
+        
+        // Если есть явная аллокация, используем её
+        if ($allocation) {
+            $fullTotalPaid = (float) $documents->sum('paid_amount');
+            $fullContractAmount = (float) ($contract->base_amount ?? 0) + (float) ($contract->gp_amount ?? 0);
+            
+            if ($fullContractAmount > 0) {
+                $allocatedAmount = $allocation->calculateAllocatedAmount();
+                $proportion = $allocatedAmount / $fullContractAmount;
+
+                $totalAdvancePaid = (float) $documents->where('invoice_type', 'advance')->sum('paid_amount') * $proportion;
+                $totalFactPaid = (float) $documents->whereIn('invoice_type', ['act', 'progress'])->sum('paid_amount') * $proportion;
+                $totalPaid = $fullTotalPaid * $proportion;
+            }
+
+            return [
+                'advance' => $totalAdvancePaid,
+                'fact' => $totalFactPaid,
+                'deferred' => $totalDeferredPaid,
+                'total' => $totalPaid,
+            ];
+        }
+
+        // Если нет явной аллокации, используем пропорциональное распределение на основе КС-2
+        $totalActsAmount = DB::table('contract_performance_acts')
+            ->where('contract_id', $contract->id)
+            ->where('is_approved', true)
+            ->sum('amount');
+
+        if ($totalActsAmount == 0) {
+            $projectsCount = $contract->projects()->count();
+            $proportion = $projectsCount > 0 ? 1 / $projectsCount : 1;
+        } else {
+            $projectActsAmount = DB::table('contract_performance_acts')
+                ->where('contract_id', $contract->id)
+                ->where('project_id', $projectId)
+                ->where('is_approved', true)
+                ->sum('amount');
+            $proportion = $projectActsAmount / $totalActsAmount;
+        }
+
+        $totalAdvancePaid = (float) $documents->where('invoice_type', 'advance')->sum('paid_amount') * $proportion;
+        $totalFactPaid = (float) $documents->whereIn('invoice_type', ['act', 'progress'])->sum('paid_amount') * $proportion;
+        $totalPaid = (float) $documents->sum('paid_amount') * $proportion;
+
+        return [
+            'advance' => $totalAdvancePaid,
+            'fact' => $totalFactPaid,
+            'deferred' => $totalDeferredPaid,
+            'total' => $totalPaid,
         ];
     }
 
