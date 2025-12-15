@@ -315,9 +315,15 @@ class PaymentDocumentService
     /**
      * Отменить документ
      */
-    public function cancel(PaymentDocument $document, string $reason): PaymentDocument
+    public function cancel(PaymentDocument $document, string $reason, ?\App\Models\User $user = null): PaymentDocument
     {
-        if (!$document->canBeCancelled()) {
+        // Владелец организации может отменять платежи в любом статусе (GOD MODE)
+        $isOrganizationOwner = false;
+        if ($user) {
+            $isOrganizationOwner = $user->isOrganizationOwner($document->organization_id);
+        }
+
+        if (!$isOrganizationOwner && !$document->canBeCancelled()) {
             throw new \DomainException('Документ нельзя отменить в текущем статусе');
         }
 
@@ -326,6 +332,8 @@ class PaymentDocumentService
         Log::info('payment_document.cancelled', [
             'document_id' => $document->id,
             'reason' => $reason,
+            'cancelled_by_owner' => $isOrganizationOwner,
+            'user_id' => $user?->id,
         ]);
 
         return $document->fresh();

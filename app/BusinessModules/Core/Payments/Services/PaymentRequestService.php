@@ -196,13 +196,13 @@ class PaymentRequestService
     /**
      * Отклонить платежное требование
      */
-    public function rejectRequest(PaymentDocument $document, string $reason): PaymentDocument
+    public function rejectRequest(PaymentDocument $document, string $reason, ?\App\Models\User $user = null): PaymentDocument
     {
         if ($document->document_type !== PaymentDocumentType::PAYMENT_REQUEST) {
             throw new \DomainException('Можно отклонять только платежные требования');
         }
 
-        return $this->documentService->cancel($document, "Отклонено: {$reason}");
+        return $this->documentService->cancel($document, "Отклонено: {$reason}", $user);
     }
 
     /**

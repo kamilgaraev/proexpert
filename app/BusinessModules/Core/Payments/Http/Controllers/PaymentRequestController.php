@@ -183,7 +183,7 @@ class PaymentRequestController extends Controller
             $document = \App\BusinessModules\Core\Payments\Models\PaymentDocument::forOrganization($organizationId)
                 ->findOrFail($id);
 
-            $this->requestService->rejectRequest($document, $validated['reason']);
+            $this->requestService->rejectRequest($document, $validated['reason'], $request->user());
 
             return response()->json([
                 'success' => true,

@@ -60,7 +60,7 @@ class PaymentDocumentController extends Controller
                                 $this->service->approve($document, $request->user()->id);
                                 break;
                             case 'cancel':
-                                $this->service->cancel($document, $request->validated('reason'));
+                                $this->service->cancel($document, $request->validated('reason'), $request->user());
                                 break;
                             case 'schedule':
                                 $scheduledAt = new \DateTime($request->validated('scheduled_at'));
@@ -598,7 +598,7 @@ class PaymentDocumentController extends Controller
             $organizationId = $request->attributes->get('current_organization_id');
             $document = PaymentDocument::forOrganization($organizationId)->findOrFail($id);
 
-            $cancelled = $this->service->cancel($document, $validated['reason']);
+            $cancelled = $this->service->cancel($document, $validated['reason'], $request->user());
 
             return response()->json([
                 'success' => true,
