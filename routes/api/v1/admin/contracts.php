@@ -50,4 +50,7 @@ Route::get('performance-acts/{performance_act}/files', [ContractPerformanceActCo
 // ПРИМЕЧАНИЕ: Маршруты для спецификаций и state-events перенесены в project-based.php
 // Используйте маршруты: /api/v1/admin/projects/{project}/contracts/{contract}/...
 
+// Маршруты для распределения контрактов по проектам (allocations)
+require __DIR__ . '/contract_allocations.php';
+
 ?> 
