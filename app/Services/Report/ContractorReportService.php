@@ -59,6 +59,11 @@ class ContractorReportService
         $exportFormat = $request->validated('export_format');
         $sortBy = $request->validated('sort_by');
         $sortDirection = $request->validated('sort_direction');
+        
+        // НОВЫЕ ФИЛЬТРЫ
+        $filterMultiProject = $request->validated('filter_multi_project');
+        $showAllocationDetails = $request->validated('show_allocation_details');
+        $allocationTypeFilter = $request->validated('allocation_type_filter');
 
         // Получаем информацию о проекте
         $project = Project::where('id', $projectId)
@@ -98,6 +103,13 @@ class ContractorReportService
             $contractorsQuery->where('contracts.status', $contractStatus);
         }
 
+        // НОВЫЙ ФИЛЬТР: Фильтрация по мультипроектным контрактам
+        if ($filterMultiProject === 'only_multi') {
+            $contractorsQuery->where('contracts.is_multi_project', true);
+        } elseif ($filterMultiProject === 'exclude_multi') {
+            $contractorsQuery->where('contracts.is_multi_project', false);
+        }
+
         // Получаем уникальных подрядчиков
         $contractors = $contractorsQuery->distinct()->get();
 
@@ -120,7 +132,9 @@ class ContractorReportService
                 $contractStatus,
                 $includeCompletedWorks,
                 $includePayments,
-                $includeMaterials
+                $includeMaterials,
+                $showAllocationDetails,
+                $allocationTypeFilter
             );
 
             // Пропускаем подрядчиков без контрактов в этом проекте (после применения фильтров)
@@ -388,7 +402,9 @@ class ContractorReportService
         ?string $contractStatus,
         bool $includeCompletedWorks,
         bool $includePayments,
-        bool $includeMaterials
+        bool $includeMaterials,
+        bool $showAllocationDetails = false,
+        string $allocationTypeFilter = 'all'
     ): array {
         // Получаем контракты подрядчика по проекту
         $contractsQuery = Contract::where('contractor_id', $contractor->id)
@@ -412,7 +428,7 @@ class ContractorReportService
 
         $contracts = $contractsQuery->get();
 
-        $totalContractAmount = $this->calculateTotalContractAmount($contracts);
+        $totalContractAmount = $this->calculateTotalContractAmount($contracts, $projectId);
         $totalCompletedAmount = 0;
         $totalPaymentAmount = 0;
         $contractsCount = $contracts->count();
@@ -475,7 +491,12 @@ class ContractorReportService
                     });
                 }
 
-                $totalPaymentAmount = $paymentsQuery->sum('paid_amount') ?? 0;
+                // Для мультипроектных контрактов распределяем платежи пропорционально
+                $totalPaymentAmount = $this->calculatePaymentsForProject(
+                    $paymentsQuery->get(), 
+                    $contracts, 
+                    $projectId
+                );
             }
         }
 
@@ -487,7 +508,7 @@ class ContractorReportService
             $contractorType = $contractorType->name;
         }
 
-        return [
+        $result = [
             'contractor_id' => $contractor->id,
             'contractor_name' => $contractor->name,
             'contact_person' => $contractor->contact_person,
@@ -502,6 +523,52 @@ class ContractorReportService
             'completion_percentage' => $totalContractAmount > 0 ? round(($totalCompletedAmount / $totalContractAmount) * 100, 2) : 0,
             'payment_percentage' => $totalContractAmount > 0 ? round(($totalPaymentAmount / $totalContractAmount) * 100, 2) : 0,
         ];
+
+        // НОВАЯ ФУНКЦИЯ: Добавляем детали распределения если запрошено
+        if ($showAllocationDetails) {
+            $result['allocation_details'] = $this->getAllocationDetails($contracts, $projectId, $allocationTypeFilter);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Получить детали распределения контрактов
+     */
+    private function getAllocationDetails($contracts, int $projectId, string $allocationTypeFilter): array
+    {
+        $details = [];
+        
+        foreach ($contracts as $contract) {
+            if (!$contract->is_multi_project) {
+                continue;
+            }
+
+            $allocation = $contract->allocationForProject($projectId);
+            
+            // Фильтр по типу распределения
+            if ($allocationTypeFilter !== 'all') {
+                if (!$allocation || $allocation->allocation_type->value !== $allocationTypeFilter) {
+                    continue;
+                }
+            }
+
+            $details[] = [
+                'contract_id' => $contract->id,
+                'contract_number' => $contract->number,
+                'is_multi_project' => true,
+                'has_explicit_allocation' => $allocation !== null,
+                'allocation_type' => $allocation ? $allocation->allocation_type->value : 'auto_fallback',
+                'allocation_type_label' => $allocation ? $allocation->allocation_type->label() : 'Авто (fallback)',
+                'allocated_amount' => round($contract->getAllocatedAmount($projectId), 2),
+                'total_contract_amount' => round((float) $contract->total_amount, 2),
+                'allocation_percentage' => $contract->total_amount > 0 
+                    ? round(($contract->getAllocatedAmount($projectId) / (float) $contract->total_amount) * 100, 2) 
+                    : 0,
+            ];
+        }
+
+        return $details;
     }
 
     /**
@@ -1079,23 +1146,138 @@ class ContractorReportService
 
     /**
      * Рассчитать общую сумму контрактов с учетом дополнительных соглашений.
+     * Для мультипроектных контрактов учитывается только часть суммы относящаяся к проекту.
      */
-    private function calculateTotalContractAmount($contracts): float
+    private function calculateTotalContractAmount($contracts, ?int $projectId = null): float
     {
         $total = 0;
         foreach ($contracts as $contract) {
-            $total += $this->calculateSingleContractAmount($contract);
+            $total += $this->calculateSingleContractAmount($contract, $projectId);
         }
         return $total;
     }
 
     /**
      * Рассчитать сумму одного контракта с учетом дополнительных соглашений.
+     * Для мультипроектных контрактов возвращает часть суммы относящуюся к проекту.
+     * 
+     * НОВАЯ ЛОГИКА: Использует таблицу allocations если есть явное распределение,
+     * иначе fallback на старую логику (пропорционально актам)
      */
-    private function calculateSingleContractAmount(Contract $contract): float
+    private function calculateSingleContractAmount(Contract $contract, ?int $projectId = null): float
     {
-        // Поле total_amount в модели Contract уже содержит актуальную сумму с учетом доп. соглашений
-        return (float) ($contract->total_amount ?? 0);
+        $fullAmount = (float) ($contract->total_amount ?? 0);
+        
+        // Если контракт не мультипроектный, возвращаем полную сумму
+        if (!$contract->is_multi_project || $projectId === null) {
+            return $fullAmount;
+        }
+        
+        // НОВАЯ ЛОГИКА: Проверяем наличие явного распределения
+        $allocation = $contract->allocationForProject($projectId);
+        
+        if ($allocation) {
+            return $allocation->calculateAllocatedAmount();
+        }
+        
+        // FALLBACK: Если распределения нет, используем старую логику (пропорционально актам)
+        // Для мультипроектных контрактов используем пропорциональное распределение на основе актов
+        // Получаем общую сумму всех актов по контракту
+        $totalActsAmount = ContractPerformanceAct::where('contract_id', $contract->id)
+            ->where('is_approved', true)
+            ->sum('amount');
+        
+        // Если актов нет, распределяем поровну между проектами
+        if ($totalActsAmount == 0) {
+            $projectsCount = $contract->projects()->count();
+            return $projectsCount > 0 ? $fullAmount / $projectsCount : $fullAmount;
+        }
+        
+        // Получаем сумму актов по конкретному проекту
+        $projectActsAmount = ContractPerformanceAct::where('contract_id', $contract->id)
+            ->where('project_id', $projectId)
+            ->where('is_approved', true)
+            ->sum('amount');
+        
+        // Рассчитываем пропорциональную долю
+        $proportion = $projectActsAmount / $totalActsAmount;
+        
+        return $fullAmount * $proportion;
+    }
+
+    /**
+     * Рассчитать сумму платежей для проекта с учетом мультипроектных контрактов.
+     * Для мультиконтрактов платежи распределяются на основе allocations или пропорционально актам.
+     * 
+     * НОВАЯ ЛОГИКА: Использует allocations для определения доли платежей
+     */
+    private function calculatePaymentsForProject($payments, $contracts, ?int $projectId = null): float
+    {
+        if ($payments->isEmpty() || $projectId === null) {
+            return $payments->sum('paid_amount') ?? 0;
+        }
+        
+        $totalPaymentAmount = 0;
+        
+        // Группируем платежи по контрактам
+        $paymentsByContract = $payments->groupBy('invoiceable_id');
+        
+        foreach ($paymentsByContract as $contractId => $contractPayments) {
+            $contract = $contracts->firstWhere('id', $contractId);
+            
+            if (!$contract) {
+                // Если контракт не найден, просто суммируем платежи
+                $totalPaymentAmount += $contractPayments->sum('paid_amount');
+                continue;
+            }
+            
+            $paymentSum = $contractPayments->sum('paid_amount');
+            
+            // Если контракт не мультипроектный, берем всю сумму платежей
+            if (!$contract->is_multi_project) {
+                $totalPaymentAmount += $paymentSum;
+                continue;
+            }
+            
+            // НОВАЯ ЛОГИКА: Проверяем наличие явного распределения
+            $allocation = $contract->allocationForProject($projectId);
+            
+            if ($allocation) {
+                // Если есть allocation, используем его для расчета доли платежей
+                $allocatedAmount = $allocation->calculateAllocatedAmount();
+                $contractTotal = (float) $contract->total_amount;
+                
+                if ($contractTotal > 0) {
+                    $proportion = $allocatedAmount / $contractTotal;
+                    $totalPaymentAmount += $paymentSum * $proportion;
+                    continue;
+                }
+            }
+            
+            // FALLBACK: Для мультипроектных контрактов распределяем платежи пропорционально актам
+            $totalActsAmount = ContractPerformanceAct::where('contract_id', $contract->id)
+                ->where('is_approved', true)
+                ->sum('amount');
+            
+            // Если актов нет, распределяем поровну между проектами
+            if ($totalActsAmount == 0) {
+                $projectsCount = $contract->projects()->count();
+                $totalPaymentAmount += $projectsCount > 0 ? $paymentSum / $projectsCount : $paymentSum;
+                continue;
+            }
+            
+            // Получаем сумму актов по конкретному проекту
+            $projectActsAmount = ContractPerformanceAct::where('contract_id', $contract->id)
+                ->where('project_id', $projectId)
+                ->where('is_approved', true)
+                ->sum('amount');
+            
+            // Рассчитываем пропорциональную долю платежей
+            $proportion = $projectActsAmount / $totalActsAmount;
+            $totalPaymentAmount += $paymentSum * $proportion;
+        }
+        
+        return $totalPaymentAmount;
     }
 
 }

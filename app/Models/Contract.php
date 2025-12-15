@@ -92,6 +92,32 @@ class Contract extends Model
                     ->withTimestamps();
     }
 
+    /**
+     * Распределения сумм контракта по проектам
+     */
+    public function allocations(): HasMany
+    {
+        return $this->hasMany(ContractProjectAllocation::class);
+    }
+
+    /**
+     * Получить активные распределения
+     */
+    public function activeAllocations(): HasMany
+    {
+        return $this->hasMany(ContractProjectAllocation::class)->where('is_active', true);
+    }
+
+    /**
+     * Получить распределение для конкретного проекта
+     */
+    public function allocationForProject(int $projectId): ?ContractProjectAllocation
+    {
+        return $this->activeAllocations()
+            ->where('project_id', $projectId)
+            ->first();
+    }
+
     public function contractor(): BelongsTo
     {
         return $this->belongsTo(Contractor::class);
@@ -632,5 +658,72 @@ class Contract extends Model
                 $this->projects()->sync([]);
             }
         }
+    }
+
+    /**
+     * Получить выделенную сумму для проекта
+     * @param int|null $projectId - ID проекта
+     * @return float
+     */
+    public function getAllocatedAmount(?int $projectId = null): float
+    {
+        // Если projectId не указан, используем основной проект
+        if ($projectId === null) {
+            $projectId = $this->project_id;
+        }
+
+        // Если проект не указан, возвращаем полную сумму
+        if ($projectId === null) {
+            return (float) $this->total_amount;
+        }
+
+        // Ищем активное распределение для проекта
+        $allocation = $this->allocationForProject($projectId);
+
+        // Если распределение найдено, используем его
+        if ($allocation) {
+            return $allocation->calculateAllocatedAmount();
+        }
+
+        // Если распределения нет и контракт не мультипроектный, возвращаем полную сумму
+        if (!$this->is_multi_project) {
+            return (float) $this->total_amount;
+        }
+
+        // Для мультипроектных контрактов без явного распределения
+        // используем автоматический расчет (пропорционально актам)
+        return $this->calculateAutoAllocation($projectId);
+    }
+
+    /**
+     * Автоматический расчет распределения на основе актов
+     * @param int $projectId
+     * @return float
+     */
+    protected function calculateAutoAllocation(int $projectId): float
+    {
+        // Получаем общую сумму всех актов по контракту
+        $totalActsAmount = ContractPerformanceAct::where('contract_id', $this->id)
+            ->where('is_approved', true)
+            ->sum('amount');
+
+        // Если актов нет, распределяем поровну между проектами
+        if ($totalActsAmount == 0) {
+            $projectsCount = $this->projects()->count();
+            return $projectsCount > 0 
+                ? (float) $this->total_amount / $projectsCount 
+                : (float) $this->total_amount;
+        }
+
+        // Получаем сумму актов по конкретному проекту
+        $projectActsAmount = ContractPerformanceAct::where('contract_id', $this->id)
+            ->where('project_id', $projectId)
+            ->where('is_approved', true)
+            ->sum('amount');
+
+        // Рассчитываем пропорциональную долю
+        $proportion = $projectActsAmount / $totalActsAmount;
+
+        return (float) $this->total_amount * $proportion;
     }
 }

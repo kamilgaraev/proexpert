@@ -37,6 +37,11 @@ class ContractorReportRequest extends FormRequest
             'export_format' => ['nullable', 'string', Rule::in(['json', 'csv', 'excel', 'xlsx'])],
             'sort_by' => ['nullable', 'string', Rule::in(['contractor_name', 'total_amount', 'completed_amount', 'payment_amount'])],
             'sort_direction' => ['nullable', 'string', Rule::in(['asc', 'desc'])],
+            
+            // НОВЫЕ ФИЛЬТРЫ ДЛЯ МУЛЬТИКОНТРАКТОВ
+            'filter_multi_project' => ['nullable', 'string', Rule::in(['all', 'only_multi', 'exclude_multi'])],
+            'show_allocation_details' => ['nullable', 'boolean'],
+            'allocation_type_filter' => ['nullable', 'string', Rule::in(['all', 'fixed', 'percentage', 'auto', 'custom'])],
         ];
 
         // Добавляем валидацию template_id только если модуль активен
@@ -79,6 +84,8 @@ class ContractorReportRequest extends FormRequest
             'project_id.exists' => 'Указанный проект не найден.',
             'date_to.after_or_equal' => 'Дата окончания должна быть не раньше даты начала.',
             'contractor_ids.*.exists' => 'Один из указанных подрядчиков не найден.',
+            'filter_multi_project.in' => 'Некорректное значение фильтра мультипроектных контрактов.',
+            'allocation_type_filter.in' => 'Некорректный тип распределения.',
         ];
     }
 
@@ -100,6 +107,11 @@ class ContractorReportRequest extends FormRequest
             'group_by' => $this->input('group_by', 'contractor'),
             'sort_by' => $this->input('sort_by', 'total_amount'),
             'sort_direction' => $this->input('sort_direction', 'desc'),
+            
+            // НОВЫЕ ФИЛЬТРЫ
+            'filter_multi_project' => $this->input('filter_multi_project', 'all'),
+            'show_allocation_details' => $this->boolean('show_allocation_details', false),
+            'allocation_type_filter' => $this->input('allocation_type_filter', 'all'),
         ];
         
         // export_format без дефолта - если не указан, вернется JSON из контроллера
