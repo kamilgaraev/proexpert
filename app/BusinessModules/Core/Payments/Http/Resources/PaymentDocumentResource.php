@@ -15,6 +15,14 @@ class PaymentDocumentResource extends JsonResource
      */
     public function toArray(Request $request): array
     {
+        // Владелец организации может отменять документы в любом статусе
+        $canBeCancelled = $this->canBeCancelled();
+        $user = $request->user();
+        if ($user && !$canBeCancelled) {
+            // Если по статусу нельзя отменить, но пользователь владелец - разрешаем
+            $canBeCancelled = $user->isOrganizationOwner($this->organization_id);
+        }
+
         return [
             'id' => $this->id,
             'organization_id' => $this->organization_id,
@@ -47,7 +55,7 @@ class PaymentDocumentResource extends JsonResource
             'days_until_due' => $this->getDaysUntilDue(),
             'is_overdue' => $this->isOverdue(),
             'can_be_paid' => $this->canBePaid(),
-            'can_be_cancelled' => $this->canBeCancelled(),
+            'can_be_cancelled' => $canBeCancelled,
             'can_be_edited' => $this->canBeEdited(),
             'requires_approval' => $this->requiresApproval(),
             'site_requests' => $this->whenLoaded('siteRequests', fn() => $this->siteRequests->map(fn($request) => [

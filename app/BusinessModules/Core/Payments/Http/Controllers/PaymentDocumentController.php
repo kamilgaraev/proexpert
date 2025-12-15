@@ -747,6 +747,14 @@ class PaymentDocumentController extends Controller
      */
     private function formatDocument(PaymentDocument $document): array
     {
+        // Владелец организации может отменять документы в любом статусе
+        $canBeCancelled = $document->canBeCancelled();
+        $user = request()->user();
+        if ($user && !$canBeCancelled) {
+            // Если по статусу нельзя отменить, но пользователь владелец - разрешаем
+            $canBeCancelled = $user->isOrganizationOwner($document->organization_id);
+        }
+
         return [
             'id' => $document->id,
             'document_number' => $document->document_number,
@@ -769,6 +777,7 @@ class PaymentDocumentController extends Controller
             'is_overdue' => $document->isOverdue(),
             'days_until_due' => $document->getDaysUntilDue(),
             'payment_percentage' => $document->getPaymentPercentage(),
+            'can_be_cancelled' => $canBeCancelled,
             'created_at' => $document->created_at->toDateTimeString(),
         ];
     }
