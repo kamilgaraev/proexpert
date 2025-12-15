@@ -7,6 +7,7 @@ use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Organization;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class PaymentValidationService
 {
@@ -281,15 +282,31 @@ class PaymentValidationService
     private function checkDuplicates(PaymentDocument $document, array &$errors): void
     {
         // Ищем похожие документы за последние 30 дней
-        $similar = PaymentDocument::where('organization_id', $document->organization_id)
+        // Исключаем документы со статусами: draft, cancelled, rejected
+        $similarDocuments = PaymentDocument::where('organization_id', $document->organization_id)
             ->where('id', '!=', $document->id)
             ->where('document_type', $document->document_type)
             ->where('amount', $document->amount)
             ->where('payee_contractor_id', $document->payee_contractor_id)
+            ->whereNotIn('status', ['draft', 'cancelled', 'rejected'])
             ->where('created_at', '>=', now()->subDays(30))
-            ->exists();
+            ->get(['id', 'document_number', 'status', 'created_at']);
 
-        if ($similar) {
+        if ($similarDocuments->isNotEmpty()) {
+            Log::warning('payment_document.duplicate_check', [
+                'current_document_id' => $document->id,
+                'current_document_number' => $document->document_number,
+                'current_status' => $document->status->value,
+                'amount' => $document->amount,
+                'payee_contractor_id' => $document->payee_contractor_id,
+                'similar_documents' => $similarDocuments->map(fn($doc) => [
+                    'id' => $doc->id,
+                    'document_number' => $doc->document_number,
+                    'status' => $doc->status->value,
+                    'created_at' => $doc->created_at->toDateTimeString(),
+                ])->toArray(),
+            ]);
+
             $errors[] = 'Возможный дубликат: найден похожий документ с той же суммой и получателем';
         }
     }
