@@ -28,10 +28,15 @@ class ContractAllocationService
         return DB::transaction(function () use ($contract, $allocationsData) {
             $allocations = collect();
 
-            // Деактивируем все существующие активные распределения
+            // Получаем ID проектов из новых данных
+            $newProjectIds = collect($allocationsData)->pluck('project_id')->toArray();
+
+            // Деактивируем старые распределения, которых НЕТ в новых данных
+            // Это предотвращает конфликт при обновлении существующих
             ContractProjectAllocation::where('contract_id', $contract->id)
                 ->where('is_active', true)
-                ->update(['is_active' => false]);
+                ->whereNotIn('project_id', $newProjectIds)
+                ->update(['is_active' => false, 'updated_by' => Auth::id()]);
 
             foreach ($allocationsData as $allocationData) {
                 $allocation = $this->createOrUpdateAllocation($contract, $allocationData);
@@ -47,27 +52,42 @@ class ContractAllocationService
 
     /**
      * Создать или обновить одно распределение
+     * 
+     * Стратегия:
+     * 1. Ищем активное распределение для этой пары contract-project
+     * 2. Если найдено - обновляем его
+     * 3. Если не найдено - создаем новое активное
      */
     protected function createOrUpdateAllocation(Contract $contract, array $data): ContractProjectAllocation
     {
-        $allocation = ContractProjectAllocation::updateOrCreate(
-            [
-                'contract_id' => $contract->id,
-                'project_id' => $data['project_id'],
-                'is_active' => true,
-            ],
-            [
-                'allocation_type' => $data['allocation_type'] ?? ContractAllocationTypeEnum::AUTO->value,
-                'allocated_amount' => $data['allocated_amount'] ?? null,
-                'allocated_percentage' => $data['allocated_percentage'] ?? null,
-                'custom_formula' => $data['custom_formula'] ?? null,
-                'notes' => $data['notes'] ?? null,
-                'created_by' => Auth::id(),
-                'updated_by' => Auth::id(),
-            ]
-        );
+        // Сначала пытаемся найти существующее активное распределение
+        $existingAllocation = ContractProjectAllocation::where('contract_id', $contract->id)
+            ->where('project_id', $data['project_id'])
+            ->where('is_active', true)
+            ->first();
 
-        return $allocation;
+        $allocationData = [
+            'allocation_type' => $data['allocation_type'] ?? ContractAllocationTypeEnum::AUTO->value,
+            'allocated_amount' => $data['allocated_amount'] ?? null,
+            'allocated_percentage' => $data['allocated_percentage'] ?? null,
+            'custom_formula' => $data['custom_formula'] ?? null,
+            'notes' => $data['notes'] ?? null,
+            'updated_by' => Auth::id(),
+        ];
+
+        if ($existingAllocation) {
+            // Обновляем существующее
+            $existingAllocation->update($allocationData);
+            return $existingAllocation->fresh();
+        } else {
+            // Создаем новое активное распределение
+            $allocationData['contract_id'] = $contract->id;
+            $allocationData['project_id'] = $data['project_id'];
+            $allocationData['is_active'] = true;
+            $allocationData['created_by'] = Auth::id();
+            
+            return ContractProjectAllocation::create($allocationData);
+        }
     }
 
     /**
