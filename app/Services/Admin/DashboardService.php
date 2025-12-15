@@ -132,8 +132,19 @@ class DashboardService
     private function getProjectSummary(int $organizationId, int $projectId): array
     {
         // Контракты проекта (ВСЕ, без фильтра по дате)
+        // Включаем как обычные контракты (project_id), так и мультипроектные (через pivot)
         $contractsQuery = Contract::where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
+            ->where(function($q) use ($projectId) {
+                // Обычные контракты (project_id)
+                $q->where('project_id', $projectId)
+                  // ИЛИ мультипроектные контракты (через pivot таблицу)
+                  ->orWhereExists(function($sub) use ($projectId) {
+                      $sub->select(DB::raw(1))
+                          ->from('contract_project')
+                          ->whereColumn('contract_project.contract_id', 'contracts.id')
+                          ->where('contract_project.project_id', $projectId);
+                  });
+            })
             ->whereNull('deleted_at');
 
         $contractsTotal = (clone $contractsQuery)->count();
@@ -141,8 +152,9 @@ class DashboardService
         $contractsCompleted = (clone $contractsQuery)->where('status', ContractStatusEnum::COMPLETED->value)->count();
         $contractsDraft = (clone $contractsQuery)->where('status', ContractStatusEnum::DRAFT->value)->count();
 
-        // Суммы контрактов
-        $contractsAmount = (clone $contractsQuery)->sum('total_amount');
+        // Суммы контрактов с учетом мультипроектных и allocations
+        $contracts = (clone $contractsQuery)->get();
+        $contractsAmount = $this->calculateTotalContractAmountForProject($contracts, $projectId);
 
         // Выполненные работы = Акты выполненных работ (КС-2)
         $completedWorksAmount = DB::table('contract_performance_acts')
@@ -296,10 +308,21 @@ class DashboardService
      */
     private function calculateFinancialMetrics(int $organizationId, int $projectId): array
     {
-        $contractsAmount = Contract::where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
+        // Получаем контракты проекта с учетом мультипроектных
+        $contracts = Contract::where('organization_id', $organizationId)
+            ->where(function($q) use ($projectId) {
+                $q->where('project_id', $projectId)
+                  ->orWhereExists(function($sub) use ($projectId) {
+                      $sub->select(DB::raw(1))
+                          ->from('contract_project')
+                          ->whereColumn('contract_project.contract_id', 'contracts.id')
+                          ->where('contract_project.project_id', $projectId);
+                  });
+            })
             ->whereNull('deleted_at')
-            ->sum('total_amount');
+            ->get();
+        
+        $contractsAmount = $this->calculateTotalContractAmountForProject($contracts, $projectId);
 
         // Выполненные работы = Акты выполненных работ (КС-2)
         $completedWorksAmount = DB::table('contract_performance_acts')
@@ -1040,12 +1063,24 @@ class DashboardService
         return $this->remember($cacheKey, $tags, self::CACHE_TTL_MEDIUM, function () use ($organizationId, $projectId) {
             $contractsQuery = Contract::where('organization_id', $organizationId);
             if ($projectId) {
-                $contractsQuery->where('project_id', $projectId);
+                $contractsQuery->where(function($q) use ($projectId) {
+                    $q->where('project_id', $projectId)
+                      ->orWhereExists(function($sub) use ($projectId) {
+                          $sub->select(DB::raw(1))
+                              ->from('contract_project')
+                              ->whereColumn('contract_project.contract_id', 'contracts.id')
+                              ->where('contract_project.project_id', $projectId);
+                      });
+                });
             }
 
-            $totalContractsAmount = $contractsQuery->sum('total_amount');
-            $activeContractsAmount = (clone $contractsQuery)->where('status', ContractStatusEnum::ACTIVE->value)->sum('total_amount');
-            $completedContractsAmount = (clone $contractsQuery)->where('status', ContractStatusEnum::COMPLETED->value)->sum('total_amount');
+            $allContracts = $contractsQuery->get();
+            $activeContracts = $allContracts->where('status', ContractStatusEnum::ACTIVE);
+            $completedContracts = $allContracts->where('status', ContractStatusEnum::COMPLETED);
+
+            $totalContractsAmount = $this->calculateTotalContractAmountForProject($allContracts, $projectId);
+            $activeContractsAmount = $this->calculateTotalContractAmountForProject($activeContracts, $projectId);
+            $completedContractsAmount = $this->calculateTotalContractAmountForProject($completedContracts, $projectId);
 
             // Выполненные работы = Акты выполненных работ (КС-2)
             $worksQuery = DB::table('contract_performance_acts')
@@ -1083,7 +1118,15 @@ class DashboardService
             $query = Contract::where('organization_id', $organizationId);
             
             if ($projectId) {
-                $query->where('project_id', $projectId);
+                $query->where(function($q) use ($projectId) {
+                    $q->where('project_id', $projectId)
+                      ->orWhereExists(function($sub) use ($projectId) {
+                          $sub->select(DB::raw(1))
+                              ->from('contract_project')
+                              ->whereColumn('contract_project.contract_id', 'contracts.id')
+                              ->where('contract_project.project_id', $projectId);
+                      });
+                });
             }
 
             // Применяем фильтры
@@ -1103,18 +1146,16 @@ class DashboardService
                 $query->where('created_at', '<=', $filters['date_to']);
             }
 
-            $total = $query->count();
-            $byStatus = (clone $query)->select('status', DB::raw('COUNT(*) as count'))
-                ->groupBy('status')
-                ->get()
-                ->mapWithKeys(function ($item) {
-                    $statusValue = $item->status instanceof ContractStatusEnum 
-                        ? $item->status->value 
-                        : (string)$item->status;
-                    return [$statusValue => $item->count];
-                });
+            $contracts = $query->get();
+            $total = $contracts->count();
+            
+            $byStatus = $contracts->groupBy(function($contract) {
+                return $contract->status instanceof ContractStatusEnum 
+                    ? $contract->status->value 
+                    : (string)$contract->status;
+            })->map(fn($group) => $group->count());
 
-            $totalAmount = (clone $query)->sum('total_amount');
+            $totalAmount = $this->calculateTotalContractAmountForProject($contracts, $projectId);
             $avgAmount = $total > 0 ? $totalAmount / $total : 0;
 
             // Выполненные работы = Акты выполненных работ (КС-2)
@@ -1473,24 +1514,37 @@ class DashboardService
                 ->with('contractor:id,name');
 
             if ($projectId) {
-                $query->where('project_id', $projectId);
+                $query->where(function($q) use ($projectId) {
+                    $q->where('project_id', $projectId)
+                      ->orWhereExists(function($sub) use ($projectId) {
+                          $sub->select(DB::raw(1))
+                              ->from('contract_project')
+                              ->whereColumn('contract_project.contract_id', 'contracts.id')
+                              ->where('contract_project.project_id', $projectId);
+                      });
+                });
             }
 
-            $byContractor = $query->select('contractor_id', DB::raw('COUNT(*) as count'), DB::raw('SUM(total_amount) as total_amount'))
-                ->groupBy('contractor_id')
-                ->orderByDesc('count')
-                ->limit($limit)
-                ->get();
+            $contracts = $query->get();
+            
+            // Группируем контракты по подрядчикам
+            $byContractor = $contracts->groupBy('contractor_id')->map(function($contractorContracts) use ($projectId) {
+                return [
+                    'count' => $contractorContracts->count(),
+                    'total_amount' => $this->calculateTotalContractAmountForProject($contractorContracts, $projectId),
+                    'contractor_id' => $contractorContracts->first()->contractor_id,
+                ];
+            })->sortByDesc('count')->take($limit);
 
             $labels = [];
             $counts = [];
             $amounts = [];
 
             foreach ($byContractor as $item) {
-                $contractor = Contractor::find($item->contractor_id);
+                $contractor = Contractor::find($item['contractor_id']);
                 $labels[] = $contractor?->name ?? 'Неизвестно';
-                $counts[] = $item->count;
-                $amounts[] = (float) $item->total_amount;
+                $counts[] = $item['count'];
+                $amounts[] = $item['total_amount'];
             }
 
             return [
@@ -1982,5 +2036,91 @@ class DashboardService
                 'comparison' => $comparison,
             ];
         });
+    }
+
+    /**
+     * Рассчитать общую сумму контрактов для проекта с учетом мультипроектных контрактов и allocations.
+     * Использует ту же логику, что и ContractorReportService.
+     */
+    private function calculateTotalContractAmountForProject($contracts, ?int $projectId = null): float
+    {
+        $total = 0;
+        foreach ($contracts as $contract) {
+            $total += $this->calculateSingleContractAmountForProject($contract, $projectId);
+        }
+        return $total;
+    }
+
+    /**
+     * Публичный метод для расчета общей суммы контрактов.
+     * Используется из контроллера.
+     */
+    public function calculateTotalAmountForContracts($contracts, ?int $projectId = null): float
+    {
+        return $this->calculateTotalContractAmountForProject($contracts, $projectId);
+    }
+
+    /**
+     * Рассчитать сумму одного контракта для проекта с учетом allocations.
+     * Для мультипроектных контрактов возвращает часть суммы относящуюся к проекту.
+     * 
+     * Логика:
+     * 1. Если контракт не мультипроектный, возвращаем полную сумму
+     * 2. Если есть явное распределение (allocation), используем его
+     * 3. Fallback: распределяем пропорционально актам
+     * 4. Если актов нет, делим поровну между проектами
+     */
+    private function calculateSingleContractAmountForProject(Contract $contract, ?int $projectId = null): float
+    {
+        $fullAmount = (float) ($contract->total_amount ?? 0);
+        
+        // Если контракт не мультипроектный, возвращаем полную сумму
+        if (!$contract->is_multi_project || $projectId === null) {
+            return $fullAmount;
+        }
+        
+        // Проверяем наличие явного распределения через таблицу allocations
+        try {
+            $allocation = $contract->allocationForProject($projectId);
+            
+            if ($allocation) {
+                return $allocation->calculateAllocatedAmount();
+            }
+        } catch (\Exception $e) {
+            // Если метод не существует или произошла ошибка, продолжаем с fallback логикой
+        }
+        
+        // FALLBACK: Если распределения нет, используем пропорциональное распределение на основе актов
+        // Получаем общую сумму всех актов по контракту
+        $totalActsAmount = DB::table('contract_performance_acts')
+            ->where('contract_id', $contract->id)
+            ->where('is_approved', true)
+            ->sum('amount');
+        
+        // Если актов нет, распределяем поровну между проектами
+        if ($totalActsAmount == 0) {
+            $projectsCount = DB::table('contract_project')
+                ->where('contract_id', $contract->id)
+                ->count();
+            
+            // Если нет связей через pivot, но is_multi_project = true, считаем 1 проект
+            if ($projectsCount == 0) {
+                $projectsCount = 1;
+            }
+            
+            return $projectsCount > 0 ? $fullAmount / $projectsCount : $fullAmount;
+        }
+        
+        // Получаем сумму актов по конкретному проекту
+        $projectActsAmount = DB::table('contract_performance_acts')
+            ->where('contract_id', $contract->id)
+            ->where('project_id', $projectId)
+            ->where('is_approved', true)
+            ->sum('amount');
+        
+        // Рассчитываем пропорциональную долю
+        $proportion = $projectActsAmount / $totalActsAmount;
+        
+        return $fullAmount * $proportion;
     }
 } 

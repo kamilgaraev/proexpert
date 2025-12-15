@@ -230,23 +230,30 @@ class DashboardController extends Controller
         $request->validate(['project_id' => 'required|integer|min:1']);
         $projectId = (int)$request->input('project_id');
         
-        $stats = DB::table('contracts')
-            ->where('organization_id', $organizationId)
-            ->where('project_id', $projectId)
+        // Получаем контракты с учетом мультипроектных
+        $contracts = Contract::where('organization_id', $organizationId)
+            ->where(function($q) use ($projectId) {
+                $q->where('project_id', $projectId)
+                  ->orWhereExists(function($sub) use ($projectId) {
+                      $sub->select(DB::raw(1))
+                          ->from('contract_project')
+                          ->whereColumn('contract_project.contract_id', 'contracts.id')
+                          ->where('contract_project.project_id', $projectId);
+                  });
+            })
             ->whereNull('deleted_at')
-            ->selectRaw('
-                COUNT(*) as total_contracts,
-                COUNT(CASE WHEN status = ? THEN 1 END) as active_contracts,
-                COUNT(CASE WHEN status = ? THEN 1 END) as completed_contracts,
-                COUNT(CASE WHEN status = ? THEN 1 END) as draft_contracts,
-                SUM(total_amount) as total_amount,
-                AVG(total_amount) as avg_amount
-            ', [
-                ContractStatusEnum::ACTIVE->value,
-                ContractStatusEnum::COMPLETED->value,
-                ContractStatusEnum::DRAFT->value
-            ])
-            ->first();
+            ->get();
+        
+        $stats = (object)[
+            'total_contracts' => $contracts->count(),
+            'active_contracts' => $contracts->where('status', ContractStatusEnum::ACTIVE)->count(),
+            'completed_contracts' => $contracts->where('status', ContractStatusEnum::COMPLETED)->count(),
+            'draft_contracts' => $contracts->where('status', ContractStatusEnum::DRAFT)->count(),
+            'total_amount' => $this->dashboardService->calculateTotalAmountForContracts($contracts, $projectId),
+            'avg_amount' => 0,
+        ];
+        
+        $stats->avg_amount = $stats->total_contracts > 0 ? $stats->total_amount / $stats->total_contracts : 0;
 
         // Статистика по выполненным работам проекта
         $worksStats = DB::table('completed_works')
