@@ -1708,109 +1708,53 @@ class HoldingReportService
                 }
             }
 
-            if ($contractDocuments->isNotEmpty() || $approvedActs->isNotEmpty()) {
-                foreach ($contractDocuments as $document) {
-                    $documentDate = $document->document_date ? Carbon::parse($document->document_date) : null;
-                    $paidAt = $document->paid_at ? Carbon::parse($document->paid_at) : $documentDate;
-                    
-                    $rows[] = $this->buildDetailedReportRow(
-                        registryDate: $documentDate ?? $contract->date ?? now(),
-                        paymentDate: $paidAt,
-                        month: $paidAt ? $paidAt->format('m') : '',
-                        year: $paidAt ? $paidAt->format('Y') : '',
-                        organizationName: $organization->name ?? '-',
-                        contractorName: $contractor->name ?? '-',
-                        contractNumber: $contractNumber,
-                        contractDate: $contractDate,
-                        agreementNumber: $agreementSpecNumber,
-                        subject: $contractSubject,
-                        workTypeCategory: $workTypeCategory,
-                        paymentTerms: $paymentTerms,
-                        contractAmount: $totalAmountWithGp,
-                        gpPercentage: $gpPercentage,
-                        gpAmount: $gpAmount,
-                        warrantyRetentionAmount: $warrantyRetentionAmount,
-                        amountToPay: $amountToPay,
-                        advancePaid: $totalAdvancePaid,
-                        factPaid: $totalFactPaid,
-                        deferredPaid: $totalDeferredPaid,
-                        totalPaid: $totalPaid,
-                        remainingToPay: $remainingToPay,
-                        performedAmount: $totalPerformed,
-                        remainingToPerform: $remainingToPerform,
-                        notes: $document->notes ?? $contract->notes ?? ''
-                    );
-                }
-
-                foreach ($approvedActs as $act) {
-                    $actDate = $act->act_date 
-                        ? Carbon::parse($act->act_date) 
-                        : ($contract->date ? Carbon::parse($contract->date) : now());
-                    
-                    $hasRowForAct = $contractDocuments->contains(function ($document) use ($actDate) {
-                        $documentDate = $document->document_date ? Carbon::parse($document->document_date) : null;
-                        return $documentDate && $documentDate->format('Y-m-d') === $actDate->format('Y-m-d');
-                    });
-
-                    if (!$hasRowForAct) {
-                        $rows[] = $this->buildDetailedReportRow(
-                            registryDate: $actDate,
-                            paymentDate: $actDate,
-                            month: $actDate->format('m'),
-                            year: $actDate->format('Y'),
-                            organizationName: $organization->name ?? '-',
-                            contractorName: $contractor->name ?? '-',
-                            contractNumber: $contractNumber,
-                            contractDate: $contractDate,
-                            agreementNumber: $act->act_document_number ?? $agreementSpecNumber,
-                            subject: $contractSubject,
-                            workTypeCategory: $workTypeCategory,
-                            paymentTerms: $paymentTerms,
-                            contractAmount: $totalAmountWithGp,
-                            gpPercentage: $gpPercentage,
-                            gpAmount: $gpAmount,
-                            warrantyRetentionAmount: $warrantyRetentionAmount,
-                            amountToPay: $amountToPay,
-                            advancePaid: $totalAdvancePaid,
-                            factPaid: $totalFactPaid,
-                            deferredPaid: $totalDeferredPaid,
-                            totalPaid: $totalPaid,
-                            remainingToPay: $remainingToPay,
-                            performedAmount: $totalPerformed,
-                            remainingToPerform: $remainingToPerform,
-                            notes: $act->description ?? $contract->notes ?? ''
-                        );
-                    }
-                }
-            } else {
-                $rows[] = $this->buildDetailedReportRow(
-                    registryDate: $contract->date ?? now(),
-                    paymentDate: null,
-                    month: '',
-                    year: '',
-                    organizationName: $organization->name ?? '-',
-                    contractorName: $contractor->name ?? '-',
-                    contractNumber: $contractNumber,
-                    contractDate: $contractDate,
-                    agreementNumber: $agreementSpecNumber,
-                    subject: $contractSubject,
-                    workTypeCategory: $workTypeCategory,
-                    paymentTerms: $paymentTerms,
-                    contractAmount: $totalAmountWithGp,
-                    gpPercentage: $gpPercentage,
-                    gpAmount: $gpAmount,
-                    warrantyRetentionAmount: $warrantyRetentionAmount,
-                    amountToPay: $amountToPay,
-                    advancePaid: $totalAdvancePaid,
-                    factPaid: $totalFactPaid,
-                    deferredPaid: $totalDeferredPaid,
-                    totalPaid: $totalPaid,
-                    remainingToPay: $remainingToPay,
-                    performedAmount: $totalPerformed,
-                    remainingToPerform: $remainingToPerform,
-                    notes: $contract->notes ?? ''
-                );
+            // Создаем только одну строку на контракт, без дублирования
+            // Финансовые данные показываем один раз
+            $firstDocumentDate = null;
+            $firstPaymentDate = null;
+            $firstNotes = $contract->notes ?? '';
+            
+            if ($contractDocuments->isNotEmpty()) {
+                $firstDocument = $contractDocuments->first();
+                $firstDocumentDate = $firstDocument->document_date ? Carbon::parse($firstDocument->document_date) : null;
+                $firstPaymentDate = $firstDocument->paid_at ? Carbon::parse($firstDocument->paid_at) : $firstDocumentDate;
+                $firstNotes = $firstDocument->notes ?? $contract->notes ?? '';
+            } elseif ($approvedActs->isNotEmpty()) {
+                $firstAct = $approvedActs->first();
+                $firstDocumentDate = $firstAct->act_date 
+                    ? Carbon::parse($firstAct->act_date) 
+                    : ($contract->date ? Carbon::parse($contract->date) : now());
+                $firstPaymentDate = $firstDocumentDate;
+                $firstNotes = $firstAct->description ?? $contract->notes ?? '';
             }
+            
+            $rows[] = $this->buildDetailedReportRow(
+                registryDate: $firstDocumentDate ?? $contract->date ?? now(),
+                paymentDate: $firstPaymentDate,
+                month: $firstPaymentDate ? $firstPaymentDate->format('m') : '',
+                year: $firstPaymentDate ? $firstPaymentDate->format('Y') : '',
+                organizationName: $organization->name ?? '-',
+                contractorName: $contractor->name ?? '-',
+                contractNumber: $contractNumber,
+                contractDate: $contractDate,
+                agreementNumber: $agreementSpecNumber,
+                subject: $contractSubject,
+                workTypeCategory: $workTypeCategory,
+                paymentTerms: $paymentTerms,
+                contractAmount: $totalAmountWithGp,
+                gpPercentage: $gpPercentage,
+                gpAmount: $gpAmount,
+                warrantyRetentionAmount: $warrantyRetentionAmount,
+                amountToPay: $amountToPay,
+                advancePaid: $totalAdvancePaid,
+                factPaid: $totalFactPaid,
+                deferredPaid: $totalDeferredPaid,
+                totalPaid: $totalPaid,
+                remainingToPay: $remainingToPay,
+                performedAmount: $totalPerformed,
+                remainingToPerform: $remainingToPerform,
+                notes: $firstNotes
+            );
         }
 
         // Сортировка по дате реестра
