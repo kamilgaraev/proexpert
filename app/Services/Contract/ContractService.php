@@ -311,7 +311,7 @@ class ContractService
         return $this->stateEventService;
     }
 
-    public function getContractById(int $contractId, int $organizationId): ?Contract
+    public function getContractById(int $contractId, int $organizationId, ?int $projectId = null): ?Contract
     {
         $contract = $this->contractRepository->find($contractId);
         if (!$contract) {
@@ -371,17 +371,27 @@ class ContractService
             'source_organization_id' => $contract->contractor->source_organization_id ?? null
         ]);
         
-        return $contract->load([
+        $contract->load([
             'contractor', 
             'project', 
             'project.organization',           // Для customer (заказчик)
             'projects',                       // Проекты для мультипроектных контрактов
             'agreements',                     // Дополнительные соглашения
             'specifications',                 // Спецификации
-            'performanceActs',
-            'performanceActs.completedWorks'
-            // 'payments' - УДАЛЕНО: платежи теперь в модуле Payments (invoices)
         ]);
+        
+        // Загружаем акты с фильтрацией по project_id если указан
+        if ($projectId !== null) {
+            $contract->load(['performanceActs' => function($query) use ($projectId) {
+                $query->where('project_id', $projectId);
+            }, 'performanceActs.completedWorks']);
+        } else {
+            $contract->load(['performanceActs', 'performanceActs.completedWorks']);
+        }
+        
+        // 'payments' - УДАЛЕНО: платежи теперь в модуле Payments (invoices)
+        
+        return $contract;
     }
 
     public function updateContract(int $contractId, int $organizationId, ContractDTO $contractDTO): Contract
@@ -648,7 +658,7 @@ class ContractService
     /**
      * Получить полную детальную информацию по контракту
      */
-    public function getFullContractDetails(int $contractId, int $organizationId): array
+    public function getFullContractDetails(int $contractId, int $organizationId, ?int $projectId = null): array
     {
         $contract = $this->contractRepository->find($contractId);
         
@@ -661,10 +671,6 @@ class ContractService
             'contractor:id,name,legal_address,inn,kpp,phone,email',
             'project:id,name,address,description',
             'parentContract:id,number,total_amount,status',
-            'performanceActs:id,contract_id,act_document_number,act_date,amount,description,is_approved,approval_date',
-            'performanceActs.completedWorks:id,work_type_id,user_id,quantity,total_amount,status,completion_date',
-            'performanceActs.completedWorks.workType:id,name',
-            'performanceActs.completedWorks.user:id,name',
             // 'payments' - УДАЛЕНО: платежи теперь в модуле Payments (invoices)
             'completedWorks:id,contract_id,work_type_id,user_id,quantity,total_amount,status,completion_date',
             'completedWorks.workType:id,name',
@@ -673,6 +679,24 @@ class ContractService
             'agreements:id,contract_id,number,agreement_date,change_amount,subject_changes,supersede_agreement_ids,created_at,updated_at',
             'specifications:id,number,spec_date,total_amount,status,scope_items'
         ]);
+        
+        // Загружаем акты с фильтрацией по project_id если указан
+        if ($projectId !== null) {
+            $contract->load(['performanceActs' => function($query) use ($projectId) {
+                $query->where('project_id', $projectId)
+                      ->select('id', 'contract_id', 'project_id', 'act_document_number', 'act_date', 'amount', 'description', 'is_approved', 'approval_date');
+            }, 
+            'performanceActs.completedWorks:id,work_type_id,user_id,quantity,total_amount,status,completion_date',
+            'performanceActs.completedWorks.workType:id,name',
+            'performanceActs.completedWorks.user:id,name']);
+        } else {
+            $contract->load([
+                'performanceActs:id,contract_id,project_id,act_document_number,act_date,amount,description,is_approved,approval_date',
+                'performanceActs.completedWorks:id,work_type_id,user_id,quantity,total_amount,status,completion_date',
+                'performanceActs.completedWorks.workType:id,name',
+                'performanceActs.completedWorks.user:id,name'
+            ]);
+        }
 
         // Принудительно загружаем дочерние контракты отдельно
         $contract->setRelation('childContracts', 
