@@ -205,6 +205,9 @@ Route::prefix('v1/admin')->name('admin.')->group(function () {
         // Контракты (включая allocations)
         require __DIR__ . '/api/v1/admin/contracts.php';
         
+        // Общий журнал работ (ОЖР, форма КС-6)
+        require __DIR__ . '/api/construction-journal.php';
+        
         // OLD ROUTES - Закомментированы для Project-Based RBAC
         // Используйте новые маршруты: /api/v1/admin/projects/{project}/...
         // require __DIR__ . '/api/v1/admin/completed_works.php';

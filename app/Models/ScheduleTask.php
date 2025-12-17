@@ -176,6 +176,31 @@ class ScheduleTask extends Model
         return $this->belongsTo(EstimateSection::class);
     }
 
+    /**
+     * Записи журнала работ, связанные с этой задачей
+     */
+    public function journalEntries(): HasMany
+    {
+        return $this->hasMany(ConstructionJournalEntry::class, 'schedule_task_id');
+    }
+
+    /**
+     * Синхронизировать прогресс задачи на основе записей журнала
+     */
+    public function syncProgressFromJournalEntries(): void
+    {
+        $approvedEntries = $this->journalEntries()
+            ->where('status', \App\Enums\ConstructionJournal\JournalEntryStatusEnum::APPROVED)
+            ->get();
+
+        if ($approvedEntries->isEmpty()) {
+            return;
+        }
+
+        // Логика расчета прогресса будет в JournalScheduleIntegrationService
+        event(new \App\BusinessModules\Features\ScheduleManagement\Events\ScheduleProgressUpdated($this));
+    }
+
     public function measurementUnit(): BelongsTo
     {
         return $this->belongsTo(MeasurementUnit::class);

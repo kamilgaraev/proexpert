@@ -168,10 +168,21 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         // События будут зарегистрированы через EventServiceProvider
         // Или можно зарегистрировать здесь напрямую:
         
-        // Event::listen(
-        //     \App\BusinessModules\Features\BudgetEstimates\Events\EstimateCreated::class,
-        //     \App\BusinessModules\Features\BudgetEstimates\Listeners\UpdateProjectBudget::class
-        // );
+        // Listeners для журнала работ (ОЖР)
+        \Illuminate\Support\Facades\Event::listen(
+            \App\BusinessModules\Features\BudgetEstimates\Events\JournalEntryApproved::class,
+            \App\BusinessModules\Features\BudgetEstimates\Listeners\UpdateScheduleProgressFromJournal::class
+        );
+        
+        \Illuminate\Support\Facades\Event::listen(
+            \App\BusinessModules\Features\BudgetEstimates\Events\JournalEntrySubmitted::class,
+            \App\BusinessModules\Features\BudgetEstimates\Listeners\NotifyAboutPendingApprovals::class
+        );
+        
+        \Illuminate\Support\Facades\Event::listen(
+            \App\BusinessModules\Features\BudgetEstimates\Events\JournalWorkVolumesRecorded::class,
+            \App\BusinessModules\Features\BudgetEstimates\Listeners\UpdateEstimateActualVolumes::class
+        );
     }
 
     /**

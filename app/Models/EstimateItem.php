@@ -147,6 +147,39 @@ class EstimateItem extends Model
         return $this->hasMany(EstimateItemResource::class);
     }
 
+    /**
+     * Фактические объемы работ из журнала работ
+     */
+    public function journalWorkVolumes(): HasMany
+    {
+        return $this->hasMany(JournalWorkVolume::class);
+    }
+
+    /**
+     * Получить сумму фактических объемов из журнала работ
+     */
+    public function getActualVolume(): float
+    {
+        return (float) $this->journalWorkVolumes()
+            ->whereHas('journalEntry', function ($query) {
+                $query->where('status', \App\Enums\ConstructionJournal\JournalEntryStatusEnum::APPROVED);
+            })
+            ->sum('quantity');
+    }
+
+    /**
+     * Получить процент выполнения позиции сметы
+     */
+    public function getCompletionPercentage(): float
+    {
+        if (!$this->quantity_total || $this->quantity_total == 0) {
+            return 0;
+        }
+
+        $actualVolume = $this->getActualVolume();
+        return min(100, ($actualVolume / $this->quantity_total) * 100);
+    }
+
     public function scopeByEstimate($query, int $estimateId)
     {
         return $query->where('estimate_id', $estimateId);
