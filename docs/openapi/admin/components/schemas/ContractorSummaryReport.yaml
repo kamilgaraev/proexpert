@@ -132,6 +132,11 @@ properties:
           format: float
           description: Сумма платежей
           example: 3500000.00
+        remaining_to_complete:
+          type: number
+          format: float
+          description: Остаток к выполнению
+          example: 1000000.00
         remaining_amount:
           type: number
           format: float
@@ -147,7 +152,7 @@ properties:
           format: float
           description: Процент оплаты
           example: 70.0
-      required: [contractor_id, contractor_name, contracts_count, total_contract_amount, total_completed_amount, total_payment_amount, remaining_amount, completion_percentage, payment_percentage]
+      required: [contractor_id, contractor_name, contracts_count, total_contract_amount, total_completed_amount, total_payment_amount, remaining_to_complete, remaining_amount, completion_percentage, payment_percentage]
   generated_at:
     type: string
     format: date-time
