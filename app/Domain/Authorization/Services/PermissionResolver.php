@@ -190,36 +190,47 @@ class PermissionResolver
 
         [$module, $action] = $parts;
         
+        // Маппинг модулей: schedule.* -> schedule-management.*
+        $moduleMapping = [
+            'schedule' => 'schedule-management',
+        ];
+        
+        $modulesToCheck = [$module];
+        if (isset($moduleMapping[$module])) {
+            $modulesToCheck[] = $moduleMapping[$module];
+        }
+        
         $this->logging->technical('permission.module.parsed', [
             'module' => $module,
             'action' => $action,
             'organization_id' => $organizationId,
+            'modules_to_check' => $modulesToCheck,
         ]);
         
-        $cacheKey = "module_active_{$module}_{$organizationId}";
-        $isActive = Cache::remember($cacheKey, 300, function () use ($module, $organizationId) {
-            return $this->moduleChecker->isModuleActive($module, $organizationId);
-        });
-        
-        $this->logging->technical('permission.module.active_check', [
-            'module' => $module,
-            'is_active' => $isActive,
-        ]);
-        
-        if (!$isActive) {
-            $this->logging->technical('permission.module.denied.not_active', [
-                'module' => $module,
-            ]);
-            return false;
-        }
-
         $modulePermissions = $this->getModulePermissions($assignment);
         
-        $this->logging->technical('permission.module.permissions_retrieved', [
-            'module_permissions' => $modulePermissions,
-        ]);
+        // Проверяем каждый модуль из списка
+        foreach ($modulesToCheck as $moduleToCheck) {
+            $cacheKey = "module_active_{$moduleToCheck}_{$organizationId}";
+            $isActive = Cache::remember($cacheKey, 300, function () use ($moduleToCheck, $organizationId) {
+                return $this->moduleChecker->isModuleActive($moduleToCheck, $organizationId);
+            });
+            
+            $this->logging->technical('permission.module.active_check', [
+                'module' => $moduleToCheck,
+                'is_active' => $isActive,
+            ]);
+            
+            if (!$isActive) {
+                continue;
+            }
+            
+            if ($this->checkModulePermission($modulePermissions, $moduleToCheck, $action)) {
+                return true;
+            }
+        }
         
-        return $this->checkModulePermission($modulePermissions, $module, $action);
+        return false;
     }
 
     /**
