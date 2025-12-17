@@ -278,18 +278,57 @@ class UserPermissionsController extends Controller
     protected function getModulePermissions(string $moduleSlug): array
     {
         try {
+            // Сначала пытаемся получить права из базы данных (наиболее надежный способ)
+            $module = \App\Models\Module::where('slug', $moduleSlug)->first();
+            if ($module && $module->permissions) {
+                Log::debug("Права модуля {$moduleSlug} загружены из БД", [
+                    'count' => count($module->permissions),
+                    'permissions' => $module->permissions
+                ]);
+                return $module->permissions;
+            }
+
+            // Если в БД нет, ищем в файлах конфигурации
+            // Рекурсивно ищем во всех подпапках ModuleList
+            $configPath = config_path('ModuleList');
+            if (is_dir($configPath)) {
+                $finder = new \Symfony\Component\Finder\Finder();
+                $finder->files()
+                    ->name("{$moduleSlug}.json")
+                    ->in($configPath);
+
+                foreach ($finder as $file) {
+                    $config = json_decode($file->getContents(), true);
+                    if ($config && isset($config['permissions'])) {
+                        return $config['permissions'];
+                    }
+                }
+            }
+
+            // Fallback: проверяем стандартные пути для обратной совместимости
             $configPaths = [
                 base_path("config/ModuleList/core/{$moduleSlug}.json"),
                 base_path("config/ModuleList/premium/{$moduleSlug}.json"),
                 base_path("config/ModuleList/enterprise/{$moduleSlug}.json"),
+                base_path("config/ModuleList/features/{$moduleSlug}.json"),
+                base_path("config/ModuleList/addons/{$moduleSlug}.json"),
+                base_path("config/ModuleList/services/{$moduleSlug}.json"),
             ];
 
             foreach ($configPaths as $path) {
                 if (file_exists($path)) {
                     $config = json_decode(file_get_contents($path), true);
-                    return $config['permissions'] ?? [];
+                    if ($config && isset($config['permissions'])) {
+                        Log::debug("Права модуля {$moduleSlug} загружены из файла", [
+                            'path' => $path,
+                            'count' => count($config['permissions'])
+                        ]);
+                        return $config['permissions'];
+                    }
                 }
             }
+
+            Log::warning("Права модуля {$moduleSlug} не найдены ни в БД, ни в файлах конфигурации");
         } catch (\Exception $e) {
             Log::warning("Не удалось загрузить права модуля {$moduleSlug}: " . $e->getMessage());
         }
