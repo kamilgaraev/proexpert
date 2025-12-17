@@ -778,7 +778,7 @@ class ContractorReportService
             
             // Статусы и проверки
             'is_overdue' => $contract->is_overdue ?? false,
-            'is_nearing_limit' => $contract->is_nearing_limit() ?? false,
+            'is_nearing_limit' => $contract->isNearingLimit() ?? false,
             
             // Дополнительные соглашения
             'agreements' => $agreements,
