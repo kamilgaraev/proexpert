@@ -50,8 +50,28 @@ class AuthServiceProvider extends ServiceProvider
             
             // Пропускаем model policy abilities (view, create, update, delete, etc)
             // чтобы они обрабатывались через зарегистрированные Policy классы
-            if (!empty($arguments) && is_object($arguments[0])) {
-                return null;
+            if (!empty($arguments)) {
+                // Если первый аргумент - объект модели, пропускаем в Policy
+                if (is_object($arguments[0])) {
+                    return null;
+                }
+                
+                // Если первый аргумент - строка класса модели, зарегистрированная в policies, пропускаем в Policy
+                if (is_string($arguments[0]) && isset($this->policies[$arguments[0]])) {
+                    return null;
+                }
+                
+                // Если arguments - массив и содержит объект модели, пропускаем в Policy
+                if (is_array($arguments)) {
+                    foreach ($arguments as $arg) {
+                        if (is_object($arg)) {
+                            $modelClass = get_class($arg);
+                            if (isset($this->policies[$modelClass])) {
+                                return null;
+                            }
+                        }
+                    }
+                }
             }
             
             $authorizationService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
