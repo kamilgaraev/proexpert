@@ -12,7 +12,7 @@ use App\Http\Controllers\Api\V1\Admin\Geo\GeocodingController;
 |
 */
 
-Route::middleware(['auth:sanctum'])->group(function () {
+Route::middleware(['auth:api_admin'])->group(function () {
     // Geocoding status and statistics
     Route::get('/projects/geocoding-status', [GeocodingController::class, 'getStatistics'])
         ->name('projects.geocoding.status');
