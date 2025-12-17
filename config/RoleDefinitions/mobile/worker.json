@@ -68,6 +68,9 @@
     "payments": [
       "payments.invoice.view",
       "payments.transaction.view"
+    ],
+    "construction-journal": [
+      "construction-journal.view"
     ]
   },
   

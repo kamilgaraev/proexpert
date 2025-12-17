@@ -10,6 +10,20 @@ use App\Models\Project;
 class ConstructionJournalPolicy
 {
     /**
+     * Проверка наличия прав модуля
+     */
+    private function hasModulePermission(User $user, array $permissions): bool
+    {
+        foreach ($permissions as $permission) {
+            if ($user->hasPermission("construction-journal.{$permission}")) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
      * Просмотр списка журналов проекта
      */
     public function viewAny(User $user, Project $project): bool
@@ -19,7 +33,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $user->can('construction-journal.view');
+        return $this->hasModulePermission($user, ['view', '*']);
     }
 
     /**
@@ -32,7 +46,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $user->can('construction-journal.view');
+        return $this->hasModulePermission($user, ['view', '*']);
     }
 
     /**
@@ -45,7 +59,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $user->can('construction-journal.create');
+        return $this->hasModulePermission($user, ['create', '*']);
     }
 
     /**
@@ -63,7 +77,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $user->can('construction-journal.edit');
+        return $this->hasModulePermission($user, ['edit', '*']);
     }
 
     /**
@@ -76,7 +90,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $user->can('construction-journal.delete');
+        return $this->hasModulePermission($user, ['delete', '*']);
     }
 
     /**
@@ -89,7 +103,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $user->can('construction-journal.export');
+        return $this->hasModulePermission($user, ['export', '*']);
     }
 }
 
