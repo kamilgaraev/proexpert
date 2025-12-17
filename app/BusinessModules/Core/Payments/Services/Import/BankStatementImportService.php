@@ -87,19 +87,27 @@ class BankStatementImportService
 
         $contractor = $this->findContractor($isIncoming ? $payerInn : $payeeInn);
 
+        // TODO: Требуется доработка - необходимо создавать PaymentDocument для импортируемых операций
+        // так как payment_document_id является обязательным полем в payment_transactions
+        // В текущей версии этот функционал неактивен
+        
+        throw new \RuntimeException(
+            'BankStatementImportService требует доработки: необходимо создавать PaymentDocument для каждой импортируемой операции'
+        );
+
         // Create Transaction
-        PaymentTransaction::create([
-            'organization_id' => $organizationId,
-            'amount' => $amount,
-            'transaction_date' => $date,
-            'reference_number' => $number,
-            'payment_method' => 'bank_transfer',
-            'status' => 'completed',
-            'description' => $docData['НазначениеПлатежа'] ?? '',
-            'payer_contractor_id' => $isIncoming ? $contractor?->id : null,
-            'payee_contractor_id' => !$isIncoming ? $contractor?->id : null,
-            'metadata' => $docData,
-        ]);
+        // PaymentTransaction::create([
+        //     'organization_id' => $organizationId,
+        //     'amount' => $amount,
+        //     'transaction_date' => $date,
+        //     'reference_number' => $number,
+        //     'payment_method' => 'bank_transfer',
+        //     'status' => 'completed',
+        //     'notes' => $docData['НазначениеПлатежа'] ?? '',
+        //     'payer_contractor_id' => $isIncoming ? $contractor?->id : null,
+        //     'payee_contractor_id' => !$isIncoming ? $contractor?->id : null,
+        //     'metadata' => $docData,
+        // ]);
 
         return true;
     }
