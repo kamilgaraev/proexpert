@@ -38,6 +38,10 @@ return [
         'label' => 'Оплачено',
         'type' => 'money'
     ],
+    'remaining_to_complete' => [
+        'label' => 'Остаток к выполнению',
+        'type' => 'money'
+    ],
     'remaining_amount' => [
         'label' => 'Остаток к оплате',
         'type' => 'money'

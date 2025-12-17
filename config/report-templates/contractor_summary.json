@@ -90,21 +90,27 @@
         "format_options": {"type": "money"}
       },
       {
+        "header": "Остаток к выполнению",
+        "data_key": "remaining_to_complete",
+        "order": 9,
+        "format_options": {"type": "money"}
+      },
+      {
         "header": "Остаток к доплате",
         "data_key": "remaining_amount",
-        "order": 9,
+        "order": 10,
         "format_options": {"type": "money"}
       },
       {
         "header": "Процент выполнения",
         "data_key": "completion_percentage",
-        "order": 10,
+        "order": 11,
         "format_options": {"type": "percentage"}
       },
       {
         "header": "Процент оплаты",
         "data_key": "payment_percentage",
-        "order": 11,
+        "order": 12,
         "format_options": {"type": "percentage"}
       }
     ]
@@ -169,21 +175,27 @@
         "format_options": {"type": "money"}
       },
       {
+        "header": "Остаток к выполнению",
+        "data_key": "remaining_to_complete",
+        "order": 10,
+        "format_options": {"type": "money"}
+      },
+      {
         "header": "Остаток к доплате",
         "data_key": "remaining_amount",
-        "order": 10,
+        "order": 11,
         "format_options": {"type": "money"}
       },
       {
         "header": "Процент выполнения",
         "data_key": "completion_percentage",
-        "order": 11,
+        "order": 12,
         "format_options": {"type": "percentage"}
       },
       {
         "header": "Процент оплаты",
         "data_key": "payment_percentage",
-        "order": 12,
+        "order": 13,
         "format_options": {"type": "percentage"}
       }
     ]
