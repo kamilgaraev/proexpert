@@ -269,6 +269,14 @@ class Project extends Model
     }
 
     /**
+     * Журналы работ проекта
+     */
+    public function journals(): HasMany
+    {
+        return $this->hasMany(ConstructionJournal::class);
+    }
+
+    /**
      * Получить используемые в проекте виды работ через CompletedWork.
      */
     public function workTypes()

@@ -743,4 +743,356 @@ class OfficialFormsExportService
             'project' => $contract->project,
         ];
     }
+
+    // === EXPORT KS-6 (CONSTRUCTION JOURNAL) ===
+
+    public function exportKS6ToExcel(\App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): string
+    {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        $this->setKS6Header($sheet, $journal, $from, $to);
+        $this->setKS6Items($sheet, $journal, $from, $to);
+        $this->setKS6Footer($sheet, $journal);
+        $this->applyKS6Styles($sheet);
+
+        $journalNumber = $journal->journal_number ?? $journal->id;
+        $filename = "KS-6_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.xlsx";
+        $tempPath = storage_path("app/temp/{$filename}");
+
+        if (!file_exists(dirname($tempPath))) {
+            mkdir(dirname($tempPath), 0755, true);
+        }
+
+        $writer = new Xlsx($spreadsheet);
+        $writer->save($tempPath);
+
+        return $tempPath;
+    }
+
+    public function exportKS6ToPdf(\App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): string
+    {
+        $data = $this->prepareKS6Data($journal, $from, $to);
+        
+        $pdf = Pdf::loadView('estimates.exports.ks6', $data);
+        
+        $journalNumber = $journal->journal_number ?? $journal->id;
+        $filename = "KS-6_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.pdf";
+        $tempPath = storage_path("app/temp/{$filename}");
+
+        if (!file_exists(dirname($tempPath))) {
+            mkdir(dirname($tempPath), 0755, true);
+        }
+
+        $pdf->save($tempPath);
+
+        return $tempPath;
+    }
+
+    public function exportDailyReportToPdf(\App\Models\ConstructionJournalEntry $entry): string
+    {
+        $data = [
+            'entry' => $entry->load([
+                'journal.project',
+                'scheduleTask',
+                'createdBy',
+                'approvedBy',
+                'workVolumes.estimateItem',
+                'workVolumes.workType',
+                'workers',
+                'equipment',
+                'materials'
+            ]),
+        ];
+        
+        $pdf = Pdf::loadView('estimates.exports.journal_daily_report', $data);
+        
+        $journalNumber = $entry->journal->journal_number ?? $entry->journal_id;
+        $filename = "Daily_Report_{$journalNumber}_{$entry->entry_date->format('Ymd')}_{$entry->entry_number}.pdf";
+        $tempPath = storage_path("app/temp/{$filename}");
+
+        if (!file_exists(dirname($tempPath))) {
+            mkdir(dirname($tempPath), 0755, true);
+        }
+
+        $pdf->save($tempPath);
+
+        return $tempPath;
+    }
+
+    public function exportExtendedReportToExcel(\App\Models\ConstructionJournal $journal, array $options): string
+    {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        $from = \Carbon\Carbon::parse($options['date_from']);
+        $to = \Carbon\Carbon::parse($options['date_to']);
+
+        $this->setExtendedReportHeader($sheet, $journal, $from, $to);
+        $this->setExtendedReportData($sheet, $journal, $from, $to, $options);
+        $this->applyExtendedReportStyles($sheet);
+
+        $journalNumber = $journal->journal_number ?? $journal->id;
+        $filename = "Extended_Report_{$journalNumber}_{$from->format('Ymd')}_{$to->format('Ymd')}.xlsx";
+        $tempPath = storage_path("app/temp/{$filename}");
+
+        if (!file_exists(dirname($tempPath))) {
+            mkdir(dirname($tempPath), 0755, true);
+        }
+
+        $writer = new Xlsx($spreadsheet);
+        $writer->save($tempPath);
+
+        return $tempPath;
+    }
+
+    // === KS-6 HELPER METHODS ===
+
+    protected function setKS6Header($sheet, \App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): void
+    {
+        $row = 1;
+        
+        $sheet->setCellValue("A{$row}", 'ОБЩИЙ ЖУРНАЛ РАБОТ (форма КС-6)');
+        $sheet->mergeCells("A{$row}:H{$row}");
+        $row++;
+        
+        $sheet->setCellValue("A{$row}", 'Утверждена постановлением Госкомстата России от 11.11.99 № 100');
+        $sheet->mergeCells("A{$row}:H{$row}");
+        $row += 2;
+        
+        $project = $journal->project;
+        $sheet->setCellValue("A{$row}", 'Объект: ' . ($project->name ?? ''));
+        $sheet->mergeCells("A{$row}:H{$row}");
+        $row++;
+        
+        $sheet->setCellValue("A{$row}", 'Журнал № ' . ($journal->journal_number ?? $journal->id));
+        $sheet->mergeCells("A{$row}:H{$row}");
+        $row++;
+        
+        $sheet->setCellValue("A{$row}", "Период: с {$from->format('d.m.Y')} по {$to->format('d.m.Y')}");
+        $sheet->mergeCells("A{$row}:H{$row}");
+        $row += 2;
+        
+        // Заголовки таблицы
+        $sheet->setCellValue("A{$row}", '№ записи');
+        $sheet->setCellValue("B{$row}", 'Дата');
+        $sheet->setCellValue("C{$row}", 'Описание работ');
+        $sheet->setCellValue("D{$row}", 'Объем работ');
+        $sheet->setCellValue("E{$row}", 'Рабочие');
+        $sheet->setCellValue("F{$row}", 'Оборудование');
+        $sheet->setCellValue("G{$row}", 'Погодные условия');
+        $sheet->setCellValue("H{$row}", 'Статус');
+    }
+
+    protected function setKS6Items($sheet, \App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): void
+    {
+        $startRow = $sheet->getHighestRow() + 1;
+        $row = $startRow;
+
+        $entries = $journal->entries()
+            ->whereBetween('entry_date', [$from, $to])
+            ->with(['workVolumes', 'workers', 'equipment', 'createdBy'])
+            ->orderBy('entry_date')
+            ->orderBy('entry_number')
+            ->get();
+
+        foreach ($entries as $entry) {
+            $sheet->setCellValue("A{$row}", $entry->entry_number);
+            $sheet->setCellValue("B{$row}", $entry->entry_date->format('d.m.Y'));
+            $sheet->setCellValue("C{$row}", $entry->work_description);
+            
+            $volumesText = $entry->workVolumes->map(function ($v) {
+                return $v->quantity . ' ' . ($v->measurementUnit?->short_name ?? '');
+            })->implode(', ');
+            $sheet->setCellValue("D{$row}", $volumesText);
+            
+            $workersText = $entry->workers->map(function ($w) {
+                return $w->specialty . ': ' . $w->workers_count;
+            })->implode(', ');
+            $sheet->setCellValue("E{$row}", $workersText);
+            
+            $equipmentText = $entry->equipment->map(function ($e) {
+                return $e->equipment_name;
+            })->implode(', ');
+            $sheet->setCellValue("F{$row}", $equipmentText);
+            
+            $weather = $entry->weather_conditions;
+            $weatherText = $weather ? ($weather['temperature'] ?? '') . '°C, ' . ($weather['precipitation'] ?? '') : '';
+            $sheet->setCellValue("G{$row}", $weatherText);
+            
+            $sheet->setCellValue("H{$row}", $entry->status->label());
+            
+            $row++;
+        }
+    }
+
+    protected function setKS6Footer($sheet, \App\Models\ConstructionJournal $journal): void
+    {
+        $lastRow = $sheet->getHighestRow();
+        $row = $lastRow + 2;
+
+        $sheet->setCellValue("A{$row}", 'Ответственный за ведение журнала:');
+        $row++;
+        $sheet->setCellValue("A{$row}", $journal->createdBy?->name ?? '');
+        $sheet->setCellValue("D{$row}", '_______________');
+        $sheet->setCellValue("E{$row}", 'подпись');
+    }
+
+    protected function applyKS6Styles($sheet): void
+    {
+        $highestRow = $sheet->getHighestRow();
+        
+        // Заголовок
+        $sheet->getStyle('A1:H1')->getFont()->setBold(true)->setSize(14);
+        $sheet->getStyle('A1:H1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        
+        // Заголовки таблицы
+        $headerRow = 8;
+        $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getFont()->setBold(true);
+        $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        $sheet->getStyle("A{$headerRow}:H{$headerRow}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+        
+        // Данные
+        for ($row = $headerRow + 1; $row <= $highestRow; $row++) {
+            $sheet->getStyle("A{$row}:H{$row}")->getBorders()->getAllBorders()->setBorderStyle(Border::BORDER_THIN);
+            $sheet->getStyle("A{$row}:H{$row}")->getAlignment()->setWrapText(true);
+        }
+        
+        // Ширина колонок
+        $sheet->getColumnDimension('A')->setWidth(10);
+        $sheet->getColumnDimension('B')->setWidth(12);
+        $sheet->getColumnDimension('C')->setWidth(40);
+        $sheet->getColumnDimension('D')->setWidth(20);
+        $sheet->getColumnDimension('E')->setWidth(20);
+        $sheet->getColumnDimension('F')->setWidth(20);
+        $sheet->getColumnDimension('G')->setWidth(15);
+        $sheet->getColumnDimension('H')->setWidth(15);
+    }
+
+    protected function prepareKS6Data(\App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): array
+    {
+        $entries = $journal->entries()
+            ->whereBetween('entry_date', [$from, $to])
+            ->with(['workVolumes.estimateItem', 'workers', 'equipment', 'materials', 'createdBy', 'approvedBy'])
+            ->orderBy('entry_date')
+            ->orderBy('entry_number')
+            ->get();
+
+        return [
+            'journal' => $journal->load('project', 'contract', 'createdBy'),
+            'entries' => $entries,
+            'period_from' => $from,
+            'period_to' => $to,
+        ];
+    }
+
+    protected function setExtendedReportHeader($sheet, \App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to): void
+    {
+        $row = 1;
+        $sheet->setCellValue("A{$row}", 'РАСШИРЕННЫЙ ОТЧЕТ ПО ЖУРНАЛУ РАБОТ');
+        $sheet->mergeCells("A{$row}:J{$row}");
+        $row += 2;
+        
+        $sheet->setCellValue("A{$row}", 'Проект: ' . ($journal->project->name ?? ''));
+        $sheet->mergeCells("A{$row}:J{$row}");
+        $row++;
+        
+        $sheet->setCellValue("A{$row}", "Период: с {$from->format('d.m.Y')} по {$to->format('d.m.Y')}");
+        $sheet->mergeCells("A{$row}:J{$row}");
+        $row += 2;
+    }
+
+    protected function setExtendedReportData($sheet, \App\Models\ConstructionJournal $journal, \Carbon\Carbon $from, \Carbon\Carbon $to, array $options): void
+    {
+        $row = $sheet->getHighestRow() + 1;
+        
+        $entries = $journal->entries()
+            ->whereBetween('entry_date', [$from, $to])
+            ->approved()
+            ->with(['workVolumes', 'workers', 'equipment', 'materials'])
+            ->get();
+
+        // Сводная статистика
+        $sheet->setCellValue("A{$row}", 'СВОДНАЯ СТАТИСТИКА');
+        $sheet->mergeCells("A{$row}:J{$row}");
+        $row += 2;
+        
+        $totalEntries = $entries->count();
+        $totalWorkers = $entries->sum(function ($e) { return $e->workers->sum('workers_count'); });
+        $totalWorkHours = $entries->sum(function ($e) { return $e->workers->sum('hours_worked'); });
+        
+        $sheet->setCellValue("A{$row}", 'Всего записей:');
+        $sheet->setCellValue("B{$row}", $totalEntries);
+        $row++;
+        
+        $sheet->setCellValue("A{$row}", 'Всего рабочих:');
+        $sheet->setCellValue("B{$row}", $totalWorkers);
+        $row++;
+        
+        $sheet->setCellValue("A{$row}", 'Всего человеко-часов:');
+        $sheet->setCellValue("B{$row}", $totalWorkHours);
+        $row += 2;
+        
+        // Детализация по объемам
+        if ($options['include_materials'] ?? true) {
+            $this->addMaterialsSummary($sheet, $row, $entries);
+        }
+    }
+
+    protected function addMaterialsSummary($sheet, &$row, $entries): void
+    {
+        $sheet->setCellValue("A{$row}", 'ИСПОЛЬЗОВАННЫЕ МАТЕРИАЛЫ');
+        $sheet->mergeCells("A{$row}:D{$row}");
+        $row++;
+        
+        $sheet->setCellValue("A{$row}", 'Материал');
+        $sheet->setCellValue("B{$row}", 'Количество');
+        $sheet->setCellValue("C{$row}", 'Ед. изм.');
+        $sheet->setCellValue("D{$row}", 'Записей');
+        $row++;
+        
+        $materialsSummary = [];
+        foreach ($entries as $entry) {
+            foreach ($entry->materials as $material) {
+                $key = $material->material_name . '_' . $material->measurement_unit;
+                if (!isset($materialsSummary[$key])) {
+                    $materialsSummary[$key] = [
+                        'name' => $material->material_name,
+                        'quantity' => 0,
+                        'unit' => $material->measurement_unit,
+                        'count' => 0,
+                    ];
+                }
+                $materialsSummary[$key]['quantity'] += $material->quantity;
+                $materialsSummary[$key]['count']++;
+            }
+        }
+        
+        foreach ($materialsSummary as $material) {
+            $sheet->setCellValue("A{$row}", $material['name']);
+            $sheet->setCellValue("B{$row}", $material['quantity']);
+            $sheet->setCellValue("C{$row}", $material['unit']);
+            $sheet->setCellValue("D{$row}", $material['count']);
+            $row++;
+        }
+        
+        $row += 2;
+    }
+
+    protected function applyExtendedReportStyles($sheet): void
+    {
+        $highestRow = $sheet->getHighestRow();
+        
+        $sheet->getStyle('A1:J1')->getFont()->setBold(true)->setSize(14);
+        $sheet->getStyle('A1:J1')->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
+        
+        for ($row = 1; $row <= $highestRow; $row++) {
+            $sheet->getStyle("A{$row}:J{$row}")->getAlignment()->setWrapText(true);
+        }
+        
+        $sheet->getColumnDimension('A')->setWidth(30);
+        $sheet->getColumnDimension('B')->setWidth(15);
+        $sheet->getColumnDimension('C')->setWidth(15);
+        $sheet->getColumnDimension('D')->setWidth(10);
+    }
 }
