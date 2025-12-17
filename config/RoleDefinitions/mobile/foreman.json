@@ -95,7 +95,7 @@
       "site_requests.templates.manage",
       "site_requests.calendar.view"
     ],
-    "construction-journal": [
+    "budget-estimates": [
       "construction-journal.view",
       "construction-journal.create",
       "construction-journal.edit",
