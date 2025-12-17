@@ -20,7 +20,7 @@ class ConstructionJournalController extends Controller
      */
     public function index(Request $request, Project $project): JsonResponse
     {
-        $this->authorize('view', [ConstructionJournal::class, $project]);
+        $this->authorize('viewAny', [ConstructionJournal::class, $project]);
 
         $journals = $project->journals()
             ->with(['contract', 'createdBy'])
