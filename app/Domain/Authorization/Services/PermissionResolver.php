@@ -191,8 +191,10 @@ class PermissionResolver
         [$module, $action] = $parts;
         
         // Маппинг модулей: schedule.* -> schedule-management.*
+        // construction-journal.* -> budget-estimates.* (права ОЖР находятся в модуле сметного дела)
         $moduleMapping = [
             'schedule' => 'schedule-management',
+            'construction-journal' => 'budget-estimates',
         ];
         
         $modulesToCheck = [$module];
