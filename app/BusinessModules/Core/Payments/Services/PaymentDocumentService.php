@@ -12,6 +12,7 @@ use App\BusinessModules\Core\Payments\Events\PaymentDocumentCreated;
 use App\BusinessModules\Core\Payments\Events\PaymentRequestReceived;
 use App\Models\Contract;
 use App\Models\Project;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -29,58 +30,96 @@ class PaymentDocumentService
      */
     public function create(array $data): PaymentDocument
     {
-        DB::beginTransaction();
+        $attempts = 0;
+        $maxAttempts = 3;
+        $wasNumberProvided = isset($data['document_number']);
 
-        try {
-            // Валидация
-            $this->validator->validate($data);
+        while ($attempts < $maxAttempts) {
+            DB::beginTransaction();
 
-            // Генерация номера документа
-            if (!isset($data['document_number'])) {
-                $data['document_number'] = $this->generateDocumentNumber(
-                    $data['organization_id'],
-                    PaymentDocumentType::from($data['document_type'])
-                );
+            try {
+                // Валидация
+                $this->validator->validate($data);
+
+                // Генерация номера документа
+                if (!isset($data['document_number'])) {
+                    $data['document_number'] = $this->generateDocumentNumber(
+                        $data['organization_id'],
+                        PaymentDocumentType::from($data['document_type'])
+                    );
+                }
+
+                // Расчет сумм с НДС
+                $data = $this->calculateAmounts($data);
+
+                // Создание документа
+                $document = PaymentDocument::create($data);
+
+                // Автоматически определяем и кэшируем получателя-организацию
+                $this->detectAndSetRecipientOrganization($document);
+
+                Log::info('payment_document.created', [
+                    'document_id' => $document->id,
+                    'document_number' => $document->document_number,
+                    'document_type' => $document->document_type->value,
+                    'amount' => $document->amount,
+                    'recipient_org_id' => $document->recipient_organization_id,
+                ]);
+
+                // Генерируем событие
+                event(new PaymentDocumentCreated($document));
+                
+                // Для платежных требований - дополнительное событие
+                if ($document->document_type === PaymentDocumentType::PAYMENT_REQUEST && $document->payee_contractor_id) {
+                    event(new PaymentRequestReceived($document, $document->payee_contractor_id));
+                }
+
+                DB::commit();
+                return $document;
+
+            } catch (QueryException $e) {
+                DB::rollBack();
+
+                // SQLSTATE 23505: Unique violation
+                // Проверяем, что ошибка связана именно с номером документа
+                // Поддержка старого и нового имени ограничения
+                $isUniqueViolation = $e->getCode() == '23505';
+                $isDocumentNumberConstraint = str_contains($e->getMessage(), 'payment_documents_document_number_unique') || 
+                                            str_contains($e->getMessage(), 'payment_documents_org_id_doc_num_unique');
+
+                if ($isUniqueViolation && $isDocumentNumberConstraint) {
+                    if (!$wasNumberProvided) {
+                        $attempts++;
+                        unset($data['document_number']); // Сброс номера для новой генерации
+                        
+                        if ($attempts < $maxAttempts) {
+                            // Небольшая задержка перед повтором (100ms, 200ms)
+                            usleep(100000 * $attempts); 
+                            continue;
+                        }
+                    }
+                }
+                
+                Log::error('payment_document.create_failed', [
+                    'data' => $data,
+                    'error' => $e->getMessage(),
+                ]);
+
+                throw $e;
+
+            } catch (\Exception $e) {
+                DB::rollBack();
+                
+                Log::error('payment_document.create_failed', [
+                    'data' => $data,
+                    'error' => $e->getMessage(),
+                ]);
+
+                throw $e;
             }
-
-            // Расчет сумм с НДС
-            $data = $this->calculateAmounts($data);
-
-            // Создание документа
-            $document = PaymentDocument::create($data);
-
-            // Автоматически определяем и кэшируем получателя-организацию
-            $this->detectAndSetRecipientOrganization($document);
-
-            Log::info('payment_document.created', [
-                'document_id' => $document->id,
-                'document_number' => $document->document_number,
-                'document_type' => $document->document_type->value,
-                'amount' => $document->amount,
-                'recipient_org_id' => $document->recipient_organization_id,
-            ]);
-
-            // Генерируем событие
-            event(new PaymentDocumentCreated($document));
-            
-            // Для платежных требований - дополнительное событие
-            if ($document->document_type === PaymentDocumentType::PAYMENT_REQUEST && $document->payee_contractor_id) {
-                event(new PaymentRequestReceived($document, $document->payee_contractor_id));
-            }
-
-            DB::commit();
-            return $document;
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            
-            Log::error('payment_document.create_failed', [
-                'data' => $data,
-                'error' => $e->getMessage(),
-            ]);
-
-            throw $e;
         }
+
+        throw new \Exception("Не удалось создать документ после {$maxAttempts} попыток. Пожалуйста, попробуйте еще раз.");
     }
 
     /**
@@ -521,6 +560,7 @@ class PaymentDocumentService
             ->whereYear('created_at', $year)
             ->whereMonth('created_at', $month)
             ->orderBy('id', 'desc')
+            ->lockForUpdate()
             ->first();
 
         $nextNumber = 1;
