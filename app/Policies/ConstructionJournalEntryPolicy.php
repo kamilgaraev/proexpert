@@ -9,6 +9,20 @@ use App\Models\ConstructionJournalEntry;
 class ConstructionJournalEntryPolicy
 {
     /**
+     * Проверка наличия прав модуля
+     */
+    private function hasModulePermission(User $user, array $permissions): bool
+    {
+        foreach ($permissions as $permission) {
+            if ($user->hasPermission("construction-journal.{$permission}")) {
+                return true;
+            }
+        }
+        
+        return false;
+    }
+
+    /**
      * Просмотр записи журнала
      */
     public function view(User $user, ConstructionJournalEntry $entry): bool
@@ -20,7 +34,7 @@ class ConstructionJournalEntryPolicy
             return false;
         }
 
-        return $user->can('construction-journal.view');
+        return $this->hasModulePermission($user, ['view', '*']);
     }
 
     /**
@@ -38,7 +52,7 @@ class ConstructionJournalEntryPolicy
             return false;
         }
 
-        return $user->can('construction-journal.create');
+        return $this->hasModulePermission($user, ['create', '*']);
     }
 
     /**
@@ -55,7 +69,7 @@ class ConstructionJournalEntryPolicy
 
         // Можно редактировать только свои записи или если есть право редактирования всех
         $isOwner = $entry->created_by_user_id === $user->id;
-        $canEditAll = $user->can('construction-journal.edit_all');
+        $canEditAll = $this->hasModulePermission($user, ['edit_all', '*']);
 
         if (!$isOwner && !$canEditAll) {
             return false;
@@ -66,7 +80,7 @@ class ConstructionJournalEntryPolicy
             return false;
         }
 
-        return $user->can('construction-journal.edit');
+        return $this->hasModulePermission($user, ['edit', '*']);
     }
 
     /**
@@ -83,7 +97,7 @@ class ConstructionJournalEntryPolicy
 
         // Можно удалять только свои записи или если есть право удаления всех
         $isOwner = $entry->created_by_user_id === $user->id;
-        $canDeleteAll = $user->can('construction-journal.delete_all');
+        $canDeleteAll = $this->hasModulePermission($user, ['delete_all', '*']);
 
         if (!$isOwner && !$canDeleteAll) {
             return false;
@@ -94,7 +108,7 @@ class ConstructionJournalEntryPolicy
             return false;
         }
 
-        return $user->can('construction-journal.delete');
+        return $this->hasModulePermission($user, ['delete', '*']);
     }
 
     /**
@@ -114,7 +128,7 @@ class ConstructionJournalEntryPolicy
             return false;
         }
 
-        return $user->can('construction-journal.approve');
+        return $this->hasModulePermission($user, ['approve', '*']);
     }
 }
 

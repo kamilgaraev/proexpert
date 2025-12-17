@@ -93,6 +93,15 @@
       "site_requests.files.upload",
       "site_requests.templates.manage",
       "site_requests.calendar.view"
+    ],
+    "construction-journal": [
+      "construction-journal.view",
+      "construction-journal.create",
+      "construction-journal.edit",
+      "construction-journal.edit_all",
+      "construction-journal.delete_all",
+      "construction-journal.approve",
+      "construction-journal.export"
     ]
   },
   
