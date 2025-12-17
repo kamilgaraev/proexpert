@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::middleware(['auth:sanctum'])->group(function () {
+Route::middleware(['auth:api_admin'])->group(function () {
     
     // Журналы работ
     Route::prefix('projects/{project}')->group(function () {
