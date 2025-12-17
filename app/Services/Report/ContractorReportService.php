@@ -308,6 +308,9 @@ class ContractorReportService
             $contractorType = $contractorType->name;
         }
 
+        // Рассчитываем расширенную статистику
+        $extendedSummary = $this->calculateExtendedSummary($contracts, $contractsData, $projectId);
+
         $result = [
             'title' => 'Детальный отчет по подрядчику',
             'contractor' => [
@@ -316,7 +319,14 @@ class ContractorReportService
                 'contact_person' => $contractor->contact_person,
                 'phone' => $contractor->phone,
                 'email' => $contractor->email,
+                'legal_address' => $contractor->legal_address,
+                'inn' => $contractor->inn,
+                'kpp' => $contractor->kpp,
+                'bank_details' => $contractor->bank_details,
+                'notes' => $contractor->notes,
                 'contractor_type' => $contractorType,
+                'connected_at' => $contractor->connected_at?->toISOString(),
+                'last_sync_at' => $contractor->last_sync_at?->toISOString(),
             ],
             'project' => [
                 'id' => $project->id,
@@ -327,7 +337,7 @@ class ContractorReportService
                 'from' => $dateFrom,
                 'to' => $dateTo,
             ],
-            'summary' => $totalSummary,
+            'summary' => array_merge($totalSummary, $extendedSummary),
             'contracts' => $contractsData,
             'generated_at' => now()->toISOString(),
         ];
@@ -577,7 +587,7 @@ class ContractorReportService
      */
     private function getContractDetailData(Contract $contract, ?string $dateFrom, ?string $dateTo, ?int $projectId = null): array
     {
-        $contract->load('agreements');
+        $contract->load(['agreements', 'estimate', 'completedWorks.workType', 'completedWorks.materials']);
         
         // Получаем акты выполненных работ
         // Для мультипроектных контрактов фильтруем по project_id
@@ -634,30 +644,165 @@ class ContractorReportService
         $payments = $paymentsQuery->get();
         $paymentAmount = $payments->sum('paid_amount') ?? 0;
         
-        $effectiveTotalAmount = $this->calculateSingleContractAmount($contract);
+        $effectiveTotalAmount = $this->calculateSingleContractAmount($contract, $projectId);
+
+        // Получаем выполненные работы
+        $completedWorksQuery = CompletedWork::where('contract_id', $contract->id)
+            ->where('status', 'confirmed');
+        
+        if ($projectId !== null) {
+            $completedWorksQuery->where('project_id', $projectId);
+        }
+
+        if ($dateFrom) {
+            $completedWorksQuery->where('completion_date', '>=', Carbon::parse($dateFrom)->toDateString());
+        }
+
+        if ($dateTo) {
+            $completedWorksQuery->where('completion_date', '<=', Carbon::parse($dateTo)->toDateString());
+        }
+
+        $completedWorks = $completedWorksQuery->with(['workType', 'materials'])->get();
+
+        // Статистика по видам работ
+        $workTypesStats = $completedWorks->groupBy('work_type_id')->map(function ($works) {
+            $firstWork = $works->first();
+            $workType = $firstWork->workType;
+            return [
+                'work_type_id' => $workType?->id,
+                'work_type_name' => $workType?->name ?? 'Не указан',
+                'work_type_code' => $workType?->code,
+                'works_count' => $works->count(),
+                'total_quantity' => round($works->sum('quantity'), 3),
+                'total_amount' => round($works->sum('total_amount'), 2),
+                'average_price' => $works->count() > 0 ? round($works->sum('total_amount') / $works->count(), 2) : 0,
+            ];
+        })->values()->toArray();
+
+        // Статистика по материалам
+        $materialsStats = [];
+        foreach ($completedWorks as $work) {
+            foreach ($work->materials as $material) {
+                $materialId = $material->id;
+                if (!isset($materialsStats[$materialId])) {
+                    $materialsStats[$materialId] = [
+                        'material_id' => $material->id,
+                        'material_name' => $material->name,
+                        'material_unit' => $material->measurement_unit_id,
+                        'total_quantity' => 0,
+                        'total_amount' => 0,
+                    ];
+                }
+                $materialsStats[$materialId]['total_quantity'] += $material->pivot->quantity ?? 0;
+                $materialsStats[$materialId]['total_amount'] += $material->pivot->total_amount ?? 0;
+            }
+        }
+        $materialsStats = array_values($materialsStats);
+
+        // Преобразуем статус контракта
+        $contractStatus = $contract->status;
+        if ($contractStatus instanceof \BackedEnum) {
+            $contractStatus = $contractStatus->value;
+        }
+
+        // Преобразуем work_type_category
+        $workTypeCategory = $contract->work_type_category;
+        if ($workTypeCategory instanceof \BackedEnum) {
+            $workTypeCategory = $workTypeCategory->value;
+        }
+
+        // Дополнительные соглашения
+        $agreements = $contract->agreements->map(function ($agreement) {
+            return [
+                'id' => $agreement->id,
+                'number' => $agreement->number,
+                'agreement_date' => $agreement->agreement_date?->format('Y-m-d'),
+                'change_amount' => round((float) $agreement->change_amount, 2),
+                'subject_changes' => $agreement->subject_changes,
+            ];
+        })->toArray();
+
+        // Информация о смете
+        $estimateInfo = null;
+        if ($contract->estimate) {
+            $estimateInfo = [
+                'id' => $contract->estimate->id,
+                'number' => $contract->estimate->number,
+                'name' => $contract->estimate->name,
+                'total_amount' => round((float) $contract->estimate->total_amount, 2),
+                'estimate_date' => $contract->estimate->estimate_date?->format('Y-m-d'),
+            ];
+        }
+
+        // Рассчитываем GP и другие показатели
+        $baseAmount = (float) ($contract->base_amount ?? $effectiveTotalAmount);
+        $gpAmount = (float) ($contract->gp_amount ?? 0);
+        $warrantyRetentionAmount = (float) ($contract->warranty_retention_amount ?? 0);
 
         return [
             'contract_id' => $contract->id,
             'contract_number' => $contract->number,
             'contract_date' => $contract->date?->format('Y-m-d'),
-            'status' => $contract->status,
+            'subject' => $contract->subject,
+            'status' => $contractStatus,
+            'work_type_category' => $workTypeCategory,
+            'payment_terms' => $contract->payment_terms,
+            'start_date' => $contract->start_date?->format('Y-m-d'),
+            'end_date' => $contract->end_date?->format('Y-m-d'),
+            'is_multi_project' => $contract->is_multi_project ?? false,
+            'is_fixed_amount' => $contract->is_fixed_amount ?? true,
+            'notes' => $contract->notes,
+            
+            // Суммы
+            'base_amount' => round($baseAmount, 2),
             'total_amount' => round($effectiveTotalAmount, 2),
+            'gp_percentage' => $contract->gp_percentage ? round((float) $contract->gp_percentage, 3) : null,
+            'gp_amount' => round($gpAmount, 2),
+            'warranty_retention_percentage' => $contract->warranty_retention_percentage ? round((float) $contract->warranty_retention_percentage, 3) : null,
+            'warranty_retention_amount' => round($warrantyRetentionAmount, 2),
+            'subcontract_amount' => $contract->subcontract_amount ? round((float) $contract->subcontract_amount, 2) : null,
+            
+            // Авансы
+            'planned_advance_amount' => $contract->planned_advance_amount ? round((float) $contract->planned_advance_amount, 2) : null,
+            'actual_advance_amount' => $contract->actual_advance_amount ? round((float) $contract->actual_advance_amount, 2) : null,
+            'remaining_advance_amount' => round((float) ($contract->remaining_advance_amount ?? 0), 2),
+            'advance_payment_percentage' => round((float) ($contract->advance_payment_percentage ?? 0), 2),
+            
+            // Выполнение и оплата
             'completed_amount' => round($completedAmount, 2),
             'payment_amount' => round($paymentAmount, 2),
             'remaining_amount' => round($effectiveTotalAmount - $paymentAmount, 2),
+            'remaining_to_complete' => round($effectiveTotalAmount - $completedAmount, 2),
             'completion_percentage' => $effectiveTotalAmount > 0 ? round(($completedAmount / $effectiveTotalAmount) * 100, 2) : 0,
             'payment_percentage' => $effectiveTotalAmount > 0 ? round(($paymentAmount / $effectiveTotalAmount) * 100, 2) : 0,
+            
+            // Статусы и проверки
+            'is_overdue' => $contract->is_overdue ?? false,
+            'is_nearing_limit' => $contract->is_nearing_limit() ?? false,
+            
+            // Дополнительные соглашения
+            'agreements' => $agreements,
+            'agreements_count' => count($agreements),
+            'agreements_total_change' => round(array_sum(array_column($agreements, 'change_amount')), 2),
+            
+            // Смета
+            'estimate' => $estimateInfo,
+            
+            // Акты выполненных работ
             'performance_acts' => $acts->map(function ($act) {
                 return [
                     'id' => $act->id,
                     'act_document_number' => $act->act_document_number,
                     'act_date' => $act->act_date?->format('Y-m-d'),
-                    'amount' => $act->amount,
+                    'amount' => round((float) $act->amount, 2),
                     'description' => $act->description,
                     'is_approved' => $act->is_approved,
                     'approval_date' => $act->approval_date?->format('Y-m-d'),
                 ];
             })->toArray(),
+            'performance_acts_count' => $acts->count(),
+            
+            // Платежи
             'payments' => $payments->map(function ($payment) {
                 $paymentDate = null;
                 if (isset($payment->paid_at) && $payment->paid_at) {
@@ -673,7 +818,7 @@ class ContractorReportService
                 return [
                     'id' => $payment->id ?? null,
                     'document_number' => $payment->document_number ?? 'N/A',
-                    'amount' => $payment->paid_amount ?? 0,
+                    'amount' => round((float) ($payment->paid_amount ?? 0), 2),
                     'payment_date' => $paymentDate,
                     'document_type' => ($payment->invoice_type ?? null) instanceof \BackedEnum 
                         ? $payment->invoice_type->value 
@@ -685,6 +830,30 @@ class ContractorReportService
                     'notes' => $payment->notes ?? null,
                 ];
             })->toArray(),
+            'payments_count' => $payments->count(),
+            
+            // Выполненные работы
+            'completed_works' => $completedWorks->map(function ($work) {
+                return [
+                    'id' => $work->id,
+                    'work_type_id' => $work->work_type_id,
+                    'work_type_name' => $work->workType?->name ?? 'Не указан',
+                    'work_type_code' => $work->workType?->code,
+                    'quantity' => round((float) $work->quantity, 3),
+                    'price' => round((float) ($work->price ?? 0), 2),
+                    'total_amount' => round((float) ($work->total_amount ?? 0), 2),
+                    'completion_date' => $work->completion_date?->format('Y-m-d'),
+                    'status' => $work->status,
+                    'notes' => $work->notes,
+                ];
+            })->toArray(),
+            'completed_works_count' => $completedWorks->count(),
+            
+            // Статистика по видам работ
+            'work_types_statistics' => $workTypesStats,
+            
+            // Статистика по материалам
+            'materials_statistics' => $materialsStats,
         ];
     }
 
@@ -912,27 +1081,57 @@ class ContractorReportService
         $headers = [
             'Номер контракта',
             'Дата контракта',
+            'Предмет контракта',
             'Статус',
+            'Категория работ',
+            'Дата начала',
+            'Дата окончания',
+            'Базовая сумма',
             'Сумма контракта',
+            'ГП сумма',
+            'Гарантийное удержание',
+            'Планируемый аванс',
+            'Фактический аванс',
             'Выполнено работ',
             'Оплачено',
             'Остаток к доплате',
+            'Остаток к выполнению',
             'Процент выполнения',
             'Процент оплаты',
+            'Количество актов',
+            'Количество платежей',
+            'Количество выполненных работ',
+            'Количество доп. соглашений',
+            'Просрочен',
         ];
 
         $rows = [];
         foreach ($data['contracts'] as $contract) {
             $rows[] = [
-                $contract['contract_number'],
-                $contract['contract_date'],
-                $contract['status'],
-                $contract['total_amount'],
-                $contract['completed_amount'],
-                $contract['payment_amount'],
-                $contract['remaining_amount'],
-                $contract['completion_percentage'].'%',
-                $contract['payment_percentage'].'%',
+                $contract['contract_number'] ?? '',
+                $contract['contract_date'] ?? '',
+                $contract['subject'] ?? '',
+                $contract['status'] ?? '',
+                $contract['work_type_category'] ?? '',
+                $contract['start_date'] ?? '',
+                $contract['end_date'] ?? '',
+                $contract['base_amount'] ?? 0,
+                $contract['total_amount'] ?? 0,
+                $contract['gp_amount'] ?? 0,
+                $contract['warranty_retention_amount'] ?? 0,
+                $contract['planned_advance_amount'] ?? '',
+                $contract['actual_advance_amount'] ?? '',
+                $contract['completed_amount'] ?? 0,
+                $contract['payment_amount'] ?? 0,
+                $contract['remaining_amount'] ?? 0,
+                $contract['remaining_to_complete'] ?? 0,
+                ($contract['completion_percentage'] ?? 0) . '%',
+                ($contract['payment_percentage'] ?? 0) . '%',
+                $contract['performance_acts_count'] ?? 0,
+                $contract['payments_count'] ?? 0,
+                $contract['completed_works_count'] ?? 0,
+                $contract['agreements_count'] ?? 0,
+                ($contract['is_overdue'] ?? false) ? 'Да' : 'Нет',
             ];
         }
 
@@ -1012,13 +1211,28 @@ class ContractorReportService
         $headers = [
             'Номер контракта',
             'Дата контракта',
+            'Предмет контракта',
             'Статус',
+            'Категория работ',
+            'Дата начала',
+            'Дата окончания',
+            'Базовая сумма',
             'Сумма контракта',
+            'ГП сумма',
+            'Гарантийное удержание',
+            'Планируемый аванс',
+            'Фактический аванс',
             'Выполнено работ',
             'Оплачено',
             'Остаток к доплате',
+            'Остаток к выполнению',
             'Процент выполнения',
             'Процент оплаты',
+            'Количество актов',
+            'Количество платежей',
+            'Количество выполненных работ',
+            'Количество доп. соглашений',
+            'Просрочен',
         ];
 
         $rows = [];
@@ -1026,13 +1240,28 @@ class ContractorReportService
             $rows[] = [
                 (string)($contract['contract_number'] ?? ''),
                 (string)($contract['contract_date'] ?? ''),
+                (string)($contract['subject'] ?? ''),
                 (string)($contract['status'] ?? ''),
+                (string)($contract['work_type_category'] ?? ''),
+                (string)($contract['start_date'] ?? ''),
+                (string)($contract['end_date'] ?? ''),
+                (float)($contract['base_amount'] ?? 0),
                 (float)($contract['total_amount'] ?? 0),
+                (float)($contract['gp_amount'] ?? 0),
+                (float)($contract['warranty_retention_amount'] ?? 0),
+                (float)($contract['planned_advance_amount'] ?? 0),
+                (float)($contract['actual_advance_amount'] ?? 0),
                 (float)($contract['completed_amount'] ?? 0),
                 (float)($contract['payment_amount'] ?? 0),
                 (float)($contract['remaining_amount'] ?? 0),
+                (float)($contract['remaining_to_complete'] ?? 0),
                 (float)($contract['completion_percentage'] ?? 0),
                 (float)($contract['payment_percentage'] ?? 0),
+                (int)($contract['performance_acts_count'] ?? 0),
+                (int)($contract['payments_count'] ?? 0),
+                (int)($contract['completed_works_count'] ?? 0),
+                (int)($contract['agreements_count'] ?? 0),
+                (bool)($contract['is_overdue'] ?? false) ? 'Да' : 'Нет',
             ];
         }
 
@@ -1209,6 +1438,105 @@ class ContractorReportService
         $proportion = $projectActsAmount / $totalActsAmount;
         
         return $fullAmount * $proportion;
+    }
+
+    /**
+     * Рассчитать расширенную статистику для отчета.
+     */
+    private function calculateExtendedSummary($contracts, array $contractsData, ?int $projectId = null): array
+    {
+        $totalAgreements = 0;
+        $totalAgreementsChange = 0;
+        $totalPerformanceActs = 0;
+        $totalPayments = 0;
+        $totalCompletedWorks = 0;
+        $overdueContracts = 0;
+        $activeContracts = 0;
+        $completedContracts = 0;
+        $totalGpAmount = 0;
+        $totalWarrantyRetention = 0;
+        $totalPlannedAdvance = 0;
+        $totalActualAdvance = 0;
+        $earliestStartDate = null;
+        $latestEndDate = null;
+
+        foreach ($contractsData as $contractData) {
+            $totalAgreements += $contractData['agreements_count'] ?? 0;
+            $totalAgreementsChange += $contractData['agreements_total_change'] ?? 0;
+            $totalPerformanceActs += $contractData['performance_acts_count'] ?? 0;
+            $totalPayments += $contractData['payments_count'] ?? 0;
+            $totalCompletedWorks += $contractData['completed_works_count'] ?? 0;
+            $totalGpAmount += $contractData['gp_amount'] ?? 0;
+            $totalWarrantyRetention += $contractData['warranty_retention_amount'] ?? 0;
+            $totalPlannedAdvance += $contractData['planned_advance_amount'] ?? 0;
+            $totalActualAdvance += $contractData['actual_advance_amount'] ?? 0;
+
+            if ($contractData['is_overdue'] ?? false) {
+                $overdueContracts++;
+            }
+
+            $status = $contractData['status'] ?? '';
+            if ($status === 'active' || $status === 'draft') {
+                $activeContracts++;
+            } elseif ($status === 'completed') {
+                $completedContracts++;
+            }
+
+            if (isset($contractData['start_date']) && $contractData['start_date']) {
+                $startDate = Carbon::parse($contractData['start_date']);
+                if (!$earliestStartDate || $startDate->lt($earliestStartDate)) {
+                    $earliestStartDate = $startDate;
+                }
+            }
+
+            if (isset($contractData['end_date']) && $contractData['end_date']) {
+                $endDate = Carbon::parse($contractData['end_date']);
+                if (!$latestEndDate || $endDate->gt($latestEndDate)) {
+                    $latestEndDate = $endDate;
+                }
+            }
+        }
+
+        // Средние значения
+        $contractsCount = count($contractsData);
+        $avgContractAmount = $contractsCount > 0 ? round(array_sum(array_column($contractsData, 'total_amount')) / $contractsCount, 2) : 0;
+        $avgCompletionPercentage = $contractsCount > 0 
+            ? round(array_sum(array_column($contractsData, 'completion_percentage')) / $contractsCount, 2) 
+            : 0;
+        $avgPaymentPercentage = $contractsCount > 0 
+            ? round(array_sum(array_column($contractsData, 'payment_percentage')) / $contractsCount, 2) 
+            : 0;
+
+        return [
+            'total_agreements' => $totalAgreements,
+            'total_agreements_change_amount' => round($totalAgreementsChange, 2),
+            'total_performance_acts' => $totalPerformanceActs,
+            'total_payments_count' => $totalPayments,
+            'total_completed_works_count' => $totalCompletedWorks,
+            'overdue_contracts_count' => $overdueContracts,
+            'active_contracts_count' => $activeContracts,
+            'completed_contracts_count' => $completedContracts,
+            'total_gp_amount' => round($totalGpAmount, 2),
+            'total_warranty_retention_amount' => round($totalWarrantyRetention, 2),
+            'total_planned_advance_amount' => round($totalPlannedAdvance, 2),
+            'total_actual_advance_amount' => round($totalActualAdvance, 2),
+            'remaining_advance_amount' => round($totalPlannedAdvance - $totalActualAdvance, 2),
+            'average_contract_amount' => $avgContractAmount,
+            'average_completion_percentage' => $avgCompletionPercentage,
+            'average_payment_percentage' => $avgPaymentPercentage,
+            'earliest_start_date' => $earliestStartDate?->format('Y-m-d'),
+            'latest_end_date' => $latestEndDate?->format('Y-m-d'),
+            'total_remaining_amount' => round(
+                array_sum(array_column($contractsData, 'total_amount')) - 
+                array_sum(array_column($contractsData, 'payment_amount')), 
+                2
+            ),
+            'total_remaining_to_complete' => round(
+                array_sum(array_column($contractsData, 'total_amount')) - 
+                array_sum(array_column($contractsData, 'completed_amount')), 
+                2
+            ),
+        ];
     }
 
     /**
