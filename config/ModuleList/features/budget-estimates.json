@@ -30,7 +30,15 @@
     "estimates.templates.manage",
     "estimates.analytics",
     "estimates.versions.create",
-    "estimates.versions.compare"
+    "estimates.versions.compare",
+    "construction-journal.view",
+    "construction-journal.create",
+    "construction-journal.edit",
+    "construction-journal.edit_all",
+    "construction-journal.delete",
+    "construction-journal.delete_all",
+    "construction-journal.approve",
+    "construction-journal.export"
   ],
   
   "features": [
@@ -43,7 +51,11 @@
     "Экспорт в Excel и PDF",
     "Интеграция с проектами и контрактами",
     "Аналитика и сравнение смет",
-    "Умное сопоставление позиций при импорте"
+    "Умное сопоставление позиций при импорте",
+    "Ведение общего журнала работ (форма КС-6)",
+    "Ежедневный учет выполненных работ",
+    "Автоматическая синхронизация со сметами и графиками",
+    "Экспорт официальных форм КС-6"
   ],
   
   "dependencies": [

@@ -56,8 +56,7 @@
     "advanced-warehouse": ["*"],
     "budget-estimates": ["*"],
     "payments": ["*"],
-    "site-requests": ["*"],
-    "construction-journal": ["*"]
+    "site-requests": ["*"]
   },
   
   "interface_access": ["lk", "admin", "mobile"],

@@ -106,7 +106,15 @@
       "budget-estimates.edit",
       "budget-estimates.import",
       "budget-estimates.export",
-      "budget-estimates.templates.manage"
+      "budget-estimates.templates.manage",
+      "construction-journal.view",
+      "construction-journal.create",
+      "construction-journal.edit",
+      "construction-journal.edit_all",
+      "construction-journal.delete",
+      "construction-journal.delete_all",
+      "construction-journal.approve",
+      "construction-journal.export"
     ],
     "payments": [
       "payments.dashboard.view",
@@ -128,16 +136,6 @@
       "site_requests.statistics",
       "site_requests.templates.manage",
       "site_requests.calendar.view"
-    ],
-    "construction-journal": [
-      "construction-journal.view",
-      "construction-journal.create",
-      "construction-journal.edit",
-      "construction-journal.edit_all",
-      "construction-journal.delete",
-      "construction-journal.delete_all",
-      "construction-journal.approve",
-      "construction-journal.export"
     ]
   },
   
