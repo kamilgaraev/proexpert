@@ -40,6 +40,8 @@ jobs:
           host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
+          timeout: 300s
+          command_timeout: 180s
           script: |
             set -e # Остановить выполнение при первой ошибке
             cd /var/www/prohelper
@@ -91,6 +93,8 @@ jobs:
           host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
+          timeout: 60s
+          command_timeout: 30s
           script: |
             cd /var/www/prohelper
             echo "Checking docs files structure..."
@@ -141,6 +145,8 @@ jobs:
           host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
+          timeout: 120s
+          command_timeout: 90s
           script: |
             cd /var/www/prohelper
             mkdir -p storage/logs/{api,telemetry}
@@ -154,12 +160,15 @@ jobs:
               (command -v docker-compose >/dev/null && docker-compose restart prometheus grafana || docker compose restart prometheus grafana)
             fi
 
-      - name: Update Monitoring Configuration (appleboy)
+      - name: Update Monitoring Configuration and Notify (appleboy)
+        if: always()
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: 89.169.44.117
           username: root
           key: ${{ secrets.DEPLOY }}
+          timeout: 120s
+          command_timeout: 90s
           script: |
             cd /var/www/prohelper
             chmod +x start-monitoring.sh stop-monitoring.sh
@@ -171,16 +180,7 @@ jobs:
                 docker-compose up -d --remove-orphans --force-recreate prometheus grafana loki promtail node-exporter;
               else
                 docker compose up -d --remove-orphans --force-recreate prometheus grafana loki promtail node-exporter;
-              fi'
-
-      - name: Notify Monitoring (appleboy)
-        if: always()
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: 89.169.44.117
-          username: root
-          key: ${{ secrets.DEPLOY }}
-          script: |
-            cd /var/www/prohelper
+              fi' || true
+            sleep 3
             curl -X POST http://localhost:9090/api/v1/admin/tsdb/snapshot || true
             echo '{"timestamp":"'$(date -Iseconds)'","event":"deployment","version":"${{ github.sha }}","branch":"${{ github.ref_name }}"}' >> storage/logs/api/deployment.log
