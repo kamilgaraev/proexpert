@@ -274,14 +274,16 @@ class OffsetService
 
         // Транзакция для дебиторского документа
         $transactions[] = PaymentTransaction::create([
+            'payment_document_id' => $receivable->id,
             'organization_id' => $receivable->organization_id,
-            'invoice_id' => $receivable->id, // Legacy field compatibility
+            'project_id' => $receivable->project_id,
             'transaction_date' => $now,
             'amount' => $amount,
+            'currency' => $receivable->currency,
             'payment_method' => 'offset', // Убедитесь, что это значение есть в Enum
             'status' => 'completed',
             'payer_contractor_id' => $receivable->payer_contractor_id,
-            'description' => "Взаимозачет с документом №{$payable->document_number}. {$notes}",
+            'notes' => "Взаимозачет с документом №{$payable->document_number}. {$notes}",
             'reference_number' => $ref,
             'metadata' => [
                 'offset_type' => 'receivable',
@@ -293,14 +295,16 @@ class OffsetService
 
         // Транзакция для кредиторского документа
         $transactions[] = PaymentTransaction::create([
+            'payment_document_id' => $payable->id,
             'organization_id' => $payable->organization_id,
-            'invoice_id' => $payable->id, // Legacy field compatibility
+            'project_id' => $payable->project_id,
             'transaction_date' => $now,
             'amount' => $amount,
+            'currency' => $payable->currency,
             'payment_method' => 'offset',
             'status' => 'completed',
             'payee_contractor_id' => $payable->payee_contractor_id,
-            'description' => "Взаимозачет с документом №{$receivable->document_number}. {$notes}",
+            'notes' => "Взаимозачет с документом №{$receivable->document_number}. {$notes}",
             'reference_number' => $ref,
             'metadata' => [
                 'offset_type' => 'payable',
