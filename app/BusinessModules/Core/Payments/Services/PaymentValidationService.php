@@ -22,6 +22,11 @@ class PaymentValidationService
         $this->validateDates($data);
         $this->validateParties($data);
         
+        // Валидация уникальности номера документа (если передан)
+        if (isset($data['document_number'])) {
+            $this->validateDocumentNumber($data['document_number'], $data['organization_id'], $existingDocument);
+        }
+        
         // Бизнес-валидация
         $this->validateBankDetails($data);
         
@@ -196,6 +201,36 @@ class PaymentValidationService
             if (!Contractor::find($data['payee_contractor_id'])) {
                 throw new \InvalidArgumentException('Контрагент-получатель не найден');
             }
+        }
+    }
+
+    /**
+     * Валидация уникальности номера документа
+     */
+    private function validateDocumentNumber(string $documentNumber, int $organizationId, ?PaymentDocument $existingDocument = null): void
+    {
+        $query = PaymentDocument::where('organization_id', $organizationId)
+            ->where('document_number', $documentNumber);
+
+        // Если это обновление, исключаем текущий документ
+        if ($existingDocument) {
+            $query->where('id', '!=', $existingDocument->id);
+        }
+
+        $duplicate = $query->first();
+
+        if ($duplicate) {
+            Log::warning('payment_document.duplicate_number', [
+                'document_number' => $documentNumber,
+                'organization_id' => $organizationId,
+                'existing_document_id' => $duplicate->id,
+                'existing_document_status' => $duplicate->status->value,
+            ]);
+
+            throw new \InvalidArgumentException(
+                "Документ с номером '{$documentNumber}' уже существует для данной организации. " .
+                "Пожалуйста, используйте другой номер или оставьте поле пустым для автоматической генерации."
+            );
         }
     }
 
