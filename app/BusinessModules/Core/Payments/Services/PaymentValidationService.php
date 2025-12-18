@@ -275,13 +275,85 @@ class PaymentValidationService
         // Проверка для договоров
         if ($sourceType === Contract::class) {
             if (isset($data['amount']) && $source->total_amount > 0) {
-                // Проверяем, что общая сумма платежей не превышает сумму договора
+                // Получаем сумму всех существующих платежей по договору
                 $existingPaymentsSum = PaymentDocument::where('source_type', Contract::class)
                     ->where('source_id', $sourceId)
                     ->sum('amount');
 
-                if (($existingPaymentsSum + $data['amount']) > $source->total_amount) {
-                    throw new \DomainException('Сумма превышает остаток по договору');
+                // Определяем тип платежа
+                $invoiceTypeValue = null;
+                if (isset($data['invoice_type'])) {
+                    $invoiceTypeValue = is_object($data['invoice_type']) 
+                        ? $data['invoice_type']->value 
+                        : $data['invoice_type'];
+                }
+                
+                $isAdvancePayment = $invoiceTypeValue === 'advance';
+                $isFinalPayment = $invoiceTypeValue === 'final';
+                
+                if ($isAdvancePayment) {
+                    // Для авансовых платежей проверяем плановую сумму аванса
+                    if ($source->planned_advance_amount > 0) {
+                        $existingAdvancePayments = PaymentDocument::where('source_type', Contract::class)
+                            ->where('source_id', $sourceId)
+                            ->where('invoice_type', 'advance')
+                            ->sum('amount');
+                        
+                        $totalAdvanceWithCurrent = $existingAdvancePayments + $data['amount'];
+                        
+                        if ($totalAdvanceWithCurrent > $source->planned_advance_amount) {
+                            throw new \DomainException(
+                                sprintf(
+                                    'Сумма авансовых платежей превышает плановый аванс. Доступно: %.2f, запрошено: %.2f',
+                                    $source->planned_advance_amount - $existingAdvancePayments,
+                                    $data['amount']
+                                )
+                            );
+                        }
+                    }
+                } elseif (!$isFinalPayment) {
+                    // Для обычных платежей (кроме финального расчета) проверяем выполненные работы
+                    // Финальный расчет проверяется только по общей сумме договора ниже
+                    $performedAmount = $source->total_performed_amount ?? 0;
+                    
+                    // Получаем сумму неавансовых платежей (исключая финальные расчеты)
+                    $existingRegularPayments = PaymentDocument::where('source_type', Contract::class)
+                        ->where('source_id', $sourceId)
+                        ->where(function($query) {
+                            $query->whereNull('invoice_type')
+                                  ->orWhereNotIn('invoice_type', ['advance', 'final']);
+                        })
+                        ->sum('amount');
+                    
+                    $totalRegularWithCurrent = $existingRegularPayments + $data['amount'];
+                    
+                    if ($totalRegularWithCurrent > $performedAmount) {
+                        throw new \DomainException(
+                            sprintf(
+                                'Сумма превышает объем выполненных работ. Выполнено: %.2f, уже оплачено: %.2f, доступно: %.2f, запрошено: %.2f',
+                                $performedAmount,
+                                $existingRegularPayments,
+                                $performedAmount - $existingRegularPayments,
+                                $data['amount']
+                            )
+                        );
+                    }
+                }
+                // Для финального расчета проверка идет только по общей сумме договора (см. ниже)
+                
+                // Общая проверка: сумма всех платежей не должна превышать общую сумму договора
+                $totalWithCurrent = $existingPaymentsSum + $data['amount'];
+                
+                if ($totalWithCurrent > $source->total_amount) {
+                    throw new \DomainException(
+                        sprintf(
+                            'Сумма всех платежей превышает общую сумму договора. Договор: %.2f, уже оплачено: %.2f, доступно: %.2f, запрошено: %.2f',
+                            $source->total_amount,
+                            $existingPaymentsSum,
+                            $source->total_amount - $existingPaymentsSum,
+                            $data['amount']
+                        )
+                    );
                 }
             }
 
