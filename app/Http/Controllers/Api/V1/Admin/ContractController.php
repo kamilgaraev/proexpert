@@ -169,7 +169,7 @@ class ContractController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(int $project, int $contract, Request $request)
+    public function show(Request $request, int $contract, ?int $project = null)
     {
         $user = $request->user();
         $organization = $request->attributes->get('current_organization');
