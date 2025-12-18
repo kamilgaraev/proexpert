@@ -396,16 +396,12 @@ class PaymentDocumentService
                 Log::info('payment_document.register_payment.marking_paid', [
                     'document_id' => $document->id,
                 ]);
-                // Передаем transactionId в событие через временное свойство
-                $document->setAttribute('_last_transaction_id', $transaction);
-                $this->stateMachine->markPaid($document, $newPaidAmount);
+                $this->stateMachine->markPaid($document, $newPaidAmount, $transaction);
             } else {
                 Log::info('payment_document.register_payment.marking_partially_paid', [
                     'document_id' => $document->id,
                 ]);
-                // Для частичной оплаты тоже нужно событие с transactionId
-                $document->setAttribute('_last_transaction_id', $transaction);
-                $this->stateMachine->markPartiallyPaid($document, $amount);
+                $this->stateMachine->markPartiallyPaid($document, $amount, $transaction);
             }
 
             Log::info('payment_document.payment_registered', [
