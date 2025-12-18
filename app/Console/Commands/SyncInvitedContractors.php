@@ -38,7 +38,7 @@ class SyncInvitedContractors extends Command
                         'email'           => $src->email,
                         'legal_address'   => $src->address,
                         'inn'             => $src->tax_number,
-                        'kpp'             => $src->registration_number,
+                        'kpp'             => $src->registration_number ? substr($src->registration_number, 0, 9) : null,
                         'updated_at'      => now(),
                         'last_sync_at'    => now(),
                     ];
