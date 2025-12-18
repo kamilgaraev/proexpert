@@ -550,6 +550,7 @@ class PaymentDocumentController extends Controller
                 'reference_number' => 'nullable|string',
                 'bank_transaction_id' => 'nullable|string',
                 'transaction_date' => 'nullable|date',
+                'payment_date' => 'nullable|date',
                 'notes' => 'nullable|string',
                 'metadata' => 'nullable|array',
             ]);
@@ -558,6 +559,11 @@ class PaymentDocumentController extends Controller
             $userId = $request->user()->id;
 
             $document = PaymentDocument::forOrganization($organizationId)->findOrFail($id);
+
+            // Поддержка обоих полей: payment_date и transaction_date
+            if (!isset($validated['transaction_date']) && isset($validated['payment_date'])) {
+                $validated['transaction_date'] = $validated['payment_date'];
+            }
 
             $validated['created_by_user_id'] = $userId;
             $paid = $this->service->registerPayment($document, $validated['amount'], $validated);
@@ -576,11 +582,14 @@ class PaymentDocumentController extends Controller
             Log::error('payment_document.register_payment.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all(),
             ]);
 
             return response()->json([
                 'success' => false,
                 'error' => 'Не удалось зарегистрировать платеж',
+                'debug' => config('app.debug') ? $e->getMessage() : null,
             ], 500);
         }
     }
