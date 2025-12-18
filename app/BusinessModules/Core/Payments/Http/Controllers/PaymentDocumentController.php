@@ -543,7 +543,26 @@ class PaymentDocumentController extends Controller
      */
     public function registerPayment(Request $request, int $id): JsonResponse
     {
+        // Принудительное логирование через несколько каналов
+        $logData = [
+            'id' => $id,
+            'request_data' => $request->all(),
+            'timestamp' => now()->toIso8601String(),
+        ];
+        
+        Log::info('payment_document.controller.register_payment.started', $logData);
+        
+        // Дополнительно пишем в error_log для гарантии
+        error_log('[PaymentDocument] register_payment started: ' . json_encode($logData));
+        
+        // Записываем в stderr
+        file_put_contents('php://stderr', '[PaymentDocument] register_payment started: ' . json_encode($logData) . PHP_EOL);
+
         try {
+            Log::info('payment_document.controller.validating', [
+                'id' => $id,
+            ]);
+
             $validated = $request->validate([
                 'amount' => 'required|numeric|min:0.01',
                 'payment_method' => 'nullable|string',
@@ -555,10 +574,31 @@ class PaymentDocumentController extends Controller
                 'metadata' => 'nullable|array',
             ]);
 
+            Log::info('payment_document.controller.validated', [
+                'id' => $id,
+                'validated' => $validated,
+            ]);
+
             $organizationId = $request->attributes->get('current_organization_id');
             $userId = $request->user()->id;
 
+            Log::info('payment_document.controller.context', [
+                'id' => $id,
+                'organization_id' => $organizationId,
+                'user_id' => $userId,
+            ]);
+
+            Log::info('payment_document.controller.finding_document', [
+                'id' => $id,
+            ]);
+
             $document = PaymentDocument::forOrganization($organizationId)->findOrFail($id);
+
+            Log::info('payment_document.controller.document_found', [
+                'id' => $id,
+                'document_id' => $document->id,
+                'status' => $document->status->value,
+            ]);
 
             // Поддержка обоих полей: payment_date и transaction_date
             if (!isset($validated['transaction_date']) && isset($validated['payment_date'])) {
@@ -566,7 +606,17 @@ class PaymentDocumentController extends Controller
             }
 
             $validated['created_by_user_id'] = $userId;
+
+            Log::info('payment_document.controller.calling_service', [
+                'id' => $id,
+                'amount' => $validated['amount'],
+            ]);
+
             $paid = $this->service->registerPayment($document, $validated['amount'], $validated);
+
+            Log::info('payment_document.controller.service_completed', [
+                'id' => $id,
+            ]);
 
             return response()->json([
                 'success' => true,
@@ -574,22 +624,42 @@ class PaymentDocumentController extends Controller
                 'data' => $this->formatDocumentDetailed($paid),
             ]);
         } catch (\DomainException $e) {
+            Log::warning('payment_document.controller.domain_exception', [
+                'id' => $id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+
             return response()->json([
                 'success' => false,
                 'error' => $e->getMessage(),
             ], 422);
         } catch (\Exception $e) {
-            Log::error('payment_document.register_payment.error', [
+            $errorData = [
                 'id' => $id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
+                'line' => $e->getLine(),
+                'file' => $e->getFile(),
                 'request_data' => $request->all(),
-            ]);
+                'timestamp' => now()->toIso8601String(),
+            ];
+            
+            Log::error('payment_document.register_payment.error', $errorData);
+            
+            // Принудительное логирование через несколько каналов
+            error_log('[PaymentDocument] register_payment ERROR: ' . json_encode($errorData));
+            file_put_contents('php://stderr', '[PaymentDocument] register_payment ERROR: ' . json_encode($errorData) . PHP_EOL);
 
             return response()->json([
                 'success' => false,
                 'error' => 'Не удалось зарегистрировать платеж',
                 'debug' => config('app.debug') ? $e->getMessage() : null,
+                'error_details' => config('app.debug') ? [
+                    'message' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                ] : null,
             ], 500);
         }
     }
