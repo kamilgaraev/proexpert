@@ -16,6 +16,7 @@ class PaymentSchedule extends Model
         'installment_number',
         'due_date',
         'amount',
+        'paid_amount',
         'status',
         'paid_at',
         'payment_transaction_id',
@@ -25,6 +26,7 @@ class PaymentSchedule extends Model
     protected $casts = [
         'due_date' => 'date',
         'amount' => 'decimal:2',
+        'paid_amount' => 'decimal:2',
         'paid_at' => 'datetime',
     ];
 

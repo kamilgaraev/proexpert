@@ -7,6 +7,7 @@ use App\Services\Contract\ContractService;
 use App\Services\Contract\ContractStateEventService;
 use App\Services\Contract\ContractStateCalculatorService;
 use App\Models\Contract;
+use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
@@ -18,15 +19,18 @@ class ContractStateEventController extends Controller
     protected ContractService $contractService;
     protected ContractStateEventService $stateEventService;
     protected ContractStateCalculatorService $stateCalculatorService;
+    protected ContractPerformanceActRepositoryInterface $performanceActRepository;
 
     public function __construct(
         ContractService $contractService,
         ContractStateEventService $stateEventService,
-        ContractStateCalculatorService $stateCalculatorService
+        ContractStateCalculatorService $stateCalculatorService,
+        ContractPerformanceActRepositoryInterface $performanceActRepository
     ) {
         $this->contractService = $contractService;
         $this->stateEventService = $stateEventService;
         $this->stateCalculatorService = $stateCalculatorService;
+        $this->performanceActRepository = $performanceActRepository;
     }
 
     private function validateProjectContext(Request $request, $contract): bool
@@ -159,29 +163,76 @@ class ContractStateEventController extends Controller
                 ]);
             }
 
+            // Получаем события
             $timeline = $this->stateEventService->getTimeline($contractModel, $asOfDate);
+            
+            // Получаем акты
+            $performanceActs = $this->performanceActRepository->getActsForContract($contractModel->id);
+            
+            // Фильтруем акты по дате если указано
+            if ($asOfDate) {
+                $performanceActs = $performanceActs->filter(function ($act) use ($asOfDate) {
+                    return $act->created_at <= $asOfDate;
+                });
+            }
+            
+            // Формируем массив событий
+            $events = $timeline->map(function ($event) {
+                return [
+                    'type' => 'event',
+                    'id' => $event->id,
+                    'event_type' => $event->event_type->value,
+                    'description' => $this->getEventDescription($event),
+                    'amount_delta' => $event->amount_delta,
+                    'effective_from' => $event->effective_from?->format('Y-m-d'),
+                    'created_at' => $event->created_at?->toIso8601String(),
+                    'created_by' => $event->createdBy?->name ?? 'System',
+                    'specification' => $event->specification ? [
+                        'id' => $event->specification->id,
+                        'number' => $event->specification->number,
+                    ] : null,
+                    'is_active' => $event->isActive(),
+                    'sort_date' => $event->created_at,
+                ];
+            })->toArray();
+            
+            // Формируем массив актов
+            $acts = $performanceActs->map(function ($act) {
+                return [
+                    'type' => 'performance_act',
+                    'id' => $act->id,
+                    'event_type' => 'performance_act',
+                    'description' => "Акт выполненных работ №{$act->act_document_number} на сумму " . number_format($act->amount, 2, '.', ' ') . " руб.",
+                    'amount_delta' => $act->amount,
+                    'effective_from' => $act->act_date?->format('Y-m-d'),
+                    'created_at' => $act->created_at?->toIso8601String(),
+                    'created_by' => 'System',
+                    'act_document_number' => $act->act_document_number,
+                    'is_approved' => $act->is_approved,
+                    'approval_date' => $act->approval_date?->format('Y-m-d'),
+                    'is_active' => true,
+                    'sort_date' => $act->created_at,
+                ];
+            })->toArray();
+            
+            // Объединяем и сортируем по дате
+            $combined = array_merge($events, $acts);
+            usort($combined, function ($a, $b) {
+                return $a['sort_date'] <=> $b['sort_date'];
+            });
+            
+            // Убираем служебное поле sort_date
+            $combined = array_map(function ($item) {
+                unset($item['sort_date']);
+                return $item;
+            }, $combined);
             
             return response()->json([
                 'success' => true,
                 'data' => [
                     'contract_id' => $contractModel->id,
                     'as_of_date' => $asOfDate?->format('Y-m-d'),
-                    'events' => $timeline->map(function ($event) {
-                        return [
-                            'id' => $event->id,
-                            'event_type' => $event->event_type->value,
-                            'description' => $this->getEventDescription($event),
-                            'amount_delta' => $event->amount_delta,
-                            'effective_from' => $event->effective_from?->format('Y-m-d'),
-                            'created_at' => $event->created_at?->toIso8601String(),
-                            'created_by' => $event->createdBy?->name ?? 'System',
-                            'specification' => $event->specification ? [
-                                'id' => $event->specification->id,
-                                'number' => $event->specification->number,
-                            ] : null,
-                            'is_active' => $event->isActive(),
-                        ];
-                    })
+                    'events' => $combined
                 ]
             ]);
         } catch (Exception $e) {

@@ -302,7 +302,7 @@ class PaymentScheduleGenerator
 
         try {
             // Удаляем старый график (только pending платежи)
-            PaymentSchedule::where('invoice_id', $document->id)
+            PaymentSchedule::where('payment_document_id', $document->id)
                 ->where('status', 'pending')
                 ->delete();
 
@@ -335,7 +335,7 @@ class PaymentScheduleGenerator
 
         Log::info('payment_schedule.marked_paid', [
             'schedule_id' => $schedule->id,
-            'invoice_id' => $schedule->invoice_id,
+            'payment_document_id' => $schedule->payment_document_id,
             'amount' => $amount,
         ]);
 
@@ -347,12 +347,12 @@ class PaymentScheduleGenerator
      */
     public function getOverdue(int $organizationId): Collection
     {
-        return PaymentSchedule::whereHas('invoice', function($query) use ($organizationId) {
+        return PaymentSchedule::whereHas('paymentDocument', function($query) use ($organizationId) {
                 $query->where('organization_id', $organizationId);
             })
             ->where('status', 'pending')
             ->where('due_date', '<', Carbon::now())
-            ->with(['invoice'])
+            ->with(['paymentDocument'])
             ->orderBy('due_date', 'asc')
             ->get();
     }
@@ -362,12 +362,12 @@ class PaymentScheduleGenerator
      */
     public function getUpcoming(int $organizationId, int $days = 7): Collection
     {
-        return PaymentSchedule::whereHas('invoice', function($query) use ($organizationId) {
+        return PaymentSchedule::whereHas('paymentDocument', function($query) use ($organizationId) {
                 $query->where('organization_id', $organizationId);
             })
             ->where('status', 'pending')
             ->whereBetween('due_date', [Carbon::now(), Carbon::now()->addDays($days)])
-            ->with(['invoice'])
+            ->with(['paymentDocument'])
             ->orderBy('due_date', 'asc')
             ->get();
     }
@@ -380,7 +380,7 @@ class PaymentScheduleGenerator
         $startDate = Carbon::now()->startOfMonth();
         $endDate = (clone $startDate)->addMonths($months);
 
-        $schedules = PaymentSchedule::whereHas('invoice', function($query) use ($organizationId) {
+        $schedules = PaymentSchedule::whereHas('paymentDocument', function($query) use ($organizationId) {
                 $query->where('organization_id', $organizationId);
             })
             ->where('status', 'pending')
