@@ -542,33 +542,23 @@ class PaymentDocumentService
      */
     private function generateDocumentNumber(int $organizationId, PaymentDocumentType $type): string
     {
-        $prefix = match($type) {
-            PaymentDocumentType::PAYMENT_REQUEST => 'ПТ',
-            PaymentDocumentType::INVOICE => 'СЧ',
-            PaymentDocumentType::PAYMENT_ORDER => 'ПП',
-            PaymentDocumentType::INCOMING_PAYMENT => 'ВП',
-            PaymentDocumentType::EXPENSE => 'РО',
-            PaymentDocumentType::OFFSET_ACT => 'АВЗ',
-        };
-
         $year = date('Y');
         $month = date('m');
+        $docType = $type->value;
 
-        // Получаем последний номер за текущий месяц
-        $lastDocument = PaymentDocument::where('organization_id', $organizationId)
-            ->where('document_type', $type)
-            ->whereYear('created_at', $year)
-            ->whereMonth('created_at', $month)
-            ->orderBy('id', 'desc')
-            ->lockForUpdate()
-            ->first();
+        // Используем PostgreSQL функцию для генерации уникального номера (thread-safe)
+        $documentNumber = DB::selectOne(
+            'SELECT get_next_payment_document_number(?, ?, ?, ?) as number',
+            [$organizationId, $docType, $year, $month]
+        )->number;
 
-        $nextNumber = 1;
-        if ($lastDocument && preg_match('/(\d+)$/', $lastDocument->document_number, $matches)) {
-            $nextNumber = intval($matches[1]) + 1;
-        }
+        Log::info('payment_document.number_generated', [
+            'organization_id' => $organizationId,
+            'document_type' => $docType,
+            'document_number' => $documentNumber,
+        ]);
 
-        return sprintf('%s-%s%s-%04d', $prefix, $year, $month, $nextNumber);
+        return $documentNumber;
     }
 
     /**
