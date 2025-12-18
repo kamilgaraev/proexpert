@@ -175,7 +175,7 @@ class PaymentDocumentStateMachine
     /**
      * Отметить как частично оплаченный (Legacy метод, лучше использовать registerPartialPayment)
      */
-    public function markPartiallyPaid(PaymentDocument $document, float $amount): PaymentDocument
+    public function markPartiallyPaid(PaymentDocument $document, float $amount, ?int $transactionId = null): PaymentDocument
     {
         $document->paid_amount += $amount;
         $document->remaining_amount = $document->calculateRemainingAmount();
@@ -183,7 +183,6 @@ class PaymentDocumentStateMachine
 
         $result = $this->transition($document, PaymentDocumentStatus::PARTIALLY_PAID, "Частичная оплата: {$amount}");
         
-        $transactionId = $document->getAttribute('_last_transaction_id');
         if ($transactionId) {
             event(new PaymentDocumentPaid($document, $amount, $transactionId));
         }
@@ -191,7 +190,7 @@ class PaymentDocumentStateMachine
         return $result;
     }
 
-    public function markPaid(PaymentDocument $document, ?float $finalAmount = null): PaymentDocument
+    public function markPaid(PaymentDocument $document, ?float $finalAmount = null, ?int $transactionId = null): PaymentDocument
     {
         if ($finalAmount !== null) {
             $document->paid_amount = $finalAmount;
@@ -204,8 +203,6 @@ class PaymentDocumentStateMachine
 
         $result = $this->transition($document, PaymentDocumentStatus::PAID, 'Полностью оплачен');
         
-        // Получаем transactionId из временного атрибута (если был установлен)
-        $transactionId = $document->getAttribute('_last_transaction_id');
         event(new PaymentDocumentPaid($document, $document->paid_amount, $transactionId));
         
         return $result;
