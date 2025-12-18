@@ -270,8 +270,8 @@ class PaymentDocumentService
                 throw new \DomainException('Сумма платежа превышает остаток к оплате');
             }
 
-            // Создаем транзакцию платежа
-            $transaction = DB::table('payment_transactions')->insertGetId([
+            // Подготовка данных для вставки транзакции
+            $transactionData = [
                 'payment_document_id' => $document->id,
                 'organization_id' => $document->organization_id,
                 'project_id' => $document->project_id,
@@ -292,7 +292,15 @@ class PaymentDocumentService
                 'created_by_user_id' => $paymentData['created_by_user_id'] ?? null,
                 'created_at' => now(),
                 'updated_at' => now(),
-            ]);
+            ];
+
+            // Если колонка invoice_id еще существует (до выполнения миграции удаления), добавляем null
+            if (\Schema::hasColumn('payment_transactions', 'invoice_id')) {
+                $transactionData['invoice_id'] = null;
+            }
+
+            // Создаем транзакцию платежа
+            $transaction = DB::table('payment_transactions')->insertGetId($transactionData);
 
             // Обновляем суммы в документе
             $newPaidAmount = $document->paid_amount + $amount;

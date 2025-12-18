@@ -40,7 +40,19 @@ class PaymentTransaction extends Model
         'metadata',
         'created_by_user_id',
         'approved_by_user_id',
+        'invoice_id', // Временно для поддержки старых миграций
     ];
+
+    protected static function booted(): void
+    {
+        // Автоматически устанавливаем invoice_id = null если колонка существует
+        // (для поддержки старых баз до выполнения миграции удаления invoice_id)
+        static::creating(function (PaymentTransaction $transaction) {
+            if (\Schema::hasColumn('payment_transactions', 'invoice_id') && !isset($transaction->invoice_id)) {
+                $transaction->invoice_id = null;
+            }
+        });
+    }
 
     protected $casts = [
         'amount' => 'decimal:2',
