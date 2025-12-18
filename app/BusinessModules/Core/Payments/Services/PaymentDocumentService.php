@@ -270,9 +270,9 @@ class PaymentDocumentService
                 throw new \DomainException('Сумма платежа превышает остаток к оплате');
             }
 
-            // Создаем транзакцию платежа (через старую таблицу для совместимости)
+            // Создаем транзакцию платежа
             $transaction = DB::table('payment_transactions')->insertGetId([
-                'invoice_id' => $document->id, // используем ID document как invoice_id
+                'payment_document_id' => $document->id,
                 'organization_id' => $document->organization_id,
                 'project_id' => $document->project_id,
                 'payer_organization_id' => $document->payer_organization_id,
