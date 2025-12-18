@@ -169,8 +169,24 @@ class ContractController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(Request $request, int $contract, ?int $project = null)
+    public function show(Request $request)
     {
+        // Получаем параметры из роута независимо от порядка
+        $routeParams = $request->route()->parameters();
+        $contract = (int) ($routeParams['contract'] ?? null);
+        $projectId = isset($routeParams['project']) ? (int) $routeParams['project'] : null;
+        
+        Log::info('ContractController@show ENTRY', [
+            'contract' => $contract,
+            'project' => $projectId,
+            'url' => $request->url(),
+            'route_params' => $routeParams,
+        ]);
+        
+        if (!$contract) {
+            return response()->json(['message' => 'Contract ID не указан'], 400);
+        }
+        
         $user = $request->user();
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
@@ -178,8 +194,6 @@ class ContractController extends Controller
         if (!$organizationId) {
             return response()->json(['message' => 'Не определён контекст организации'], 400);
         }
-        
-        $projectId = $project;
         
         Log::info('ContractController@show attempt', [
             'contract_id' => $contract,
