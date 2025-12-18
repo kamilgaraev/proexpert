@@ -258,17 +258,41 @@ class PaymentDocumentService
      */
     public function registerPayment(PaymentDocument $document, float $amount, array $paymentData): PaymentDocument
     {
+        Log::info('payment_document.register_payment.started', [
+            'document_id' => $document->id,
+            'amount' => $amount,
+            'payment_data' => $paymentData,
+        ]);
+
         if (!$document->canBePaid()) {
+            Log::warning('payment_document.register_payment.cannot_be_paid', [
+                'document_id' => $document->id,
+                'status' => $document->status->value,
+                'remaining_amount' => $document->remaining_amount,
+            ]);
             throw new \DomainException('Документ нельзя оплатить в текущем статусе');
         }
 
         DB::beginTransaction();
 
         try {
+            Log::info('payment_document.register_payment.transaction_started', [
+                'document_id' => $document->id,
+            ]);
+
             // Проверка суммы
             if ($amount > $document->remaining_amount) {
+                Log::warning('payment_document.register_payment.amount_exceeds', [
+                    'document_id' => $document->id,
+                    'amount' => $amount,
+                    'remaining_amount' => $document->remaining_amount,
+                ]);
                 throw new \DomainException('Сумма платежа превышает остаток к оплате');
             }
+
+            Log::info('payment_document.register_payment.preparing_data', [
+                'document_id' => $document->id,
+            ]);
 
             // Подготовка данных для вставки транзакции
             $transactionData = [
@@ -294,13 +318,34 @@ class PaymentDocumentService
                 'updated_at' => now(),
             ];
 
+            Log::info('payment_document.register_payment.checking_invoice_column', [
+                'document_id' => $document->id,
+            ]);
+
             // Если колонка invoice_id еще существует (до выполнения миграции удаления), добавляем null
             if (\Schema::hasColumn('payment_transactions', 'invoice_id')) {
                 $transactionData['invoice_id'] = null;
+                Log::info('payment_document.register_payment.invoice_id_added', [
+                    'document_id' => $document->id,
+                ]);
             }
+
+            Log::info('payment_document.register_payment.inserting_transaction', [
+                'document_id' => $document->id,
+                'transaction_data_keys' => array_keys($transactionData),
+            ]);
 
             // Создаем транзакцию платежа
             $transaction = DB::table('payment_transactions')->insertGetId($transactionData);
+            
+            Log::info('payment_document.register_payment.transaction_inserted', [
+                'document_id' => $document->id,
+                'transaction_id' => $transaction,
+            ]);
+
+            Log::info('payment_document.register_payment.updating_amounts', [
+                'document_id' => $document->id,
+            ]);
 
             // Обновляем суммы в документе
             $newPaidAmount = $document->paid_amount + $amount;
@@ -308,12 +353,26 @@ class PaymentDocumentService
             $document->remaining_amount = $document->amount - $newPaidAmount;
             $document->save();
 
+            Log::info('payment_document.register_payment.amounts_updated', [
+                'document_id' => $document->id,
+                'new_paid_amount' => $newPaidAmount,
+                'remaining_amount' => $document->remaining_amount,
+            ]);
+
             // Загружаем транзакцию как модель для уведомлений
             $transactionModel = PaymentTransaction::find($transaction);
             
+            Log::info('payment_document.register_payment.transaction_loaded', [
+                'document_id' => $document->id,
+                'transaction_model_exists' => $transactionModel !== null,
+            ]);
+
             // Отправляем уведомление получателю (если зарегистрирован)
             if ($transactionModel) {
                 try {
+                    Log::info('payment_document.register_payment.sending_notification', [
+                        'document_id' => $document->id,
+                    ]);
                     $notificationService = app(\App\BusinessModules\Core\Payments\Services\PaymentRecipientNotificationService::class);
                     $notificationService->notifyRecipientAboutPayment($document, $transactionModel);
                 } catch (\Exception $e) {
@@ -322,16 +381,28 @@ class PaymentDocumentService
                         'document_id' => $document->id,
                         'transaction_id' => $transaction,
                         'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString(),
                     ]);
                 }
             }
 
+            Log::info('payment_document.register_payment.updating_status', [
+                'document_id' => $document->id,
+                'remaining_amount' => $document->remaining_amount,
+            ]);
+
             // Определяем новый статус
             if ($document->remaining_amount <= 0.01) { // учитываем погрешность
+                Log::info('payment_document.register_payment.marking_paid', [
+                    'document_id' => $document->id,
+                ]);
                 // Передаем transactionId в событие через временное свойство
                 $document->setAttribute('_last_transaction_id', $transaction);
                 $this->stateMachine->markPaid($document, $newPaidAmount);
             } else {
+                Log::info('payment_document.register_payment.marking_partially_paid', [
+                    'document_id' => $document->id,
+                ]);
                 // Для частичной оплаты тоже нужно событие с transactionId
                 $document->setAttribute('_last_transaction_id', $transaction);
                 $this->stateMachine->markPartiallyPaid($document, $amount);
@@ -344,7 +415,16 @@ class PaymentDocumentService
                 'remaining' => $document->remaining_amount,
             ]);
 
+            Log::info('payment_document.register_payment.committing', [
+                'document_id' => $document->id,
+            ]);
+
             DB::commit();
+            
+            Log::info('payment_document.register_payment.committed', [
+                'document_id' => $document->id,
+            ]);
+
             return $document->fresh();
 
         } catch (\Exception $e) {
@@ -353,6 +433,9 @@ class PaymentDocumentService
             Log::error('payment_document.payment_failed', [
                 'document_id' => $document->id,
                 'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'line' => $e->getLine(),
+                'file' => $e->getFile(),
             ]);
 
             throw $e;
