@@ -275,10 +275,27 @@ class PaymentValidationService
         // Проверка для договоров
         if ($sourceType === Contract::class) {
             if (isset($data['amount']) && $source->total_amount > 0) {
-                // Получаем сумму всех существующих платежей по договору
-                $existingPaymentsSum = PaymentDocument::where('source_type', Contract::class)
-                    ->where('source_id', $sourceId)
-                    ->sum('amount');
+                // Проверяем, мультипроектный ли договор и передан ли project_id
+                $projectId = $data['project_id'] ?? null;
+                $isMultiProject = $source->is_multi_project ?? false;
+                
+                Log::info('payment_validation.contract_check', [
+                    'contract_id' => $sourceId,
+                    'is_multi_project' => $isMultiProject,
+                    'project_id' => $projectId,
+                    'amount' => $data['amount'],
+                ]);
+                
+                // Базовый запрос для подсчета платежей
+                $paymentsQuery = PaymentDocument::where('source_type', Contract::class)
+                    ->where('source_id', $sourceId);
+                
+                // Для мультипроектных договоров фильтруем по проекту
+                if ($isMultiProject && $projectId) {
+                    $paymentsQuery->where('project_id', $projectId);
+                }
+                
+                $existingPaymentsSum = (clone $paymentsQuery)->sum('amount');
 
                 // Определяем тип платежа
                 $invoiceTypeValue = null;
@@ -294,11 +311,15 @@ class PaymentValidationService
                 if ($isAdvancePayment) {
                     // Для авансовых платежей проверяем плановую сумму аванса
                     if ($source->planned_advance_amount > 0) {
-                        $existingAdvancePayments = PaymentDocument::where('source_type', Contract::class)
+                        $advanceQuery = PaymentDocument::where('source_type', Contract::class)
                             ->where('source_id', $sourceId)
-                            ->where('invoice_type', 'advance')
-                            ->sum('amount');
+                            ->where('invoice_type', 'advance');
                         
+                        if ($isMultiProject && $projectId) {
+                            $advanceQuery->where('project_id', $projectId);
+                        }
+                        
+                        $existingAdvancePayments = $advanceQuery->sum('amount');
                         $totalAdvanceWithCurrent = $existingAdvancePayments + $data['amount'];
                         
                         if ($totalAdvanceWithCurrent > $source->planned_advance_amount) {
@@ -313,24 +334,50 @@ class PaymentValidationService
                     }
                 } elseif (!$isFinalPayment) {
                     // Для обычных платежей (кроме финального расчета) проверяем выполненные работы
-                    // Финальный расчет проверяется только по общей сумме договора ниже
-                    $performedAmount = $source->total_performed_amount ?? 0;
+                    // Для мультипроектных договоров - только по текущему проекту
+                    
+                    if ($isMultiProject && $projectId) {
+                        // Для мультипроектного договора считаем акты только по текущему проекту
+                        $performedAmount = DB::table('contract_performance_acts')
+                            ->where('contract_id', $sourceId)
+                            ->where('project_id', $projectId)
+                            ->where('is_approved', true)
+                            ->sum('amount');
+                    } else {
+                        // Для обычного договора берем все акты
+                        $performedAmount = $source->total_performed_amount ?? 0;
+                    }
                     
                     // Получаем сумму неавансовых платежей (исключая финальные расчеты)
-                    $existingRegularPayments = PaymentDocument::where('source_type', Contract::class)
+                    $regularPaymentsQuery = PaymentDocument::where('source_type', Contract::class)
                         ->where('source_id', $sourceId)
                         ->where(function($query) {
                             $query->whereNull('invoice_type')
                                   ->orWhereNotIn('invoice_type', ['advance', 'final']);
-                        })
-                        ->sum('amount');
+                        });
                     
+                    if ($isMultiProject && $projectId) {
+                        $regularPaymentsQuery->where('project_id', $projectId);
+                    }
+                    
+                    $existingRegularPayments = $regularPaymentsQuery->sum('amount');
                     $totalRegularWithCurrent = $existingRegularPayments + $data['amount'];
                     
+                    Log::info('payment_validation.performed_amount_check', [
+                        'is_multi_project' => $isMultiProject,
+                        'project_id' => $projectId,
+                        'performed_amount' => $performedAmount,
+                        'existing_regular_payments' => $existingRegularPayments,
+                        'requested_amount' => $data['amount'],
+                        'total_with_current' => $totalRegularWithCurrent,
+                    ]);
+                    
                     if ($totalRegularWithCurrent > $performedAmount) {
+                        $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
                         throw new \DomainException(
                             sprintf(
-                                'Сумма превышает объем выполненных работ. Выполнено: %.2f, уже оплачено: %.2f, доступно: %.2f, запрошено: %.2f',
+                                'Сумма превышает объем выполненных работ%s. Выполнено: %.2f, уже оплачено: %.2f, доступно: %.2f, запрошено: %.2f',
+                                $projectInfo,
                                 $performedAmount,
                                 $existingRegularPayments,
                                 $performedAmount - $existingRegularPayments,
@@ -342,12 +389,15 @@ class PaymentValidationService
                 // Для финального расчета проверка идет только по общей сумме договора (см. ниже)
                 
                 // Общая проверка: сумма всех платежей не должна превышать общую сумму договора
+                // Для мультипроектных договоров проверяем по проекту, если указан
                 $totalWithCurrent = $existingPaymentsSum + $data['amount'];
                 
                 if ($totalWithCurrent > $source->total_amount) {
+                    $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
                     throw new \DomainException(
                         sprintf(
-                            'Сумма всех платежей превышает общую сумму договора. Договор: %.2f, уже оплачено: %.2f, доступно: %.2f, запрошено: %.2f',
+                            'Сумма всех платежей превышает общую сумму договора%s. Договор: %.2f, уже оплачено: %.2f, доступно: %.2f, запрошено: %.2f',
+                            $projectInfo,
                             $source->total_amount,
                             $existingPaymentsSum,
                             $source->total_amount - $existingPaymentsSum,
