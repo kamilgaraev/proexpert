@@ -152,7 +152,7 @@ class ContractResource extends JsonResource
             : (float) ($this->base_amount ?? $this->total_amount ?? 0);
         
         // Рассчитываем сумму ГП от base_amount (НЕ от effectiveTotalAmount!)
-        $gpAmount = $this->gp_amount; // Используем accessor модели для правильного расчета
+        $gpAmount = (float) ($this->gp_amount ?? 0); // Используем accessor модели для правильного расчета
         
         // Для контрактов с нефиксированной суммой: используем total_amount из БД
         // (он уже пересчитан на основе актов и ДС через Observer'ы)
@@ -164,7 +164,7 @@ class ContractResource extends JsonResource
             $totalAmountCalculated = (float) ($this->total_amount ?? 0);
         } else {
             // Для фиксированных контрактов рассчитываем: базовая сумма + изменения от допсоглашений + ГП
-            $totalAmountCalculated = round($effectiveTotalAmount + $gpAmount, 2);
+            $totalAmountCalculated = round((float) $effectiveTotalAmount + $gpAmount, 2);
         }
 
         return [
@@ -227,7 +227,7 @@ class ContractResource extends JsonResource
                 }
                 return $totalAmount;
             }, 0), 2),
-            'remaining_amount' => round((float) max(0, $totalAmountCalculated - ($this->whenLoaded('performanceActs', function() {
+            'remaining_amount' => round(max(0, (float) $totalAmountCalculated - (float) ($this->whenLoaded('performanceActs', function() {
                 $totalAmount = 0;
                 foreach ($this->performanceActs->where('is_approved', true) as $act) {
                     if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
@@ -237,9 +237,9 @@ class ContractResource extends JsonResource
                     }
                 }
                 return $totalAmount;
-            }, 0)), 2),
-            'completion_percentage' => $totalAmountCalculated > 0 ? 
-                round((($this->whenLoaded('performanceActs', function() {
+            }, 0))), 2),
+            'completion_percentage' => ((float) $totalAmountCalculated) > 0 ? 
+                round(((float) $this->whenLoaded('performanceActs', function() {
                     $totalAmount = 0;
                     foreach ($this->performanceActs->where('is_approved', true) as $act) {
                         if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
@@ -249,7 +249,7 @@ class ContractResource extends JsonResource
                         }
                     }
                     return $totalAmount;
-                }, 0)) / $totalAmountCalculated) * 100, 2) : 0.0,
+                }, 0)) / ((float) $totalAmountCalculated)) * 100, 2) : 0.0,
             'total_paid_amount' => (float) $this->whenLoaded('payments', function() {
                 return $this->payments->sum('amount') ?? 0;
             }, 0),
@@ -316,7 +316,7 @@ class ContractResource extends JsonResource
                 }, 0), 2),
                 
                 // Расчетные показатели
-                'remaining_to_perform' => round(max(0, $totalAmountCalculated - (float) $this->whenLoaded('performanceActs', function() {
+                'remaining_to_perform' => round(max(0.0, (float) $totalAmountCalculated - (float) $this->whenLoaded('performanceActs', function() {
                     $totalAmount = 0;
                     foreach ($this->performanceActs->where('is_approved', true) as $act) {
                         if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
@@ -328,7 +328,7 @@ class ContractResource extends JsonResource
                     return $totalAmount;
                 }, 0)), 2),
                 
-                'remaining_to_pay' => round(max(0, (float) $this->whenLoaded('performanceActs', function() {
+                'remaining_to_pay' => round(max(0.0, (float) $this->whenLoaded('performanceActs', function() {
                     $totalAmount = 0;
                     foreach ($this->performanceActs->where('is_approved', true) as $act) {
                         if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
@@ -341,7 +341,7 @@ class ContractResource extends JsonResource
                 }, 0) - (float) $this->whenLoaded('payments', fn() => $this->payments->sum('amount') ?? 0, 0)), 2),
                 
                 // Проценты выполнения
-                'performance_percentage' => $totalAmountCalculated > 0 ? 
+                'performance_percentage' => ((float) $totalAmountCalculated) > 0 ? 
                     round((((float) $this->whenLoaded('performanceActs', function() {
                         $totalAmount = 0;
                         foreach ($this->performanceActs->where('is_approved', true) as $act) {
@@ -352,10 +352,10 @@ class ContractResource extends JsonResource
                             }
                         }
                         return $totalAmount;
-                    }, 0)) / $totalAmountCalculated) * 100, 2) : 0.0,
+                    }, 0)) / ((float) $totalAmountCalculated)) * 100, 2) : 0.0,
                     
-                'payment_percentage' => $totalAmountCalculated > 0 ? 
-                    round(((float) $this->whenLoaded('payments', fn() => $this->payments->sum('amount') ?? 0, 0) / $totalAmountCalculated) * 100, 2) : 0.0,
+                'payment_percentage' => ((float) $totalAmountCalculated) > 0 ? 
+                    round(((float) $this->whenLoaded('payments', fn() => $this->payments->sum('amount') ?? 0, 0) / ((float) $totalAmountCalculated)) * 100, 2) : 0.0,
                 
                 // Дополнительные метрики
                 'payment_vs_performance_diff' => round((float) $this->whenLoaded('payments', function() {
