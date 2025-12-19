@@ -6,6 +6,7 @@ use App\BusinessModules\Core\Payments\Models\PaymentDocument;
 use App\Models\Contract;
 use App\Models\Contractor;
 use App\Models\Organization;
+use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -386,13 +387,13 @@ class PaymentValidationService
                         );
                     }
                 }
-                // Для финального расчета проверка идет только по общей сумме договора (см. ниже)
+                // Для финального расчета проверка по общей сумме договора - мягкая (только логирование)
                 
                 // Общая проверка: сумма всех платежей не должна превышать общую сумму договора
-                // Для мультипроектных договоров проверяем по проекту, если указан
+                // ИСКЛЮЧЕНИЕ: для финального расчета разрешаем превышение (реальный бизнес-процесс)
                 $totalWithCurrent = $existingPaymentsSum + $data['amount'];
                 
-                if ($totalWithCurrent > $source->total_amount) {
+                if (!$isFinalPayment && $totalWithCurrent > $source->total_amount) {
                     $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
                     throw new \DomainException(
                         sprintf(
@@ -404,6 +405,35 @@ class PaymentValidationService
                             $data['amount']
                         )
                     );
+                }
+                
+                // Для финального расчета - логируем превышение и отправляем уведомление
+                if ($isFinalPayment && $totalWithCurrent > $source->total_amount) {
+                    $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
+                    $excess = $totalWithCurrent - $source->total_amount;
+                    
+                    Log::info('payment_validation.final_payment_exceeds_contract', [
+                        'contract_id' => $sourceId,
+                        'project_id' => $projectId,
+                        'is_multi_project' => $isMultiProject,
+                        'contract_amount' => $source->total_amount,
+                        'existing_payments' => $existingPaymentsSum,
+                        'new_payment' => $data['amount'],
+                        'total_with_current' => $totalWithCurrent,
+                        'excess_amount' => $excess,
+                        'message' => "Финальный расчет{$projectInfo} превышает сумму договора на " . number_format($excess, 2, '.', ' ') . " ₽",
+                    ]);
+                    
+                    // Создаем уведомление для администраторов организации
+                    if (isset($data['organization_id'])) {
+                        $this->notifyContractExcess(
+                            $data['organization_id'],
+                            $source,
+                            $projectId,
+                            $excess,
+                            $data['amount']
+                        );
+                    }
                 }
             }
 
@@ -588,9 +618,10 @@ class PaymentValidationService
         }
         
         // Общая проверка по сумме договора
+        // ИСКЛЮЧЕНИЕ: для финального расчета разрешаем превышение (реальный бизнес-процесс)
         $totalWithCurrent = $paidSum + $document->amount;
 
-        if ($totalWithCurrent > $contract->total_amount) {
+        if (!$isFinalPayment && $totalWithCurrent > $contract->total_amount) {
             $remaining = $contract->total_amount - $paidSum;
             $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
             $errors[] = sprintf(
@@ -599,6 +630,121 @@ class PaymentValidationService
                 $remaining,
                 $document->amount
             );
+        }
+        
+        // Для финального расчета - логируем превышение и отправляем уведомление
+        if ($isFinalPayment && $totalWithCurrent > $contract->total_amount) {
+            $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
+            $excess = $totalWithCurrent - $contract->total_amount;
+            
+            Log::info('payment_validation.final_payment_exceeds_contract_on_submit', [
+                'document_id' => $document->id,
+                'contract_id' => $contract->id,
+                'project_id' => $projectId,
+                'is_multi_project' => $isMultiProject,
+                'contract_amount' => $contract->total_amount,
+                'existing_payments' => $paidSum,
+                'new_payment' => $document->amount,
+                'total_with_current' => $totalWithCurrent,
+                'excess_amount' => $excess,
+                'message' => "Финальный расчет{$projectInfo} превышает сумму договора на " . number_format($excess, 2, '.', ' ') . " ₽ (это разрешено)",
+            ]);
+            
+            // Создаем уведомление для администраторов организации
+            $this->notifyContractExcess(
+                $document->organization_id,
+                $contract,
+                $projectId,
+                $excess,
+                $document->amount
+            );
+        }
+    }
+    
+    /**
+     * Отправка уведомления о превышении суммы договора
+     */
+    private function notifyContractExcess(
+        int $organizationId,
+        Contract $contract,
+        ?int $projectId,
+        float $excessAmount,
+        float $paymentAmount
+    ): void {
+        try {
+            // Получаем администраторов и владельцев организации
+            $users = User::whereHas('organizationUsers', function($query) use ($organizationId) {
+                $query->where('organization_id', $organizationId)
+                      ->whereIn('role_slug', ['organization_owner', 'admin', 'accountant']);
+            })->get();
+            
+            if ($users->isEmpty()) {
+                Log::warning('No users to notify about contract excess', [
+                    'organization_id' => $organizationId,
+                    'contract_id' => $contract->id,
+                ]);
+                return;
+            }
+            
+            $notificationService = app(\App\BusinessModules\Features\Notifications\Services\NotificationService::class);
+            
+            $projectInfo = '';
+            $projectName = '';
+            if ($projectId && $contract->is_multi_project) {
+                $project = $contract->projects()->find($projectId);
+                if ($project) {
+                    $projectInfo = " (проект #{$projectId})";
+                    $projectName = $project->name;
+                }
+            }
+            
+            $formattedExcess = number_format($excessAmount, 2, '.', ' ');
+            $formattedPayment = number_format($paymentAmount, 2, '.', ' ');
+            $formattedContract = number_format($contract->total_amount, 2, '.', ' ');
+            
+            foreach ($users as $user) {
+                $notificationService->send(
+                    $user,
+                    'payment.contract_excess',
+                    [
+                        'title' => '⚠️ Превышение суммы договора',
+                        'message' => "Финальный расчет{$projectInfo} превышает сумму договора на {$formattedExcess} ₽",
+                        'contract_id' => $contract->id,
+                        'contract_number' => $contract->number,
+                        'contract_amount' => $contract->total_amount,
+                        'payment_amount' => $paymentAmount,
+                        'excess_amount' => $excessAmount,
+                        'project_id' => $projectId,
+                        'project_name' => $projectName,
+                        'contractor_name' => $contract->contractor->name ?? null,
+                        'details' => [
+                            'Договор' => "№{$contract->number}",
+                            'Контрагент' => $contract->contractor->name ?? 'Не указан',
+                            'Сумма договора' => "{$formattedContract} ₽",
+                            'Сумма платежа' => "{$formattedPayment} ₽",
+                            'Превышение' => "{$formattedExcess} ₽",
+                        ],
+                    ],
+                    'finance',
+                    'high',
+                    ['in_app', 'websocket'],
+                    $organizationId
+                );
+            }
+            
+            Log::info('Contract excess notifications sent', [
+                'organization_id' => $organizationId,
+                'contract_id' => $contract->id,
+                'users_count' => $users->count(),
+                'excess_amount' => $excessAmount,
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to send contract excess notification', [
+                'organization_id' => $organizationId,
+                'contract_id' => $contract->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
         }
     }
 
