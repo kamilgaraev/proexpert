@@ -249,7 +249,7 @@ class ContractResource extends JsonResource
                         }
                     }
                     return $totalAmount;
-                }, 0)) / ((float) $totalAmountCalculated)) * 100, 2) : 0.0,
+                }, 0) / ((float) $totalAmountCalculated)) * 100, 2) : 0.0,
             'total_paid_amount' => (float) $this->whenLoaded('payments', function() {
                 return $this->payments->sum('amount') ?? 0;
             }, 0),
@@ -342,7 +342,7 @@ class ContractResource extends JsonResource
                 
                 // Проценты выполнения
                 'performance_percentage' => ((float) $totalAmountCalculated) > 0 ? 
-                    round((((float) $this->whenLoaded('performanceActs', function() {
+                    round(((float) $this->whenLoaded('performanceActs', function() {
                         $totalAmount = 0;
                         foreach ($this->performanceActs->where('is_approved', true) as $act) {
                             if ($act->relationLoaded('completedWorks') && $act->completedWorks->count() > 0) {
@@ -352,7 +352,7 @@ class ContractResource extends JsonResource
                             }
                         }
                         return $totalAmount;
-                    }, 0)) / ((float) $totalAmountCalculated)) * 100, 2) : 0.0,
+                    }, 0) / ((float) $totalAmountCalculated)) * 100, 2) : 0.0,
                     
                 'payment_percentage' => ((float) $totalAmountCalculated) > 0 ? 
                     round(((float) $this->whenLoaded('payments', fn() => $this->payments->sum('amount') ?? 0, 0) / ((float) $totalAmountCalculated)) * 100, 2) : 0.0,
