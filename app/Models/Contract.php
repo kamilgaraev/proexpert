@@ -330,7 +330,7 @@ class Contract extends Model
     {
         $planned = $this->planned_advance_amount ?? 0;
         $actual = $this->actual_advance_amount ?? 0;
-        return max(0, $planned - $actual);
+        return round(max(0, $planned - $actual), 2);
     }
 
     /**
@@ -362,9 +362,12 @@ class Contract extends Model
      */
     public function getCompletedWorksAmountAttribute(): float
     {
-        return (float) $this->completedWorks()
-            ->whereIn('status', ['confirmed'])
-            ->sum('total_amount');
+        return round(
+            (float) $this->completedWorks()
+                ->whereIn('status', ['confirmed'])
+                ->sum('total_amount'),
+            2
+        );
     }
 
     /**
@@ -380,7 +383,7 @@ class Contract extends Model
         
         $totalAmount = $this->total_amount ?? 0;
         $completedAmount = $this->completed_works_amount ?? 0;
-        return max(0, $totalAmount - $completedAmount);
+        return round(max(0, $totalAmount - $completedAmount), 2);
     }
 
     /**
@@ -448,8 +451,10 @@ class Contract extends Model
      */
     public function getTotalPaidAmountAttribute(): float
     {
-        return (float) $this->payments()
-            ->sum('amount');
+        return round(
+            (float) $this->payments()->sum('amount'),
+            2
+        );
     }
 
     /**
@@ -457,9 +462,12 @@ class Contract extends Model
      */
     public function getTotalPerformedAmountAttribute(): float
     {
-        return (float) $this->performanceActs()
-            ->where('is_approved', true)
-            ->sum('amount');
+        return round(
+            (float) $this->performanceActs()
+                ->where('is_approved', true)
+                ->sum('amount'),
+            2
+        );
     }
 
     /**
