@@ -516,18 +516,86 @@ class PaymentValidationService
             return;
         }
 
-        // Сумма всех платежей по договору
-        $paidSum = PaymentDocument::where('source_type', Contract::class)
+        // Проверяем, мультипроектный ли договор и передан ли project_id
+        $projectId = $document->project_id ?? null;
+        $isMultiProject = $contract->is_multi_project ?? false;
+        
+        // Базовый запрос для подсчета платежей
+        $paymentsQuery = PaymentDocument::where('source_type', Contract::class)
             ->where('source_id', $contract->id)
-            ->where('id', '!=', $document->id)
-            ->sum('amount');
+            ->where('id', '!=', $document->id);
+        
+        // Для мультипроектных договоров фильтруем по проекту
+        if ($isMultiProject && $projectId) {
+            $paymentsQuery->where('project_id', $projectId);
+        }
+        
+        $paidSum = $paymentsQuery->sum('amount');
 
+        // Определяем тип платежа
+        $invoiceTypeValue = null;
+        if ($document->invoice_type) {
+            $invoiceTypeValue = is_object($document->invoice_type) 
+                ? $document->invoice_type->value 
+                : $document->invoice_type;
+        }
+        
+        $isAdvancePayment = $invoiceTypeValue === 'advance';
+        $isFinalPayment = $invoiceTypeValue === 'final';
+        
+        // Для обычных платежей (не аванс и не финальный расчет) проверяем по актам
+        if (!$isAdvancePayment && !$isFinalPayment) {
+            if ($isMultiProject && $projectId) {
+                // Для мультипроектного договора считаем акты только по текущему проекту
+                $performedAmount = DB::table('contract_performance_acts')
+                    ->where('contract_id', $contract->id)
+                    ->where('project_id', $projectId)
+                    ->where('is_approved', true)
+                    ->sum('amount');
+            } else {
+                // Для обычного договора берем все акты
+                $performedAmount = $contract->total_performed_amount ?? 0;
+            }
+            
+            // Получаем сумму неавансовых платежей (исключая финальные расчеты)
+            $regularPaymentsQuery = PaymentDocument::where('source_type', Contract::class)
+                ->where('source_id', $contract->id)
+                ->where('id', '!=', $document->id)
+                ->where(function($query) {
+                    $query->whereNull('invoice_type')
+                          ->orWhereNotIn('invoice_type', ['advance', 'final']);
+                });
+            
+            if ($isMultiProject && $projectId) {
+                $regularPaymentsQuery->where('project_id', $projectId);
+            }
+            
+            $existingRegularPayments = $regularPaymentsQuery->sum('amount');
+            $totalRegularWithCurrent = $existingRegularPayments + $document->amount;
+            
+            if ($totalRegularWithCurrent > $performedAmount) {
+                $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
+                $errors[] = sprintf(
+                    'Сумма превышает объем выполненных работ%s. Выполнено: %.2f, уже оплачено: %.2f, доступно: %.2f, запрошено: %.2f',
+                    $projectInfo,
+                    $performedAmount,
+                    $existingRegularPayments,
+                    $performedAmount - $existingRegularPayments,
+                    $document->amount
+                );
+                return;
+            }
+        }
+        
+        // Общая проверка по сумме договора
         $totalWithCurrent = $paidSum + $document->amount;
 
         if ($totalWithCurrent > $contract->total_amount) {
             $remaining = $contract->total_amount - $paidSum;
+            $projectInfo = $isMultiProject && $projectId ? " (проект #{$projectId})" : '';
             $errors[] = sprintf(
-                'Превышена сумма договора. Остаток: %.2f, запрошено: %.2f',
+                'Превышена сумма договора%s. Остаток: %.2f, запрошено: %.2f',
+                $projectInfo,
                 $remaining,
                 $document->amount
             );
