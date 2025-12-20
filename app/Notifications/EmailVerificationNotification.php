@@ -36,7 +36,7 @@ class EmailVerificationNotification extends VerifyEmail
         ];
         
         $apiUrl = URL::temporarySignedRoute(
-            'api.landing.verification.verify',
+            'api.v1.landing.verification.verify',
             Carbon::now()->addMinutes(60),
             [
                 'id' => $notifiable->getKey(),
