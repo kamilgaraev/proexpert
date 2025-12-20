@@ -83,6 +83,23 @@ class JwtAuthService
                     /** @var User $user */
                     $user = Auth::getLastAttempted();
                     Log::info('[JwtAuthService] User retrieved.', ['user_id' => $user?->id]);
+                    
+                    if (!$user->hasVerifiedEmail()) {
+                        Log::warning('[JwtAuthService] Login blocked: email not verified', [
+                            'user_id' => $user->id,
+                            'email' => $user->email
+                        ]);
+                        LogService::authLog('login_failed', array_merge($logContext, [
+                            'reason' => 'email_not_verified',
+                            'user_id' => $user->id
+                        ]));
+                        return [
+                            'success' => false, 
+                            'message' => 'Пожалуйста, подтвердите ваш email адрес. Проверьте почту и перейдите по ссылке из письма.', 
+                            'status_code' => 403
+                        ];
+                    }
+                    
                     $user->update([
                         'last_login_at' => now(),
                         'last_login_ip' => request()->ip(),
