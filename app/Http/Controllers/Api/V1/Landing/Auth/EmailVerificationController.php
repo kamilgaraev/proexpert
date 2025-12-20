@@ -27,6 +27,20 @@ class EmailVerificationController extends Controller
             ], 403);
         }
 
+        $expires = $request->query('expires');
+        if ($expires && $expires < time()) {
+            Log::warning('Email verification failed: link expired', [
+                'user_id' => $id,
+                'expires' => $expires,
+                'current_time' => time()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Ссылка для подтверждения истекла. Запросите новую.'
+            ], 403);
+        }
+
         if ($user->hasVerifiedEmail()) {
             return response()->json([
                 'success' => true,
