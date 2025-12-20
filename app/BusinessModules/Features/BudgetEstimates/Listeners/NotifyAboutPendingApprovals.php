@@ -17,21 +17,24 @@ class NotifyAboutPendingApprovals implements ShouldQueue
         $entry = $event->entry;
         $journal = $entry->journal;
 
-        // Найти пользователей с правом утверждения
         $approvers = User::where('current_organization_id', $journal->organization_id)
-            ->whereHas('roles', function ($query) {
-                $query->whereHas('permissions', function ($q) {
-                    $q->where('name', 'construction-journal.approve');
-                });
+            ->whereHas('roleAssignments', function ($query) use ($journal) {
+                $query->active()
+                    ->whereHas('context', function ($q) use ($journal) {
+                        $q->where('resource_id', $journal->organization_id)
+                          ->where('type', 'organization');
+                    });
             })
-            ->where('id', '!=', $entry->created_by_user_id) // Исключить создателя
-            ->get();
+            ->where('id', '!=', $entry->created_by_user_id)
+            ->get()
+            ->filter(function ($user) {
+                return $user->can('construction-journal.approve');
+            });
 
         if ($approvers->isEmpty()) {
             return;
         }
 
-        // Отправить уведомление
         Notification::send($approvers, new \App\Notifications\Journal\JournalEntryPendingApprovalNotification($entry));
     }
 }
