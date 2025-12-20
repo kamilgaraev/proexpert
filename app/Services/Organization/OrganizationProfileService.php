@@ -101,7 +101,8 @@ class OrganizationProfileService
             specializations: $organization->specializations ?? [],
             certifications: $organization->certifications ?? [],
             profileCompleteness: $organization->profile_completeness ?? 0,
-            onboardingCompleted: $organization->onboarding_completed ?? false
+            onboardingCompleted: $organization->onboarding_completed ?? false,
+            onboardingCompletedAt: $organization->onboarding_completed_at
         );
     }
 
@@ -155,14 +156,13 @@ class OrganizationProfileService
     public function calculateProfileCompleteness(Organization $organization): int
     {
         $completeness = 0;
-        $totalFields = 5;
 
         if (!empty($organization->capabilities)) {
             $completeness += 30;
         }
 
         if (!empty($organization->primary_business_type)) {
-            $completeness += 25;
+            $completeness += 30;
         }
 
         if (!empty($organization->specializations)) {
@@ -170,11 +170,7 @@ class OrganizationProfileService
         }
 
         if (!empty($organization->certifications)) {
-            $completeness += 15;
-        }
-
-        if (!empty($organization->name) && !empty($organization->inn)) {
-            $completeness += 10;
+            $completeness += 20;
         }
 
         $organization->update([

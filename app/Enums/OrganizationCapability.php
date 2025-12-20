@@ -124,6 +124,7 @@ enum OrganizationCapability: string
                 'value' => $case->value,
                 'label' => $case->label(),
                 'description' => $case->description(),
+                'recommended_modules' => $case->recommendedModules(),
             ],
             self::cases()
         );

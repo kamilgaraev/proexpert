@@ -61,6 +61,9 @@ class Organization extends Model
         'primary_business_type',
         'specializations',
         'certifications',
+        'profile_completeness',
+        'onboarding_completed',
+        'onboarding_completed_at',
     ];
 
     /**
@@ -84,6 +87,8 @@ class Organization extends Model
         'capabilities' => 'array',
         'specializations' => 'array',
         'certifications' => 'array',
+        'onboarding_completed' => 'boolean',
+        'onboarding_completed_at' => 'datetime',
     ];
 
     /**
