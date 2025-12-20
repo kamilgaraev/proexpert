@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\Landing\Auth\AuthController;
+use App\Http\Controllers\Api\V1\Landing\Auth\EmailVerificationController;
 use App\Http\Controllers\Api\V1\Landing\ProfileController;
 
 Route::prefix('auth')->name('auth.')->group(function () {
@@ -13,5 +14,12 @@ Route::prefix('auth')->name('auth.')->group(function () {
         Route::patch('me', [ProfileController::class, 'update'])->name('me.update');
         Route::post('refresh', [AuthController::class, 'refresh'])->name('refresh');
         Route::post('logout', [AuthController::class, 'logout'])->name('logout');
+        
+        Route::post('email/resend', [EmailVerificationController::class, 'resend'])->name('verification.resend');
+        Route::get('email/check', [EmailVerificationController::class, 'check'])->name('verification.check');
     });
-}); 
+});
+
+Route::get('email/verify/{id}/{hash}', [EmailVerificationController::class, 'verify'])
+    ->middleware(['signed'])
+    ->name('api.landing.verification.verify'); 

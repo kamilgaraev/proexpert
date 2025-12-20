@@ -63,6 +63,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'module.access' => \App\Modules\Middleware\ModuleAccessMiddleware::class,
             'module.permission' => \App\Modules\Middleware\ModulePermissionMiddleware::class,
             'holding.subdomain' => \App\Http\Middleware\DetectHoldingSubdomain::class,
+            'verified' => \App\Http\Middleware\EnsureEmailIsVerified::class,
         ]);
 
         // Глобальные middleware

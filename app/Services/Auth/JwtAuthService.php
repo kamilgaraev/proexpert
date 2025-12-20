@@ -675,22 +675,18 @@ class JwtAuthService
                 }
             }
 
-            // Отправляем приветственное письмо. Пытаемся через queue; если очередь недоступна — шлём синхронно.
+            // Отправляем письмо для верификации email
             try {
-                Mail::to($user->email)->queue(new UserWelcomeMail($user));
+                $user->sendEmailVerificationNotification();
+                Log::info('[JwtAuthService] Email verification notification sent', [
+                    'user_id' => $user->id,
+                    'email' => $user->email
+                ]);
             } catch (\Throwable $mailEx) {
-                Log::warning('[JwtAuthService] Queue welcome mail failed, fallback to sync send', [
+                Log::error('[JwtAuthService] Failed to send email verification notification', [
                     'user_id' => $user->id,
                     'error' => $mailEx->getMessage(),
                 ]);
-                try {
-                    Mail::to($user->email)->send(new UserWelcomeMail($user));
-                } catch (\Throwable $mailSyncEx) {
-                    Log::error('[JwtAuthService] Failed to send welcome email synchronously', [
-                        'user_id' => $user->id,
-                        'error' => $mailSyncEx->getMessage(),
-                    ]);
-                }
             }
 
             // Верифицируем, что пользователь действительно сохранен
