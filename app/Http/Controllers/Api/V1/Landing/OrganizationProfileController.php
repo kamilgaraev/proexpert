@@ -42,13 +42,16 @@ class OrganizationProfileController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => [
-                    'organization' => [
-                        'id' => $organization->id,
-                        'name' => $organization->name,
-                        'inn' => $organization->inn,
-                        'address' => $organization->address,
-                    ],
-                    'profile' => $profile->toArray(),
+                    'organization_id' => $organization->id,
+                    'name' => $organization->name,
+                    'inn' => $organization->inn ?? $organization->tax_number,
+                    'capabilities' => $profile->getCapabilities(),
+                    'primary_business_type' => $profile->getPrimaryBusinessType()?->value,
+                    'specializations' => $profile->getSpecializations(),
+                    'certifications' => $profile->getCertifications(),
+                    'profile_completeness' => $profile->getProfileCompleteness(),
+                    'onboarding_completed' => $profile->isOnboardingCompleted(),
+                    'onboarding_completed_at' => $profile->getOnboardingCompletedAt()?->format('Y-m-d H:i:s'),
                     'recommended_modules' => $profile->getRecommendedModules(),
                 ],
             ]);
@@ -107,7 +110,7 @@ class OrganizationProfileController extends Controller
                 'success' => true,
                 'message' => 'Capabilities успешно обновлены',
                 'data' => [
-                    'profile' => $profile->toArray(),
+                    'profile_completeness' => $profile->getProfileCompleteness(),
                     'recommended_modules' => $profile->getRecommendedModules(),
                 ],
             ]);
@@ -165,7 +168,8 @@ class OrganizationProfileController extends Controller
                 'success' => true,
                 'message' => 'Основной тип деятельности обновлен',
                 'data' => [
-                    'profile' => $profile->toArray(),
+                    'profile_completeness' => $profile->getProfileCompleteness(),
+                    'recommended_modules' => $profile->getRecommendedModules(),
                 ],
             ]);
         } catch (\Exception $e) {
@@ -223,7 +227,8 @@ class OrganizationProfileController extends Controller
                 'success' => true,
                 'message' => 'Специализации обновлены',
                 'data' => [
-                    'profile' => $profile->toArray(),
+                    'profile_completeness' => $profile->getProfileCompleteness(),
+                    'recommended_modules' => $profile->getRecommendedModules(),
                 ],
             ]);
         } catch (\Exception $e) {
@@ -248,10 +253,7 @@ class OrganizationProfileController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'certifications' => 'required|array',
-            'certifications.*.name' => 'required|string|max:255',
-            'certifications.*.number' => 'nullable|string|max:255',
-            'certifications.*.issued_date' => 'nullable|date',
-            'certifications.*.expiry_date' => 'nullable|date',
+            'certifications.*' => 'string|max:255',
         ]);
         
         if ($validator->fails()) {
@@ -284,7 +286,8 @@ class OrganizationProfileController extends Controller
                 'success' => true,
                 'message' => 'Сертификаты обновлены',
                 'data' => [
-                    'profile' => $profile->toArray(),
+                    'profile_completeness' => $profile->getProfileCompleteness(),
+                    'recommended_modules' => $profile->getRecommendedModules(),
                 ],
             ]);
         } catch (\Exception $e) {
@@ -342,7 +345,9 @@ class OrganizationProfileController extends Controller
                 'success' => true,
                 'message' => 'Onboarding успешно завершен',
                 'data' => [
-                    'profile' => $profile->toArray(),
+                    'onboarding_completed' => $profile->isOnboardingCompleted(),
+                    'onboarding_completed_at' => $profile->getOnboardingCompletedAt()?->format('Y-m-d H:i:s'),
+                    'profile_completeness' => $profile->getProfileCompleteness(),
                     'recommended_modules' => $profile->getRecommendedModules(),
                 ],
             ]);

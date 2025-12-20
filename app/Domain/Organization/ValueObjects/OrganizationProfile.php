@@ -15,6 +15,7 @@ class OrganizationProfile
         private array $certifications,
         private int $profileCompleteness,
         private bool $onboardingCompleted,
+        private ?\DateTime $onboardingCompletedAt = null,
     ) {}
     
     /**
@@ -67,7 +68,7 @@ class OrganizationProfile
             }
         }
         
-        return array_unique($modules);
+        return \App\Helpers\ModuleHelper::formatModules($modules);
     }
     
     /**
@@ -138,9 +139,11 @@ class OrganizationProfile
         return $this->onboardingCompleted;
     }
     
-    /**
-     * Преобразовать в массив
-     */
+    public function getOnboardingCompletedAt(): ?\DateTime
+    {
+        return $this->onboardingCompletedAt;
+    }
+    
     public function toArray(): array
     {
         return [
@@ -151,6 +154,7 @@ class OrganizationProfile
             'certifications' => $this->certifications,
             'profile_completeness' => $this->profileCompleteness,
             'onboarding_completed' => $this->onboardingCompleted,
+            'onboarding_completed_at' => $this->onboardingCompletedAt?->format('Y-m-d H:i:s'),
         ];
     }
     
@@ -159,6 +163,13 @@ class OrganizationProfile
      */
     public static function fromArray(array $data): self
     {
+        $onboardingCompletedAt = null;
+        if (!empty($data['onboarding_completed_at'])) {
+            $onboardingCompletedAt = $data['onboarding_completed_at'] instanceof \DateTime 
+                ? $data['onboarding_completed_at'] 
+                : new \DateTime($data['onboarding_completed_at']);
+        }
+        
         return new self(
             organizationId: $data['organization_id'] ?? 0,
             capabilities: $data['capabilities'] ?? [],
@@ -167,6 +178,7 @@ class OrganizationProfile
             certifications: $data['certifications'] ?? [],
             profileCompleteness: $data['profile_completeness'] ?? 0,
             onboardingCompleted: $data['onboarding_completed'] ?? false,
+            onboardingCompletedAt: $onboardingCompletedAt,
         );
     }
 }
