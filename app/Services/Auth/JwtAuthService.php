@@ -5,6 +5,7 @@ namespace App\Services\Auth;
 use App\DTOs\Auth\LoginDTO;
 use App\DTOs\Auth\RegisterDTO;
 use App\Models\User;
+use App\Models\Organization;
 use App\Repositories\Interfaces\OrganizationRepositoryInterface;
 use App\Repositories\Interfaces\UserRepositoryInterface;
 use App\Services\LogService;
@@ -517,7 +518,25 @@ class JwtAuthService
                 ]);
                 
                 try {
-                    // Создаем организацию
+                    if (!empty($orgData['tax_number'])) {
+                        $existingOrg = Organization::where('tax_number', $orgData['tax_number'])->first();
+                        if ($existingOrg) {
+                            Log::warning('[JwtAuthService] Organization with this INN already exists', [
+                                'tax_number' => $orgData['tax_number'],
+                                'existing_org_id' => $existingOrg->id,
+                                'existing_org_name' => $existingOrg->name
+                            ]);
+                            
+                            DB::rollBack();
+                            
+                            return [
+                                'success' => false, 
+                                'message' => 'Организация с таким ИНН уже зарегистрирована в системе. Если вы являетесь сотрудником этой организации, попросите владельца добавить вас в команду.', 
+                                'status_code' => 422
+                            ];
+                        }
+                    }
+                    
                     $organization = $this->organizationRepository->create($orgData);
                     Log::info('[JwtAuthService] Organization created', [
                         'org_id' => $organization->id ?? 'Failed to get ID',
@@ -525,7 +544,6 @@ class JwtAuthService
                         'tax_number' => $organization->tax_number
                     ]);
                     
-                    // Привязываем пользователя к организации
                     if (!$user->organizations()->where('organization_id', $organization->id)->exists()) {
                         $user->organizations()->attach($organization->id, [
                             'is_owner' => true,
@@ -539,7 +557,6 @@ class JwtAuthService
                         'current_org_id' => $organization->id
                     ]);
 
-                    // Назначаем роль владельца организации через новую систему авторизации
                     $this->userRepository->assignRoleToUser($user->id, 'organization_owner', $organization->id);
                     Log::info('[JwtAuthService] Owner role assigned to user after registration (new auth system)', [
                         'user_id' => $user->id,
@@ -547,15 +564,36 @@ class JwtAuthService
                         'role_slug' => 'organization_owner'
                     ]);
 
-                    // Выдача тестового баланса при регистрации (если включен тестовый режим)
                     $this->grantTestingBalanceIfEnabled($organization, $user);
 
+                } catch (\Illuminate\Database\QueryException $e) {
+                    if (str_contains($e->getMessage(), 'organizations_tax_number_unique') || 
+                        str_contains($e->getMessage(), 'duplicate key')) {
+                        Log::warning('[JwtAuthService] Duplicate INN detected in database', [
+                            'tax_number' => $orgData['tax_number'] ?? 'unknown',
+                            'error' => $e->getMessage()
+                        ]);
+                        
+                        DB::rollBack();
+                        
+                        return [
+                            'success' => false, 
+                            'message' => 'Организация с таким ИНН уже зарегистрирована в системе. Если вы являетесь сотрудником этой организации, попросите владельца добавить вас в команду.', 
+                            'status_code' => 422
+                        ];
+                    }
+                    
+                    Log::error('[JwtAuthService] Failed to create organization', [
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    throw $e;
                 } catch (\Exception $e) {
                     Log::error('[JwtAuthService] Failed to create organization', [
                         'error' => $e->getMessage(),
                         'trace' => $e->getTraceAsString()
                     ]);
-                    throw $e; // Пробрасываем исключение для обработки во внешнем catch
+                    throw $e;
                 }
             }
 
