@@ -32,21 +32,7 @@ class EmailVerificationNotification extends VerifyEmail
             'id' => $notifiable->getKey(),
             'hash' => sha1($notifiable->getEmailForVerification()),
             'expires' => Carbon::now()->addMinutes(60)->timestamp,
-            'signature' => ''
         ];
-        
-        $apiUrl = URL::temporarySignedRoute(
-            'api.v1.landing.verification.verify',
-            Carbon::now()->addMinutes(60),
-            [
-                'id' => $notifiable->getKey(),
-                'hash' => sha1($notifiable->getEmailForVerification())
-            ]
-        );
-        
-        $params['signature'] = parse_url($apiUrl, PHP_URL_QUERY);
-        preg_match('/signature=([^&]+)/', $params['signature'], $matches);
-        $params['signature'] = $matches[1] ?? '';
         
         return $frontendUrl . '/verify-email?' . http_build_query($params);
     }

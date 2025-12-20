@@ -6,7 +6,6 @@ use App\Http\Controllers\Api\V1\Landing\Auth\EmailVerificationController;
 use App\Http\Controllers\Api\V1\Landing\ProfileController;
 
 Route::get('email/verify/{id}/{hash}', [EmailVerificationController::class, 'verify'])
-    ->middleware(['signed'])
     ->name('verification.verify');
 
 Route::prefix('auth')->name('auth.')->group(function () {
