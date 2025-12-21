@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Domain\Authorization\Http\Controllers\Api\V1\Landing\CustomRoleController;
+use App\Http\Controllers\Api\V1\Landing\RolesComparisonController;
 
 /*
 |--------------------------------------------------------------------------
@@ -13,8 +14,12 @@ use App\Domain\Authorization\Http\Controllers\Api\V1\Landing\CustomRoleControlle
 */
 
 Route::prefix('authorization')
-    ->middleware(['auth:api', 'interface:lk'])
+    ->middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.context'])
     ->group(function () {
+        
+        // Сравнение ролей (доступен всем аутентифицированным пользователям)
+        Route::get('roles/comparison', [RolesComparisonController::class, 'comparison'])
+            ->name('roles.comparison');
         
         // Кастомные роли организации
         Route::prefix('custom-roles')->group(function () {
