@@ -890,18 +890,23 @@ class UserService
 
         // Проверяем, что у пользователя есть хотя бы одна из разрешенных ролей в ЭТОЙ организации
         $hasAllowedRole = false;
+        $userRoles = [];
         foreach ($allowedRoles as $roleSlug) {
-            if ($this->authorizationService->hasRole($user, $roleSlug, $intOrganizationId)) {
+            $hasRole = $this->authorizationService->hasRole($user, $roleSlug, $intOrganizationId);
+            $userRoles[$roleSlug] = $hasRole;
+            if ($hasRole) {
                 $hasAllowedRole = true;
                 break;
             }
         }
 
         if (!$hasAllowedRole) {
-             Log::warning('Attempted to find user by ID who does not have an allowed admin panel role in the current org', [
+             Log::warning('[UserService@findAdminPanelUserById] User does not have an allowed admin panel role', [
                  'requesting_user_id' => $request->user()->id,
                  'target_user_id' => $targetUserId,
                  'organization_id' => $intOrganizationId,
+                 'allowed_roles' => $allowedRoles,
+                 'user_roles_check' => $userRoles,
                  'allowed_roles' => $allowedRoles
              ]);
             return null; // Пользователь найден, но у него нет нужной роли админ-панели
@@ -975,7 +980,7 @@ class UserService
      */
     public function deleteAdminPanelUser(int $targetUserId, Request $request, array $rolesToDelete = null): bool
     {
-        $this->ensureUserIsAdmin($request); // Проверяем права запрашивающего
+        $this->ensureUserIsAdmin($request);
         $organizationId = $request->attributes->get('current_organization_id');
         if(!$organizationId) {
             throw new BusinessLogicException('Контекст организации не определен.', 500);
@@ -983,10 +988,29 @@ class UserService
         $intOrganizationId = (int) $organizationId;
         $requestingUser = $request->user();
 
-        // Используем findAdminPanelUserById для проверки
-        $rolesToDelete = $rolesToDelete ?? $this->adminPanelHelper->getAdminPanelRoles($intOrganizationId);
-        $targetUser = $this->findAdminPanelUserById($targetUserId, $request, $rolesToDelete);
+        // Получаем интерфейс из запроса (как в getAdminPanelUsersForCurrentOrg)
+        $currentInterface = $request->input('current_interface', 'lk');
+        $rolesToDelete = $rolesToDelete ?? $this->adminPanelHelper->getAdminPanelRoles($intOrganizationId, $currentInterface);
+        
+        Log::info('[UserService@deleteAdminPanelUser] Attempting to delete user', [
+            'target_user_id' => $targetUserId,
+            'organization_id' => $intOrganizationId,
+            'current_interface' => $currentInterface,
+            'roles_to_delete' => $rolesToDelete,
+        ]);
+        
+        // Используем тот же метод поиска, что и в getAdminPanelUsersForCurrentOrg
+        $adminPanelUsers = $this->userRepository->findByRolesInOrganization($intOrganizationId, $rolesToDelete);
+        $targetUser = $adminPanelUsers->firstWhere('id', $targetUserId);
+        
         if (!$targetUser) {
+            Log::warning('[UserService@deleteAdminPanelUser] User not found in admin panel users', [
+                'target_user_id' => $targetUserId,
+                'organization_id' => $intOrganizationId,
+                'roles_checked' => $rolesToDelete,
+                'found_users_count' => $adminPanelUsers->count(),
+                'found_user_ids' => $adminPanelUsers->pluck('id')->toArray(),
+            ]);
             throw new BusinessLogicException('Пользователь админ-панели не найден или нет прав на его просмотр/удаление.', 404);
         }
 
