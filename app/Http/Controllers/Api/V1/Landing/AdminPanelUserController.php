@@ -171,14 +171,29 @@ class AdminPanelUserController extends Controller
      */
     public function destroy(int $userId, Request $request): Responsable
     {
-        $deleted = $this->userService->deleteAdminPanelUser($userId, $request);
+        try {
+            $deleted = $this->userService->deleteAdminPanelUser($userId, $request);
 
-        if (!$deleted) {
-            // Теоретически, findAdminPanelUserById внутри deleteAdminPanelUser должен выбросить исключение 404/403 раньше.
-            // Но на всякий случай.
-            return new NotFoundResponse('Не удалось удалить пользователя админ-панели.');
+            if (!$deleted) {
+                return new NotFoundResponse('Не удалось удалить пользователя админ-панели.');
+            }
+
+            return new SuccessResponse(message: 'Пользователь админ-панели успешно удален.', statusCode: 204);
+        } catch (BusinessLogicException $e) {
+            $code = $e->getCode();
+            $status = ($code >= 400 && $code < 600) ? $code : Response::HTTP_BAD_REQUEST;
+            Log::warning('[AdminPanelUserController] Business logic error при удалении пользователя админ-панели', [
+                'message' => $e->getMessage(),
+                'code' => $code,
+            ]);
+            return new ErrorResponse($e->getMessage(), $status);
+        } catch (\Throwable $e) {
+            Log::error('[AdminPanelUserController] Ошибка удаления пользователя админ-панели', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            report($e);
+            return new ErrorResponse('Failed to delete admin panel user. ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
-
-        return new SuccessResponse(message: 'Пользователь админ-панели успешно удален.', statusCode: 204); // 204 No Content
     }
 } 
