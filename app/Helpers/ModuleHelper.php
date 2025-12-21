@@ -30,3 +30,4 @@ class ModuleHelper
         return self::$moduleMap[$slug] ?? ucfirst(str_replace('-', ' ', $slug));
     }
 }
+ 

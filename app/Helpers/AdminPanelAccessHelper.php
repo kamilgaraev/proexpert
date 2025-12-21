@@ -44,6 +44,7 @@ class AdminPanelAccessHelper
         $systemRoles = $this->getSystemRolesByInterface($currentInterface);
         $roles = array_merge($roles, $systemRoles);
 
+        $customRoles = [];
         if ($organizationId) {
             $customRoles = $this->getCustomRolesByInterface($organizationId, $currentInterface);
             $roles = array_merge($roles, $customRoles);
@@ -51,13 +52,16 @@ class AdminPanelAccessHelper
 
         $finalRoles = array_unique($roles);
         
-        \Illuminate\Support\Facades\Log::info('[AdminPanelAccessHelper] Getting roles for interface', [
-            'current_interface' => $currentInterface,
-            'organization_id' => $organizationId,
-            'system_roles' => $systemRoles,
-            'custom_roles' => $organizationId ? $this->getCustomRolesByInterface($organizationId, $currentInterface) : [],
-            'final_roles' => $finalRoles
-        ]);
+        // Логируем только в debug режиме или при ошибках, чтобы не замедлять работу
+        if (config('app.debug')) {
+            \Illuminate\Support\Facades\Log::info('[AdminPanelAccessHelper] Getting roles for interface', [
+                'current_interface' => $currentInterface,
+                'organization_id' => $organizationId,
+                'system_roles' => $systemRoles,
+                'custom_roles' => $customRoles,
+                'final_roles' => $finalRoles
+            ]);
+        }
 
         return $finalRoles;
     }

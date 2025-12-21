@@ -43,7 +43,7 @@ class OrganizationProfileController extends Controller
                 'success' => true,
                 'data' => [
                     'organization_id' => $organization->id,
-                    'name' => $organization->name,
+                        'name' => $organization->name,
                     'inn' => $organization->inn ?? $organization->tax_number,
                     'capabilities' => $profile->getCapabilities(),
                     'primary_business_type' => $profile->getPrimaryBusinessType()?->value,
