@@ -97,9 +97,22 @@ class CustomUserManagementController extends Controller
                 }
             }
             
-            // Отправляем учетные данные, если запрошено
+            if (!$user->hasVerifiedEmail()) {
+                try {
+                    $user->sendEmailVerificationNotification();
+                    Log::info('[CustomUserManagementController] Email verification sent to new user', [
+                        'user_id' => $user->id,
+                        'email' => $user->email
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('[CustomUserManagementController] Failed to send email verification', [
+                        'user_id' => $user->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+            
             if ($data['send_credentials'] ?? false) {
-                // TODO: Реализовать отправку учетных данных
                 Log::info('User credentials need to be sent', ['user_id' => $user->id]);
             }
             
@@ -110,6 +123,7 @@ class CustomUserManagementController extends Controller
                         'id' => $user->id,
                         'name' => $user->name,
                         'email' => $user->email,
+                        'email_verified_at' => $user->email_verified_at,
                         'created_at' => $user->created_at
                     ]
                 ],
