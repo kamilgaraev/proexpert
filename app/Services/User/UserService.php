@@ -786,13 +786,26 @@ class UserService
             $this->userRepository->update($existingUser->id, ['name' => $userData['name']]);
             return $this->userRepository->find($existingUser->id);
         } else {
-            // Пользователь не существует. Создаем его.
-            // Устанавливаем текущую организацию перед созданием
             $userData['current_organization_id'] = $intOrganizationId;
             $newUser = $this->userRepository->create($userData);
-            // Привязываем к организации и назначаем роль.
-            $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId, false, true); // Не владелец, активный
+            $this->userRepository->attachToOrganization($newUser->id, $intOrganizationId, false, true);
             $this->userRepository->assignRoleToUser($newUser->id, $roleSlug, $intOrganizationId);
+            
+            if (!$newUser->hasVerifiedEmail()) {
+                try {
+                    $newUser->sendEmailVerificationNotification();
+                    Log::info('[UserService] Email verification sent to new admin panel user', [
+                        'user_id' => $newUser->id,
+                        'email' => $newUser->email
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('[UserService] Failed to send email verification', [
+                        'user_id' => $newUser->id,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+            }
+            
             return $newUser;
         }
     }

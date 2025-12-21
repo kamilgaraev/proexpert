@@ -45,13 +45,11 @@ class AdminPanelUserResource extends JsonResource
             'id' => $this->id,
             'name' => $this->name,
             'email' => $this->email,
+            'email_verified_at' => $this->email_verified_at?->toISOString(),
             'role_slug' => $roleSlug,
-            // Важно: isActiveInOrg может быть нерелевантно для пользователя админ-панели
-            // Возможно, нужно поле is_active из самой модели User?
             'is_active' => $this->is_active,
             'created_at' => $this->created_at?->toISOString(),
             'updated_at' => $this->updated_at?->toISOString(),
-            // Можно добавить другие поля при необходимости
         ];
     }
 } 
