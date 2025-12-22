@@ -6,6 +6,7 @@ use App\Models\Project;
 use App\Models\Contract;
 use App\Models\CompletedWork;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class CollectBudgetDataAction
 {
@@ -93,13 +94,17 @@ class CollectBudgetDataAction
         // Сумма выполненных работ
         $completedWorksTotal = (float) $project->completedWorks()->sum('total_amount');
         
-        // Сумма по контрактам (оплаченное)
-        try {
-            $contractsPaid = (float) $project->contracts()
-                ->join('contract_payments', 'contracts.id', '=', 'contract_payments.contract_id')
-                ->where('contract_payments.status', 'paid')
-                ->sum('contract_payments.amount');
-        } catch (\Exception $e) {
+        // Проверяем существование таблицы contract_payments
+        if ($this->tableExists('contract_payments')) {
+            try {
+                $contractsPaid = (float) $project->contracts()
+                    ->join('contract_payments', 'contracts.id', '=', 'contract_payments.contract_id')
+                    ->where('contract_payments.status', 'paid')
+                    ->sum('contract_payments.amount');
+            } catch (\Exception $e) {
+                $contractsPaid = 0;
+            }
+        } else {
             // Если таблица не существует, используем сумму контрактов
             $contractsPaid = (float) $project->contracts()->sum('total_amount');
         }
@@ -126,25 +131,35 @@ class CollectBudgetDataAction
         $totalPaid = 0;
         $totalActed = 0;
 
+        $hasPaymentsTable = $this->tableExists('contract_payments');
+        $hasActsTable = $this->tableExists('contract_performance_acts');
+
         foreach ($contracts as $contract) {
-            // Безопасно пытаемся получить данные по платежам
-            try {
-                $paid = DB::table('contract_payments')
-                    ->where('contract_id', $contract->id)
-                    ->where('status', 'paid')
-                    ->sum('amount');
-            } catch (\Exception $e) {
-                $paid = 0;
+            $paid = 0;
+            $acted = 0;
+
+            // Получаем данные по платежам только если таблица существует
+            if ($hasPaymentsTable) {
+                try {
+                    $paid = DB::table('contract_payments')
+                        ->where('contract_id', $contract->id)
+                        ->where('status', 'paid')
+                        ->sum('amount');
+                } catch (\Exception $e) {
+                    $paid = 0;
+                }
             }
                 
-            // Безопасно пытаемся получить данные по актам
-            try {
-                $acted = DB::table('contract_performance_acts')
-                    ->where('contract_id', $contract->id)
-                    ->where('status', 'approved')
-                    ->sum('amount');
-            } catch (\Exception $e) {
-                $acted = 0;
+            // Получаем данные по актам только если таблица существует
+            if ($hasActsTable) {
+                try {
+                    $acted = DB::table('contract_performance_acts')
+                        ->where('contract_id', $contract->id)
+                        ->where('status', 'approved')
+                        ->sum('amount');
+                } catch (\Exception $e) {
+                    $acted = 0;
+                }
             }
 
             $contractsArray[] = [
@@ -177,6 +192,10 @@ class CollectBudgetDataAction
      */
     private function collectExpensesByCategory(Project $project): array
     {
+        if (!$this->tableExists('completed_works') || !$this->tableExists('work_types')) {
+            return [];
+        }
+
         try {
             $expenses = DB::table('completed_works')
                 ->select('work_type_id', DB::raw('SUM(total_amount) as total'))
@@ -228,6 +247,18 @@ class CollectBudgetDataAction
         }
         
         return 'good';
+    }
+
+    /**
+     * Проверить существование таблицы в БД
+     */
+    private function tableExists(string $tableName): bool
+    {
+        try {
+            return \Illuminate\Support\Facades\Schema::hasTable($tableName);
+        } catch (\Exception $e) {
+            return false;
+        }
     }
 }
 
