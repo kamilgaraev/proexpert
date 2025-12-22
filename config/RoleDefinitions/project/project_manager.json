@@ -136,6 +136,14 @@
       "site_requests.statistics",
       "site_requests.templates.manage",
       "site_requests.calendar.view"
+    ],
+    "ai-assistant": [
+      "ai_assistant.chat",
+      "ai_assistant.reports.generate",
+      "ai_assistant.analytics.view",
+      "admin.ai_assistant.system_analysis.view",
+      "admin.ai_assistant.system_analysis.analyze",
+      "admin.ai_assistant.system_analysis.export"
     ]
   },
   
