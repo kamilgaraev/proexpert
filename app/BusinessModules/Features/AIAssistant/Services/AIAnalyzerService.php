@@ -651,7 +651,7 @@ PROMPT;
 
         return [
             'score' => 50,
-            'status' => 'unknown',
+            'status' => 'warning',
             'summary' => 'Не удалось обработать ответ AI',
             'analysis' => $content,
             'recommendations' => [],
@@ -665,7 +665,7 @@ PROMPT;
     {
         return [
             'score' => 0,
-            'status' => 'unknown',
+            'status' => 'critical',
             'summary' => 'Ошибка при анализе раздела',
             'analysis' => 'Не удалось выполнить анализ из-за технической ошибки.',
             'recommendations' => [],

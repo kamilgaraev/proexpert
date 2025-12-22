@@ -167,7 +167,7 @@ class SystemAnalysisService
             'created_by_user_id' => $user->id,
             'results' => $aggregated,
             'overall_score' => $aggregated['overall_score'] ?? 0,
-            'overall_status' => $aggregated['overall_status'] ?? 'unknown',
+            'overall_status' => $aggregated['overall_status'] ?? 'warning',
             'completed_at' => now(),
         ]);
 
@@ -349,7 +349,7 @@ class SystemAnalysisService
                 'analysis' => $analysis['analysis'] ?? '',
                 'score' => $analysis['score'] ?? null,
                 'status' => $analysis['status'] ?? null,
-                'severity' => $this->determineSeverity($analysis['status'] ?? 'unknown'),
+                'severity' => $this->determineSeverity($analysis['status'] ?? 'warning'),
                 'recommendations' => $analysis['recommendations'] ?? [],
                 'summary' => $analysis['summary'] ?? '',
             ]);
@@ -539,7 +539,7 @@ class SystemAnalysisService
         if (empty($projectAnalyses)) {
             return [
                 'overall_score' => 0,
-                'overall_status' => 'unknown',
+                'overall_status' => 'warning',
                 'projects_summary' => [],
             ];
         }
