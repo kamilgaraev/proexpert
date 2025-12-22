@@ -26,8 +26,8 @@ class AIAnalyzerService
         $prompt = $this->buildBudgetPrompt($data);
         
         $messages = [
-            ['role' => 'system', 'content' => 'Ты опытный проектный менеджер строительных проектов с большим опытом финансового анализа.'],
-            ['role' => 'user', 'content' => $prompt],
+            ['role' => 'system', 'content' => 'Ты опытный проектный менеджер строительных проектов с большим опытом финансового анализа. ВАЖНО: Твой ответ должен быть ТОЛЬКО валидным JSON объектом, без дополнительного текста до или после JSON.'],
+            ['role' => 'user', 'content' => $prompt . "\n\nВЕРНИ ТОЛЬКО JSON ОБЪЕКТ, БЕЗ ОБЪЯСНЕНИЙ И ДОПОЛНИТЕЛЬНОГО ТЕКСТА."],
         ];
 
         try {
@@ -47,8 +47,8 @@ class AIAnalyzerService
         $prompt = $this->buildSchedulePrompt($data);
         
         $messages = [
-            ['role' => 'system', 'content' => 'Ты опытный руководитель проектов со знанием методологий управления временем и критическим путем.'],
-            ['role' => 'user', 'content' => $prompt],
+            ['role' => 'system', 'content' => 'Ты опытный руководитель проектов со знанием методологий управления временем и критическим путем. ВАЖНО: Твой ответ должен быть ТОЛЬКО валидным JSON объектом, без дополнительного текста до или после JSON.'],
+            ['role' => 'user', 'content' => $prompt . "\n\nВЕРНИ ТОЛЬКО JSON ОБЪЕКТ, БЕЗ ОБЪЯСНЕНИЙ И ДОПОЛНИТЕЛЬНОГО ТЕКСТА."],
         ];
 
         try {
@@ -68,8 +68,8 @@ class AIAnalyzerService
         $prompt = $this->buildMaterialsPrompt($data);
         
         $messages = [
-            ['role' => 'system', 'content' => 'Ты опытный снабженец на строительстве с глубоким знанием логистики и управления запасами.'],
-            ['role' => 'user', 'content' => $prompt],
+            ['role' => 'system', 'content' => 'Ты опытный снабженец на строительстве с глубоким знанием логистики и управления запасами. ВАЖНО: Твой ответ должен быть ТОЛЬКО валидным JSON объектом, без дополнительного текста до или после JSON.'],
+            ['role' => 'user', 'content' => $prompt . "\n\nВЕРНИ ТОЛЬКО JSON ОБЪЕКТ, БЕЗ ОБЪЯСНЕНИЙ И ДОПОЛНИТЕЛЬНОГО ТЕКСТА."],
         ];
 
         try {
@@ -89,8 +89,8 @@ class AIAnalyzerService
         $prompt = $this->buildWorkersPrompt($data);
         
         $messages = [
-            ['role' => 'system', 'content' => 'Ты опытный HR-менеджер в строительстве со знанием управления персоналом и производительностью труда.'],
-            ['role' => 'user', 'content' => $prompt],
+            ['role' => 'system', 'content' => 'Ты опытный HR-менеджер в строительстве со знанием управления персоналом и производительностью труда. ВАЖНО: Твой ответ должен быть ТОЛЬКО валидным JSON объектом, без дополнительного текста до или после JSON.'],
+            ['role' => 'user', 'content' => $prompt . "\n\nВЕРНИ ТОЛЬКО JSON ОБЪЕКТ, БЕЗ ОБЪЯСНЕНИЙ И ДОПОЛНИТЕЛЬНОГО ТЕКСТА."],
         ];
 
         try {
@@ -110,8 +110,8 @@ class AIAnalyzerService
         $prompt = $this->buildContractsPrompt($data);
         
         $messages = [
-            ['role' => 'system', 'content' => 'Ты юрист и специалист по управлению контрактами в строительстве.'],
-            ['role' => 'user', 'content' => $prompt],
+            ['role' => 'system', 'content' => 'Ты юрист и специалист по управлению контрактами в строительстве. ВАЖНО: Твой ответ должен быть ТОЛЬКО валидным JSON объектом, без дополнительного текста до или после JSON.'],
+            ['role' => 'user', 'content' => $prompt . "\n\nВЕРНИ ТОЛЬКО JSON ОБЪЕКТ, БЕЗ ОБЪЯСНЕНИЙ И ДОПОЛНИТЕЛЬНОГО ТЕКСТА."],
         ];
 
         try {
@@ -131,8 +131,8 @@ class AIAnalyzerService
         $prompt = $this->buildRisksPrompt($allData);
         
         $messages = [
-            ['role' => 'system', 'content' => 'Ты risk-менеджер со специализацией в строительных проектах.'],
-            ['role' => 'user', 'content' => $prompt],
+            ['role' => 'system', 'content' => 'Ты risk-менеджер со специализацией в строительных проектах. ВАЖНО: Твой ответ должен быть ТОЛЬКО валидным JSON объектом, без дополнительного текста до или после JSON.'],
+            ['role' => 'user', 'content' => $prompt . "\n\nВЕРНИ ТОЛЬКО JSON ОБЪЕКТ, БЕЗ ОБЪЯСНЕНИЙ И ДОПОЛНИТЕЛЬНОГО ТЕКСТА."],
         ];
 
         try {
@@ -152,8 +152,8 @@ class AIAnalyzerService
         $prompt = $this->buildPerformancePrompt($kpiData);
         
         $messages = [
-            ['role' => 'system', 'content' => 'Ты аналитик с опытом оценки эффективности строительных проектов.'],
-            ['role' => 'user', 'content' => $prompt],
+            ['role' => 'system', 'content' => 'Ты аналитик с опытом оценки эффективности строительных проектов. ВАЖНО: Твой ответ должен быть ТОЛЬКО валидным JSON объектом, без дополнительного текста до или после JSON.'],
+            ['role' => 'user', 'content' => $prompt . "\n\nВЕРНИ ТОЛЬКО JSON ОБЪЕКТ, БЕЗ ОБЪЯСНЕНИЙ И ДОПОЛНИТЕЛЬНОГО ТЕКСТА."],
         ];
 
         try {
@@ -173,8 +173,8 @@ class AIAnalyzerService
         $prompt = $this->buildRecommendationsPrompt($allData, $allAnalyses);
         
         $messages = [
-            ['role' => 'system', 'content' => 'Ты опытный консультант по оптимизации строительных проектов.'],
-            ['role' => 'user', 'content' => $prompt],
+            ['role' => 'system', 'content' => 'Ты опытный консультант по оптимизации строительных проектов. ВАЖНО: Твой ответ должен быть ТОЛЬКО валидным JSON объектом, без дополнительного текста до или после JSON.'],
+            ['role' => 'user', 'content' => $prompt . "\n\nВЕРНИ ТОЛЬКО JSON ОБЪЕКТ, БЕЗ ОБЪЯСНЕНИЙ И ДОПОЛНИТЕЛЬНОГО ТЕКСТА."],
         ];
 
         try {
