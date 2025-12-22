@@ -30,7 +30,14 @@ class SystemAnalysisController extends Controller
     public function analyzeProject(Request $request, int $projectId)
     {
         $user = Auth::user();
-        $organizationId = $request->organization_id ?? $user->organization_id;
+        $organizationId = $request->input('organization_id') ?? ($user->current_organization_id ?? null);
+
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Не удалось определить организацию',
+            ], 400);
+        }
 
         // Валидация
         $validated = $request->validate([
@@ -68,7 +75,14 @@ class SystemAnalysisController extends Controller
     public function analyzeOrganization(Request $request)
     {
         $user = Auth::user();
-        $organizationId = $request->organization_id ?? $user->organization_id;
+        $organizationId = $request->input('organization_id') ?? ($user->current_organization_id ?? null);
+
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Не удалось определить организацию',
+            ], 400);
+        }
 
         $validated = $request->validate([
             'organization_id' => 'sometimes|integer|exists:organizations,id',
@@ -103,7 +117,14 @@ class SystemAnalysisController extends Controller
     public function listReports(Request $request)
     {
         $user = Auth::user();
-        $organizationId = $request->organization_id ?? $user->organization_id;
+        $organizationId = $request->input('organization_id') ?? ($user->current_organization_id ?? null);
+
+        if (!$organizationId) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Не удалось определить организацию',
+            ], 400);
+        }
 
         $query = SystemAnalysisReport::forOrganization($organizationId)
             ->with(['project', 'createdBy'])

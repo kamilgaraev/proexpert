@@ -28,4 +28,5 @@ Route::middleware(['auth:api_landing', 'auth.jwt:api_landing', 'organization.con
         Route::get('/{user}', [AdminPanelUserController::class, 'show'])->name('show');
         Route::match(['put', 'patch'], '/{user}', [AdminPanelUserController::class, 'update'])->name('update');
         Route::delete('/{user}', [AdminPanelUserController::class, 'destroy'])->name('destroy');
+        Route::post('/{user}/resend-verification-email', [AdminPanelUserController::class, 'resendVerificationEmail'])->name('resendVerificationEmail');
     });
