@@ -5,6 +5,7 @@ namespace App\BusinessModules\Features\AIAssistant\Actions\Analysis;
 use App\Models\Project;
 use App\Models\Contract;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class CollectContractsDataAction
 {
@@ -22,7 +23,7 @@ class CollectContractsDataAction
             ->firstOrFail();
 
         $contracts = $project->contracts()
-            ->with(['contractor', 'contractPayments', 'performanceActs'])
+            ->with(['contractor'])
             ->get();
 
         $contractsAnalysis = [];
@@ -31,17 +32,42 @@ class CollectContractsDataAction
         $totalActed = 0;
         $problemContracts = [];
 
+        // Проверяем существование таблиц один раз
+        $hasPaymentsTable = $this->tableExists('contract_payments');
+        $hasActsTable = $this->tableExists('contract_performance_acts');
+
         foreach ($contracts as $contract) {
-            $paid = $contract->contractPayments()
-                ->where('status', 'paid')
-                ->sum('amount');
+            // Безопасно получаем данные по платежам
+            $paid = 0;
+            $invoiced = 0;
+            if ($hasPaymentsTable) {
+                try {
+                    $paid = (float) DB::table('contract_payments')
+                        ->where('contract_id', $contract->id)
+                        ->where('status', 'paid')
+                        ->sum('amount');
 
-            $invoiced = $contract->contractPayments()
-                ->sum('amount');
+                    $invoiced = (float) DB::table('contract_payments')
+                        ->where('contract_id', $contract->id)
+                        ->sum('amount');
+                } catch (\Exception $e) {
+                    $paid = 0;
+                    $invoiced = 0;
+                }
+            }
 
-            $acted = $contract->performanceActs()
-                ->where('status', 'approved')
-                ->sum('amount');
+            // Безопасно получаем данные по актам
+            $acted = 0;
+            if ($hasActsTable) {
+                try {
+                    $acted = (float) DB::table('contract_performance_acts')
+                        ->where('contract_id', $contract->id)
+                        ->where('status', 'approved')
+                        ->sum('amount');
+                } catch (\Exception $e) {
+                    $acted = 0;
+                }
+            }
 
             $completionPercentage = $contract->total_amount > 0 
                 ? round(($acted / $contract->total_amount) * 100, 2) 
@@ -217,6 +243,18 @@ class CollectContractsDataAction
         }
 
         return 'good';
+    }
+
+    /**
+     * Проверить существование таблицы в БД
+     */
+    private function tableExists(string $tableName): bool
+    {
+        try {
+            return Schema::hasTable($tableName);
+        } catch (\Exception $e) {
+            return false;
+        }
     }
 }
 
