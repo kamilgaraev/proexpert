@@ -502,24 +502,20 @@ class UserInvitationService
         $context = AuthorizationContext::getOrganizationContext($invitation->organization_id);
         
         foreach ($invitation->role_slugs as $roleSlug) {
-            // Проверяем, не назначена ли уже роль
-            $existing = UserRoleAssignment::where([
-                'user_id' => $user->id,
-                'role_slug' => $roleSlug,
-                'context_id' => $context->id,
-                'is_active' => true
-            ])->exists();
-            
-            if (!$existing) {
-                UserRoleAssignment::create([
+            // Используем updateOrCreate для атомарного создания или реактивации роли
+            UserRoleAssignment::updateOrCreate(
+                [
                     'user_id' => $user->id,
                     'role_slug' => $roleSlug,
-                    'role_type' => 'system', // Системная роль из JSON
                     'context_id' => $context->id,
+                ],
+                [
+                    'role_type' => 'system', // Системная роль из JSON
                     'assigned_by' => auth()->id(),
-                    'is_active' => true
-                ]);
-            }
+                    'is_active' => true,
+                    'expires_at' => null,
+                ]
+            );
         }
     }
 

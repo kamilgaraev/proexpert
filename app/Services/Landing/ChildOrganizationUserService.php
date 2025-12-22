@@ -94,14 +94,20 @@ class ChildOrganizationUserService
                 $role = null;
             }
             
-            UserRoleAssignment::create([
-                'user_id' => $user->id,
-                'role_slug' => $roleSlug,
-                'role_type' => $role ? 'custom' : 'system',
-                'context_id' => $context->id,
-                'assigned_by' => $updatedBy->id,
-                'is_active' => true
-            ]);
+            // Используем updateOrCreate для атомарного создания или реактивации роли
+            UserRoleAssignment::updateOrCreate(
+                [
+                    'user_id' => $user->id,
+                    'role_slug' => $roleSlug,
+                    'context_id' => $context->id,
+                ],
+                [
+                    'role_type' => $role ? 'custom' : 'system',
+                    'assigned_by' => $updatedBy->id,
+                    'is_active' => true,
+                    'expires_at' => null,
+                ]
+            );
 
             return [
                 'user' => $this->formatUserData($user, $roleSlug, $role),
@@ -368,24 +374,20 @@ class ChildOrganizationUserService
 
         $context = AuthorizationContext::getOrganizationContext($organization->id);
         
-        // Проверяем, не назначена ли уже эта роль
-        $existing = UserRoleAssignment::where([
-            'user_id' => $user->id,
-            'role_slug' => $roleSlug,
-            'context_id' => $context->id,
-            'is_active' => true
-        ])->exists();
-        
-        if (!$existing) {
-            UserRoleAssignment::create([
+        // Используем updateOrCreate для атомарного создания или реактивации роли
+        UserRoleAssignment::updateOrCreate(
+            [
                 'user_id' => $user->id,
                 'role_slug' => $roleSlug,
-                'role_type' => 'system', // По умолчанию системная
                 'context_id' => $context->id,
+            ],
+            [
+                'role_type' => 'system', // По умолчанию системная
                 'assigned_by' => Auth::id(),
-                'is_active' => true
-            ]);
-        }
+                'is_active' => true,
+                'expires_at' => null,
+            ]
+        );
     }
 
     private function removeUserFromOrganization(User $user, Organization $organization): void
