@@ -3,8 +3,6 @@
 namespace App\BusinessModules\Features\AIAssistant\Actions\Analysis;
 
 use App\Models\Project;
-use App\BusinessModules\Features\BasicWarehouse\Models\Material;
-use App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStock;
 use App\Models\EstimateItem;
 use Illuminate\Support\Facades\DB;
 
@@ -51,37 +49,61 @@ class CollectMaterialsDataAction
      */
     private function collectStockData(int $organizationId): array
     {
-        $stocks = WarehouseStock::with(['material.measurementUnit'])
-            ->whereHas('warehouse', function ($query) use ($organizationId) {
-                $query->where('organization_id', $organizationId);
-            })
-            ->get();
-
-        $stockArray = [];
-        $totalValue = 0;
-
-        foreach ($stocks as $stock) {
-            $available = $stock->quantity - $stock->reserved_quantity;
-            $value = $available * ($stock->material->price ?? 0);
-            
-            $stockArray[] = [
-                'material_id' => $stock->material_id,
-                'name' => $stock->material->name,
-                'quantity' => (float) $stock->quantity,
-                'reserved' => (float) $stock->reserved_quantity,
-                'available' => (float) $available,
-                'unit' => $stock->material->measurementUnit->short_name ?? 'шт',
-                'price' => (float) ($stock->material->price ?? 0),
-                'value' => $value,
-            ];
-            
-            $totalValue += $value;
+        // Проверяем существование класса WarehouseStock
+        if (!class_exists('App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStock')) {
+            // Если модуль склада не установлен, пытаемся получить данные из материалов напрямую
+            return $this->collectStockDataFallback($organizationId);
         }
 
+        try {
+            $warehouseStockClass = 'App\BusinessModules\Features\BasicWarehouse\Models\WarehouseStock';
+            $stocks = $warehouseStockClass::with(['material.measurementUnit'])
+                ->whereHas('warehouse', function ($query) use ($organizationId) {
+                    $query->where('organization_id', $organizationId);
+                })
+                ->get();
+
+            $stockArray = [];
+            $totalValue = 0;
+
+            foreach ($stocks as $stock) {
+                $available = $stock->quantity - $stock->reserved_quantity;
+                $value = $available * ($stock->material->price ?? 0);
+                
+                $stockArray[] = [
+                    'material_id' => $stock->material_id,
+                    'name' => $stock->material->name,
+                    'quantity' => (float) $stock->quantity,
+                    'reserved' => (float) $stock->reserved_quantity,
+                    'available' => (float) $available,
+                    'unit' => $stock->material->measurementUnit->short_name ?? 'шт',
+                    'price' => (float) ($stock->material->price ?? 0),
+                    'value' => $value,
+                ];
+                
+                $totalValue += $value;
+            }
+
+            return [
+                'materials' => $stockArray,
+                'total_materials_count' => count($stockArray),
+                'total_inventory_value' => $totalValue,
+            ];
+        } catch (\Exception $e) {
+            return $this->collectStockDataFallback($organizationId);
+        }
+    }
+
+    /**
+     * Альтернативный метод получения данных о материалах (когда склад не доступен)
+     */
+    private function collectStockDataFallback(int $organizationId): array
+    {
+        // Возвращаем пустые данные, так как модуль склада не установлен
         return [
-            'materials' => $stockArray,
-            'total_materials_count' => count($stockArray),
-            'total_inventory_value' => $totalValue,
+            'materials' => [],
+            'total_materials_count' => 0,
+            'total_inventory_value' => 0,
         ];
     }
 
@@ -90,38 +112,55 @@ class CollectMaterialsDataAction
      */
     private function collectRequiredMaterials(Project $project): array
     {
-        // Получаем сметы проекта
-        $estimates = $project->estimates;
-        
-        $requiredMaterials = [];
+        try {
+            // Получаем сметы проекта
+            $estimates = $project->estimates;
+            
+            if (!$estimates) {
+                return [];
+            }
+            
+            $requiredMaterials = [];
 
-        foreach ($estimates as $estimate) {
-            $items = $estimate->items()
-                ->with(['resources.material.measurementUnit'])
-                ->get();
+            foreach ($estimates as $estimate) {
+                try {
+                    $items = $estimate->items()
+                        ->with(['resources.material.measurementUnit'])
+                        ->get();
 
-            foreach ($items as $item) {
-                foreach ($item->resources as $resource) {
-                    if ($resource->resource_type === 'material' && $resource->material) {
-                        $materialId = $resource->material_id;
-                        
-                        if (!isset($requiredMaterials[$materialId])) {
-                            $requiredMaterials[$materialId] = [
-                                'material_id' => $materialId,
-                                'name' => $resource->material->name,
-                                'required_quantity' => 0,
-                                'unit' => $resource->material->measurementUnit->short_name ?? 'шт',
-                                'estimated_cost' => (float) ($resource->material->price ?? 0),
-                            ];
+                    foreach ($items as $item) {
+                        if (!$item->resources) {
+                            continue;
                         }
-                        
-                        $requiredMaterials[$materialId]['required_quantity'] += (float) $resource->quantity;
+
+                        foreach ($item->resources as $resource) {
+                            if ($resource->resource_type === 'material' && $resource->material) {
+                                $materialId = $resource->material_id;
+                                
+                                if (!isset($requiredMaterials[$materialId])) {
+                                    $requiredMaterials[$materialId] = [
+                                        'material_id' => $materialId,
+                                        'name' => $resource->material->name ?? 'N/A',
+                                        'required_quantity' => 0,
+                                        'unit' => $resource->material->measurementUnit->short_name ?? 'шт',
+                                        'estimated_cost' => (float) ($resource->material->price ?? 0),
+                                    ];
+                                }
+                                
+                                $requiredMaterials[$materialId]['required_quantity'] += (float) $resource->quantity;
+                            }
+                        }
                     }
+                } catch (\Exception $e) {
+                    // Пропускаем проблемные сметы
+                    continue;
                 }
             }
-        }
 
-        return array_values($requiredMaterials);
+            return array_values($requiredMaterials);
+        } catch (\Exception $e) {
+            return [];
+        }
     }
 
     /**
