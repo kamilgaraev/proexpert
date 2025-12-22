@@ -46,5 +46,40 @@ return [
     'openai_api_key' => env('OPENAI_API_KEY'),
     'openai_model' => env('OPENAI_MODEL', 'gpt-4o-mini'),
     'max_tokens' => env('OPENAI_MAX_TOKENS', 2000),
+    
+    // System Analysis Configuration
+    'system_analysis' => [
+        'enabled' => env('SYSTEM_ANALYSIS_ENABLED', true),
+        'cache_ttl' => env('SYSTEM_ANALYSIS_CACHE_TTL', 3600), // 1 час
+        'rate_limit_per_project' => env('SYSTEM_ANALYSIS_RATE_LIMIT', 1), // 1 анализ в минуту на проект
+        
+        // Какие разделы анализировать по умолчанию
+        'sections' => [
+            'budget' => true,
+            'schedule' => true,
+            'materials' => true,
+            'workers' => true,
+            'contracts' => true,
+            'risks' => true,
+            'performance' => true,
+            'recommendations' => true,
+        ],
+        
+        // Настройки экспорта
+        'pdf_export' => [
+            'enabled' => true,
+            'orientation' => 'portrait', // portrait или landscape
+            'page_size' => 'A4', // A4, Letter, Legal
+        ],
+        
+        // Автоматическое сохранение истории
+        'save_history' => true,
+        
+        // Максимальное количество хранимых анализов на проект
+        'max_reports_per_project' => 50,
+        
+        // Автоматическая очистка старых отчетов (в днях)
+        'auto_cleanup_days' => 90,
+    ],
 ];
 
