@@ -26,7 +26,7 @@ class EmailVerificationNotification extends VerifyEmail
 
     protected function verificationUrl($notifiable)
     {
-        $frontendUrl = env('FRONTEND_URL', config('app.url'));
+        $frontendUrl = config('app.frontend_url');
         
         $params = [
             'id' => $notifiable->getKey(),
