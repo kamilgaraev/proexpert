@@ -12,7 +12,7 @@ return [
     // LLM Provider Configuration
     'llm' => [
         // Выбор провайдера: 'yandex', 'openai' или 'deepseek'
-        'provider' => env('LLM_PROVIDER', 'deepseek'),
+        'provider' => env('LLM_PROVIDER', 'yandex'),
         
         // YandexGPT Configuration
         'yandex' => [
