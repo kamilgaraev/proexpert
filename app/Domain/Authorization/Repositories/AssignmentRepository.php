@@ -59,7 +59,7 @@ class AssignmentRepository
     }
 
     /**
-     * Создать назначение роли
+     * Создать назначение роли (или реактивировать существующее)
      */
     public function createAssignment(
         User $user,
@@ -69,15 +69,20 @@ class AssignmentRepository
         ?User $assignedBy = null,
         ?Carbon $expiresAt = null
     ): UserRoleAssignment {
-        $assignment = UserRoleAssignment::create([
-            'user_id' => $user->id,
-            'role_slug' => $roleSlug,
-            'role_type' => $roleType,
-            'context_id' => $context->id,
-            'assigned_by' => $assignedBy?->id,
-            'expires_at' => $expiresAt,
-            'is_active' => true
-        ]);
+        // Используем updateOrCreate для атомарного создания или обновления
+        $assignment = UserRoleAssignment::updateOrCreate(
+            [
+                'user_id' => $user->id,
+                'role_slug' => $roleSlug,
+                'context_id' => $context->id,
+            ],
+            [
+                'role_type' => $roleType,
+                'assigned_by' => $assignedBy?->id,
+                'expires_at' => $expiresAt,
+                'is_active' => true
+            ]
+        );
 
         // Очищаем кеш
         $this->clearUserCache($user);

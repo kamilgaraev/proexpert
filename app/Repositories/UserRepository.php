@@ -158,24 +158,22 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
             // Получаем или создаем контекст организации
             $context = AuthorizationContext::getOrganizationContext($organizationId);
 
-            // Проверяем, не назначена ли уже роль
-            $existing = UserRoleAssignment::where([
-                'user_id' => $userId,
-                'role_slug' => $roleSlug,
-                'context_id' => $context->id,
-                'is_active' => true
-            ])->exists();
-
-            if (!$existing) {
-                UserRoleAssignment::create([
+            // Используем updateOrCreate для атомарного создания или обновления роли
+            $roleAssignment = UserRoleAssignment::updateOrCreate(
+                [
                     'user_id' => $userId,
                     'role_slug' => $roleSlug,
-                    'role_type' => 'system', // Системная роль из JSON
                     'context_id' => $context->id,
+                ],
+                [
+                    'role_type' => 'system', // Системная роль из JSON
                     'assigned_by' => auth()->id(),
-                    'is_active' => true
-                ]);
+                    'is_active' => true,
+                    'expires_at' => null, // Сбрасываем срок действия при повторном назначении
+                ]
+            );
 
+            if ($roleAssignment->wasRecentlyCreated) {
                 Log::info("[UserRepository] assignRoleToUser: Role assigned (new auth system)", [
                     'user_id' => $userId,
                     'role_slug' => $roleSlug,
@@ -183,6 +181,13 @@ class UserRepository extends BaseRepository implements UserRepositoryInterface
                     'context_id' => $context->id
                 ]);
             } else {
+                Log::info("[UserRepository] assignRoleToUser: Role reactivated (new auth system)", [
+                    'user_id' => $userId,
+                    'role_slug' => $roleSlug,
+                    'organization_id' => $organizationId,
+                    'context_id' => $context->id,
+                    'was_inactive' => !$roleAssignment->getOriginal('is_active')
+                ]);
             }
         } catch (\Exception $e) {
             // Таблицы новой системы авторизации еще не созданы - это нормально
