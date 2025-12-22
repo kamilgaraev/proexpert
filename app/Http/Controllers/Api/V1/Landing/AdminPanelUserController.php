@@ -196,4 +196,47 @@ class AdminPanelUserController extends Controller
             return new ErrorResponse('Failed to delete admin panel user. ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
+
+    /**
+     * Resend email verification for the specified user.
+     *
+     * @param int $userId
+     * @param Request $request
+     * @return Responsable
+     */
+    public function resendVerificationEmail(int $userId, Request $request): Responsable
+    {
+        try {
+            $user = $this->userService->findAdminPanelUserById($userId, $request);
+
+            if (!$user) {
+                return new NotFoundResponse('Пользователь админ-панели не найден.');
+            }
+
+            if ($user->hasVerifiedEmail()) {
+                return new ErrorResponse('Email уже подтвержден', Response::HTTP_BAD_REQUEST);
+            }
+
+            $user->sendEmailVerificationNotification();
+
+            Log::info('[AdminPanelUserController] Email verification resent', [
+                'user_id' => $user->id,
+                'email' => $user->email,
+                'resent_by' => Auth::id()
+            ]);
+
+            return new SuccessResponse(
+                message: 'Письмо с подтверждением email отправлено повторно',
+                statusCode: 200
+            );
+        } catch (\Throwable $e) {
+            Log::error('[AdminPanelUserController] Ошибка при переотправке письма подтверждения', [
+                'user_id' => $userId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            report($e);
+            return new ErrorResponse('Failed to resend verification email. ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
 } 
