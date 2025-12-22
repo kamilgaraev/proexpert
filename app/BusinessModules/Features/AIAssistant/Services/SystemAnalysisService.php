@@ -464,12 +464,12 @@ class SystemAnalysisService
                 'status' => $project->status,
             ],
             'analysis_type' => $report->analysis_type,
-            'generated_at' => $report->completed_at->toISOString(),
+            'generated_at' => $report->completed_at ? $report->completed_at->toISOString() : now()->toISOString(),
             'overall_score' => $report->overall_score,
             'overall_status' => $report->overall_status,
             'tokens_used' => $report->tokens_used,
             'cost_rub' => $report->cost,
-            'sections' => $this->formatSectionsForOutput($report->analysisSections, $collectedData, $analyses),
+            'sections' => $this->formatSectionsForOutput($report->analysisSections()->get(), $collectedData, $analyses),
         ];
     }
 
