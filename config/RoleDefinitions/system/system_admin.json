@@ -54,6 +54,17 @@
       "advanced-dashboard.analytics.*",
       "advanced-dashboard.alerts.*",
       "advanced-dashboard.export.*"
+    ],
+    "ai-assistant": [
+      "ai_assistant.chat",
+      "ai_assistant.reports.generate",
+      "ai_assistant.analytics.view",
+      "ai_assistant.settings.manage",
+      "ai_assistant.usage.view",
+      "admin.ai_assistant.system_analysis.view",
+      "admin.ai_assistant.system_analysis.analyze",
+      "admin.ai_assistant.system_analysis.export",
+      "admin.ai_assistant.system_analysis.delete"
     ]
   },
   
