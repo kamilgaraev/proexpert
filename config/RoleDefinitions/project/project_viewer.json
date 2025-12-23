@@ -1,0 +1,113 @@
+{
+  "name": "Наблюдатель проекта",
+  "slug": "project_viewer",
+  "version": "1.0.0",
+  "context": "project",
+  "interface": "admin",
+  "description": "Только просмотр данных проекта без права редактирования",
+  
+  "system_permissions": [
+    "admin.access",
+    "admin.dashboard.view",
+    "admin.projects.view",
+    "profile.view",
+    "profile.edit"
+  ],
+  
+  "module_permissions": {
+    "projects": [
+      "projects.view"
+    ],
+    "materials": [
+      "materials.view"
+    ],
+    "reports": [
+      "reports.view"
+    ],
+    "finance": [
+      "finance.view_project_budget"
+    ],
+    "project-management": [
+      "projects.view",
+      "projects.materials.view",
+      "projects.work_types.view",
+      "projects.statistics"
+    ],
+    "contract-management": [
+      "contracts.view",
+      "contracts.completed_works.view",
+      "contracts.performance_acts.view",
+      "specifications.view"
+    ],
+    "catalog-management": [
+      "materials.view",
+      "work_types.view",
+      "measurement_units.view"
+    ],
+    "workflow-management": [
+      "completed_works.view"
+    ],
+    "advance-accounting": [
+      "advance_transactions.view"
+    ],
+    "act-reporting": [
+      "act_reports.view",
+      "act_reports.works.view"
+    ],
+    "time-tracking": [
+      "time_tracking.view"
+    ],
+    "material-analytics": [
+      "materials.analytics.usage_by_projects",
+      "materials.analytics.low_stock"
+    ],
+    "contractor-portal": [
+      "contractor_invitations.view"
+    ],
+    "file-management": [
+      "personal_files.view"
+    ],
+    "system-logs": [
+      "system-logs.material_usage.view",
+      "system-logs.work_completion.view"
+    ],
+    "rate-management": [
+      "rate_coefficients.view"
+    ],
+    "report-templates": [
+      "report_templates.view"
+    ],
+    "data-filters": [
+      "filters.contracts.view",
+      "filters.completed_works.view"
+    ],
+    "dashboard-widgets": [
+      "dashboard.view",
+      "dashboard.recent_activity.view"
+    ],
+    "schedule-management": [
+      "schedule.view"
+    ],
+    "budget-estimates": [
+      "budget-estimates.view",
+      "construction-journal.view"
+    ],
+    "site-requests": [
+      "site_requests.view"
+    ]
+  },
+  
+  "interface_access": ["admin", "lk"],
+  
+  "hierarchy": {
+    "can_manage_roles": [],
+    "cannot_manage": ["*"]
+  },
+  
+  "conditions": {
+    "project_count": {
+      "max_projects": 10
+    }
+  }
+}
+

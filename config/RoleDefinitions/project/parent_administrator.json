@@ -7,6 +7,9 @@
   "description": "Головная организация холдинга автоматически добавляется с этой ролью при создании проектов дочерними организациями. Полный контроль и видимость.",
   
   "system_permissions": [
+    "admin.access",
+    "admin.dashboard.view",
+    "admin.projects.view",
     "profile.view",
     "profile.edit"
   ],
@@ -72,6 +75,11 @@
     ],
     "schedule-management": [
       "schedule.view"
+    ],
+    "budget-estimates": [
+      "budget-estimates.view",
+      "budget-estimates.view_all",
+      "construction-journal.view"
     ]
   },
   
