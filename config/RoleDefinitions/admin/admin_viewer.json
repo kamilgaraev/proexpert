@@ -33,7 +33,18 @@
     "report-templates": ["report_templates.view"],
     "data-filters": ["filters.contracts.view", "filters.completed_works.view"],
     "dashboard-widgets": ["dashboard.view"],
-    "schedule-management": ["schedule.view"]
+    "schedule-management": ["schedule.view"],
+    "budget-estimates": [
+      "budget-estimates.view",
+      "construction-journal.view"
+    ],
+    "payments": [
+      "payments.invoice.view",
+      "payments.transaction.view"
+    ],
+    "site-requests": [
+      "site_requests.view"
+    ]
   },
   
   "interface_access": ["admin"],

@@ -3,10 +3,13 @@
   "slug": "accountant",
   "version": "1.0.0",
   "context": "organization",
-  "interface": "lk",
+  "interface": "admin",
   "description": "Управление финансами и отчетностью организации",
   
   "system_permissions": [
+    "admin.access",
+    "admin.dashboard.view",
+    "admin.projects.view",
     "organization.view",
     "modules.billing",
     "profile.view",
@@ -117,7 +120,7 @@
     ]
   },
   
-  "interface_access": ["lk"],
+  "interface_access": ["admin", "lk"],
   
   "hierarchy": {
     "can_manage_roles": [],

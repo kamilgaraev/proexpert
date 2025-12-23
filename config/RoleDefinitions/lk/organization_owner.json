@@ -3,7 +3,7 @@
   "slug": "organization_owner",
   "version": "1.0.0",
   "context": "organization",
-  "interface": "lk",
+  "interface": "admin",
   "description": "Полное управление организацией, включая биллинг",
   
   "system_permissions": [

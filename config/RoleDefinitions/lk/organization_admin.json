@@ -3,7 +3,7 @@
   "slug": "organization_admin",
   "version": "1.0.0",
   "context": "organization",
-  "interface": "lk",
+  "interface": "admin",
   "description": "Управление организацией без доступа к биллингу",
   
   "system_permissions": [
@@ -19,7 +19,9 @@
     "roles.manage_custom",
     "profile.view",
     "profile.edit",
-    "admin.access"
+    "admin.access",
+    "admin.dashboard.view",
+    "admin.projects.view"
   ],
   
   "module_permissions": {
@@ -42,6 +44,13 @@
       "projects.analytics", "projects.foremen.assign", "projects.foremen.detach",
       "projects.materials.view", "projects.work_types.view", 
       "projects.organizations.manage", "projects.statistics"
+    ],
+    "construction-journal": [
+      "construction-journal.view",
+      "construction-journal.create",
+      "construction-journal.edit",
+      "construction-journal.approve",
+      "construction-journal.export"
     ],
     "contract-management": [
       "contracts.view", "contracts.create", "contracts.edit", "contracts.delete",
@@ -173,7 +182,14 @@
       "budget-estimates.templates.manage",
       "budget-estimates.versions.create",
       "budget-estimates.versions.compare",
-      "budget-estimates.versions.rollback"
+      "budget-estimates.versions.rollback",
+      "construction-journal.view",
+      "construction-journal.create",
+      "construction-journal.edit",
+      "construction-journal.edit_all",
+      "construction-journal.delete",
+      "construction-journal.approve",
+      "construction-journal.export"
     ],
     "payments": [
       "payments.dashboard.view",

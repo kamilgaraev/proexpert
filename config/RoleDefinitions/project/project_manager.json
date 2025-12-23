@@ -3,10 +3,13 @@
   "slug": "project_manager",
   "version": "1.0.0",
   "context": "project",
-  "interface": "lk",
+  "interface": "admin",
   "description": "Полное управление проектом и командой",
   
   "system_permissions": [
+    "admin.access",
+    "admin.dashboard.view",
+    "admin.projects.view",
     "profile.view",
     "profile.edit"
   ],
@@ -147,7 +150,7 @@
     ]
   },
   
-  "interface_access": ["lk", "mobile"],
+  "interface_access": ["admin", "lk", "mobile"],
   
   "hierarchy": {
     "can_manage_roles": [
