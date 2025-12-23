@@ -17,6 +17,7 @@ class ConstructionJournalEntry extends Model
     protected $fillable = [
         'journal_id',
         'schedule_task_id',
+        'estimate_id',
         'entry_date',
         'entry_number',
         'work_description',
@@ -49,6 +50,11 @@ class ConstructionJournalEntry extends Model
     public function scheduleTask(): BelongsTo
     {
         return $this->belongsTo(ScheduleTask::class);
+    }
+
+    public function estimate(): BelongsTo
+    {
+        return $this->belongsTo(Estimate::class);
     }
 
     public function createdBy(): BelongsTo

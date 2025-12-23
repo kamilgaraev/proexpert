@@ -5,6 +5,10 @@ use App\Http\Controllers\Api\V1\Admin\EstimateController;
 use App\Http\Controllers\Api\V1\Admin\EstimateSectionController;
 use App\Http\Controllers\Api\V1\Admin\EstimateItemController;
 use App\Http\Controllers\Api\V1\Admin\EstimateImportController;
+use App\Http\Controllers\Api\V1\Admin\EstimateProgressController;
+use App\Http\Controllers\Api\V1\Admin\EstimateContractController;
+use App\Http\Controllers\Api\V1\Admin\EstimateExportController;
+use App\Http\Controllers\Api\V1\Admin\EstimatePaymentController;
 
 /*
 |--------------------------------------------------------------------------
@@ -77,6 +81,42 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
                 Route::get('/status/{jobId}', [EstimateImportController::class, 'status'])->name('status');
                 Route::get('/history', [EstimateImportController::class, 'history'])->name('history');
             });
+            
+            // Прогресс выполнения сметы
+            Route::prefix('{estimate}/progress')->name('progress.')->group(function () {
+                Route::get('/actual-vs-planned', [EstimateProgressController::class, 'getActualVsPlanned'])->name('actual_vs_planned');
+                Route::get('/completion-stats', [EstimateProgressController::class, 'getCompletionStats'])->name('completion_stats');
+                Route::get('/items/{item}/journal-entries', [EstimateProgressController::class, 'getItemJournalEntries'])->name('item_journal_entries');
+            });
+            
+            // Интеграция с договорами
+            Route::prefix('{estimate}/contract')->name('contract.')->group(function () {
+                Route::put('/', [EstimateContractController::class, 'linkContract'])->name('link');
+                Route::delete('/', [EstimateContractController::class, 'unlinkContract'])->name('unlink');
+                Route::get('/validation', [EstimateContractController::class, 'validateContractAmount'])->name('validation');
+            });
+            
+            // Экспорт смет
+            Route::prefix('{estimate}/export')->name('export.')->group(function () {
+                Route::post('/ks2', [EstimateExportController::class, 'exportKS2'])->name('ks2');
+                Route::post('/ks3', [EstimateExportController::class, 'exportKS3'])->name('ks3');
+                Route::post('/summary', [EstimateExportController::class, 'exportSummary'])->name('summary');
+            });
+            
+            // Платежи по смете
+            Route::get('/{estimate}/payments', [EstimatePaymentController::class, 'getPayments'])->name('payments');
+        });
+        
+        // Интеграция с договорами (на уровне проекта)
+        Route::prefix('contracts/{contract}/estimates')->name('contracts.estimates.')->group(function () {
+            Route::post('/', [EstimateContractController::class, 'createFromContract'])->name('create');
+            Route::get('/', [EstimateContractController::class, 'getEstimatesByContract'])->name('index');
+        });
+        
+        // Экспорт журнала с фильтром по смете
+        Route::prefix('construction-journal/{journal}/export')->name('construction_journal.export.')->group(function () {
+            Route::post('/ks6', [EstimateExportController::class, 'exportKS6'])->name('ks6');
+            Route::post('/extended-report', [EstimateExportController::class, 'exportExtendedReport'])->name('extended');
         });
     });
 

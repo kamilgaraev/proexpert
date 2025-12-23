@@ -320,6 +320,45 @@ class PaymentDocumentController extends Controller
 
             $document = $this->service->create($validated);
 
+            // Сохраняем splits по позициям сметы, если указаны
+            if (isset($validated['estimate_splits']) && is_array($validated['estimate_splits'])) {
+                $totalAmount = $document->amount;
+                $totalSplitsAmount = 0;
+
+                foreach ($validated['estimate_splits'] as $split) {
+                    $percentage = $split['percentage'] ?? null;
+                    
+                    // Если процент не указан, вычисляем его на основе суммы
+                    if ($percentage === null && $totalAmount > 0) {
+                        $percentage = ($split['amount'] / $totalAmount) * 100;
+                    }
+
+                    \App\BusinessModules\Core\Payments\Models\PaymentDocumentEstimateSplit::create([
+                        'payment_document_id' => $document->id,
+                        'estimate_item_id' => $split['estimate_item_id'],
+                        'amount' => $split['amount'],
+                        'percentage' => $percentage ?? 0,
+                    ]);
+
+                    $totalSplitsAmount += $split['amount'];
+                }
+
+                // Валидация: сумма splits не должна превышать общую сумму документа
+                if ($totalSplitsAmount > $totalAmount) {
+                    // Удаляем документ и splits, если сумма превышает
+                    $document->estimateSplits()->delete();
+                    $document->delete();
+                    
+                    return response()->json([
+                        'success' => false,
+                        'error' => 'Сумма распределения по позициям не может превышать общую сумму документа',
+                    ], 422);
+                }
+            }
+
+            // Загружаем splits для ответа
+            $document->load('estimateSplits.estimateItem');
+
             return response()->json([
                 'success' => true,
                 'message' => 'Платежный документ создан',

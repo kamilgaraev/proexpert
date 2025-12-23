@@ -67,6 +67,7 @@ class ConstructionJournalService
             $entry = ConstructionJournalEntry::create([
                 'journal_id' => $journal->id,
                 'schedule_task_id' => $data['schedule_task_id'] ?? null,
+                'estimate_id' => $data['estimate_id'] ?? null,
                 'entry_date' => $data['entry_date'],
                 'entry_number' => $entryNumber,
                 'work_description' => $data['work_description'],
@@ -115,18 +116,38 @@ class ConstructionJournalService
     {
         return DB::transaction(function () use ($entry, $data) {
             // Обновить основные данные
-            $entry->update(array_filter([
-                'schedule_task_id' => $data['schedule_task_id'] ?? $entry->schedule_task_id,
-                'entry_date' => $data['entry_date'] ?? $entry->entry_date,
-                'work_description' => $data['work_description'] ?? $entry->work_description,
-                'weather_conditions' => $data['weather_conditions'] ?? $entry->weather_conditions,
-                'problems_description' => $data['problems_description'] ?? $entry->problems_description,
-                'safety_notes' => $data['safety_notes'] ?? $entry->safety_notes,
-                'visitors_notes' => $data['visitors_notes'] ?? $entry->visitors_notes,
-                'quality_notes' => $data['quality_notes'] ?? $entry->quality_notes,
-            ], function ($value) {
-                return $value !== null;
-            }));
+            $updateData = [];
+            if (isset($data['schedule_task_id'])) {
+                $updateData['schedule_task_id'] = $data['schedule_task_id'];
+            }
+            if (isset($data['estimate_id'])) {
+                $updateData['estimate_id'] = $data['estimate_id'];
+            }
+            if (isset($data['entry_date'])) {
+                $updateData['entry_date'] = $data['entry_date'];
+            }
+            if (isset($data['work_description'])) {
+                $updateData['work_description'] = $data['work_description'];
+            }
+            if (isset($data['weather_conditions'])) {
+                $updateData['weather_conditions'] = $data['weather_conditions'];
+            }
+            if (isset($data['problems_description'])) {
+                $updateData['problems_description'] = $data['problems_description'];
+            }
+            if (isset($data['safety_notes'])) {
+                $updateData['safety_notes'] = $data['safety_notes'];
+            }
+            if (isset($data['visitors_notes'])) {
+                $updateData['visitors_notes'] = $data['visitors_notes'];
+            }
+            if (isset($data['quality_notes'])) {
+                $updateData['quality_notes'] = $data['quality_notes'];
+            }
+            
+            if (!empty($updateData)) {
+                $entry->update($updateData);
+            }
 
             // Обновить связанные данные если указаны
             if (isset($data['work_volumes'])) {
