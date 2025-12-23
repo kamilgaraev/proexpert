@@ -26,6 +26,7 @@ class ConstructionJournalEntryController extends Controller
 
         $validated = $request->validate([
             'schedule_task_id' => 'nullable|exists:schedule_tasks,id',
+            'estimate_id' => 'nullable|exists:estimates,id',
             'entry_date' => 'required|date',
             'entry_number' => 'nullable|integer|min:1',
             'work_description' => 'required|string',
@@ -103,6 +104,7 @@ class ConstructionJournalEntryController extends Controller
 
         $validated = $request->validate([
             'schedule_task_id' => 'sometimes|nullable|exists:schedule_tasks,id',
+            'estimate_id' => 'sometimes|nullable|exists:estimates,id',
             'entry_date' => 'sometimes|date',
             'work_description' => 'sometimes|string',
             'weather_conditions' => 'nullable|array',

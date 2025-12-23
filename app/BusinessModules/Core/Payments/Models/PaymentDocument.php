@@ -46,6 +46,7 @@ class PaymentDocument extends Model
     protected $fillable = [
         'organization_id',
         'project_id',
+        'estimate_id',
         'document_type',
         'document_number',
         'document_date',
@@ -143,6 +144,11 @@ class PaymentDocument extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    public function estimate(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Estimate::class);
     }
 
     public function payerOrganization(): BelongsTo
@@ -244,6 +250,11 @@ class PaymentDocument extends Model
             'payment_document_id',
             'site_request_id'
         )->withPivot('amount')->withTimestamps();
+    }
+
+    public function estimateSplits(): HasMany
+    {
+        return $this->hasMany(PaymentDocumentEstimateSplit::class, 'payment_document_id');
     }
 
     // ==========================================
