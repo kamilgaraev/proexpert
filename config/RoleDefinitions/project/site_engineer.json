@@ -89,9 +89,11 @@
       "budget-estimates.create",
       "budget-estimates.edit",
       "construction-journal.view",
+      "construction-journal.view_all",
       "construction-journal.create",
       "construction-journal.edit",
       "construction-journal.edit_all",
+      "construction-journal.delete",
       "construction-journal.approve",
       "construction-journal.export"
     ],
