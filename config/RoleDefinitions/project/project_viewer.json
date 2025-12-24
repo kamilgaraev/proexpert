@@ -97,7 +97,7 @@
     ]
   },
   
-  "interface_access": ["admin", "lk"],
+  "interface_access": ["admin"],
   
   "hierarchy": {
     "can_manage_roles": [],
