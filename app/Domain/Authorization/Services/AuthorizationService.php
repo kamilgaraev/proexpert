@@ -113,12 +113,16 @@ class AuthorizationService
                 // Для проектных контекстов также добавляем все проектные контексты организации
                 // (роли могут быть назначены в разных проектных контекстах)
                 if ($context->type === AuthorizationContext::TYPE_PROJECT && $context->parent_context_id) {
-                    $orgContext = AuthorizationContext::find($context->parent_context_id);
-                    if ($orgContext) {
-                        $projectContexts = AuthorizationContext::where('parent_context_id', $orgContext->id)
-                            ->where('type', AuthorizationContext::TYPE_PROJECT)
-                            ->pluck('id');
-                        $contextIds = $contextIds->merge($projectContexts)->unique();
+                    try {
+                        $orgContext = AuthorizationContext::find($context->parent_context_id);
+                        if ($orgContext) {
+                            $projectContexts = AuthorizationContext::where('parent_context_id', $orgContext->id)
+                                ->where('type', AuthorizationContext::TYPE_PROJECT)
+                                ->pluck('id');
+                            $contextIds = $contextIds->merge($projectContexts)->unique();
+                        }
+                    } catch (\Exception $e) {
+                        // Игнорируем ошибки при поиске контекстов - используем только иерархию
                     }
                 }
                 
@@ -416,9 +420,13 @@ class AuthorizationService
         
         // Для проектных контекстов также проверяем контекст организации (роли могут быть назначены там)
         if ($authContext && $authContext->type === AuthorizationContext::TYPE_PROJECT && $authContext->parent_context_id) {
-            $orgContext = AuthorizationContext::find($authContext->parent_context_id);
-            if ($orgContext && $this->checkPermissionInContext($user, $permission, $orgContext)) {
-                return true;
+            try {
+                $orgContext = AuthorizationContext::find($authContext->parent_context_id);
+                if ($orgContext && $this->checkPermissionInContext($user, $permission, $orgContext)) {
+                    return true;
+                }
+            } catch (\Exception $e) {
+                // Игнорируем ошибки при поиске контекста организации
             }
         }
         
