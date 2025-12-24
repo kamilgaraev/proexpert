@@ -156,6 +156,62 @@ class ContractService
             // Проверка доступности подрядчика происходит ниже через ContractorSharing
         }
         
+        // Обработка самоподряда (собственные силы)
+        $isSelfExecution = $contractDTO->is_self_execution ?? false;
+        
+        if ($isSelfExecution) {
+            // Создаем или получаем подрядчика самоподряда для организации
+            $selfExecutionService = app(\App\Services\Contractor\SelfExecutionService::class);
+            
+            if (!$selfExecutionService->canUseSelfExecution($organizationId)) {
+                throw new Exception('Организация не может использовать самоподряд');
+            }
+            
+            $selfExecutionContractor = $selfExecutionService->getOrCreateForOrganization($organizationId);
+            
+            // Если contractor_id не указан или указан неверно, устанавливаем правильный
+            if (!$contractDTO->contractor_id || $contractDTO->contractor_id !== $selfExecutionContractor->id) {
+                $contractDTO = new ContractDTO(
+                    project_id: $contractDTO->project_id,
+                    contractor_id: $selfExecutionContractor->id,
+                    parent_contract_id: $contractDTO->parent_contract_id,
+                    number: $contractDTO->number,
+                    date: $contractDTO->date,
+                    subject: $contractDTO->subject,
+                    work_type_category: $contractDTO->work_type_category,
+                    payment_terms: $contractDTO->payment_terms,
+                    base_amount: $contractDTO->base_amount,
+                    total_amount: $contractDTO->total_amount,
+                    gp_percentage: $contractDTO->gp_percentage,
+                    gp_calculation_type: $contractDTO->gp_calculation_type,
+                    gp_coefficient: $contractDTO->gp_coefficient,
+                    warranty_retention_calculation_type: $contractDTO->warranty_retention_calculation_type,
+                    warranty_retention_percentage: $contractDTO->warranty_retention_percentage,
+                    warranty_retention_coefficient: $contractDTO->warranty_retention_coefficient,
+                    subcontract_amount: $contractDTO->subcontract_amount,
+                    planned_advance_amount: $contractDTO->planned_advance_amount,
+                    actual_advance_amount: $contractDTO->actual_advance_amount,
+                    status: $contractDTO->status,
+                    start_date: $contractDTO->start_date,
+                    end_date: $contractDTO->end_date,
+                    notes: $contractDTO->notes,
+                    advance_payments: $contractDTO->advance_payments,
+                    is_fixed_amount: $contractDTO->is_fixed_amount,
+                    is_self_execution: true,
+                    is_multi_project: $contractDTO->is_multi_project,
+                    project_ids: $contractDTO->project_ids,
+                    supplier_id: $contractDTO->supplier_id,
+                    contract_category: $contractDTO->contract_category
+                );
+                
+                $this->logging->technical('self_execution contractor_id auto-filled', [
+                    'organization_id' => $organizationId,
+                    'contractor_id' => $selfExecutionContractor->id,
+                    'is_self_execution' => true,
+                ]);
+            }
+        }
+        
         // Финальная проверка: contractor_id обязателен
         if (!$contractDTO->contractor_id) {
             throw new Exception('Не указан подрядчик для контракта');
@@ -190,7 +246,20 @@ class ContractService
             'project_id' => $contractDTO->project_id,
             'user_id' => Auth::id(),
             'has_project_context' => $projectContext !== null,
+            'is_self_execution' => $isSelfExecution,
         ]);
+        
+        // Логирование для контрактов самоподряда
+        if ($isSelfExecution) {
+            $this->logging->business('contract.self_execution.created', [
+                'organization_id' => $organizationId,
+                'contractor_id' => $contractDTO->contractor_id,
+                'contract_number' => $contractDTO->number,
+                'project_id' => $contractDTO->project_id,
+                'total_amount' => $contractDTO->total_amount,
+                'user_id' => Auth::id(),
+            ]);
+        }
 
         $contractData = $contractDTO->toArray();
         $contractData['organization_id'] = $organizationId;
@@ -429,6 +498,23 @@ class ContractService
         ]);
 
         // Дополнительные проверки перед обновлением
+        
+        // Валидация: нельзя изменить тип контракта (самоподряд <-> внешний подрядчик)
+        $currentIsSelfExecution = $contract->is_self_execution || ($contract->contractor && $contract->contractor->isSelfExecution());
+        $newIsSelfExecution = $contractDTO->is_self_execution;
+        
+        if ($currentIsSelfExecution !== $newIsSelfExecution) {
+            // Проверяем, есть ли уже акты или платежи
+            $hasPerformanceActs = $contract->performanceActs()->exists();
+            $hasPayments = $contract->payments()->exists();
+            
+            if ($hasPerformanceActs || $hasPayments) {
+                throw new Exception(
+                    'Невозможно изменить тип исполнения контракта (самоподряд/подрядчик), ' .
+                    'так как уже есть акты выполненных работ или платежи'
+                );
+            }
+        }
 
         $updateData = $contractDTO->toArray();
         

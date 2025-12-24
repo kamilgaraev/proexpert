@@ -87,6 +87,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
         return [
             'project_id' => ['sometimes', 'nullable', 'integer', 'exists:projects,id'],
             'contractor_id' => ['sometimes', 'nullable', 'integer', 'exists:contractors,id'],
+            'is_self_execution' => ['sometimes', 'nullable', 'boolean'],
             'supplier_id' => ['sometimes', 'nullable', 'integer', 'exists:suppliers,id'],
             'contract_category' => ['sometimes', 'nullable', 'string', 'in:work,procurement,service'],
             'parent_contract_id' => ['sometimes', 'nullable', 'integer', new ParentContractValid], 
@@ -145,7 +146,7 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             'gp_percentage', 'gp_calculation_type', 'gp_coefficient',
             'warranty_retention_calculation_type', 'warranty_retention_percentage', 'warranty_retention_coefficient',
             'subcontract_amount', 'planned_advance_amount', 'actual_advance_amount', 'status', 'start_date',
-            'end_date', 'notes', 'is_multi_project', 'project_ids'
+            'end_date', 'notes', 'is_multi_project', 'project_ids', 'is_self_execution', 'supplier_id', 'contract_category'
         ];
         
         $filtered = array_intersect_key($input, array_flip($allowedFields));
@@ -253,7 +254,16 @@ class UpdateContractRequest extends FormRequest // Был StoreContractRequest
             is_multi_project: array_key_exists('is_multi_project', $validatedData)
                 ? (bool) $validatedData['is_multi_project']
                 : ($contract->is_multi_project ?? false),
-            project_ids: $validatedData['project_ids'] ?? null
+            project_ids: $validatedData['project_ids'] ?? null,
+            is_self_execution: array_key_exists('is_self_execution', $validatedData)
+                ? (bool) $validatedData['is_self_execution']
+                : ($contract->is_self_execution ?? false),
+            supplier_id: array_key_exists('supplier_id', $validatedData)
+                ? $validatedData['supplier_id']
+                : $contract->supplier_id,
+            contract_category: array_key_exists('contract_category', $validatedData)
+                ? $validatedData['contract_category']
+                : $contract->contract_category
         );
     }
 } 

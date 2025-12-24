@@ -18,6 +18,7 @@ class Contractor extends Model
     const TYPE_MANUAL = 'manual';
     const TYPE_INVITED_ORGANIZATION = 'invited_organization';
     const TYPE_HOLDING_MEMBER = 'holding_member';
+    const TYPE_SELF_EXECUTION = 'self_execution';
 
     protected $fillable = [
         'organization_id',
@@ -80,6 +81,11 @@ class Contractor extends Model
         return $query->where('contractor_type', ContractorType::HOLDING_MEMBER->value);
     }
 
+    public function scopeSelfExecution($query)
+    {
+        return $query->where('contractor_type', ContractorType::SELF_EXECUTION->value);
+    }
+
     public function scopeNeedingSync($query)
     {
         return $query->whereIn('contractor_type', [
@@ -111,6 +117,14 @@ class Contractor extends Model
     public function isHoldingMember(): bool
     {
         return $this->contractor_type === ContractorType::HOLDING_MEMBER;
+    }
+
+    /**
+     * Проверяет, является ли подрядчик записью самоподряда (собственные силы)
+     */
+    public function isSelfExecution(): bool
+    {
+        return $this->contractor_type === ContractorType::SELF_EXECUTION;
     }
 
     /**
@@ -253,6 +267,47 @@ class Contractor extends Model
     {
         Cache::forget($this->getCacheKey('details'));
         Cache::forget($this->getCacheKey('contracts'));
+    }
+
+    /**
+     * Получить или создать подрядчика самоподряда для организации
+     * 
+     * @param int $organizationId ID организации
+     * @return Contractor
+     */
+    public static function getOrCreateSelfExecution(int $organizationId): Contractor
+    {
+        $contractor = static::where('organization_id', $organizationId)
+            ->where('contractor_type', ContractorType::SELF_EXECUTION->value)
+            ->first();
+
+        if ($contractor) {
+            return $contractor;
+        }
+
+        // Получаем данные организации для заполнения полей
+        $organization = Organization::find($organizationId);
+
+        if (!$organization) {
+            throw new \Exception("Организация с ID {$organizationId} не найдена");
+        }
+
+        return static::create([
+            'organization_id' => $organizationId,
+            'source_organization_id' => $organizationId,
+            'name' => 'Собственные силы',
+            'contact_person' => null,
+            'phone' => $organization->phone,
+            'email' => $organization->email,
+            'legal_address' => $organization->address,
+            'inn' => $organization->tax_number,
+            'kpp' => null,
+            'bank_details' => null,
+            'notes' => 'Автоматически созданный подрядчик для учета работ собственными силами (хозяйственный способ)',
+            'contractor_type' => ContractorType::SELF_EXECUTION,
+            'connected_at' => now(),
+            'last_sync_at' => now(),
+        ]);
     }
 
     protected static function boot()

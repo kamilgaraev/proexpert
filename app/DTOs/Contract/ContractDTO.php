@@ -36,7 +36,10 @@ class ContractDTO
         public readonly ?array $advance_payments = null,
         public readonly bool $is_fixed_amount = true, // По умолчанию фиксированная сумма
         public readonly bool $is_multi_project = false, // Мультипроектный контракт
-        public readonly ?array $project_ids = null // Массив ID проектов для мультипроектных контрактов
+        public readonly ?array $project_ids = null, // Массив ID проектов для мультипроектных контрактов
+        public readonly bool $is_self_execution = false, // Собственные силы (хозяйственный способ)
+        public readonly ?int $supplier_id = null, // Поставщик (для договоров поставки)
+        public readonly ?string $contract_category = null // Категория контракта (work, procurement, service)
     ) {}
 
     public function toArray(): array
@@ -68,6 +71,9 @@ class ContractDTO
             'is_fixed_amount' => $this->is_fixed_amount,
             'is_multi_project' => $this->is_multi_project,
             'project_ids' => $this->project_ids,
+            'is_self_execution' => $this->is_self_execution,
+            'supplier_id' => $this->supplier_id,
+            'contract_category' => $this->contract_category,
         ];
     }
 

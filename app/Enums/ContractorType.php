@@ -7,6 +7,7 @@ enum ContractorType: string
     case MANUAL = 'manual';
     case INVITED_ORGANIZATION = 'invited_organization';
     case HOLDING_MEMBER = 'holding_member';
+    case SELF_EXECUTION = 'self_execution';
 
     /**
      * Получить человекочитаемое название
@@ -17,6 +18,7 @@ enum ContractorType: string
             self::MANUAL => 'Ручной ввод',
             self::INVITED_ORGANIZATION => 'Приглашенная организация',
             self::HOLDING_MEMBER => 'Участник холдинга',
+            self::SELF_EXECUTION => 'Собственные силы',
         };
     }
 
@@ -29,6 +31,7 @@ enum ContractorType: string
             self::MANUAL => 'Подрядчик, созданный вручную пользователем',
             self::INVITED_ORGANIZATION => 'Подрядчик из внешней приглашенной организации',
             self::HOLDING_MEMBER => 'Подрядчик - участник холдинга (головная/дочерняя организация)',
+            self::SELF_EXECUTION => 'Работы выполняются собственными силами компании (хозяйственный способ)',
         };
     }
 
@@ -41,6 +44,7 @@ enum ContractorType: string
             self::MANUAL => true,
             self::INVITED_ORGANIZATION => false,
             self::HOLDING_MEMBER => false,
+            self::SELF_EXECUTION => false,
         };
     }
 
@@ -53,6 +57,7 @@ enum ContractorType: string
             self::MANUAL => true,
             self::INVITED_ORGANIZATION => true,
             self::HOLDING_MEMBER => false, // Удаляется только при удалении из холдинга
+            self::SELF_EXECUTION => false, // Удаляется только при удалении организации
         };
     }
 
@@ -65,6 +70,7 @@ enum ContractorType: string
             self::MANUAL => false,
             self::INVITED_ORGANIZATION => true,
             self::HOLDING_MEMBER => true,
+            self::SELF_EXECUTION => false,
         };
     }
 
