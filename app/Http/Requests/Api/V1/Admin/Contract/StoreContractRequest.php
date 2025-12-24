@@ -31,6 +31,9 @@ class StoreContractRequest extends FormRequest
             $supplierId = $this->input('supplier_id');
             $contractorId = $this->input('contractor_id');
             $contractCategory = $this->input('contract_category');
+            $isSelfExecution = $this->input('is_self_execution') === true 
+                || $this->input('is_self_execution') === '1' 
+                || $this->input('is_self_execution') === 1;
 
             // Если указан supplier_id, проверяем активацию модулей
             if ($supplierId) {
@@ -58,7 +61,6 @@ class StoreContractRequest extends FormRequest
 
             // Проверка: либо contractor_id, либо supplier_id должен быть заполнен
             // Исключение: если is_self_execution = true, contractor_id опционален (будет заполнен автоматически)
-            $isSelfExecution = $this->input('is_self_execution');
             if (!$supplierId && !$contractorId && !$isSelfExecution) {
                 $validator->errors()->add(
                     'contractor_id',
@@ -66,11 +68,19 @@ class StoreContractRequest extends FormRequest
                 );
             }
 
-            // Нельзя указать оба одновременно
+            // Нельзя указать оба одновременно (поставщик и подрядчик)
             if ($supplierId && $contractorId) {
                 $validator->errors()->add(
                     'supplier_id',
                     'Нельзя указать одновременно подрядчика и поставщика. Укажите либо contractor_id, либо supplier_id.'
+                );
+            }
+
+            // Нельзя указать supplier_id для самоподряда
+            if ($isSelfExecution && $supplierId) {
+                $validator->errors()->add(
+                    'is_self_execution',
+                    'Нельзя указать самоподряд (is_self_execution=true) вместе с поставщиком (supplier_id). Самоподряд применим только для работ, а не для поставок.'
                 );
             }
         });
