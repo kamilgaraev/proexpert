@@ -12,7 +12,7 @@ class ConstructionJournalPolicy
     /**
      * Проверка наличия прав модуля
      */
-    private function hasModulePermission(User $user, array $permissions, ?int $organizationId = null): bool
+    private function hasModulePermission(User $user, array $permissions, ?int $organizationId = null, ?int $projectId = null): bool
     {
         $orgId = $organizationId ?? $user->current_organization_id;
         
@@ -20,7 +20,12 @@ class ConstructionJournalPolicy
             return false;
         }
         
-        $context = ['organization_id' => $orgId];
+        // Если указан project_id, проверяем через контекст проекта (для проектных ролей)
+        if ($projectId) {
+            $context = ['project_id' => $projectId, 'organization_id' => $orgId];
+        } else {
+            $context = ['organization_id' => $orgId];
+        }
         
         foreach ($permissions as $permission) {
             if ($user->hasPermission("construction-journal.{$permission}", $context)) {
@@ -41,7 +46,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $this->hasModulePermission($user, ['view', '*'], $project->organization_id);
+        return $this->hasModulePermission($user, ['view', '*'], $project->organization_id, $project->id);
     }
 
     /**
@@ -54,7 +59,7 @@ class ConstructionJournalPolicy
             if ($model->organization_id !== $user->current_organization_id) {
                 return false;
             }
-            return $this->hasModulePermission($user, ['view', '*'], $model->organization_id);
+            return $this->hasModulePermission($user, ['view', '*'], $model->organization_id, $model->id);
         }
         
         // Если передан ConstructionJournal (для конкретного журнала)
@@ -62,7 +67,7 @@ class ConstructionJournalPolicy
             if ($model->organization_id !== $user->current_organization_id) {
                 return false;
             }
-            return $this->hasModulePermission($user, ['view', '*'], $model->organization_id);
+            return $this->hasModulePermission($user, ['view', '*'], $model->organization_id, $model->project_id);
         }
         
         return false;
@@ -78,7 +83,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $this->hasModulePermission($user, ['create', '*'], $project->organization_id);
+        return $this->hasModulePermission($user, ['create', '*'], $project->organization_id, $project->id);
     }
 
     /**
@@ -96,7 +101,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $this->hasModulePermission($user, ['edit', '*'], $journal->organization_id);
+        return $this->hasModulePermission($user, ['edit', '*'], $journal->organization_id, $journal->project_id);
     }
 
     /**
@@ -109,7 +114,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $this->hasModulePermission($user, ['delete', '*'], $journal->organization_id);
+        return $this->hasModulePermission($user, ['delete', '*'], $journal->organization_id, $journal->project_id);
     }
 
     /**
@@ -122,7 +127,7 @@ class ConstructionJournalPolicy
             return false;
         }
 
-        return $this->hasModulePermission($user, ['export', '*'], $journal->organization_id);
+        return $this->hasModulePermission($user, ['export', '*'], $journal->organization_id, $journal->project_id);
     }
 }
 
