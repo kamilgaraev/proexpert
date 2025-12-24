@@ -109,6 +109,19 @@ class AuthorizationService
             
             if ($context) {
                 $contextIds = $this->getContextHierarchy($context)->pluck('id');
+                
+                // Для проектных контекстов также добавляем все проектные контексты организации
+                // (роли могут быть назначены в разных проектных контекстах)
+                if ($context->type === AuthorizationContext::TYPE_PROJECT && $context->parent_context_id) {
+                    $orgContext = AuthorizationContext::find($context->parent_context_id);
+                    if ($orgContext) {
+                        $projectContexts = AuthorizationContext::where('parent_context_id', $orgContext->id)
+                            ->where('type', AuthorizationContext::TYPE_PROJECT)
+                            ->pluck('id');
+                        $contextIds = $contextIds->merge($projectContexts)->unique();
+                    }
+                }
+                
                 $query->whereIn('context_id', $contextIds);
             }
             
@@ -380,6 +393,7 @@ class AuthorizationService
             }
         }
 
+        // Проверка родительских организаций для организационных контекстов
         if ($authContext && $authContext->type === AuthorizationContext::TYPE_ORGANIZATION) {
             $cacheKey = "org_parent_{$authContext->resource_id}";
             $orgData = Cache::driver('array')->remember($cacheKey, 300, function () use ($authContext) {
@@ -397,6 +411,14 @@ class AuthorizationService
                 if ($parentContext && $this->checkPermissionInContext($user, $permission, $parentContext)) {
                     return true;
                 }
+            }
+        }
+        
+        // Для проектных контекстов также проверяем контекст организации (роли могут быть назначены там)
+        if ($authContext && $authContext->type === AuthorizationContext::TYPE_PROJECT && $authContext->parent_context_id) {
+            $orgContext = AuthorizationContext::find($authContext->parent_context_id);
+            if ($orgContext && $this->checkPermissionInContext($user, $permission, $orgContext)) {
+                return true;
             }
         }
         
