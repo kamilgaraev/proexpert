@@ -20,16 +20,23 @@ class ConstructionJournalPolicy
             return false;
         }
         
-        // Если указан project_id, проверяем через контекст проекта (для проектных ролей)
-        if ($projectId) {
-            $context = ['project_id' => $projectId, 'organization_id' => $orgId];
-        } else {
-            $context = ['organization_id' => $orgId];
-        }
+        // Проверяем права через контекст организации (роли могут быть назначены в организации или проекте)
+        $orgContext = ['organization_id' => $orgId];
         
         foreach ($permissions as $permission) {
-            if ($user->hasPermission("construction-journal.{$permission}", $context)) {
+            if ($user->hasPermission("construction-journal.{$permission}", $orgContext)) {
                 return true;
+            }
+        }
+        
+        // Если указан project_id, также проверяем через контекст проекта (для проектных ролей)
+        if ($projectId) {
+            $projectContext = ['project_id' => $projectId, 'organization_id' => $orgId];
+            
+            foreach ($permissions as $permission) {
+                if ($user->hasPermission("construction-journal.{$permission}", $projectContext)) {
+                    return true;
+                }
             }
         }
         
