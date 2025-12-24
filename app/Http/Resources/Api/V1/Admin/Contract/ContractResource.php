@@ -200,6 +200,14 @@ class ContractResource extends JsonResource
             'end_date' => $this->end_date,
             'notes' => $this->notes,
             'is_fixed_amount' => $this->is_fixed_amount ?? true, // По умолчанию true для обратной совместимости
+            // Самоподряд (собственные силы)
+            'is_self_execution' => $this->is_self_execution ?? false,
+            'contractor_display_name' => $this->is_self_execution 
+                ? 'Собственные силы' 
+                : ($this->whenLoaded('contractor', fn() => $this->contractor?->name, null)),
+            'contractor_badge' => $this->is_self_execution 
+                ? ['type' => 'self_execution', 'label' => 'Хозспособ', 'color' => 'primary']
+                : null,
             // Мультипроектные контракты
             'is_multi_project' => $this->is_multi_project ?? false,
             'project_ids' => $this->is_multi_project 

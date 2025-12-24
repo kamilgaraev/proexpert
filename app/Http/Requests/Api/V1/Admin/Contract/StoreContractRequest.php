@@ -57,10 +57,12 @@ class StoreContractRequest extends FormRequest
             }
 
             // Проверка: либо contractor_id, либо supplier_id должен быть заполнен
-            if (!$supplierId && !$contractorId) {
+            // Исключение: если is_self_execution = true, contractor_id опционален (будет заполнен автоматически)
+            $isSelfExecution = $this->input('is_self_execution');
+            if (!$supplierId && !$contractorId && !$isSelfExecution) {
                 $validator->errors()->add(
                     'contractor_id',
-                    'Необходимо указать либо подрядчика (contractor_id), либо поставщика (supplier_id)'
+                    'Необходимо указать либо подрядчика (contractor_id), либо поставщика (supplier_id), либо установить is_self_execution=true'
                 );
             }
 
@@ -85,13 +87,17 @@ class StoreContractRequest extends FormRequest
         $projectContext = \App\Http\Middleware\ProjectContextMiddleware::getProjectContext($this);
         $isContractor = $projectContext && in_array($projectContext->role->value, ['contractor', 'subcontractor']);
         
+        // Определяем, является ли контракт самоподрядом
+        $isSelfExecution = $this->input('is_self_execution') === true || $this->input('is_self_execution') === '1' || $this->input('is_self_execution') === 1;
+        
         return [
             'project_id' => ['nullable', 'integer', 'exists:projects,id', 'required_without:project_ids'],
-            // contractor_id обязателен для генподрядчика, опционален для подрядчика (auto-fill)
+            // contractor_id обязателен для генподрядчика, опционален для подрядчика (auto-fill) и для самоподряда
             // Для договоров поставки может быть null, если указан supplier_id
-            'contractor_id' => $isContractor 
+            'contractor_id' => $isContractor || $isSelfExecution
                 ? ['nullable', 'integer', 'exists:contractors,id']
                 : ['required_without:supplier_id', 'integer', 'exists:contractors,id'],
+            'is_self_execution' => ['nullable', 'boolean'],
             'supplier_id' => ['nullable', 'required_without:contractor_id', 'integer', 'exists:suppliers,id'],
             'contract_category' => ['nullable', 'string', 'in:work,procurement,service'],
             'parent_contract_id' => ['nullable', 'integer', new ParentContractValid],
@@ -189,7 +195,10 @@ class StoreContractRequest extends FormRequest
             advance_payments: $this->validated('advance_payments'),
             is_fixed_amount: $isFixedAmount,
             is_multi_project: $isMultiProject,
-            project_ids: $projectIds
+            project_ids: $projectIds,
+            is_self_execution: $this->validated('is_self_execution') === true,
+            supplier_id: $this->validated('supplier_id'),
+            contract_category: $this->validated('contract_category')
         );
     }
 } 

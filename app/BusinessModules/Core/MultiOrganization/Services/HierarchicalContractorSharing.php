@@ -89,6 +89,12 @@ class HierarchicalContractorSharing implements ContractorSharingInterface
             return false;
         }
 
+        // Особая логика для подрядчиков типа SELF_EXECUTION:
+        // Они доступны только своей организации
+        if ($contractor->contractor_type === ContractorType::SELF_EXECUTION) {
+            return $contractor->organization_id === $organizationId;
+        }
+
         // Собираем ID всех доступных организаций
         $availableOrgIds = [$organizationId];
 

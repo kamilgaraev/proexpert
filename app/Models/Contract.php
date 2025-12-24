@@ -49,6 +49,7 @@ class Contract extends Model
         'is_onboarding_demo',
         'is_fixed_amount',
         'is_multi_project',
+        'is_self_execution',
     ];
 
     protected $casts = [
@@ -71,6 +72,7 @@ class Contract extends Model
         'is_onboarding_demo' => 'boolean',
         'is_fixed_amount' => 'boolean',
         'is_multi_project' => 'boolean',
+        'is_self_execution' => 'boolean',
     ];
 
     public function organization(): BelongsTo
@@ -578,6 +580,32 @@ class Contract extends Model
     public function scopeForOrganization($query, int $organizationId)
     {
         return $query->where('organization_id', $organizationId);
+    }
+
+    /**
+     * Scope для контрактов самоподряда (собственные силы)
+     */
+    public function scopeSelfExecution($query)
+    {
+        return $query->where('is_self_execution', true);
+    }
+
+    /**
+     * Проверить, является ли контракт контрактом самоподряда
+     */
+    public function isSelfExecution(): bool
+    {
+        // Проверяем флаг или тип подрядчика
+        if ($this->is_self_execution) {
+            return true;
+        }
+
+        // Дополнительная проверка через подрядчика для обратной совместимости
+        if ($this->contractor && $this->contractor->isSelfExecution()) {
+            return true;
+        }
+
+        return false;
     }
 
     // ============================================

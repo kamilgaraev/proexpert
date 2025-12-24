@@ -14,8 +14,14 @@ properties:
     example: 5
   contractor_id:
     type: integer
-    description: ID подрядчика из каталога организации.
+    nullable: true
+    description: ID подрядчика из каталога организации. Опционален если указан is_self_execution=true.
     example: 3
+  is_self_execution:
+    type: boolean
+    nullable: true
+    description: "Флаг выполнения работ собственными силами (хозяйственный способ). Если true, contractor_id будет заполнен автоматически."
+    example: false
   parent_contract_id:
     type: integer
     nullable: true

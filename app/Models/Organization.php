@@ -233,6 +233,15 @@ class Organization extends Model
     }
 
     /**
+     * Получить подрядчика самоподряда (собственные силы) для организации.
+     */
+    public function selfExecutionContractor(): HasOne
+    {
+        return $this->hasOne(Contractor::class, 'organization_id')
+            ->where('contractor_type', \App\Enums\ContractorType::SELF_EXECUTION->value);
+    }
+
+    /**
      * Проверить, активна ли подписка организации.
      *
      * @return bool

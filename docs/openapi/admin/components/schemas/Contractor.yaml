@@ -61,7 +61,7 @@ properties:
   contractor_type:
     type: string
     description: Тип подрядчика.
-    enum: [manual, invited_organization]
+    enum: [manual, invited_organization, holding_member, self_execution]
     example: "manual"
   contractor_invitation_id:
     type: integer
@@ -97,3 +97,15 @@ properties:
     format: date-time
     description: Дата и время последнего обновления подрядчика.
     example: "2024-02-15T14:30:00.000000Z"
+  is_self_execution:
+    type: boolean
+    description: Является ли подрядчик записью самоподряда (собственные силы).
+    example: false
+  is_editable:
+    type: boolean
+    description: Можно ли редактировать данные подрядчика.
+    example: true
+  is_deletable:
+    type: boolean
+    description: Можно ли удалить подрядчика.
+    example: true
