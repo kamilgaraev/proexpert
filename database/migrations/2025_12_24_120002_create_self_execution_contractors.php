@@ -43,6 +43,8 @@ return new class extends Migration
             }
 
             // Создаем запись подрядчика самоподряда
+            // Примечание: inn оставляем null, чтобы избежать конфликта с unique constraint (organization_id, inn)
+            // так как у организации может быть подрядчик с таким же ИНН
             $contractorId = DB::table('contractors')->insertGetId([
                 'organization_id' => $organization->id,
                 'source_organization_id' => $organization->id,
@@ -51,7 +53,7 @@ return new class extends Migration
                 'phone' => $organization->phone,
                 'email' => $organization->email,
                 'legal_address' => $organization->address,
-                'inn' => $organization->tax_number,
+                'inn' => null, // Не указываем ИНН для избежания конфликтов с unique constraint
                 'kpp' => null,
                 'bank_details' => null,
                 'notes' => 'Автоматически созданный подрядчик для учета работ собственными силами (хозяйственный способ)',
