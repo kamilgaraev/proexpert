@@ -300,7 +300,7 @@ class Contractor extends Model
             'phone' => $organization->phone,
             'email' => $organization->email,
             'legal_address' => $organization->address,
-            'inn' => $organization->tax_number,
+            'inn' => null, // Не указываем ИНН для избежания конфликтов с unique constraint (organization_id, inn)
             'kpp' => null,
             'bank_details' => null,
             'notes' => 'Автоматически созданный подрядчик для учета работ собственными силами (хозяйственный способ)',
