@@ -192,14 +192,25 @@ class PermissionResolver
         
         // Маппинг модулей: schedule.* -> schedule-management.*
         // construction-journal.* -> budget-estimates.* (права ОЖР находятся в модуле сметного дела)
+        // estimates.* -> budget-estimates.* (права смет находятся в модуле budget-estimates)
         $moduleMapping = [
             'schedule' => 'schedule-management',
             'construction-journal' => 'budget-estimates',
+            'estimates' => 'budget-estimates',
+        ];
+        
+        // Обратный маппинг: budget-estimates.* -> estimates.* (для обратной совместимости)
+        $reverseMapping = [
+            'budget-estimates' => 'estimates',
+            'schedule-management' => 'schedule',
         ];
         
         $modulesToCheck = [$module];
         if (isset($moduleMapping[$module])) {
             $modulesToCheck[] = $moduleMapping[$module];
+        }
+        if (isset($reverseMapping[$module])) {
+            $modulesToCheck[] = $reverseMapping[$module];
         }
         
         $this->logging->technical('permission.module.parsed', [
