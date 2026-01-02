@@ -6,7 +6,10 @@ use App\Models\Estimate;
 use App\Repositories\EstimateRepository;
 use App\Repositories\EstimateSectionRepository;
 use App\Repositories\EstimateItemRepository;
+use App\BusinessModules\Features\BudgetEstimates\BudgetEstimatesModule;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 
 class EstimateService
 {
@@ -14,7 +17,8 @@ class EstimateService
         protected EstimateRepository $repository,
         protected EstimateSectionRepository $sectionRepository,
         protected EstimateItemRepository $itemRepository,
-        protected EstimateCalculationService $calculationService
+        protected EstimateCalculationService $calculationService,
+        protected BudgetEstimatesModule $module
     ) {}
 
     public function create(array $data): Estimate
@@ -22,6 +26,29 @@ class EstimateService
         // Retry mechanism for race condition protection
         $maxAttempts = 3;
         $attempt = 0;
+        
+        // Получаем настройки модуля для значений по умолчанию
+        $settings = $this->module->getSettings($data['organization_id']);
+        $defaults = $settings['estimate_settings'] ?? [];
+
+        // Обработка overhead_rate (Накладные расходы)
+        // Если значение не передано или null, используем настройку по умолчанию
+        // Если передано 0, используем 0
+        if (!array_key_exists('overhead_rate', $data) || is_null($data['overhead_rate'])) {
+            $data['overhead_rate'] = $defaults['default_overhead_rate'] ?? 15;
+        }
+
+        // Обработка profit_rate (Сметная прибыль)
+        // Если значение не передано или null, используем настройку по умолчанию
+        // Если передано 0, используем 0
+        if (!array_key_exists('profit_rate', $data) || is_null($data['profit_rate'])) {
+            $data['profit_rate'] = $defaults['default_profit_rate'] ?? 12;
+        }
+
+        // Обработка vat_rate (НДС)
+        if (!array_key_exists('vat_rate', $data) || is_null($data['vat_rate'])) {
+            $data['vat_rate'] = $defaults['default_vat_rate'] ?? 20;
+        }
         
         while ($attempt < $maxAttempts) {
             try {
@@ -37,12 +64,12 @@ class EstimateService
                     
                     $estimate = $this->repository->create($data);
                     
-                    \Log::info('estimate.created', [
+                    Log::info('estimate.created', [
                         'estimate_id' => $estimate->id,
                         'number' => $estimate->number,
                         'organization_id' => $estimate->organization_id,
                         'project_id' => $estimate->project_id,
-                        'user_id' => auth()->id(),
+                        'user_id' => Auth::id(),
                     ]);
                     
                     return $estimate;
@@ -50,7 +77,7 @@ class EstimateService
             } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
                 $attempt++;
                 
-                \Log::warning('estimate.create.duplicate_number', [
+                Log::warning('estimate.create.duplicate_number', [
                     'attempt' => $attempt,
                     'number' => $data['number'] ?? null,
                     'organization_id' => $data['organization_id'],
@@ -58,7 +85,7 @@ class EstimateService
                 
                 // If this was the last attempt, rethrow the exception
                 if ($attempt >= $maxAttempts) {
-                    \Log::error('estimate.create.failed', [
+                    Log::error('estimate.create.failed', [
                         'max_attempts_reached' => $maxAttempts,
                         'last_number' => $data['number'] ?? null,
                     ]);
@@ -85,10 +112,10 @@ class EstimateService
                 $this->calculationService->recalculateAll($estimate);
             }
             
-            \Log::info('estimate.updated', [
+            Log::info('estimate.updated', [
                 'estimate_id' => $estimate->id,
                 'changed_fields' => array_keys($data),
-                'user_id' => auth()->id(),
+                'user_id' => Auth::id(),
             ]);
             
             return $estimate->fresh();
@@ -101,19 +128,19 @@ class EstimateService
             throw new \Exception('Нельзя удалить утвержденную смету');
         }
         
-        \Log::warning('estimate.deleting', [
+        Log::warning('estimate.deleting', [
             'estimate_id' => $estimate->id,
             'number' => $estimate->number,
             'organization_id' => $estimate->organization_id,
             'status' => $estimate->status,
             'total_amount' => $estimate->total_amount,
-            'user_id' => auth()->id(),
+            'user_id' => Auth::id(),
         ]);
         
         $result = $this->repository->delete($estimate);
         
         if ($result) {
-            \Log::info('estimate.deleted', [
+            Log::info('estimate.deleted', [
                 'estimate_id' => $estimate->id,
                 'number' => $estimate->number,
             ]);
@@ -197,7 +224,7 @@ class EstimateService
             } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
                 $attempt++;
                 
-                \Log::warning('estimate.duplicate.duplicate_number', [
+                Log::warning('estimate.duplicate.duplicate_number', [
                     'attempt' => $attempt,
                     'number' => $newNumber,
                     'source_estimate_id' => $estimate->id,
@@ -205,7 +232,7 @@ class EstimateService
                 
                 // If this was the last attempt, rethrow the exception
                 if ($attempt >= $maxAttempts) {
-                    \Log::error('estimate.duplicate.failed', [
+                    Log::error('estimate.duplicate.failed', [
                         'max_attempts_reached' => $maxAttempts,
                         'last_number' => $newNumber,
                     ]);
@@ -266,7 +293,7 @@ class EstimateService
         $number = $prefix . str_pad($newNumber, 4, '0', STR_PAD_LEFT);
         
         // Логирование для отладки
-        \Log::debug('estimate.number_generated', [
+        Log::debug('estimate.number_generated', [
             'organization_id' => $organizationId,
             'year' => $year,
             'generated_number' => $number,
