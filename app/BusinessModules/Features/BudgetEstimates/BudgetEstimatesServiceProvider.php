@@ -3,6 +3,9 @@
 namespace App\BusinessModules\Features\BudgetEstimates;
 
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Log;
+use App\Models\EstimateItem;
 use App\BusinessModules\Features\BudgetEstimates\Services\{
     EstimateService,
     EstimateCalculationService,
@@ -55,6 +58,9 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Регистрируем route binding для item ПЕРЕД загрузкой роутов
+        $this->registerRouteBindings();
+        
         // Загрузка маршрутов
         $this->loadRoutes();
 
@@ -121,6 +127,111 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
     {
         $this->app->singleton(EstimateProjectIntegrationService::class);
         $this->app->singleton(EstimateContractIntegrationService::class);
+    }
+
+    /**
+     * Регистрация route bindings
+     */
+    protected function registerRouteBindings(): void
+    {
+        // Регистрируем binding для item только если он еще не зарегистрирован
+        if (!Route::getBindingCallback('item')) {
+            Route::bind('item', function ($value) {
+                Log::info('[BudgetEstimatesServiceProvider::bind item] ===== НАЧАЛО РЕЗОЛВИНГА =====', [
+                    'timestamp' => now()->toIso8601String(),
+                    'request_id' => uniqid('bind_', true),
+                ]);
+                
+                Log::info('[BudgetEstimatesServiceProvider::bind item] Начало резолвинга', [
+                    'value' => $value,
+                    'value_type' => gettype($value),
+                    'int_value' => (int)$value,
+                    'route' => request()->route()?->getName(),
+                    'url' => request()->fullUrl(),
+                    'method' => request()->method(),
+                ]);
+                
+                $item = EstimateItem::withTrashed()
+                    ->where('id', (int)$value)
+                    ->first();
+                
+                Log::info('[BudgetEstimatesServiceProvider::bind item] Результат поиска', [
+                    'value' => $value,
+                    'item_found' => $item !== null,
+                    'item_id' => $item?->id,
+                    'item_estimate_id' => $item?->estimate_id,
+                    'item_deleted_at' => $item?->deleted_at,
+                ]);
+                
+                if (!$item) {
+                    Log::warning('[BudgetEstimatesServiceProvider::bind item] Элемент не найден', [
+                        'value' => $value,
+                        'int_value' => (int)$value,
+                    ]);
+                    abort(404, 'Позиция сметы не найдена');
+                }
+                
+                // Загружаем связь estimate (включая удаленные)
+                $item->load(['estimate' => function ($query) {
+                    $query->withTrashed();
+                }]);
+                
+                Log::info('[BudgetEstimatesServiceProvider::bind item] После загрузки estimate', [
+                    'item_id' => $item->id,
+                    'estimate_loaded' => $item->relationLoaded('estimate'),
+                    'estimate_exists' => $item->estimate !== null,
+                    'estimate_id' => $item->estimate?->id,
+                    'estimate_organization_id' => $item->estimate?->organization_id,
+                    'estimate_deleted_at' => $item->estimate?->deleted_at,
+                ]);
+                
+                $user = request()->user();
+                Log::info('[BudgetEstimatesServiceProvider::bind item] Информация о пользователе', [
+                    'user_exists' => $user !== null,
+                    'user_id' => $user?->id,
+                    'current_organization_id' => $user?->current_organization_id,
+                ]);
+                
+                if ($user && $user->current_organization_id) {
+                    // Если estimate не найден, возвращаем 404
+                    if (!$item->estimate) {
+                        Log::warning('[BudgetEstimatesServiceProvider::bind item] Estimate не найден для элемента', [
+                            'item_id' => $item->id,
+                            'item_estimate_id' => $item->estimate_id,
+                        ]);
+                        abort(404, 'Смета для этой позиции не найдена');
+                    }
+                    
+                    // Проверяем организацию
+                    $itemOrgId = (int)$item->estimate->organization_id;
+                    $userOrgId = (int)$user->current_organization_id;
+                    
+                    Log::info('[BudgetEstimatesServiceProvider::bind item] Проверка организации', [
+                        'item_id' => $item->id,
+                        'estimate_id' => $item->estimate->id,
+                        'item_organization_id' => $itemOrgId,
+                        'user_organization_id' => $userOrgId,
+                        'match' => $itemOrgId === $userOrgId,
+                    ]);
+                    
+                    if ($itemOrgId !== $userOrgId) {
+                        Log::warning('[BudgetEstimatesServiceProvider::bind item] Организация не совпадает', [
+                            'item_id' => $item->id,
+                            'item_organization_id' => $itemOrgId,
+                            'user_organization_id' => $userOrgId,
+                        ]);
+                        abort(403, 'У вас нет доступа к этой позиции сметы');
+                    }
+                }
+                
+                Log::info('[BudgetEstimatesServiceProvider::bind item] Успешное резолвинг', [
+                    'item_id' => $item->id,
+                    'estimate_id' => $item->estimate?->id,
+                ]);
+                
+                return $item;
+            });
+        }
     }
 
     /**

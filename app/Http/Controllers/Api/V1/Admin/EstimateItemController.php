@@ -159,22 +159,33 @@ class EstimateItemController extends Controller
             'item_exists' => is_object($item) && method_exists($item, 'exists') ? $item->exists : false,
         ]);
         
-        // Если это не объект EstimateItem, значит route binding не сработал
-        if (!($item instanceof EstimateItem)) {
-            Log::error('[EstimateItemController::update] Route binding не сработал!', [
+        // Если объект пустой (не загружен из БД), значит route binding не сработал правильно
+        if (!($item instanceof EstimateItem) || !$item->exists || !$item->id) {
+            Log::error('[EstimateItemController::update] Route binding не сработал правильно!', [
                 'item_type' => gettype($item),
-                'item_value' => $item,
+                'item_class' => is_object($item) ? get_class($item) : 'not_object',
+                'item_exists' => is_object($item) && method_exists($item, 'exists') ? $item->exists : false,
+                'item_id' => is_object($item) && isset($item->id) ? $item->id : null,
+                'item_value' => is_scalar($item) ? $item : 'object',
                 'route_params' => $request->route()?->parameters(),
             ]);
             
             // Пытаемся найти элемент вручную
-            $itemId = is_scalar($item) ? (int)$item : $request->route('item');
+            $itemId = is_scalar($item) ? (int)$item : ($request->route('item') ?? null);
+            
+            if (!$itemId) {
+                Log::error('[EstimateItemController::update] Не удалось определить ID элемента', [
+                    'route_params' => $request->route()?->parameters(),
+                ]);
+                abort(404, 'Позиция сметы не найдена');
+            }
+            
             Log::info('[EstimateItemController::update] Попытка найти элемент вручную', [
                 'item_id' => $itemId,
             ]);
             
             $item = EstimateItem::withTrashed()
-                ->where('id', $itemId)
+                ->where('id', (int)$itemId)
                 ->first();
             
             if (!$item) {
@@ -186,6 +197,7 @@ class EstimateItemController extends Controller
             
             Log::info('[EstimateItemController::update] Элемент найден вручную', [
                 'item_id' => $item->id,
+                'item_estimate_id' => $item->estimate_id,
             ]);
         }
         
