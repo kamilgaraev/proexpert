@@ -302,16 +302,32 @@ class EstimateItem extends Model
 
     public function resolveRouteBinding($value, $field = null)
     {
+        // Приводим значение к int для корректного поиска
+        $id = (int) $value;
+        
+        // Сначала находим элемент (включая удаленные)
         $item = static::withTrashed()
-            ->with(['estimate' => function ($query) {
-                $query->withTrashed();
-            }])
-            ->where($this->getRouteKeyName(), $value)
-            ->firstOrFail();
+            ->where('id', $id)
+            ->first();
+        
+        if (!$item) {
+            abort(404, 'Позиция сметы не найдена');
+        }
+        
+        // Загружаем связь estimate (включая удаленные)
+        $item->load(['estimate' => function ($query) {
+            $query->withTrashed();
+        }]);
         
         $user = request()->user();
         if ($user && $user->current_organization_id) {
-            if ($item->estimate && (int)$item->estimate->organization_id !== (int)$user->current_organization_id) {
+            // Если estimate не найден, возвращаем 404
+            if (!$item->estimate) {
+                abort(404, 'Смета для этой позиции не найдена');
+            }
+            
+            // Проверяем организацию
+            if ((int)$item->estimate->organization_id !== (int)$user->current_organization_id) {
                 abort(403, 'У вас нет доступа к этой позиции сметы');
             }
         }
