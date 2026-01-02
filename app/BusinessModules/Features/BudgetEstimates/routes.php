@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Log;
 use App\Http\Controllers\Api\V1\Admin\EstimateController;
 use App\Http\Controllers\Api\V1\Admin\EstimateSectionController;
 use App\Http\Controllers\Api\V1\Admin\EstimateItemController;
@@ -49,8 +50,27 @@ Route::prefix('api/v1/admin')
         // ОПЕРАЦИИ НАД ПОЗИЦИЯМИ
         // ============================================
         Route::prefix('estimate-items')->name('estimate_items.')->group(function () {
-            Route::get('/{item}', [EstimateItemController::class, 'show'])->name('show');
-            Route::put('/{item}', [EstimateItemController::class, 'update'])->name('update');
+            Route::get('/{item}', function ($item) {
+                Log::info('[routes.php] GET /estimate-items/{item} вызван', [
+                    'item_param' => $item,
+                    'item_type' => gettype($item),
+                    'item_class' => get_class($item),
+                    'item_id' => $item instanceof \App\Models\EstimateItem ? $item->id : null,
+                ]);
+                return app(EstimateItemController::class)->show($item);
+            })->name('show');
+            
+            Route::put('/{item}', function ($item) {
+                Log::info('[routes.php] PUT /estimate-items/{item} вызван', [
+                    'item_param' => $item,
+                    'item_type' => gettype($item),
+                    'item_class' => get_class($item),
+                    'item_id' => $item instanceof \App\Models\EstimateItem ? $item->id : null,
+                    'request_data' => request()->all(),
+                ]);
+                return app(EstimateItemController::class)->update(request(), $item);
+            })->name('update');
+            
             Route::delete('/{item}', [EstimateItemController::class, 'destroy'])->name('destroy');
             Route::post('/{item}/move', [EstimateItemController::class, 'move'])->name('move');
         });

@@ -325,7 +325,7 @@ class EstimateItem extends Model
             ->where('id', $id)
             ->first();
         
-        \Log::info('[EstimateItem::resolveRouteBinding] Результат поиска', [
+        Log::info('[EstimateItem::resolveRouteBinding] Результат поиска', [
             'id' => $id,
             'item_found' => $item !== null,
             'item_id' => $item?->id,

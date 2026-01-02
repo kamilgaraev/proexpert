@@ -108,7 +108,7 @@ class RouteServiceProvider extends ServiceProvider
                 ]);
                 
                 if ($itemOrgId !== $userOrgId) {
-                    \Log::warning('[RouteServiceProvider::bind item] Организация не совпадает', [
+                    Log::warning('[RouteServiceProvider::bind item] Организация не совпадает', [
                         'item_id' => $item->id,
                         'item_organization_id' => $itemOrgId,
                         'user_organization_id' => $userOrgId,

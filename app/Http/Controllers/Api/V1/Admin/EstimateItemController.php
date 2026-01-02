@@ -19,7 +19,12 @@ class EstimateItemController extends Controller
     public function __construct(
         protected EstimateItemService $itemService,
         protected EstimateItemNumberingService $numberingService
-    ) {}
+    ) {
+        Log::info('[EstimateItemController::__construct] Контроллер создан', [
+            'url' => request()->fullUrl(),
+            'method' => request()->method(),
+        ]);
+    }
 
     public function index(Request $request, $project, int $estimate): JsonResponse
     {
@@ -138,6 +143,11 @@ class EstimateItemController extends Controller
 
     public function update(Request $request, EstimateItem $item): JsonResponse
     {
+        Log::info('[EstimateItemController::update] ===== НАЧАЛО МЕТОДА =====', [
+            'timestamp' => now()->toIso8601String(),
+            'request_id' => uniqid('req_', true),
+        ]);
+        
         Log::info('[EstimateItemController::update] Начало метода', [
             'item_id' => $item->id,
             'item_estimate_id' => $item->estimate_id,

@@ -16,9 +16,25 @@ class EnsureBudgetEstimatesActive
      */
     public function handle(Request $request, Closure $next): Response
     {
+        Log::info('[EnsureBudgetEstimatesActive] Middleware вызван', [
+            'url' => $request->fullUrl(),
+            'method' => $request->method(),
+            'route' => $request->route()?->getName(),
+            'route_params' => $request->route()?->parameters(),
+        ]);
+        
         $organizationId = $request->attributes->get('current_organization_id');
         
+        Log::info('[EnsureBudgetEstimatesActive] Контекст организации', [
+            'organization_id' => $organizationId,
+            'user_id' => $request->user()?->id,
+            'user_current_org_id' => $request->user()?->current_organization_id,
+        ]);
+        
         if (!$organizationId) {
+            Log::warning('[EnsureBudgetEstimatesActive] Контекст организации не установлен', [
+                'url' => $request->fullUrl(),
+            ]);
             return response()->json([
                 'success' => false,
                 'error' => 'Контекст организации не установлен',
