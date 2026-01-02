@@ -28,8 +28,17 @@ class EstimatePolicy
      */
     private function hasModulePermission(User $user, array $permissions): bool
     {
+        // Определяем контекст организации для проверки модульных прав
+        $context = null;
+        if ($user->current_organization_id) {
+            $context = [
+                'context_type' => 'organization',
+                'organization_id' => $user->current_organization_id
+            ];
+        }
+        
         // Сначала проверяем wildcard для всего модуля
-        if ($user->hasPermission("budget-estimates.*")) {
+        if ($user->hasPermission("budget-estimates.*", $context)) {
             return true;
         }
         
@@ -37,11 +46,11 @@ class EstimatePolicy
         foreach ($permissions as $permission) {
             if ($permission === '*') {
                 // Если в списке есть wildcard, проверяем его отдельно
-                if ($user->hasPermission("budget-estimates.*")) {
+                if ($user->hasPermission("budget-estimates.*", $context)) {
                     return true;
                 }
             } else {
-                if ($user->hasPermission("budget-estimates.{$permission}")) {
+                if ($user->hasPermission("budget-estimates.{$permission}", $context)) {
                     return true;
                 }
             }
@@ -61,8 +70,14 @@ class EstimatePolicy
             return false;
         }
         
+        // Определяем контекст организации для проверки модульных прав
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+        
         // Проверяем wildcard для всего модуля в первую очередь
-        if ($user->hasPermission("budget-estimates.*")) {
+        if ($user->hasPermission("budget-estimates.*", $context)) {
             return true;
         }
         
