@@ -234,18 +234,30 @@ class GeocodeProjectsCommand extends Command
     {
         $this->info('Checking geocoding providers...');
         
+        // Check DaData from config (not just env)
+        $dadataConfig = config('geocoding.providers.dadata');
+        $dadataEnabled = ($dadataConfig['enabled'] ?? false) && !empty($dadataConfig['api_key']);
+        
+        // Check Yandex from config
+        $yandexConfig = config('geocoding.providers.yandex');
+        $yandexEnabled = ($yandexConfig['enabled'] ?? false) && !empty($yandexConfig['api_key']);
+        
+        // Check Nominatim from config
+        $nominatimConfig = config('geocoding.providers.nominatim');
+        $nominatimEnabled = $nominatimConfig['enabled'] ?? true;
+        
         $providers = [
             'DaData' => [
-                'enabled' => env('DADATA_ENABLED', true),
-                'has_api_key' => !empty(env('DADATA_API_KEY')),
-                'has_secret' => !empty(env('DADATA_SECRET_KEY')),
+                'enabled' => $dadataEnabled,
+                'has_api_key' => !empty($dadataConfig['api_key'] ?? null),
+                'has_secret' => !empty($dadataConfig['secret_key'] ?? null),
             ],
             'Yandex' => [
-                'enabled' => env('YANDEX_GEOCODER_ENABLED', true),
-                'has_api_key' => !empty(env('YANDEX_GEOCODER_KEY')),
+                'enabled' => $yandexEnabled,
+                'has_api_key' => !empty($yandexConfig['api_key'] ?? null),
             ],
             'Nominatim' => [
-                'enabled' => env('NOMINATIM_ENABLED', true),
+                'enabled' => $nominatimEnabled,
                 'needs_key' => false,
             ],
         ];
