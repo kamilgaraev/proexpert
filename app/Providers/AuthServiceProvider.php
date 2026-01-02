@@ -164,14 +164,14 @@ class AuthServiceProvider extends ServiceProvider
             $orgId = $organizationId ?? $user->current_organization_id;
             
             if (!$orgId) {
-                \Log::warning('[Gate:access-mobile-app] No organization ID', ['user_id' => $user->id]);
+                Log::warning('[Gate:access-mobile-app] No organization ID', ['user_id' => $user->id]);
                 return false;
             }
             
             $context = \App\Domain\Authorization\Models\AuthorizationContext::getOrganizationContext($orgId);
             
             if (!$context) {
-                \Log::warning('[Gate:access-mobile-app] Context not found', ['user_id' => $user->id, 'org_id' => $orgId]);
+                Log::warning('[Gate:access-mobile-app] Context not found', ['user_id' => $user->id, 'org_id' => $orgId]);
                 return false;
             }
             
@@ -181,7 +181,7 @@ class AuthServiceProvider extends ServiceProvider
                 ->pluck('role_slug')
                 ->toArray();
             
-            \Log::info('[Gate:access-mobile-app] User roles check', [
+            Log::info('[Gate:access-mobile-app] User roles check', [
                 'user_id' => $user->id,
                 'org_id' => $orgId,
                 'context_id' => $context->id,
@@ -189,24 +189,24 @@ class AuthServiceProvider extends ServiceProvider
             ]);
             
             if (empty($userRoles)) {
-                \Log::warning('[Gate:access-mobile-app] No roles found', ['user_id' => $user->id, 'org_id' => $orgId, 'context_id' => $context->id]);
+                Log::warning('[Gate:access-mobile-app] No roles found', ['user_id' => $user->id, 'org_id' => $orgId, 'context_id' => $context->id]);
                 return false;
             }
             
             foreach ($userRoles as $roleSlug) {
                 $hasAccess = $mobileAccessHelper->canRoleAccessMobile($roleSlug, $orgId);
-                \Log::info('[Gate:access-mobile-app] Role check', [
+                Log::info('[Gate:access-mobile-app] Role check', [
                     'role' => $roleSlug,
                     'has_mobile_access' => $hasAccess
                 ]);
                 
                 if ($hasAccess) {
-                    \Log::info('[Gate:access-mobile-app] Access GRANTED', ['user_id' => $user->id, 'role' => $roleSlug]);
+                    Log::info('[Gate:access-mobile-app] Access GRANTED', ['user_id' => $user->id, 'role' => $roleSlug]);
                     return true;
                 }
             }
             
-            \Log::warning('[Gate:access-mobile-app] Access DENIED - no role with mobile access', [
+            Log::warning('[Gate:access-mobile-app] Access DENIED - no role with mobile access', [
                 'user_id' => $user->id,
                 'org_id' => $orgId,
                 'roles_checked' => $userRoles
