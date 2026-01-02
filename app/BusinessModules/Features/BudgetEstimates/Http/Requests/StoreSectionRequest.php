@@ -20,7 +20,7 @@ class StoreSectionRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'section_number' => 'required|string|max:50',
+            'section_number' => 'nullable|string|max:50',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:5000',
             'parent_section_id' => 'nullable|integer|exists:estimate_sections,id',
@@ -35,11 +35,9 @@ class StoreSectionRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'section_number.required' => 'Номер раздела обязателен',
             'name.required' => 'Название раздела обязательно',
             'name.max' => 'Название раздела не может быть длиннее 255 символов',
             'parent_section_id.exists' => 'Указанный родительский раздел не существует',
         ];
     }
 }
-

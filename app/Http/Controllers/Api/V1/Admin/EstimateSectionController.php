@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
-use App\Http\Controllers\Controller;
-use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionService;
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\StoreSectionRequest;
+use App\BusinessModules\Features\BudgetEstimates\Http\Requests\UpdateSectionRequest;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionNumberingService;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionService;
+use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateSectionResource;
 use App\Models\Estimate;
 use App\Models\EstimateSection;
@@ -19,17 +21,13 @@ class EstimateSectionController extends Controller
         protected EstimateSectionNumberingService $numberingService
     ) {}
 
-    public function index(Request $request, $project, int $estimate): JsonResponse
+    public function index(Request $request, $project, int $estimateId): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
+        $estimate = $this->findEstimateOrFail($estimateId);
         
-        $estimateModel = Estimate::where('id', $estimate)
-            ->where('organization_id', $organizationId)
-            ->firstOrFail();
+        $this->authorize('view', $estimate);
         
-        $this->authorize('view', $estimateModel);
-        
-        $sections = $estimateModel->sections()
+        $sections = $estimate->sections()
             ->with([
                 'children.children.children.children',
                 'items',
@@ -47,28 +45,16 @@ class EstimateSectionController extends Controller
         ]);
     }
 
-    public function store(Request $request, $project, int $estimate): JsonResponse
+    public function store(StoreSectionRequest $request, $project, int $estimateId): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
+        $estimate = $this->findEstimateOrFail($estimateId);
         
-        $estimateModel = Estimate::where('id', $estimate)
-            ->where('organization_id', $organizationId)
-            ->firstOrFail();
+        $this->authorize('update', $estimate);
         
-        $this->authorize('update', $estimateModel);
+        $data = $request->validated();
+        $data['estimate_id'] = $estimate->id;
         
-        $validated = $request->validate([
-            'parent_section_id' => 'nullable|exists:estimate_sections,id',
-            'section_number' => 'nullable|string|max:50', // ОПЦИОНАЛЬНЫЙ - генерируется автоматически, если не указан
-            'name' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'sort_order' => 'nullable|integer',
-            'is_summary' => 'nullable|boolean',
-        ]);
-        
-        $validated['estimate_id'] = $estimateModel->id;
-        
-        $section = $this->sectionService->createSection($validated);
+        $section = $this->sectionService->createSection($data);
         
         return response()->json([
             'data' => new EstimateSectionResource($section),
@@ -93,20 +79,11 @@ class EstimateSectionController extends Controller
         ]);
     }
 
-    public function update(Request $request, EstimateSection $section): JsonResponse
+    public function update(UpdateSectionRequest $request, EstimateSection $section): JsonResponse
     {
         $this->authorize('update', $section->estimate);
         
-        $validated = $request->validate([
-            'parent_section_id' => 'nullable|exists:estimate_sections,id',
-            'section_number' => 'sometimes|string|max:50',
-            'name' => 'sometimes|string|max:255',
-            'description' => 'nullable|string',
-            'sort_order' => 'sometimes|integer',
-            'is_summary' => 'sometimes|boolean',
-        ]);
-        
-        $section = $this->sectionService->updateSection($section, $validated);
+        $section = $this->sectionService->updateSection($section, $request->validated());
         
         return response()->json([
             'data' => new EstimateSectionResource($section),
@@ -116,45 +93,20 @@ class EstimateSectionController extends Controller
 
     public function destroy(Request $request, EstimateSection $section): JsonResponse
     {
-        Log::info('EstimateSectionController::destroy called', [
-            'section_id' => $section->id,
-            'estimate_id' => $section->estimate_id,
-            'estimate_loaded' => $section->relationLoaded('estimate'),
-            'estimate_exists' => $section->estimate ? true : false
-        ]);
+        // Fallback: ручная загрузка, если Route Model Binding не сработал
+        if (!$section->exists) {
+            $id = $request->route('section');
+            if ($id) {
+                $section = EstimateSection::with('estimate')->findOrFail($id);
+            }
+        }
 
         // Убеждаемся, что estimate загружен
         if (!$section->relationLoaded('estimate')) {
             $section->load('estimate');
         }
         
-        if (!$section->estimate) {
-            // Если смета не найдена (например, удалена), но раздел существует,
-            // мы все равно должны позволить удалить раздел (для очистки мусора),
-            // если у пользователя есть права на уровне системы или организации.
-            // Но authorize('update', null) не сработает.
-            
-            Log::warning('EstimateSectionController::destroy - Estimate not found for section', [
-                'section_id' => $section->id
-            ]);
-            
-            // Временное решение: удаляем без проверки прав сметы, но с проверкой прав администратора
-            // Или просто удаляем, так как это "сирота"
-            // Но лучше вернуть ошибку, если это не ожидаемое поведение
-            
-            // Пробуем найти смету даже если она удалена (если есть SoftDeletes)
-            $estimateWithTrashed = Estimate::withTrashed()->find($section->estimate_id);
-            if ($estimateWithTrashed) {
-                 Log::info('Found trashed estimate', ['id' => $estimateWithTrashed->id]);
-                 $this->authorize('update', $estimateWithTrashed);
-            } else {
-                 // Совсем нет сметы. Проверяем глобальное право?
-                 // Пока оставим 404, но с логом
-                 abort(404, 'Смета раздела не найдена');
-            }
-        } else {
-            $this->authorize('update', $section->estimate);
-        }
+        $this->authorizeEstimateAction('update', $section);
         
         $cascade = $request->boolean('cascade', false);
         
@@ -188,30 +140,12 @@ class EstimateSectionController extends Controller
 
     /**
      * Массовое обновление порядка разделов (для drag-and-drop)
-     * 
-     * @param Request $request
-     * @param int $project ID проекта
-     * @param int $estimate ID сметы
-     * @return JsonResponse
-     * 
-     * Формат входных данных:
-     * {
-     *   "sections": [
-     *     {"id": 1, "sort_order": 0, "parent_section_id": null},
-     *     {"id": 2, "sort_order": 1, "parent_section_id": null},
-     *     {"id": 3, "sort_order": 0, "parent_section_id": 1},
-     *   ]
-     * }
      */
-    public function reorder(Request $request, $project, int $estimate): JsonResponse
+    public function reorder(Request $request, $project, int $estimateId): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
+        $estimate = $this->findEstimateOrFail($estimateId);
         
-        $estimateModel = Estimate::where('id', $estimate)
-            ->where('organization_id', $organizationId)
-            ->firstOrFail();
-        
-        $this->authorize('update', $estimateModel);
+        $this->authorize('update', $estimate);
         
         $validated = $request->validate([
             'sections' => 'required|array',
@@ -221,15 +155,22 @@ class EstimateSectionController extends Controller
         ]);
 
         try {
-            // Обновляем порядок и родителей для всех разделов
+            $sectionIds = collect($validated['sections'])->pluck('id')->toArray();
+            $sections = EstimateSection::whereIn('id', $sectionIds)->get()->keyBy('id');
+            
+            // Обновляем порядок и родителей
             foreach ($validated['sections'] as $sectionData) {
-                $section = EstimateSection::find($sectionData['id']);
+                if (!isset($sections[$sectionData['id']])) {
+                    continue;
+                }
                 
-                // Проверяем, что раздел принадлежит данной смете
-                if ($section->estimate_id !== $estimateModel->id) {
+                $section = $sections[$sectionData['id']];
+                
+                // Проверяем принадлежность к смете
+                if ($section->estimate_id !== $estimate->id) {
                     return response()->json([
                         'success' => false,
-                        'error' => "Раздел {$sectionData['id']} не принадлежит данной смете"
+                        'error' => "Раздел {$section->id} не принадлежит данной смете"
                     ], 422);
                 }
                 
@@ -239,16 +180,17 @@ class EstimateSectionController extends Controller
                 ]);
             }
 
-            // Пересчитываем номера всех разделов после изменения порядка
-            $this->numberingService->recalculateAllSectionNumbers($estimateModel->id);
+            // Пересчитываем номера
+            $this->numberingService->recalculateAllSectionNumbers($estimate->id);
 
-            // Возвращаем обновленную иерархию разделов
-            $sections = $estimateModel->sections()
+            // Возвращаем обновленную иерархию
+            $updatedSections = $estimate->sections()
                 ->with([
                     'children.children.children.children',
                     'items',
                     'children.items',
                     'children.children.items',
+                    'children.children.children.items',
                     'children.children.children.items',
                 ])
                 ->whereNull('parent_section_id')
@@ -258,11 +200,11 @@ class EstimateSectionController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Порядок разделов успешно обновлен',
-                'data' => EstimateSectionResource::collection($sections)
+                'data' => EstimateSectionResource::collection($updatedSections)
             ]);
         } catch (\Exception $e) {
-            \Log::error('estimate.sections.reorder.error', [
-                'estimate_id' => $estimateModel->id,
+            Log::error('estimate.sections.reorder.error', [
+                'estimate_id' => $estimate->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
@@ -274,30 +216,22 @@ class EstimateSectionController extends Controller
         }
     }
 
-    /**
-     * Пересчитать номера всех разделов сметы вручную
-     * Полезно для нормализации после импорта или исправления ошибок
-     */
-    public function recalculateNumbers(Request $request, $project, int $estimate): JsonResponse
+    public function recalculateNumbers(Request $request, $project, int $estimateId): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
+        $estimate = $this->findEstimateOrFail($estimateId);
         
-        $estimateModel = Estimate::where('id', $estimate)
-            ->where('organization_id', $organizationId)
-            ->firstOrFail();
-        
-        $this->authorize('update', $estimateModel);
+        $this->authorize('update', $estimate);
 
         try {
-            $this->numberingService->recalculateAllSectionNumbers($estimateModel->id);
+            $this->numberingService->recalculateAllSectionNumbers($estimate->id);
 
             return response()->json([
                 'success' => true,
                 'message' => 'Нумерация разделов успешно пересчитана'
             ]);
         } catch (\Exception $e) {
-            \Log::error('estimate.sections.recalculate_numbers.error', [
-                'estimate_id' => $estimateModel->id,
+            Log::error('estimate.sections.recalculate_numbers.error', [
+                'estimate_id' => $estimate->id,
                 'error' => $e->getMessage(),
             ]);
 
@@ -308,22 +242,14 @@ class EstimateSectionController extends Controller
         }
     }
 
-    /**
-     * Валидация корректности нумерации разделов
-     * Возвращает список ошибок, если они есть
-     */
-    public function validateNumbering(Request $request, $project, int $estimate): JsonResponse
+    public function validateNumbering(Request $request, $project, int $estimateId): JsonResponse
     {
-        $organizationId = $request->attributes->get('current_organization_id');
+        $estimate = $this->findEstimateOrFail($estimateId);
         
-        $estimateModel = Estimate::where('id', $estimate)
-            ->where('organization_id', $organizationId)
-            ->firstOrFail();
-        
-        $this->authorize('view', $estimateModel);
+        $this->authorize('view', $estimate);
 
         try {
-            $errors = $this->numberingService->validateNumbering($estimateModel->id);
+            $errors = $this->numberingService->validateNumbering($estimate->id);
 
             return response()->json([
                 'success' => true,
@@ -334,8 +260,8 @@ class EstimateSectionController extends Controller
                     : 'Обнаружены ошибки в нумерации'
             ]);
         } catch (\Exception $e) {
-            \Log::error('estimate.sections.validate_numbering.error', [
-                'estimate_id' => $estimateModel->id,
+            Log::error('estimate.sections.validate_numbering.error', [
+                'estimate_id' => $estimate->id,
                 'error' => $e->getMessage(),
             ]);
 
@@ -343,6 +269,39 @@ class EstimateSectionController extends Controller
                 'success' => false,
                 'error' => 'Не удалось выполнить валидацию'
             ], 500);
+        }
+    }
+
+    /**
+     * Найти смету с проверкой организации
+     */
+    private function findEstimateOrFail(int $estimateId): Estimate
+    {
+        $organizationId = request()->attributes->get('current_organization_id');
+        
+        return Estimate::where('id', $estimateId)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+    }
+
+    /**
+     * Безопасная проверка прав для раздела с учетом возможного удаления сметы
+     */
+    private function authorizeEstimateAction(string $ability, EstimateSection $section): void
+    {
+        if (!$section->estimate) {
+            // Пробуем найти смету даже если она удалена (если есть SoftDeletes)
+            $estimateWithTrashed = Estimate::withTrashed()->find($section->estimate_id);
+            
+            if ($estimateWithTrashed) {
+                 // Проверяем права на удаленную смету
+                 $this->authorize($ability, $estimateWithTrashed);
+            } else {
+                 // Смета не найдена совсем - возвращаем 404
+                 abort(404, 'Смета раздела не найдена');
+            }
+        } else {
+            $this->authorize($ability, $section->estimate);
         }
     }
 }
