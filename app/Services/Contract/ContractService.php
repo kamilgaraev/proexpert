@@ -391,6 +391,9 @@ class ContractService
             return null;
         }
         
+        // Загружаем связь contractor ДО проверки доступа, чтобы проверить source_organization_id
+        $contract->load('contractor');
+        
         // Проверяем доступ: либо это организация-заказчик, либо организация-подрядчик (через source_organization_id)
         $isCustomer = $contract->organization_id === $organizationId;
         $isContractor = $contract->contractor && $contract->contractor->source_organization_id === $organizationId;
@@ -432,16 +435,39 @@ class ContractService
             }
         }
         
+        // Проверка принадлежности контракта к проекту, если projectId указан
+        if ($projectId !== null) {
+            $belongsToProject = false;
+            
+            if ($contract->is_multi_project) {
+                // Для мультипроектных контрактов проверяем через pivot таблицу
+                $belongsToProject = $contract->projects()->where('projects.id', $projectId)->exists();
+            } else {
+                // Для обычных контрактов проверяем project_id
+                $belongsToProject = (int)$contract->project_id === (int)$projectId;
+            }
+            
+            if (!$belongsToProject) {
+                Log::warning('[ContractService] Contract does not belong to project', [
+                    'contract_id' => $contractId,
+                    'contract_project_id' => $contract->project_id,
+                    'requested_project_id' => $projectId,
+                    'is_multi_project' => $contract->is_multi_project
+                ]);
+                return null;
+            }
+        }
+        
         Log::info('[ContractService] Contract access granted', [
             'contract_id' => $contractId,
             'organization_id' => $organizationId,
             'access_type' => $isCustomer ? 'customer' : 'contractor',
             'contractor_id' => $contract->contractor_id ?? null,
-            'source_organization_id' => $contract->contractor->source_organization_id ?? null
+            'source_organization_id' => $contract->contractor->source_organization_id ?? null,
+            'project_id' => $projectId
         ]);
         
         $contract->load([
-            'contractor', 
             'project', 
             'project.organization',           // Для customer (заказчик)
             'projects',                       // Проекты для мультипроектных контрактов
