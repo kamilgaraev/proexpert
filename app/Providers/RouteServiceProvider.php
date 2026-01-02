@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Log;
+use App\Models\EstimateItem;
 
 class RouteServiceProvider extends ServiceProvider
 {
@@ -34,11 +35,32 @@ class RouteServiceProvider extends ServiceProvider
         
         // Явный binding для item с проверкой организации
         Route::bind('item', function ($value) {
-            $item = \App\Models\EstimateItem::withTrashed()
+            Log::info('[RouteServiceProvider::bind item] Начало резолвинга', [
+                'value' => $value,
+                'value_type' => gettype($value),
+                'int_value' => (int)$value,
+                'route' => request()->route()?->getName(),
+                'url' => request()->fullUrl(),
+                'method' => request()->method(),
+            ]);
+            
+            $item = EstimateItem::withTrashed()
                 ->where('id', (int)$value)
                 ->first();
             
+            Log::info('[RouteServiceProvider::bind item] Результат поиска', [
+                'value' => $value,
+                'item_found' => $item !== null,
+                'item_id' => $item?->id,
+                'item_estimate_id' => $item?->estimate_id,
+                'item_deleted_at' => $item?->deleted_at,
+            ]);
+            
             if (!$item) {
+                Log::warning('[RouteServiceProvider::bind item] Элемент не найден', [
+                    'value' => $value,
+                    'int_value' => (int)$value,
+                ]);
                 abort(404, 'Позиция сметы не найдена');
             }
             
@@ -47,18 +69,58 @@ class RouteServiceProvider extends ServiceProvider
                 $query->withTrashed();
             }]);
             
+            Log::info('[RouteServiceProvider::bind item] После загрузки estimate', [
+                'item_id' => $item->id,
+                'estimate_loaded' => $item->relationLoaded('estimate'),
+                'estimate_exists' => $item->estimate !== null,
+                'estimate_id' => $item->estimate?->id,
+                'estimate_organization_id' => $item->estimate?->organization_id,
+                'estimate_deleted_at' => $item->estimate?->deleted_at,
+            ]);
+            
             $user = request()->user();
+            Log::info('[RouteServiceProvider::bind item] Информация о пользователе', [
+                'user_exists' => $user !== null,
+                'user_id' => $user?->id,
+                'current_organization_id' => $user?->current_organization_id,
+            ]);
+            
             if ($user && $user->current_organization_id) {
                 // Если estimate не найден, возвращаем 404
                 if (!$item->estimate) {
+                    Log::warning('[RouteServiceProvider::bind item] Estimate не найден для элемента', [
+                        'item_id' => $item->id,
+                        'item_estimate_id' => $item->estimate_id,
+                    ]);
                     abort(404, 'Смета для этой позиции не найдена');
                 }
                 
                 // Проверяем организацию
-                if ((int)$item->estimate->organization_id !== (int)$user->current_organization_id) {
+                $itemOrgId = (int)$item->estimate->organization_id;
+                $userOrgId = (int)$user->current_organization_id;
+                
+                Log::info('[RouteServiceProvider::bind item] Проверка организации', [
+                    'item_id' => $item->id,
+                    'estimate_id' => $item->estimate->id,
+                    'item_organization_id' => $itemOrgId,
+                    'user_organization_id' => $userOrgId,
+                    'match' => $itemOrgId === $userOrgId,
+                ]);
+                
+                if ($itemOrgId !== $userOrgId) {
+                    \Log::warning('[RouteServiceProvider::bind item] Организация не совпадает', [
+                        'item_id' => $item->id,
+                        'item_organization_id' => $itemOrgId,
+                        'user_organization_id' => $userOrgId,
+                    ]);
                     abort(403, 'У вас нет доступа к этой позиции сметы');
                 }
             }
+            
+            Log::info('[RouteServiceProvider::bind item] Успешное резолвинг', [
+                'item_id' => $item->id,
+                'estimate_id' => $item->estimate?->id,
+            ]);
             
             return $item;
         });

@@ -12,6 +12,7 @@ use App\Models\EstimateItem;
 use App\Models\EstimateSection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class EstimateItemController extends Controller
 {
@@ -137,17 +138,55 @@ class EstimateItemController extends Controller
 
     public function update(Request $request, EstimateItem $item): JsonResponse
     {
+        Log::info('[EstimateItemController::update] Начало метода', [
+            'item_id' => $item->id,
+            'item_estimate_id' => $item->estimate_id,
+            'item_deleted_at' => $item->deleted_at,
+            'item_loaded' => $item->exists,
+            'request_method' => $request->method(),
+            'request_url' => $request->fullUrl(),
+            'request_data' => $request->all(),
+        ]);
+        
         // Перезагружаем связь estimate с учетом soft deletes
         $item->load(['estimate' => function ($query) {
             $query->withTrashed();
         }]);
         
+        Log::info('[EstimateItemController::update] После загрузки estimate', [
+            'item_id' => $item->id,
+            'estimate_loaded' => $item->relationLoaded('estimate'),
+            'estimate_exists' => $item->estimate !== null,
+            'estimate_id' => $item->estimate?->id,
+            'estimate_organization_id' => $item->estimate?->organization_id,
+            'estimate_status' => $item->estimate?->status,
+            'estimate_deleted_at' => $item->estimate?->deleted_at,
+        ]);
+        
         // Проверяем, что estimate существует
         if (!$item->estimate) {
+            Log::error('[EstimateItemController::update] Estimate не найден', [
+                'item_id' => $item->id,
+                'item_estimate_id' => $item->estimate_id,
+            ]);
             abort(404, 'Смета не найдена');
         }
         
+        $user = $request->user();
+        Log::info('[EstimateItemController::update] Перед authorize', [
+            'item_id' => $item->id,
+            'estimate_id' => $item->estimate->id,
+            'user_id' => $user?->id,
+            'user_current_organization_id' => $user?->current_organization_id,
+            'estimate_organization_id' => $item->estimate->organization_id,
+        ]);
+        
         $this->authorize('update', $item->estimate);
+        
+        Log::info('[EstimateItemController::update] После authorize - успешно', [
+            'item_id' => $item->id,
+            'estimate_id' => $item->estimate->id,
+        ]);
         
         $validated = $request->validate([
             'estimate_section_id' => 'sometimes|nullable|exists:estimate_sections,id',
