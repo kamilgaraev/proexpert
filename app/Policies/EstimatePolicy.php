@@ -28,9 +28,22 @@ class EstimatePolicy
      */
     private function hasModulePermission(User $user, array $permissions): bool
     {
+        // Сначала проверяем wildcard для всего модуля
+        if ($user->hasPermission("budget-estimates.*")) {
+            return true;
+        }
+        
+        // Затем проверяем конкретные права
         foreach ($permissions as $permission) {
-            if ($user->hasPermission("budget-estimates.{$permission}")) {
-                return true;
+            if ($permission === '*') {
+                // Если в списке есть wildcard, проверяем его отдельно
+                if ($user->hasPermission("budget-estimates.*")) {
+                    return true;
+                }
+            } else {
+                if ($user->hasPermission("budget-estimates.{$permission}")) {
+                    return true;
+                }
             }
         }
         
@@ -46,6 +59,11 @@ class EstimatePolicy
     {
         if ($user->current_organization_id !== $estimate->organization_id) {
             return false;
+        }
+        
+        // Проверяем wildcard для всего модуля в первую очередь
+        if ($user->hasPermission("budget-estimates.*")) {
+            return true;
         }
         
         if ($estimate->isApproved()) {

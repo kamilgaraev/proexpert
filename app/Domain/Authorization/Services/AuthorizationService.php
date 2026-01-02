@@ -346,6 +346,21 @@ class AuthorizationService
      */
     protected function checkPermission(User $user, string $permission, ?array $context = null): bool
     {
+        // Если контекст не передан, но есть модульное право - определяем контекст организации автоматически
+        if (!$context && $user->current_organization_id) {
+            // Проверяем, является ли право модульным (содержит точку)
+            if (strpos($permission, '.') !== false) {
+                $parts = explode('.', $permission, 2);
+                $module = $parts[0];
+                
+                // Для модульных прав используем контекст организации
+                $context = [
+                    'context_type' => 'organization',
+                    'organization_id' => $user->current_organization_id
+                ];
+            }
+        }
+        
         $authContext = $this->resolveAuthContext($context);
         $roles = $this->getUserRoles($user, $authContext);
         
