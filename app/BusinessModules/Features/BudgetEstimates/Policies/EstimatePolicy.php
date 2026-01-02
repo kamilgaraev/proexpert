@@ -27,6 +27,11 @@ class EstimatePolicy
             'organization_id' => $user->current_organization_id
         ];
 
+        // Проверяем wildcard для всего модуля
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
+
         return $user->hasPermission('budget-estimates.view', $context) 
             || $user->hasPermission('budget-estimates.view_all', $context);
     }
@@ -45,6 +50,11 @@ class EstimatePolicy
             'context_type' => 'organization',
             'organization_id' => $user->current_organization_id
         ];
+
+        // Проверяем wildcard для всего модуля в первую очередь
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
 
         // Если есть право на просмотр всех - разрешить
         if ($user->hasPermission('budget-estimates.view_all', $context)) {
@@ -69,6 +79,11 @@ class EstimatePolicy
             'organization_id' => $user->current_organization_id
         ];
 
+        // Проверяем wildcard для всего модуля
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
+
         return $user->hasPermission('budget-estimates.create', $context);
     }
 
@@ -86,6 +101,11 @@ class EstimatePolicy
             'context_type' => 'organization',
             'organization_id' => $user->current_organization_id
         ];
+
+        // Проверяем wildcard для всего модуля в первую очередь
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
 
         // Если смета утверждена - нужно специальное право
         if ($estimate->isApproved()) {
@@ -116,6 +136,11 @@ class EstimatePolicy
             'organization_id' => $user->current_organization_id
         ];
 
+        // Проверяем wildcard для всего модуля
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
+
         return $user->hasPermission('budget-estimates.delete', $context);
     }
 
@@ -139,6 +164,11 @@ class EstimatePolicy
             'organization_id' => $user->current_organization_id
         ];
 
+        // Проверяем wildcard для всего модуля
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
+
         return $user->hasPermission('budget-estimates.approve', $context);
     }
 
@@ -155,6 +185,11 @@ class EstimatePolicy
             'context_type' => 'organization',
             'organization_id' => $user->current_organization_id
         ];
+
+        // Проверяем wildcard для всего модуля
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
 
         return $user->hasPermission('budget-estimates.import', $context);
     }
@@ -174,6 +209,11 @@ class EstimatePolicy
             'organization_id' => $user->current_organization_id
         ];
 
+        // Проверяем wildcard для всего модуля
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
+
         return $user->hasPermission('budget-estimates.export', $context);
     }
 
@@ -191,6 +231,11 @@ class EstimatePolicy
             'organization_id' => $user->current_organization_id
         ];
 
+        // Проверяем wildcard для всего модуля
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
+
         return $user->hasPermission('budget-estimates.templates.manage', $context);
     }
 
@@ -207,6 +252,11 @@ class EstimatePolicy
             'context_type' => 'organization',
             'organization_id' => $user->current_organization_id
         ];
+
+        // Проверяем wildcard для всего модуля
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
 
         return $user->hasPermission('budget-estimates.analytics', $context);
     }
@@ -231,6 +281,11 @@ class EstimatePolicy
             'organization_id' => $user->current_organization_id
         ];
 
+        // Проверяем wildcard для всего модуля
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
+
         return $user->hasPermission('budget-estimates.versions.create', $context);
     }
 
@@ -247,6 +302,11 @@ class EstimatePolicy
             'context_type' => 'organization',
             'organization_id' => $user->current_organization_id
         ];
+
+        // Проверяем wildcard для всего модуля
+        if ($user->hasPermission('budget-estimates.*', $context)) {
+            return true;
+        }
 
         return $user->hasPermission('budget-estimates.versions.compare', $context);
     }
