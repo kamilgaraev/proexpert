@@ -302,7 +302,10 @@ class EstimateItem extends Model
 
     public function resolveRouteBinding($value, $field = null)
     {
-        $item = static::with('estimate')
+        $item = static::withTrashed()
+            ->with(['estimate' => function ($query) {
+                $query->withTrashed();
+            }])
             ->where($this->getRouteKeyName(), $value)
             ->firstOrFail();
         
