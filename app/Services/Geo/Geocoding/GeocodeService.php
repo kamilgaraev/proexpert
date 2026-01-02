@@ -97,6 +97,14 @@ class GeocodeService
                         'confidence' => $result->confidence,
                         'threshold' => $this->minConfidence,
                     ]);
+                    
+                    // Log the attempt even if confidence is low
+                    $this->logGeocodingAttempt($project->id, $provider->getName(), false, $result, 
+                        "Confidence {$result->confidence} below threshold {$this->minConfidence}");
+                } else {
+                    // Log when provider returns null
+                    $this->logGeocodingAttempt($project->id, $provider->getName(), false, null, 
+                        'Provider returned null result');
                 }
             } catch (\Exception $e) {
                 Log::error('Geocoding provider exception', [

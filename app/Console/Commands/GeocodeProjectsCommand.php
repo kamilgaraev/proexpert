@@ -193,9 +193,22 @@ class GeocodeProjectsCommand extends Command
                     $success++;
                 } else {
                     $failed++;
-                    // Show first few failures for debugging
+                    // Show first few failures for debugging with more details
                     if ($failed <= 3) {
                         $this->warn("\nFailed to geocode project {$project->id}: {$project->address}");
+                        // Check geocoding logs for this project
+                        $logs = DB::table('geocoding_logs')
+                            ->where('project_id', $project->id)
+                            ->orderBy('created_at', 'desc')
+                            ->limit(3)
+                            ->get();
+                        
+                        if ($logs->isNotEmpty()) {
+                            foreach ($logs as $log) {
+                                $status = $log->success ? '✓' : '✗';
+                                $this->line("  {$status} {$log->provider}: " . ($log->error ?? 'No result'));
+                            }
+                        }
                     }
                 }
 

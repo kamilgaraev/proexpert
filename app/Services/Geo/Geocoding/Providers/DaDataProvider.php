@@ -39,11 +39,18 @@ class DaDataProvider implements GeocodeProviderInterface
         }
 
         try {
-            $response = Http::withHeaders([
+            $headers = [
                 'Authorization' => 'Token ' . $this->config['api_key'],
                 'Content-Type' => 'application/json',
                 'Accept' => 'application/json',
-            ])
+            ];
+            
+            // DaData requires X-Secret header for authentication
+            if (!empty($this->config['secret_key'])) {
+                $headers['X-Secret'] = $this->config['secret_key'];
+            }
+            
+            $response = Http::withHeaders($headers)
             ->timeout($this->config['timeout'] ?? 5)
             ->post($this->config['clean_url'], [
                 [$address]
