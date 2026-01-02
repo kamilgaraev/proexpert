@@ -96,11 +96,28 @@ class GeocodeService
                         'provider' => $provider->getName(),
                         'confidence' => $result->confidence,
                         'threshold' => $this->minConfidence,
+                        'coordinates' => [
+                            'lat' => $result->latitude,
+                            'lon' => $result->longitude,
+                        ],
+                        'formatted_address' => $result->formattedAddress,
                     ]);
                     
                     // Log the attempt even if confidence is low
                     $this->logGeocodingAttempt($project->id, $provider->getName(), false, $result, 
                         "Confidence {$result->confidence} below threshold {$this->minConfidence}");
+                    
+                    // If this is the last provider and we have any result, use it with low confidence
+                    // This helps with incorrect addresses that still have valid coordinates
+                    $isLastProvider = ($provider === end($this->providers));
+                    if ($isLastProvider && $result->confidence > 0) {
+                        Log::info('Using low confidence result as fallback', [
+                            'project_id' => $project->id,
+                            'provider' => $provider->getName(),
+                            'confidence' => $result->confidence,
+                        ]);
+                        return $result;
+                    }
                 } else {
                     // Log when provider returns null
                     $this->logGeocodingAttempt($project->id, $provider->getName(), false, null, 
