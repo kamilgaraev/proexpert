@@ -382,22 +382,68 @@ class ContractService
 
     public function getContractById(int $contractId, int $organizationId, ?int $projectId = null): ?Contract
     {
+        Log::info('[ContractService] getContractById START', [
+            'contract_id' => $contractId,
+            'organization_id' => $organizationId,
+            'project_id' => $projectId
+        ]);
+        
         $contract = $this->contractRepository->find($contractId);
         if (!$contract) {
-            Log::warning('[ContractService] Contract not found', [
+            Log::warning('[ContractService] Contract not found in repository', [
                 'contract_id' => $contractId,
                 'organization_id' => $organizationId
             ]);
             return null;
         }
         
+        Log::info('[ContractService] Contract found', [
+            'contract_id' => $contract->id,
+            'contract_organization_id' => $contract->organization_id,
+            'contract_project_id' => $contract->project_id,
+            'contractor_id' => $contract->contractor_id,
+            'is_multi_project' => $contract->is_multi_project,
+            'is_self_execution' => $contract->is_self_execution
+        ]);
+        
         // Загружаем связь contractor ДО проверки доступа, чтобы проверить source_organization_id
         $contract->load('contractor');
         
+        Log::info('[ContractService] Contractor loaded', [
+            'contract_id' => $contract->id,
+            'contractor_id' => $contract->contractor_id,
+            'contractor_exists' => $contract->contractor !== null,
+            'contractor_type' => $contract->contractor?->contractor_type?->value ?? null,
+            'contractor_is_self_execution' => $contract->contractor?->isSelfExecution() ?? false,
+            'contractor_source_org_id' => $contract->contractor?->source_organization_id ?? null
+        ]);
+        
         // Проверяем доступ: либо это организация-заказчик, либо организация-подрядчик (через source_organization_id)
-        $isCustomer = $contract->organization_id === $organizationId;
-        $isContractor = $contract->contractor && $contract->contractor->source_organization_id === $organizationId;
+        // Явное приведение типов для надежности
+        $isCustomer = (int)$contract->organization_id === (int)$organizationId;
+        
+        // Для самоподряда доступ имеет только организация-заказчик
+        $isSelfExecution = (bool)$contract->is_self_execution || ($contract->contractor && $contract->contractor->isSelfExecution());
+        
+        $contractorSourceOrgId = $contract->contractor?->source_organization_id ?? null;
+        // Для самоподряда не проверяем source_organization_id, так как доступ только через organization_id контракта
+        $isContractor = !$isSelfExecution && $contract->contractor && $contractorSourceOrgId && (int)$contractorSourceOrgId === (int)$organizationId;
+        
+        // Для самоподряда доступ имеет только организация-заказчик (та же организация)
+        // Для обычных контрактов доступ имеют и заказчик, и подрядчик (если source_organization_id совпадает)
         $hasAccess = $isCustomer || $isContractor;
+        
+        Log::info('[ContractService] Access check', [
+            'contract_id' => $contractId,
+            'organization_id' => $organizationId,
+            'contract_organization_id' => $contract->organization_id,
+            'is_customer' => $isCustomer,
+            'is_self_execution' => $isSelfExecution,
+            'contractor_id' => $contract->contractor_id,
+            'contractor_source_org_id' => $contractorSourceOrgId,
+            'is_contractor' => $isContractor,
+            'has_access' => $hasAccess
+        ]);
         
         if (!$hasAccess) {
             Log::warning('[ContractService] Contract access denied - not customer or contractor', [
@@ -405,13 +451,27 @@ class ContractService
                 'organization_id' => $organizationId,
                 'contract_organization_id' => $contract->organization_id,
                 'contractor_id' => $contract->contractor_id ?? null,
-                'contractor_source_org_id' => $contract->contractor->source_organization_id ?? null
+                'contractor_source_org_id' => $contractorSourceOrgId
             ]);
             return null;
         }
         
-        // 🔐 ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: если это подрядчик, проверяем ограничения
-        if ($isContractor) {
+        // 🔐 ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: если это подрядчик (НЕ самоподряд), проверяем ограничения
+        // Для самоподряда ограничения подрядчика не применяются, так как это та же организация
+        // ВАЖНО: Если это организация-заказчик ($isCustomer = true), ограничения подрядчика не применяются
+        Log::info('[ContractService] Contractor restriction check', [
+            'contract_id' => $contractId,
+            'is_customer' => $isCustomer,
+            'is_contractor' => $isContractor,
+            'is_self_execution' => $isSelfExecution,
+            'should_check_restrictions' => $isContractor && !$isSelfExecution && !$isCustomer
+        ]);
+        
+        // Проверяем ограничения только если:
+        // 1. Это подрядчик (не заказчик)
+        // 2. Это не самоподряд
+        // 3. Доступ получен через source_organization_id подрядчика
+        if ($isContractor && !$isSelfExecution && !$isCustomer) {
             $organization = \App\Models\Organization::find($organizationId);
             $activeRestriction = \App\Models\OrganizationAccessRestriction::where('organization_id', $organizationId)
                 ->where('restriction_type', 'new_contractor_verification')
@@ -427,12 +487,19 @@ class ContractService
                     'organization_id' => $organizationId,
                     'restriction_id' => $activeRestriction->id,
                     'restriction_reason' => $activeRestriction->reason,
-                    'access_level' => $activeRestriction->access_level
+                    'access_level' => $activeRestriction->access_level,
+                    'is_self_execution' => $isSelfExecution,
+                    'is_customer' => $isCustomer
                 ]);
                 
                 // Возвращаем null или можно выбросить исключение
                 return null;
             }
+        } else {
+            Log::info('[ContractService] Skipping contractor restriction check', [
+                'contract_id' => $contractId,
+                'reason' => $isCustomer ? 'is_customer' : ($isSelfExecution ? 'self_execution' : ($isContractor ? 'unknown' : 'not_contractor'))
+            ]);
         }
         
         // Проверка принадлежности контракта к проекту, если projectId указан
@@ -442,9 +509,20 @@ class ContractService
             if ($contract->is_multi_project) {
                 // Для мультипроектных контрактов проверяем через pivot таблицу
                 $belongsToProject = $contract->projects()->where('projects.id', $projectId)->exists();
+                Log::info('[ContractService] Multi-project check', [
+                    'contract_id' => $contractId,
+                    'project_id' => $projectId,
+                    'belongs_to_project' => $belongsToProject
+                ]);
             } else {
                 // Для обычных контрактов проверяем project_id
                 $belongsToProject = (int)$contract->project_id === (int)$projectId;
+                Log::info('[ContractService] Single-project check', [
+                    'contract_id' => $contractId,
+                    'contract_project_id' => $contract->project_id,
+                    'requested_project_id' => $projectId,
+                    'belongs_to_project' => $belongsToProject
+                ]);
             }
             
             if (!$belongsToProject) {
@@ -463,7 +541,7 @@ class ContractService
             'organization_id' => $organizationId,
             'access_type' => $isCustomer ? 'customer' : 'contractor',
             'contractor_id' => $contract->contractor_id ?? null,
-            'source_organization_id' => $contract->contractor->source_organization_id ?? null,
+            'source_organization_id' => $contractorSourceOrgId,
             'project_id' => $projectId
         ]);
         
