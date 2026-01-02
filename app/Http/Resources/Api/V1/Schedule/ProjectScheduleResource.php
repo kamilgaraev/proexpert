@@ -94,6 +94,19 @@ class ProjectScheduleResource extends JsonResource
                         'progress_percent' => $task->progress_percent,
                         'level' => $task->level,
                         'is_critical' => $task->is_critical,
+                        
+                        // Плановые даты
+                        'planned_start_date' => $task->planned_start_date?->format('Y-m-d'),
+                        'planned_end_date' => $task->planned_end_date?->format('Y-m-d'),
+                        'planned_duration_days' => $task->planned_duration_days,
+                        'planned_work_hours' => $task->planned_work_hours ? (float) $task->planned_work_hours : null,
+                        'labor_hours_from_estimate' => $task->labor_hours_from_estimate ? (float) $task->labor_hours_from_estimate : null,
+                        
+                        // Фактические даты
+                        'actual_start_date' => $task->actual_start_date?->format('Y-m-d'),
+                        'actual_end_date' => $task->actual_end_date?->format('Y-m-d'),
+                        'actual_duration_days' => $task->actual_duration_days,
+                        
                         // Связь со сметой
                         'estimate_item_id' => $task->estimate_item_id,
                         'estimate_section_id' => $task->estimate_section_id,

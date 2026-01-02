@@ -12,7 +12,8 @@ class EstimateItemResource extends JsonResource
             'id' => $this->id,
             'estimate_id' => $this->estimate_id,
             'estimate_section_id' => $this->estimate_section_id,
-            'item_type' => $this->item_type,
+            'item_type' => $this->item_type?->value ?? $this->item_type,
+            'item_type_label' => $this->item_type?->label() ?? null,
             'position_number' => $this->position_number,
             'name' => $this->name,
             'description' => $this->description,
@@ -27,10 +28,26 @@ class EstimateItemResource extends JsonResource
             'current_unit_price' => $this->current_unit_price ? (float) $this->current_unit_price : null,
             'price_coefficient' => $this->price_coefficient ? (float) $this->price_coefficient : null,
             'direct_costs' => (float) $this->direct_costs,
+            
+            // Стоимость по компонентам
+            'materials_cost' => $this->materials_cost ? (float) $this->materials_cost : null,
+            'machinery_cost' => $this->machinery_cost ? (float) $this->machinery_cost : null,
+            'labor_cost' => $this->labor_cost ? (float) $this->labor_cost : null,
+            'equipment_cost' => $this->equipment_cost ? (float) $this->equipment_cost : null,
+            
             'overhead_amount' => (float) $this->overhead_amount,
             'profit_amount' => (float) $this->profit_amount,
             'total_amount' => (float) $this->total_amount,
             'current_total_amount' => $this->current_total_amount ? (float) $this->current_total_amount : null,
+            
+            // Трудозатраты
+            'labor_hours' => $this->labor_hours ? (float) $this->labor_hours : null,
+            'machinery_hours' => $this->machinery_hours ? (float) $this->machinery_hours : null,
+            
+            // Нормативная база
+            'normative_rate_id' => $this->normative_rate_id,
+            'normative_rate_code' => $this->normative_rate_code,
+            
             'justification' => $this->justification,
             'is_manual' => $this->is_manual,
             'metadata' => $this->metadata,
