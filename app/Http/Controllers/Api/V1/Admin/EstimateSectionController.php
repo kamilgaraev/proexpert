@@ -10,6 +10,7 @@ use App\Models\Estimate;
 use App\Models\EstimateSection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class EstimateSectionController extends Controller
 {
@@ -34,6 +35,7 @@ class EstimateSectionController extends Controller
                 'items',
                 'children.items',
                 'children.children.items',
+                'children.children.children.items',
                 'children.children.children.items',
             ])
             ->whereNull('parent_section_id')
@@ -114,16 +116,45 @@ class EstimateSectionController extends Controller
 
     public function destroy(Request $request, EstimateSection $section): JsonResponse
     {
+        Log::info('EstimateSectionController::destroy called', [
+            'section_id' => $section->id,
+            'estimate_id' => $section->estimate_id,
+            'estimate_loaded' => $section->relationLoaded('estimate'),
+            'estimate_exists' => $section->estimate ? true : false
+        ]);
+
         // Убеждаемся, что estimate загружен
         if (!$section->relationLoaded('estimate')) {
             $section->load('estimate');
         }
         
         if (!$section->estimate) {
-            abort(404, 'Смета не найдена');
+            // Если смета не найдена (например, удалена), но раздел существует,
+            // мы все равно должны позволить удалить раздел (для очистки мусора),
+            // если у пользователя есть права на уровне системы или организации.
+            // Но authorize('update', null) не сработает.
+            
+            Log::warning('EstimateSectionController::destroy - Estimate not found for section', [
+                'section_id' => $section->id
+            ]);
+            
+            // Временное решение: удаляем без проверки прав сметы, но с проверкой прав администратора
+            // Или просто удаляем, так как это "сирота"
+            // Но лучше вернуть ошибку, если это не ожидаемое поведение
+            
+            // Пробуем найти смету даже если она удалена (если есть SoftDeletes)
+            $estimateWithTrashed = Estimate::withTrashed()->find($section->estimate_id);
+            if ($estimateWithTrashed) {
+                 Log::info('Found trashed estimate', ['id' => $estimateWithTrashed->id]);
+                 $this->authorize('update', $estimateWithTrashed);
+            } else {
+                 // Совсем нет сметы. Проверяем глобальное право?
+                 // Пока оставим 404, но с логом
+                 abort(404, 'Смета раздела не найдена');
+            }
+        } else {
+            $this->authorize('update', $section->estimate);
         }
-        
-        $this->authorize('update', $section->estimate);
         
         $cascade = $request->boolean('cascade', false);
         
@@ -315,4 +346,3 @@ class EstimateSectionController extends Controller
         }
     }
 }
-
