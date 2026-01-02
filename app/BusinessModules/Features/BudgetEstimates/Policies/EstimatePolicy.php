@@ -92,8 +92,13 @@ class EstimatePolicy
      */
     public function update(User $user, Estimate $estimate): bool
     {
-        // Проверка организации
-        if ($user->current_organization_id !== $estimate->organization_id) {
+        // Проверка организации - если current_organization_id не установлен, запрещаем доступ
+        if (!$user->current_organization_id) {
+            return false;
+        }
+
+        // Проверка организации (приводим к int для корректного сравнения)
+        if ((int)$user->current_organization_id !== (int)$estimate->organization_id) {
             return false;
         }
 
