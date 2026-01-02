@@ -38,6 +38,9 @@ class GeocodeProjectsCommand extends Command
     {
         $this->info('Starting geocoding process...');
         $this->newLine();
+        
+        // Check available providers
+        $this->checkProviders();
 
         // Build query
         $query = Project::query()->whereNotNull('address');
@@ -190,6 +193,10 @@ class GeocodeProjectsCommand extends Command
                     $success++;
                 } else {
                     $failed++;
+                    // Show first few failures for debugging
+                    if ($failed <= 3) {
+                        $this->warn("\nFailed to geocode project {$project->id}: {$project->address}");
+                    }
                 }
 
                 // Rate limiting
@@ -198,7 +205,7 @@ class GeocodeProjectsCommand extends Command
                 }
             } catch (\Exception $e) {
                 $failed++;
-                $this->error("\nFailed to geocode project {$project->id}: {$e->getMessage()}");
+                $this->error("\nException geocoding project {$project->id}: {$e->getMessage()}");
             }
 
             $bar->advance();
@@ -218,6 +225,81 @@ class GeocodeProjectsCommand extends Command
                 ['Total', $projects->count()],
             ]
         );
+    }
+
+    /**
+     * Check available geocoding providers
+     */
+    private function checkProviders(): void
+    {
+        $this->info('Checking geocoding providers...');
+        
+        $providers = [
+            'DaData' => [
+                'enabled' => env('DADATA_ENABLED', true),
+                'has_api_key' => !empty(env('DADATA_API_KEY')),
+                'has_secret' => !empty(env('DADATA_SECRET_KEY')),
+            ],
+            'Yandex' => [
+                'enabled' => env('YANDEX_GEOCODER_ENABLED', true),
+                'has_api_key' => !empty(env('YANDEX_GEOCODER_KEY')),
+            ],
+            'Nominatim' => [
+                'enabled' => env('NOMINATIM_ENABLED', true),
+                'needs_key' => false,
+            ],
+        ];
+        
+        $available = [];
+        foreach ($providers as $name => $config) {
+            $isAvailable = $config['enabled'];
+            if ($name === 'DaData') {
+                $isAvailable = $isAvailable && $config['has_api_key'] && $config['has_secret'];
+            } elseif ($name === 'Yandex') {
+                $isAvailable = $isAvailable && $config['has_api_key'];
+            }
+            
+            if ($isAvailable) {
+                $available[] = $name;
+                $this->info("  ✓ {$name} - available");
+            } else {
+                $reasons = [];
+                if (!$config['enabled']) {
+                    $reasons[] = 'disabled';
+                }
+                if (isset($config['has_api_key']) && !$config['has_api_key']) {
+                    $reasons[] = 'no API key';
+                }
+                if (isset($config['has_secret']) && !$config['has_secret']) {
+                    $reasons[] = 'no secret key';
+                }
+                $this->warn("  ✗ {$name} - unavailable (" . implode(', ', $reasons) . ")");
+            }
+        }
+        
+        $this->newLine();
+        
+        if (empty($available)) {
+            $this->error('ERROR: No geocoding providers are available!');
+            $this->error('Please configure at least one provider in .env file:');
+            $this->newLine();
+            $this->line('For Nominatim (free, no API key needed):');
+            $this->line('  NOMINATIM_ENABLED=true');
+            $this->newLine();
+            $this->line('For DaData (recommended for Russian addresses):');
+            $this->line('  DADATA_ENABLED=true');
+            $this->line('  DADATA_API_KEY=your_api_key');
+            $this->line('  DADATA_SECRET_KEY=your_secret_key');
+            $this->newLine();
+            $this->line('For Yandex:');
+            $this->line('  YANDEX_GEOCODER_ENABLED=true');
+            $this->line('  YANDEX_GEOCODER_KEY=your_api_key');
+            $this->newLine();
+            return;
+        }
+        
+        $this->info('Available providers: ' . implode(', ', $available));
+        $this->newLine();
     }
 
     /**
