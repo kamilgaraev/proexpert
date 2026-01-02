@@ -308,7 +308,7 @@ class EstimateItem extends Model
         
         $user = request()->user();
         if ($user && $user->current_organization_id) {
-            if ($item->estimate && $item->estimate->organization_id !== $user->current_organization_id) {
+            if ($item->estimate && (int)$item->estimate->organization_id !== (int)$user->current_organization_id) {
                 abort(403, 'У вас нет доступа к этой позиции сметы');
             }
         }

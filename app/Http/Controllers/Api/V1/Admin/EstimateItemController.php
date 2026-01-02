@@ -137,9 +137,12 @@ class EstimateItemController extends Controller
 
     public function update(Request $request, EstimateItem $item): JsonResponse
     {
-        // Убеждаемся, что связь estimate загружена
-        if (!$item->relationLoaded('estimate')) {
-            $item->load('estimate');
+        // Перезагружаем связь estimate, чтобы убедиться, что она загружена
+        $item->load('estimate');
+        
+        // Проверяем, что estimate существует
+        if (!$item->estimate) {
+            abort(404, 'Смета не найдена');
         }
         
         $this->authorize('update', $item->estimate);
