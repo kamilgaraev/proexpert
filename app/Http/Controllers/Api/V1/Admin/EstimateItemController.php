@@ -148,6 +148,47 @@ class EstimateItemController extends Controller
             'request_id' => uniqid('req_', true),
         ]);
         
+        Log::info('[EstimateItemController::update] Параметр $item', [
+            'item_type' => gettype($item),
+            'item_class' => is_object($item) ? get_class($item) : 'not_object',
+            'item_is_scalar' => is_scalar($item),
+            'item_value' => is_scalar($item) ? $item : 'object',
+            'item_id' => is_object($item) && isset($item->id) ? $item->id : null,
+            'item_estimate_id' => is_object($item) && isset($item->estimate_id) ? $item->estimate_id : null,
+            'item_deleted_at' => is_object($item) && isset($item->deleted_at) ? $item->deleted_at : null,
+            'item_exists' => is_object($item) && method_exists($item, 'exists') ? $item->exists : false,
+        ]);
+        
+        // Если это не объект EstimateItem, значит route binding не сработал
+        if (!($item instanceof EstimateItem)) {
+            Log::error('[EstimateItemController::update] Route binding не сработал!', [
+                'item_type' => gettype($item),
+                'item_value' => $item,
+                'route_params' => $request->route()?->parameters(),
+            ]);
+            
+            // Пытаемся найти элемент вручную
+            $itemId = is_scalar($item) ? (int)$item : $request->route('item');
+            Log::info('[EstimateItemController::update] Попытка найти элемент вручную', [
+                'item_id' => $itemId,
+            ]);
+            
+            $item = EstimateItem::withTrashed()
+                ->where('id', $itemId)
+                ->first();
+            
+            if (!$item) {
+                Log::error('[EstimateItemController::update] Элемент не найден вручную', [
+                    'item_id' => $itemId,
+                ]);
+                abort(404, 'Позиция сметы не найдена');
+            }
+            
+            Log::info('[EstimateItemController::update] Элемент найден вручную', [
+                'item_id' => $item->id,
+            ]);
+        }
+        
         Log::info('[EstimateItemController::update] Начало метода', [
             'item_id' => $item->id,
             'item_estimate_id' => $item->estimate_id,

@@ -1,6 +1,9 @@
 <?php
 
 return [
+    // RouteServiceProvider должен быть загружен ПЕРВЫМ, чтобы route bindings были зарегистрированы до загрузки роутов
+    App\Providers\RouteServiceProvider::class,
+    
     App\BusinessModules\Core\Payments\PaymentsServiceProvider::class,
     App\BusinessModules\Features\AdvancedDashboard\AdvancedDashboardServiceProvider::class,
     App\BusinessModules\Features\AIAssistant\AIAssistantServiceProvider::class,
@@ -15,5 +18,4 @@ return [
     App\Providers\EventServiceProvider::class,
     App\Providers\HorizonServiceProvider::class,
     App\Providers\RepositoryServiceProvider::class,
-    App\Providers\RouteServiceProvider::class,
 ];
