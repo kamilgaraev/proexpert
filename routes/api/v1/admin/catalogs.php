@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\Admin\ContractorController;
 use App\Http\Controllers\Api\V1\Admin\ContractController;
 use App\Http\Controllers\Api\V1\Admin\CostCategoryController;
 use App\Http\Controllers\Api\V1\Admin\MeasurementUnitController;
+use App\Http\Controllers\Api\V1\Admin\EstimateItemTypesController;
 
 /*
 |--------------------------------------------------------------------------
@@ -74,3 +75,7 @@ Route::prefix('work-types/{work_type}')->name('work-types.')->group(function () 
 if (file_exists(__DIR__ . '/estimate_positions.php')) {
     require __DIR__ . '/estimate_positions.php';
 }
+
+// Маршрут для получения типов позиций сметы
+Route::get('/estimate-item-types', [EstimateItemTypesController::class, 'index'])
+    ->name('estimate-item-types.index');

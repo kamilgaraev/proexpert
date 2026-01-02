@@ -8,6 +8,7 @@ enum EstimatePositionItemType: string
     case MATERIAL = 'material';
     case EQUIPMENT = 'equipment';
     case LABOR = 'labor';
+    case SUMMARY = 'summary';
 
     /**
      * Получить все значения
@@ -27,6 +28,7 @@ enum EstimatePositionItemType: string
             self::MATERIAL => 'Материал',
             self::EQUIPMENT => 'Оборудование',
             self::LABOR => 'Труд',
+            self::SUMMARY => 'Итого',
         };
     }
 
@@ -60,6 +62,14 @@ enum EstimatePositionItemType: string
     public function isLabor(): bool
     {
         return $this === self::LABOR;
+    }
+
+    /**
+     * Проверка, является ли итоговой строкой
+     */
+    public function isSummary(): bool
+    {
+        return $this === self::SUMMARY;
     }
 }
 

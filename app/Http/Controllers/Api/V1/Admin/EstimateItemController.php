@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Admin;
 
+use App\Enums\EstimatePositionItemType;
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemNumberingService;
@@ -55,6 +56,7 @@ class EstimateItemController extends Controller
         
         $validated = $request->validate([
             'estimate_section_id' => 'nullable|exists:estimate_sections,id',
+            'item_type' => 'required|in:' . implode(',', EstimatePositionItemType::values()),
             'position_number' => 'nullable|string|max:50',
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -62,6 +64,13 @@ class EstimateItemController extends Controller
             'measurement_unit_id' => 'nullable|exists:measurement_units,id',
             'quantity' => 'required|numeric|min:0',
             'unit_price' => 'required|numeric|min:0',
+            'labor_hours' => 'nullable|numeric|min:0',
+            'machinery_hours' => 'nullable|numeric|min:0',
+            'materials_cost' => 'nullable|numeric|min:0',
+            'machinery_cost' => 'nullable|numeric|min:0',
+            'labor_cost' => 'nullable|numeric|min:0',
+            'equipment_cost' => 'nullable|numeric|min:0',
+            'normative_rate_id' => 'nullable|exists:normative_rates,id',
             'overhead_amount' => 'nullable|numeric|min:0',
             'profit_amount' => 'nullable|numeric|min:0',
             'justification' => 'nullable|string',
@@ -127,6 +136,7 @@ class EstimateItemController extends Controller
         
         $validated = $request->validate([
             'estimate_section_id' => 'sometimes|nullable|exists:estimate_sections,id',
+            'item_type' => 'sometimes|in:' . implode(',', EstimatePositionItemType::values()),
             'position_number' => 'sometimes|string|max:50',
             'name' => 'sometimes|string|max:255',
             'description' => 'nullable|string',
@@ -134,6 +144,13 @@ class EstimateItemController extends Controller
             'measurement_unit_id' => 'sometimes|nullable|exists:measurement_units,id',
             'quantity' => 'sometimes|numeric|min:0',
             'unit_price' => 'sometimes|numeric|min:0',
+            'labor_hours' => 'sometimes|numeric|min:0',
+            'machinery_hours' => 'sometimes|numeric|min:0',
+            'materials_cost' => 'sometimes|numeric|min:0',
+            'machinery_cost' => 'sometimes|numeric|min:0',
+            'labor_cost' => 'sometimes|numeric|min:0',
+            'equipment_cost' => 'sometimes|numeric|min:0',
+            'normative_rate_id' => 'sometimes|nullable|exists:normative_rates,id',
             'overhead_amount' => 'sometimes|numeric|min:0',
             'profit_amount' => 'sometimes|numeric|min:0',
             'justification' => 'nullable|string',

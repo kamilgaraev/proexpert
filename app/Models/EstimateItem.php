@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\EstimatePositionItemType;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -62,6 +63,7 @@ class EstimateItem extends Model
     ];
 
     protected $casts = [
+        'item_type' => EstimatePositionItemType::class,
         'quantity' => 'decimal:4',
         'quantity_coefficient' => 'decimal:4',
         'quantity_total' => 'decimal:4',
