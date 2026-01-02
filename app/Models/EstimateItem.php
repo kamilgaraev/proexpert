@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Log;
 
 class EstimateItem extends Model
 {
@@ -302,15 +303,41 @@ class EstimateItem extends Model
 
     public function resolveRouteBinding($value, $field = null)
     {
+        Log::info('[EstimateItem::resolveRouteBinding] Начало', [
+            'value' => $value,
+            'value_type' => gettype($value),
+            'field' => $field,
+            'route' => request()->route()?->getName(),
+            'url' => request()->fullUrl(),
+            'method' => request()->method(),
+        ]);
+        
         // Приводим значение к int для корректного поиска
         $id = (int) $value;
+        
+        Log::info('[EstimateItem::resolveRouteBinding] Поиск элемента', [
+            'original_value' => $value,
+            'converted_id' => $id,
+        ]);
         
         // Сначала находим элемент (включая удаленные)
         $item = static::withTrashed()
             ->where('id', $id)
             ->first();
         
+        \Log::info('[EstimateItem::resolveRouteBinding] Результат поиска', [
+            'id' => $id,
+            'item_found' => $item !== null,
+            'item_id' => $item?->id,
+            'item_estimate_id' => $item?->estimate_id,
+            'item_deleted_at' => $item?->deleted_at,
+            'sql_query' => static::withTrashed()->where('id', $id)->toSql(),
+        ]);
+        
         if (!$item) {
+            Log::warning('[EstimateItem::resolveRouteBinding] Элемент не найден', [
+                'id' => $id,
+            ]);
             abort(404, 'Позиция сметы не найдена');
         }
         
@@ -319,18 +346,58 @@ class EstimateItem extends Model
             $query->withTrashed();
         }]);
         
+        Log::info('[EstimateItem::resolveRouteBinding] После загрузки estimate', [
+            'item_id' => $item->id,
+            'estimate_loaded' => $item->relationLoaded('estimate'),
+            'estimate_exists' => $item->estimate !== null,
+            'estimate_id' => $item->estimate?->id,
+            'estimate_organization_id' => $item->estimate?->organization_id,
+            'estimate_deleted_at' => $item->estimate?->deleted_at,
+        ]);
+        
         $user = request()->user();
+        Log::info('[EstimateItem::resolveRouteBinding] Информация о пользователе', [
+            'user_exists' => $user !== null,
+            'user_id' => $user?->id,
+            'current_organization_id' => $user?->current_organization_id,
+        ]);
+        
         if ($user && $user->current_organization_id) {
             // Если estimate не найден, возвращаем 404
             if (!$item->estimate) {
+                \Log::warning('[EstimateItem::resolveRouteBinding] Estimate не найден для элемента', [
+                    'item_id' => $item->id,
+                    'item_estimate_id' => $item->estimate_id,
+                ]);
                 abort(404, 'Смета для этой позиции не найдена');
             }
             
             // Проверяем организацию
-            if ((int)$item->estimate->organization_id !== (int)$user->current_organization_id) {
+            $itemOrgId = (int)$item->estimate->organization_id;
+            $userOrgId = (int)$user->current_organization_id;
+            
+            Log::info('[EstimateItem::resolveRouteBinding] Проверка организации', [
+                'item_id' => $item->id,
+                'estimate_id' => $item->estimate->id,
+                'item_organization_id' => $itemOrgId,
+                'user_organization_id' => $userOrgId,
+                'match' => $itemOrgId === $userOrgId,
+            ]);
+            
+            if ($itemOrgId !== $userOrgId) {
+                Log::warning('[EstimateItem::resolveRouteBinding] Организация не совпадает', [
+                    'item_id' => $item->id,
+                    'item_organization_id' => $itemOrgId,
+                    'user_organization_id' => $userOrgId,
+                ]);
                 abort(403, 'У вас нет доступа к этой позиции сметы');
             }
         }
+        
+        Log::info('[EstimateItem::resolveRouteBinding] Успешное резолвинг', [
+            'item_id' => $item->id,
+            'estimate_id' => $item->estimate?->id,
+        ]);
         
         return $item;
     }
