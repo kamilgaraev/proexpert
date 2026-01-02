@@ -51,6 +51,8 @@ class YandexProvider implements GeocodeProviderInterface
                 Log::warning('Yandex geocoding failed', [
                     'address' => $address,
                     'status' => $response->status(),
+                    'response' => $response->body(),
+                    'has_api_key' => !empty($this->config['api_key']),
                 ]);
                 return null;
             }
@@ -60,6 +62,11 @@ class YandexProvider implements GeocodeProviderInterface
             $geoObject = $data['response']['GeoObjectCollection']['featureMember'][0]['GeoObject'] ?? null;
             
             if (!$geoObject) {
+                $foundCount = $data['response']['GeoObjectCollection']['metaDataProperty']['GeocoderResponseMetaData']['found'] ?? 0;
+                Log::info('Yandex returned empty result', [
+                    'address' => $address,
+                    'found_count' => $foundCount,
+                ]);
                 return null;
             }
 

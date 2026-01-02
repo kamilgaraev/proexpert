@@ -50,11 +50,11 @@ class DaDataProvider implements GeocodeProviderInterface
                 $headers['X-Secret'] = $this->config['secret_key'];
             }
             
+            // DaData expects JSON array of address strings
             $response = Http::withHeaders($headers)
             ->timeout($this->config['timeout'] ?? 5)
-            ->post($this->config['clean_url'], [
-                [$address]
-            ]);
+            ->asJson()
+            ->post($this->config['clean_url'], [$address]);
 
             if (!$response->successful()) {
                 Log::warning('DaData geocoding failed', [
@@ -68,6 +68,10 @@ class DaDataProvider implements GeocodeProviderInterface
             $data = $response->json();
             
             if (empty($data) || !isset($data[0])) {
+                Log::info('DaData returned empty result', [
+                    'address' => $address,
+                    'data' => $data,
+                ]);
                 return null;
             }
 

@@ -58,6 +58,7 @@ class NominatimProvider implements GeocodeProviderInterface
                 Log::warning('Nominatim geocoding failed', [
                     'address' => $address,
                     'status' => $response->status(),
+                    'response' => $response->body(),
                 ]);
                 return null;
             }
@@ -65,6 +66,10 @@ class NominatimProvider implements GeocodeProviderInterface
             $data = $response->json();
             
             if (empty($data) || !isset($data[0])) {
+                Log::info('Nominatim returned empty result', [
+                    'address' => $address,
+                    'data_count' => is_array($data) ? count($data) : 0,
+                ]);
                 return null;
             }
 
