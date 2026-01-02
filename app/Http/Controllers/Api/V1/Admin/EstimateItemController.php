@@ -137,8 +137,10 @@ class EstimateItemController extends Controller
 
     public function update(Request $request, EstimateItem $item): JsonResponse
     {
-        // Перезагружаем связь estimate, чтобы убедиться, что она загружена
-        $item->load('estimate');
+        // Перезагружаем связь estimate с учетом soft deletes
+        $item->load(['estimate' => function ($query) {
+            $query->withTrashed();
+        }]);
         
         // Проверяем, что estimate существует
         if (!$item->estimate) {
