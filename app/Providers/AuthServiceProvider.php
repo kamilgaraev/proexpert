@@ -48,6 +48,33 @@ class AuthServiceProvider extends ServiceProvider
                 return null;
             }
             
+            // Стандартные Policy abilities (view, create, update, delete, etc) - всегда пропускаем в Policy
+            $standardPolicyAbilities = ['viewAny', 'view', 'create', 'update', 'delete', 'restore', 'forceDelete', 'approve', 'import', 'export'];
+            if (in_array($ability, $standardPolicyAbilities)) {
+                // Если есть объект модели или класс модели в arguments - пропускаем в Policy
+                if (!empty($arguments)) {
+                    if (is_object($arguments[0])) {
+                        return null; // Пропускаем в Policy
+                    }
+                    if (is_string($arguments[0]) && isset($this->policies[$arguments[0]])) {
+                        return null; // Пропускаем в Policy
+                    }
+                    if (is_array($arguments)) {
+                        foreach ($arguments as $arg) {
+                            if (is_object($arg)) {
+                                $modelClass = get_class($arg);
+                                if (isset($this->policies[$modelClass])) {
+                                    return null; // Пропускаем в Policy
+                                }
+                            }
+                        }
+                    }
+                }
+                // Если нет объекта модели, но это стандартная Policy ability - все равно пропускаем в Policy
+                // (Policy может проверить права без модели, например для create)
+                return null;
+            }
+            
             // Пропускаем model policy abilities (view, create, update, delete, etc)
             // чтобы они обрабатывались через зарегистрированные Policy классы
             if (!empty($arguments)) {
