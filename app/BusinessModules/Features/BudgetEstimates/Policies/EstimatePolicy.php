@@ -18,8 +18,17 @@ class EstimatePolicy
      */
     public function viewAny(User $user): bool
     {
-        return $user->hasPermission('budget-estimates.view') 
-            || $user->hasPermission('budget-estimates.view_all');
+        if (!$user->current_organization_id) {
+            return false;
+        }
+
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
+        return $user->hasPermission('budget-estimates.view', $context) 
+            || $user->hasPermission('budget-estimates.view_all', $context);
     }
 
     /**
@@ -32,13 +41,18 @@ class EstimatePolicy
             return false;
         }
 
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
         // Если есть право на просмотр всех - разрешить
-        if ($user->hasPermission('budget-estimates.view_all')) {
+        if ($user->hasPermission('budget-estimates.view_all', $context)) {
             return true;
         }
 
         // Если есть право на просмотр своих
-        return $user->hasPermission('budget-estimates.view');
+        return $user->hasPermission('budget-estimates.view', $context);
     }
 
     /**
@@ -46,7 +60,16 @@ class EstimatePolicy
      */
     public function create(User $user): bool
     {
-        return $user->hasPermission('budget-estimates.create');
+        if (!$user->current_organization_id) {
+            return false;
+        }
+
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
+        return $user->hasPermission('budget-estimates.create', $context);
     }
 
     /**
@@ -59,13 +82,18 @@ class EstimatePolicy
             return false;
         }
 
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
         // Если смета утверждена - нужно специальное право
         if ($estimate->isApproved()) {
-            return $user->hasPermission('budget-estimates.edit_approved');
+            return $user->hasPermission('budget-estimates.edit_approved', $context);
         }
 
         // Для черновиков достаточно обычного права на редактирование
-        return $user->hasPermission('budget-estimates.edit');
+        return $user->hasPermission('budget-estimates.edit', $context);
     }
 
     /**
@@ -83,7 +111,12 @@ class EstimatePolicy
             return false;
         }
 
-        return $user->hasPermission('budget-estimates.delete');
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
+        return $user->hasPermission('budget-estimates.delete', $context);
     }
 
     /**
@@ -101,7 +134,12 @@ class EstimatePolicy
             return false;
         }
 
-        return $user->hasPermission('budget-estimates.approve');
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
+        return $user->hasPermission('budget-estimates.approve', $context);
     }
 
     /**
@@ -109,7 +147,16 @@ class EstimatePolicy
      */
     public function import(User $user): bool
     {
-        return $user->hasPermission('budget-estimates.import');
+        if (!$user->current_organization_id) {
+            return false;
+        }
+
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
+        return $user->hasPermission('budget-estimates.import', $context);
     }
 
     /**
@@ -122,7 +169,12 @@ class EstimatePolicy
             return false;
         }
 
-        return $user->hasPermission('budget-estimates.export');
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
+        return $user->hasPermission('budget-estimates.export', $context);
     }
 
     /**
@@ -130,7 +182,16 @@ class EstimatePolicy
      */
     public function manageTemplates(User $user): bool
     {
-        return $user->hasPermission('budget-estimates.templates.manage');
+        if (!$user->current_organization_id) {
+            return false;
+        }
+
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
+        return $user->hasPermission('budget-estimates.templates.manage', $context);
     }
 
     /**
@@ -138,7 +199,16 @@ class EstimatePolicy
      */
     public function viewAnalytics(User $user): bool
     {
-        return $user->hasPermission('budget-estimates.analytics');
+        if (!$user->current_organization_id) {
+            return false;
+        }
+
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
+        return $user->hasPermission('budget-estimates.analytics', $context);
     }
 
     /**
@@ -156,7 +226,12 @@ class EstimatePolicy
             return false;
         }
 
-        return $user->hasPermission('budget-estimates.versions.create');
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
+        return $user->hasPermission('budget-estimates.versions.create', $context);
     }
 
     /**
@@ -164,7 +239,16 @@ class EstimatePolicy
      */
     public function compareVersions(User $user): bool
     {
-        return $user->hasPermission('budget-estimates.versions.compare');
+        if (!$user->current_organization_id) {
+            return false;
+        }
+
+        $context = [
+            'context_type' => 'organization',
+            'organization_id' => $user->current_organization_id
+        ];
+
+        return $user->hasPermission('budget-estimates.versions.compare', $context);
     }
 }
 
