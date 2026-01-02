@@ -54,7 +54,11 @@ class AuthServiceProvider extends ServiceProvider
                 // Если есть объект модели или класс модели в arguments - пропускаем в Policy
                 if (!empty($arguments)) {
                     if (is_object($arguments[0])) {
-                        return null; // Пропускаем в Policy
+                        $modelClass = get_class($arguments[0]);
+                        // Пропускаем в Policy только если Policy зарегистрирован для этого класса модели
+                        if (isset($this->policies[$modelClass])) {
+                            return null; // Пропускаем в Policy
+                        }
                     }
                     if (is_string($arguments[0]) && isset($this->policies[$arguments[0]])) {
                         return null; // Пропускаем в Policy
@@ -77,10 +81,14 @@ class AuthServiceProvider extends ServiceProvider
             
             // Пропускаем model policy abilities (view, create, update, delete, etc)
             // чтобы они обрабатывались через зарегистрированные Policy классы
+            // Эта логика обрабатывает случаи, когда ability не является стандартной Policy ability
             if (!empty($arguments)) {
-                // Если первый аргумент - объект модели, пропускаем в Policy
+                // Если первый аргумент - объект модели, проверяем, зарегистрирован ли Policy
                 if (is_object($arguments[0])) {
-                    return null;
+                    $modelClass = get_class($arguments[0]);
+                    if (isset($this->policies[$modelClass])) {
+                        return null; // Пропускаем в Policy
+                    }
                 }
                 
                 // Если первый аргумент - строка класса модели, зарегистрированная в policies, пропускаем в Policy
@@ -94,7 +102,7 @@ class AuthServiceProvider extends ServiceProvider
                         if (is_object($arg)) {
                             $modelClass = get_class($arg);
                             if (isset($this->policies[$modelClass])) {
-                                return null;
+                                return null; // Пропускаем в Policy
                             }
                         }
                     }
@@ -135,6 +143,29 @@ class AuthServiceProvider extends ServiceProvider
             }
             
             return $authorizationService->can($user, $ability, ['context_type' => 'system']);
+        });
+        
+        // Перехватываем результат Policy, чтобы не проверять право в системном контексте, если Policy уже вернул результат
+        Gate::after(function (\App\Models\User $user, string $ability, $result, $arguments = null) {
+            $userAgent = request()->userAgent() ?? '';
+            if (str_contains($userAgent, 'Prometheus')) {
+                return null;
+            }
+            
+            // Если это стандартная Policy ability с объектом модели, и Policy вернул результат (true или false),
+            // не позволяем Gate проверять право в системном контексте
+            $standardPolicyAbilities = ['viewAny', 'view', 'create', 'update', 'delete', 'restore', 'forceDelete', 'approve', 'import', 'export'];
+            if (in_array($ability, $standardPolicyAbilities) && !empty($arguments)) {
+                if (is_object($arguments[0])) {
+                    $modelClass = get_class($arguments[0]);
+                    if (isset($this->policies[$modelClass])) {
+                        // Policy уже обработал запрос, возвращаем его результат
+                        return $result;
+                    }
+                }
+            }
+            
+            return null; // Продолжаем стандартную обработку
         });
         
         Gate::define('admin.access', function (User $user) {

@@ -114,6 +114,15 @@ class EstimateSectionController extends Controller
 
     public function destroy(Request $request, EstimateSection $section): JsonResponse
     {
+        // Убеждаемся, что estimate загружен
+        if (!$section->relationLoaded('estimate')) {
+            $section->load('estimate');
+        }
+        
+        if (!$section->estimate) {
+            abort(404, 'Смета не найдена');
+        }
+        
         $this->authorize('update', $section->estimate);
         
         $cascade = $request->boolean('cascade', false);
