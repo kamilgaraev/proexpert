@@ -64,6 +64,8 @@ class GeocodeService
         }
 
         // Try each provider in order of priority
+        $lowConfidenceResults = [];
+        
         foreach ($this->providers as $provider) {
             try {
                 Log::info('Attempting geocoding with provider', [
@@ -107,17 +109,8 @@ class GeocodeService
                     $this->logGeocodingAttempt($project->id, $provider->getName(), false, $result, 
                         "Confidence {$result->confidence} below threshold {$this->minConfidence}");
                     
-                    // If this is the last provider and we have any result, use it with low confidence
-                    // This helps with incorrect addresses that still have valid coordinates
-                    $isLastProvider = ($provider === end($this->providers));
-                    if ($isLastProvider && $result->confidence > 0) {
-                        Log::info('Using low confidence result as fallback', [
-                            'project_id' => $project->id,
-                            'provider' => $provider->getName(),
-                            'confidence' => $result->confidence,
-                        ]);
-                        return $result;
-                    }
+                    // Store low confidence results for fallback
+                    $lowConfidenceResults[] = $result;
                 } else {
                     // Log when provider returns null
                     $this->logGeocodingAttempt($project->id, $provider->getName(), false, null, 
@@ -132,6 +125,25 @@ class GeocodeService
                 
                 $this->logGeocodingAttempt($project->id, $provider->getName(), false, null, $e->getMessage());
             }
+        }
+        
+        // If no high confidence results, use the best low confidence result
+        if (!empty($lowConfidenceResults)) {
+            // Sort by confidence descending
+            usort($lowConfidenceResults, fn($a, $b) => $b->confidence <=> $a->confidence);
+            $bestResult = $lowConfidenceResults[0];
+            
+            Log::info('Using best low confidence result as fallback', [
+                'project_id' => $project->id,
+                'provider' => $bestResult->provider,
+                'confidence' => $bestResult->confidence,
+                'coordinates' => [
+                    'lat' => $bestResult->latitude,
+                    'lon' => $bestResult->longitude,
+                ],
+            ]);
+            
+            return $bestResult;
         }
 
         Log::warning('All geocoding providers failed for project', [
