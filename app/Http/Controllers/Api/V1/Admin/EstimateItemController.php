@@ -123,6 +123,11 @@ class EstimateItemController extends Controller
 
     public function show(EstimateItem $item): JsonResponse
     {
+        // Убеждаемся, что связь estimate загружена
+        if (!$item->relationLoaded('estimate')) {
+            $item->load('estimate');
+        }
+        
         $this->authorize('view', $item->estimate);
         
         return response()->json([
@@ -132,6 +137,11 @@ class EstimateItemController extends Controller
 
     public function update(Request $request, EstimateItem $item): JsonResponse
     {
+        // Убеждаемся, что связь estimate загружена
+        if (!$item->relationLoaded('estimate')) {
+            $item->load('estimate');
+        }
+        
         $this->authorize('update', $item->estimate);
         
         $validated = $request->validate([
@@ -168,6 +178,11 @@ class EstimateItemController extends Controller
 
     public function destroy(EstimateItem $item): JsonResponse
     {
+        // Убеждаемся, что связь estimate загружена
+        if (!$item->relationLoaded('estimate')) {
+            $item->load('estimate');
+        }
+        
         $this->authorize('update', $item->estimate);
         
         $this->itemService->deleteItem($item);
@@ -179,6 +194,11 @@ class EstimateItemController extends Controller
 
     public function move(Request $request, EstimateItem $item): JsonResponse
     {
+        // Убеждаемся, что связь estimate загружена
+        if (!$item->relationLoaded('estimate')) {
+            $item->load('estimate');
+        }
+        
         $this->authorize('update', $item->estimate);
         
         $validated = $request->validate([
