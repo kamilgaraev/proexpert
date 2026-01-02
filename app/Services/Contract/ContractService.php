@@ -258,7 +258,7 @@ class ContractService
                 'project_id' => $contractDTO->project_id,
                 'total_amount' => $contractDTO->total_amount,
                 'user_id' => Auth::id(),
-            ]);
+        ]);
         }
 
         $contractData = $contractDTO->toArray();

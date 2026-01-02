@@ -108,7 +108,10 @@ class StoreContractRequest extends FormRequest
                 ? ['nullable', 'integer', 'exists:contractors,id']
                 : ['required_without:supplier_id', 'integer', 'exists:contractors,id'],
             'is_self_execution' => ['nullable', 'boolean'],
-            'supplier_id' => ['nullable', 'required_without:contractor_id', 'integer', 'exists:suppliers,id'],
+            // supplier_id обязателен только если нет contractor_id И нет is_self_execution
+            'supplier_id' => $isSelfExecution
+                ? ['nullable', 'integer', 'exists:suppliers,id']
+                : ['nullable', 'required_without:contractor_id', 'integer', 'exists:suppliers,id'],
             'contract_category' => ['nullable', 'string', 'in:work,procurement,service'],
             'parent_contract_id' => ['nullable', 'integer', new ParentContractValid],
             'number' => ['required', 'string', 'max:255'],

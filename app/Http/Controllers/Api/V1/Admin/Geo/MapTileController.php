@@ -96,13 +96,17 @@ class MapTileController extends Controller
             $projects = $query->get();
 
             // Преобразуем в GeoJSON
+            // В GeoJSON формат координат: [longitude, latitude]
+            // ИСПРАВЛЕНИЕ: Координаты в БД перепутаны местами (в поле latitude хранится долгота, в longitude - широта)
+            // Поэтому меняем их местами при выводе для правильного формата GeoJSON
             $features = [];
             foreach ($projects as $project) {
                 $features[] = [
                     'type' => 'Feature',
                     'geometry' => [
                         'type' => 'Point',
-                        'coordinates' => [(float) $project->longitude, (float) $project->latitude],
+                        // Меняем местами для корректного формата GeoJSON [longitude, latitude]
+                        'coordinates' => [(float) $project->latitude, (float) $project->longitude],
                     ],
                     'properties' => [
                         'id' => $project->id,
