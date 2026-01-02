@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Log;
 
 class EstimateItem extends Model
 {
@@ -305,8 +306,19 @@ class EstimateItem extends Model
             ->firstOrFail();
         
         $user = request()->user();
+        
+        Log::info('[EstimateItem::resolveRouteBinding]', [
+            'item_id' => $value,
+            'estimate_id' => $item->estimate_id ?? null,
+            'estimate_org' => $item->estimate->organization_id ?? null,
+            'user_id' => $user?->id,
+            'user_org' => $user?->current_organization_id,
+            'has_user' => $user !== null,
+        ]);
+        
         if ($user && $user->current_organization_id) {
             if ($item->estimate && $item->estimate->organization_id !== $user->current_organization_id) {
+                Log::warning('[EstimateItem::resolveRouteBinding] Access denied - org mismatch');
                 abort(403, 'У вас нет доступа к этой позиции сметы');
             }
         }
