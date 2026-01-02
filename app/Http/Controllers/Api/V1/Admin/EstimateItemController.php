@@ -11,6 +11,7 @@ use App\Models\EstimateItem;
 use App\Models\EstimateSection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class EstimateItemController extends Controller
 {
@@ -123,7 +124,25 @@ class EstimateItemController extends Controller
 
     public function update(Request $request, EstimateItem $item): JsonResponse
     {
-        $this->authorize('update', $item->estimate);
+        Log::info('[EstimateItemController::update] Start', [
+            'item_id' => $item->id,
+            'estimate_id' => $item->estimate_id,
+            'user_id' => $request->user()->id ?? null,
+            'user_org' => $request->user()->current_organization_id ?? null,
+            'estimate_org' => $item->estimate->organization_id ?? null,
+            'estimate_status' => $item->estimate->status ?? null,
+        ]);
+        
+        try {
+            $this->authorize('update', $item->estimate);
+            Log::info('[EstimateItemController::update] Authorization passed');
+        } catch (\Exception $e) {
+            Log::error('[EstimateItemController::update] Authorization failed', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
+        }
         
         $validated = $request->validate([
             'estimate_section_id' => 'sometimes|nullable|exists:estimate_sections,id',
@@ -249,7 +268,7 @@ class EstimateItemController extends Controller
                 'data' => EstimateItemResource::collection($items)
             ]);
         } catch (\Exception $e) {
-            \Log::error('estimate.items.reorder.error', [
+            Log::error('estimate.items.reorder.error', [
                 'estimate_id' => $estimateModel->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
@@ -295,7 +314,7 @@ class EstimateItemController extends Controller
                 'numbering_mode' => $numberingMode
             ]);
         } catch (\Exception $e) {
-            \Log::error('estimate.items.recalculate_numbers.error', [
+            Log::error('estimate.items.recalculate_numbers.error', [
                 'estimate_id' => $estimateModel->id,
                 'error' => $e->getMessage(),
             ]);
