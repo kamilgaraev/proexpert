@@ -32,6 +32,37 @@ class RouteServiceProvider extends ServiceProvider
         // Route Model Binding для estimate, section, item УДАЛЕНЫ
         // Контроллеры теперь сами загружают модели и проверяют организацию
         
+        // Явный binding для item с проверкой организации
+        Route::bind('item', function ($value) {
+            $item = \App\Models\EstimateItem::withTrashed()
+                ->where('id', (int)$value)
+                ->first();
+            
+            if (!$item) {
+                abort(404, 'Позиция сметы не найдена');
+            }
+            
+            // Загружаем связь estimate (включая удаленные)
+            $item->load(['estimate' => function ($query) {
+                $query->withTrashed();
+            }]);
+            
+            $user = request()->user();
+            if ($user && $user->current_organization_id) {
+                // Если estimate не найден, возвращаем 404
+                if (!$item->estimate) {
+                    abort(404, 'Смета для этой позиции не найдена');
+                }
+                
+                // Проверяем организацию
+                if ((int)$item->estimate->organization_id !== (int)$user->current_organization_id) {
+                    abort(403, 'У вас нет доступа к этой позиции сметы');
+                }
+            }
+            
+            return $item;
+        });
+        
         Route::bind('template', function ($value) {
             $template = \App\Models\EstimateTemplate::findOrFail($value);
             
