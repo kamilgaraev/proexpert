@@ -4,8 +4,11 @@ namespace App\Observers;
 
 use App\BusinessModules\Core\MultiOrganization\Services\HoldingContractorSyncService;
 use App\Models\Organization;
+use App\Models\MeasurementUnit;
 use App\Modules\Core\AccessController;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
 
 /**
  * Observer для автоматической синхронизации подрядчиков при изменениях в организациях холдинга
@@ -28,8 +31,51 @@ class OrganizationObserver
      */
     public function created(Organization $organization): void
     {
+        // Создаем стандартные единицы измерения для новой организации
+        $this->createDefaultMeasurementUnits($organization);
+
         // При создании организации синхронизация не нужна
         // Она будет выполнена при установке parent_organization_id
+    }
+
+    /**
+     * Создание стандартных единиц измерения для организации
+     */
+    protected function createDefaultMeasurementUnits(Organization $organization): void
+    {
+        try {
+            $units = MeasurementUnit::getDefaultUnits();
+            $now = Carbon::now();
+            $insertData = [];
+
+            foreach ($units as $unit) {
+                $insertData[] = [
+                    'organization_id' => $organization->id,
+                    'name' => $unit['name'],
+                    'short_name' => $unit['short_name'],
+                    'type' => $unit['type'],
+                    'is_system' => true,
+                    'is_default' => false,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ];
+            }
+
+            // Используем insert для массовой вставки (быстрее)
+            if (!empty($insertData)) {
+                DB::table('measurement_units')->insert($insertData);
+                
+                Log::info('Created default measurement units for new organization', [
+                    'organization_id' => $organization->id,
+                    'count' => count($insertData)
+                ]);
+            }
+        } catch (\Exception $e) {
+            Log::error('Failed to create default measurement units', [
+                'organization_id' => $organization->id,
+                'error' => $e->getMessage()
+            ]);
+        }
     }
 
     /**
