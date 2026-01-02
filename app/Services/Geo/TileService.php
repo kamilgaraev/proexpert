@@ -140,8 +140,7 @@ class TileService
             'type' => 'Feature',
             'geometry' => [
                 'type' => 'Point',
-                // ИСПРАВЛЕНИЕ: Координаты в БД перепутаны местами, меняем их для правильного формата GeoJSON
-                'coordinates' => [(float) $project->latitude, (float) $project->longitude],
+                'coordinates' => [(float) $project->longitude, (float) $project->latitude],
             ],
             'properties' => [
                 'id' => $project->id,
