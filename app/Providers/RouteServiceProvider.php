@@ -35,6 +35,11 @@ class RouteServiceProvider extends ServiceProvider
         
         // Явный binding для item с проверкой организации
         Route::bind('item', function ($value) {
+            Log::info('[RouteServiceProvider::bind item] ===== НАЧАЛО РЕЗОЛВИНГА =====', [
+                'timestamp' => now()->toIso8601String(),
+                'request_id' => uniqid('bind_', true),
+            ]);
+            
             Log::info('[RouteServiceProvider::bind item] Начало резолвинга', [
                 'value' => $value,
                 'value_type' => gettype($value),
@@ -42,6 +47,7 @@ class RouteServiceProvider extends ServiceProvider
                 'route' => request()->route()?->getName(),
                 'url' => request()->fullUrl(),
                 'method' => request()->method(),
+                'route_params' => request()->route()?->parameters(),
             ]);
             
             $item = EstimateItem::withTrashed()
