@@ -17,11 +17,11 @@
         "laravel/tinker": "^2.9",
         "league/flysystem-aws-s3-v3": "^3.29",
         "openai-php/client": "^0.17.1",
-        "openspout/openspout": "^4.0",
         "phpoffice/phpspreadsheet": "^3.9",
         "predis/predis": "^3.2",
         "resend/resend-php": "^0.15.1",
         "sentry/sentry-laravel": "^4.18",
+        "shuchkin/simplexlsx": "^1.1",
         "symfony/http-client": "^7.3",
         "symfony/yaml": "^7.2",
         "tymon/jwt-auth": "^2.1"
