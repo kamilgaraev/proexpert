@@ -19,6 +19,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportContext;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportProgressTracker;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateItemProcessor;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\ItemClassificationService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Calculation\AICalculationService;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateTypeDetectionDTO;
 use App\Models\Estimate;
 use App\Models\EstimateImportHistory;
@@ -43,7 +44,8 @@ class EstimateImportService
         private EstimateItemProcessor $itemProcessor,
         private ParserFactory $parserFactory,
         private SmartMappingService $smartMappingService,
-        private ItemClassificationService $classificationService
+        private ItemClassificationService $classificationService,
+        private ?AICalculationService $aiCalculationService = null
     ) {}
 
     public function uploadFile(UploadedFile $file, int $userId, int $organizationId): string
@@ -227,6 +229,12 @@ class EstimateImportService
         Log::info('[EstimateImport] AI classification completed', [
             'classified_items' => count($classificationResults),
         ]);
+        
+        // 🤖 АВТОМАТИЧЕСКИЙ РАСЧЕТ И ПРОВЕРКА СУММ
+        if ($this->aiCalculationService) {
+            Log::info('[EstimateImport] Applying AI calculation validation');
+            $importDTO->items = $this->aiCalculationService->validateAndCalculate($importDTO->items);
+        }
         
         $previewArray = $importDTO->toArray();
         Cache::put("estimate_import_preview:{$fileId}", $previewArray, now()->addHours(24));

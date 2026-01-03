@@ -15,6 +15,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\{
     EstimateTemplateService,
     EstimateSectionNumberingService,
     EstimateItemNumberingService,
+    EstimateCacheService,
 };
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\{
     EstimateProjectIntegrationService,
@@ -118,6 +119,24 @@ class BudgetEstimatesServiceProvider extends ServiceProvider
         $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeCodeService::class);
         $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeMatchingService::class);
         $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\ResourceMatchingService::class);
+        
+        // 🤖 AI-powered Import Services
+        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\AISectionDetector::class);
+        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Mapping\AIColumnMapper::class);
+        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Calculation\AICalculationService::class);
+        
+        // Регистрируем парсер с AI (если доступен)
+        $this->app->singleton(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelSimpleTableParser::class, function ($app) {
+            try {
+                $aiSection = $app->make(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\AISectionDetector::class);
+                $aiMapper = $app->make(\App\BusinessModules\Features\BudgetEstimates\Services\Import\Mapping\AIColumnMapper::class);
+                return new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelSimpleTableParser($aiSection, $aiMapper);
+            } catch (\Exception $e) {
+                // AI не доступен - возвращаем парсер без AI
+                Log::warning('[BudgetEstimates] AI services not available for parser', ['error' => $e->getMessage()]);
+                return new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelSimpleTableParser();
+            }
+        });
     }
 
     /**
