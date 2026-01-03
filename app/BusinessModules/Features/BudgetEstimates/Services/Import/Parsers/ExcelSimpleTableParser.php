@@ -164,6 +164,13 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 $level = $row->level;
                 $currentSectionPath = array_slice($currentSectionPath, 0, $level);
                 $currentSectionPath[] = $row->sectionNumber;
+                
+                Log::info('[ExcelParser] Раздел обнаружен', [
+                    'row' => $row->rowNumber,
+                    'section_number' => $row->sectionNumber,
+                    'name' => substr($row->itemName, 0, 100),
+                    'level' => $level,
+                ]);
             } else {
                 $row->sectionPath = !empty($currentSectionPath) 
                     ? implode('.', $currentSectionPath) 
@@ -684,7 +691,15 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         foreach ($columnMapping as $field => $columnLetter) {
             if ($columnLetter !== null) {
                 $cell = $sheet->getCell($columnLetter . $rowNum);
-                $value = $cell->getValue();
+                
+                // 🔧 ИСПРАВЛЕНИЕ: Вычисляем формулы!
+                try {
+                    // Пытаемся получить вычисленное значение формулы
+                    $value = $cell->getCalculatedValue();
+                } catch (\Exception $e) {
+                    // Если не получилось (формула с ошибкой), берем обычное значение
+                    $value = $cell->getValue();
+                }
                 
                 if (in_array($field, $numericFields)) {
                     $data[$field] = $this->parseNumericValue($value);
@@ -956,9 +971,11 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $name = mb_strtolower($rowData['name']);
         $sectionPatterns = [
             '/^раздел\s+\d+/u',
+            '/^раздел\s+\d+\./u',  // ← "Раздел 1."
             '/^глава\s+\d+/u',
             '/^этап\s+\d+/u',
             '/^часть\s+\d+/u',
+            '/^\d+\.\s+[А-ЯЁ]/u',  // ← "1. ЗЕМЛЯНЫЕ РАБОТЫ"
         ];
         
         foreach ($sectionPatterns as $pattern) {
@@ -1104,11 +1121,17 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         
         $normalized = rtrim($sectionNumber, '.');
         
+        // Поддержка простых номеров (1, 2, 3) как разделов уровня 1
+        if (preg_match('/^\d+$/', $normalized)) {
+            return 1;
+        }
+        
+        // Поддержка иерархических номеров (1.1, 1.2.3)
         if (!preg_match('/^\d+(\.\d+)*$/', $normalized)) {
             return 0;
         }
         
-        return substr_count($normalized, '.');
+        return substr_count($normalized, '.') + 1;
     }
 
     private function calculateTotals(array $items): array
