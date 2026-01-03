@@ -13,6 +13,8 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\HeaderDetection
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\MergedCellResolver;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateItemTypeDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeCodeService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\AISectionDetector;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Mapping\AIColumnMapper;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Cell\Cell;
@@ -22,12 +24,25 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
 {
     private EstimateItemTypeDetector $typeDetector;
     private NormativeCodeService $codeService;
+    private ?AISectionDetector $aiSectionDetector;
+    private ?AIColumnMapper $aiColumnMapper;
     private array $headerCandidates = [];
+    private bool $useAI = true; // Флаг для включения/отключения AI
     
-    public function __construct()
-    {
+    public function __construct(
+        ?AISectionDetector $aiSectionDetector = null,
+        ?AIColumnMapper $aiColumnMapper = null
+    ) {
         $this->typeDetector = new EstimateItemTypeDetector();
         $this->codeService = new NormativeCodeService();
+        $this->aiSectionDetector = $aiSectionDetector;
+        $this->aiColumnMapper = $aiColumnMapper;
+        
+        // AI опционален - если не передан, работаем без него
+        if ($aiSectionDetector === null || $aiColumnMapper === null) {
+            $this->useAI = false;
+            Log::info('[ExcelParser] AI services not available, using rule-based detection only');
+        }
     }
 
     /**
@@ -235,42 +250,40 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $headerRow = $this->detectHeaderRow($sheet);
         
         if ($headerRow === null) {
-            throw new \Exception('Не удалось определить строку с заголовками таблицы');
+            return [
+                'header_row' => null,
+                'column_mapping' => [],
+                'detected_columns' => [],
+                'raw_headers' => [],
+                'ai_suggestions' => []
+            ];
         }
         
         $headers = $this->extractHeaders($sheet, $headerRow);
         $columnMapping = $this->detectColumns($headers);
         
-        // Возвращаем ВСЕ колонки, даже нераспознанные
-        $detectedColumns = [];
-        $reverseMapping = array_flip(array_filter($columnMapping)); // field => columnLetter
-        
-        foreach ($headers as $columnLetter => $headerText) {
-            // Ищем распознанное поле для этой колонки
-            $field = $reverseMapping[$columnLetter] ?? null;
+        // 🤖 AI ENHANCEMENT: Попытка улучшить маппинг с помощью AI
+        if ($this->useAI && $this->aiColumnMapper) {
+            $sampleRows = $this->getSampleRowsForAI($sheet, $headerRow);
+            $aiMapping = $this->aiColumnMapper->mapColumns($headers, $sampleRows);
             
-            if ($field) {
-                // Колонка распознана
-                $detectedColumns[$columnLetter] = [
-                    'field' => $field,
-                    'header' => $headerText,
-                    'confidence' => $this->calculateColumnConfidence($headerText, $field),
-                ];
-            } else {
-                // Колонка не распознана - возвращаем как есть
-                $detectedColumns[$columnLetter] = [
-                    'field' => null, // Не распознано
-                    'header' => $headerText,
-                    'confidence' => 0.0,
-                ];
+            if (!empty($aiMapping['fields']) && $aiMapping['overall_confidence'] >= 0.7) {
+                Log::info('[ExcelParser] AI column mapping applied', [
+                    'ai_confidence' => $aiMapping['overall_confidence'],
+                    'ai_fields' => array_keys($aiMapping['fields'])
+                ]);
+                
+                // Объединяем AI результаты с существующим маппингом
+                $columnMapping = $this->mergeAIMapping($columnMapping, $aiMapping);
             }
         }
         
         return [
             'header_row' => $headerRow,
             'column_mapping' => $columnMapping,
-            'detected_columns' => $detectedColumns,
+            'detected_columns' => $this->getDetectedColumnsInfo($columnMapping),
             'raw_headers' => $headers,
+            'ai_suggestions' => $aiMapping['suggestions'] ?? []
         ];
     }
 
@@ -1277,6 +1290,124 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         // Проверка позиции УДАЛЕНА - она не нужна, мы используем content-based detection
         
         return $issues;
+    }
+    
+    /**
+     * 🤖 Получить примеры строк для AI анализа
+     */
+    private function getSampleRowsForAI(Worksheet $sheet, int $headerRow, int $count = 5): array
+    {
+        $samples = [];
+        $startRow = $headerRow + 1;
+        $maxRow = min($headerRow + 20, $sheet->getHighestRow());
+        $highestCol = $sheet->getHighestColumn();
+        
+        for ($row = $startRow; $row <= $maxRow && count($samples) < $count; $row++) {
+            $rowData = [];
+            $hasData = false;
+            
+            foreach (range('A', $highestCol) as $col) {
+                $cell = $sheet->getCell($col . $row);
+                try {
+                    $value = $cell->getCalculatedValue();
+                } catch (\Exception $e) {
+                    $value = $cell->getValue();
+                }
+                
+                if ($value !== null && trim((string)$value) !== '') {
+                    $hasData = true;
+                }
+                $rowData[$col] = $value;
+            }
+            
+            if ($hasData) {
+                $samples[] = $rowData;
+            }
+        }
+        
+        return $samples;
+    }
+    
+    /**
+     * Формирует информацию о распознанных колонках
+     */
+    private function getDetectedColumnsInfo(array $columnMapping): array
+    {
+        $detectedColumns = [];
+        $reverseMapping = array_flip(array_filter($columnMapping));
+        
+        foreach ($columnMapping as $field => $columnLetter) {
+            if ($columnLetter !== null) {
+                $detectedColumns[$columnLetter] = [
+                    'field' => $field,
+                    'confidence' => 0.9 // TODO: Calculate actual confidence
+                ];
+            }
+        }
+        
+        return $detectedColumns;
+    }
+    
+    /**
+     * 🤖 Объединить AI маппинг с существующим
+     */
+    private function mergeAIMapping(array $existingMapping, array $aiMapping): array
+    {
+        $merged = $existingMapping;
+        
+        foreach ($aiMapping['fields'] as $field => $aiField) {
+            $column = $aiField['column'] ?? null;
+            $confidence = $aiField['confidence'] ?? 0;
+            
+            // Если AI уверен (>0.8) и поле еще не замаплено, используем AI результат
+            if ($column && $confidence > 0.8) {
+                if (empty($merged[$field]) || $confidence > 0.9) {
+                    $merged[$field] = $column;
+                    Log::debug('[ExcelParser] AI mapped field', [
+                        'field' => $field,
+                        'column' => $column,
+                        'confidence' => $confidence
+                    ]);
+                }
+            }
+        }
+        
+        return $merged;
+    }
+    
+    /**
+     * 🤖 Улучшенное определение секции с помощью AI
+     */
+    private function isSectionRowWithAI(array $rowData, array $context = []): bool
+    {
+        // Сначала применяем жесткие правила (быстро)
+        $ruleBasedResult = $this->isSectionRow($rowData);
+        
+        // Если AI недоступен или правила уверены, возвращаем результат правил
+        if (!$this->useAI || !$this->aiSectionDetector) {
+            return $ruleBasedResult;
+        }
+        
+        // Если правила не уверены (пограничный случай), спрашиваем AI
+        $hasData = ($rowData['quantity'] ?? 0) > 0 || ($rowData['unit_price'] ?? 0) > 0;
+        
+        if (!$hasData && !empty($rowData['name'])) {
+            // Пограничный случай - нет данных, но есть название
+            // Спрашиваем AI
+            $aiResult = $this->aiSectionDetector->detectSection($rowData, $context);
+            
+            if ($aiResult['confidence'] >= 0.75) {
+                Log::debug('[ExcelParser] AI section detection override', [
+                    'name' => substr($rowData['name'], 0, 50),
+                    'rule_result' => $ruleBasedResult,
+                    'ai_result' => $aiResult['is_section'],
+                    'ai_confidence' => $aiResult['confidence']
+                ]);
+                return $aiResult['is_section'];
+            }
+        }
+        
+        return $ruleBasedResult;
     }
 }
 
