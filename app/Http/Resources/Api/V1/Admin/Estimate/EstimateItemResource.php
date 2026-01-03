@@ -38,6 +38,7 @@ class EstimateItemResource extends JsonResource
             'overhead_amount' => (float) $this->overhead_amount,
             'profit_amount' => (float) $this->profit_amount,
             'total_amount' => (float) $this->total_amount,
+            'total_amount_with_vat' => $this->estimate ? round($this->total_amount * (1 + ($this->estimate->vat_rate ?? 0) / 100), 2) : (float) $this->total_amount,
             'current_total_amount' => $this->current_total_amount ? (float) $this->current_total_amount : null,
             
             // Трудозатраты
