@@ -26,6 +26,12 @@ class EstimateImportPreviewResource extends JsonResource
                         'unit_price' => $item['unit_price'],
                         'total' => ($item['quantity'] ?? 0) * ($item['unit_price'] ?? 0),
                         'code' => $item['code'] ?? null,
+                        // AI Classification fields
+                        'item_type' => $item['item_type'] ?? 'work',
+                        'confidence_score' => $item['confidence_score'] ?? null,
+                        'classification_source' => $item['classification_source'] ?? null,
+                        'has_math_mismatch' => $item['has_math_mismatch'] ?? false,
+                        'warnings' => $item['warnings'] ?? [],
                     ];
                 }
                 
@@ -39,6 +45,12 @@ class EstimateImportPreviewResource extends JsonResource
                     'unit_price' => $item->unitPrice,
                     'total' => ($item->quantity ?? 0) * ($item->unitPrice ?? 0),
                     'code' => $item->code ?? null,
+                    // AI Classification fields
+                    'item_type' => $item->itemType ?? 'work',
+                    'confidence_score' => $item->confidenceScore ?? null,
+                    'classification_source' => $item->classificationSource ?? null,
+                    'has_math_mismatch' => $item->hasMathMismatch ?? false,
+                    'warnings' => $item->warnings ?? [],
                 ];
             }, array_slice($this->items, 0, 10)),
             'totals' => [
