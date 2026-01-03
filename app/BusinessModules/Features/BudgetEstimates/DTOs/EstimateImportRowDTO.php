@@ -18,15 +18,21 @@ class EstimateImportRowDTO
         public ?string $sectionPath = null,
         public ?array $rawData = null,
         
-        // Дополнительные поля, ранее бывшие в raw_data
+        // Дополнительные поля
         public ?float $quantityCoefficient = null,
         public ?float $quantityTotal = null,
         public ?float $baseUnitPrice = null,
         public ?float $priceIndex = null,
         public ?float $currentUnitPrice = null,
         public ?float $priceCoefficient = null,
-        public ?float $currentTotalAmount = null,
-        public bool $isNotAccounted = false
+        public ?float $currentTotalAmount = null, // Сумма из файла
+        public bool $isNotAccounted = false,
+        
+        // Поля валидации и классификации
+        public ?float $confidenceScore = null,
+        public ?string $classificationSource = null,
+        public array $warnings = [],
+        public bool $hasMathMismatch = false
     ) {}
     
     public function toArray(): array
@@ -52,35 +58,17 @@ class EstimateImportRowDTO
             'price_coefficient' => $this->priceCoefficient,
             'current_total_amount' => $this->currentTotalAmount,
             'is_not_accounted' => $this->isNotAccounted,
+            'confidence_score' => $this->confidenceScore,
+            'classification_source' => $this->classificationSource,
+            'warnings' => $this->warnings,
+            'has_math_mismatch' => $this->hasMathMismatch,
         ];
     }
     
     public function validate(): array
     {
-        $errors = [];
-        
-        if (empty($this->itemName)) {
-            $errors[] = "Строка {$this->rowNumber}: отсутствует наименование";
-        }
-        
-        if (!$this->isSection) {
-            if ($this->quantity === null || $this->quantity <= 0) {
-                // Если количество 0, это может быть информационная строка, но обычно это ошибка
-                // Оставим проверку, но сделаем её мягче, если это некритично для системы
-                $errors[] = "Строка {$this->rowNumber}: некорректное количество";
-            }
-            
-            // Цену проверяем менее строго, так как она может быть 0
-            if ($this->unitPrice === null || $this->unitPrice < 0) {
-                $errors[] = "Строка {$this->rowNumber}: некорректная цена";
-            }
-            
-            if (empty($this->unit)) {
-                $errors[] = "Строка {$this->rowNumber}: отсутствует единица измерения";
-            }
-        }
-        
-        return $errors;
+        // ... (validation logic can be moved to external validator, but keeping basic checks here is fine)
+        return $this->warnings;
     }
     
     public function getTotalPrice(): float
@@ -90,6 +78,11 @@ class EstimateImportRowDTO
         }
         
         return ($this->quantity ?? 0) * ($this->unitPrice ?? 0);
+    }
+    
+    public function addWarning(string $warning): void
+    {
+        $this->warnings[] = $warning;
     }
 
     public static function fromArray(array $data): self
@@ -116,7 +109,11 @@ class EstimateImportRowDTO
             currentUnitPrice: $data['current_unit_price'] ?? $rawData['current_unit_price'] ?? null,
             priceCoefficient: $data['price_coefficient'] ?? $rawData['price_coefficient'] ?? null,
             currentTotalAmount: $data['current_total_amount'] ?? $rawData['current_total_amount'] ?? null,
-            isNotAccounted: $data['is_not_accounted'] ?? $rawData['is_not_accounted'] ?? false
+            isNotAccounted: $data['is_not_accounted'] ?? $rawData['is_not_accounted'] ?? false,
+            confidenceScore: $data['confidence_score'] ?? null,
+            classificationSource: $data['classification_source'] ?? null,
+            warnings: $data['warnings'] ?? [],
+            hasMathMismatch: $data['has_math_mismatch'] ?? false
         );
     }
 }

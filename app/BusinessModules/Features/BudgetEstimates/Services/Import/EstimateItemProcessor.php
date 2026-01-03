@@ -7,6 +7,11 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Strategies\Item
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Strategies\WorkStrategy;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Strategies\ResourceStrategy;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Strategies\SummaryStrategy;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\ItemClassificationService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Validation\MathValidatorService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Validation\UnitNormalizationService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Context\StackSectionContext;
+use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionService;
 use App\Models\Estimate;
 use Illuminate\Support\Facades\Log;
 
@@ -18,7 +23,12 @@ class EstimateItemProcessor
     public function __construct(
         WorkStrategy $workStrategy,
         ResourceStrategy $resourceStrategy,
-        SummaryStrategy $summaryStrategy
+        SummaryStrategy $summaryStrategy,
+        private ItemClassificationService $classificationService,
+        private MathValidatorService $mathValidator,
+        private UnitNormalizationService $unitNormalizer,
+        private EstimateSectionService $sectionService,
+        private StackSectionContext $sectionStack
     ) {
         // Порядок важен: более специфичные стратегии первыми
         $this->strategies = [
@@ -28,65 +38,58 @@ class EstimateItemProcessor
         ];
     }
 
+    /**
+     * Обрабатывает поток данных (массив или генератор)
+     */
     public function processItems(
         Estimate $estimate, 
-        array $rows, 
+        iterable $rows, 
         ImportContext $context,
         ImportProgressTracker $progressTracker
     ): array {
-        $totalItems = count($rows);
+        $totalItems = is_array($rows) ? count($rows) : 0; // Для генератора может быть неизвестно
         
-        Log::info('[EstimateItemProcessor] Starting processing', [
-            'total_items' => $totalItems,
+        Log::info('[EstimateItemProcessor] Starting processing stream', [
             'estimate_id' => $estimate->id
         ]);
+        
+        $this->sectionStack->reset();
+        
+        $batch = [];
+        $batchSize = 50;
+        $processedCount = 0;
 
         foreach ($rows as $index => $row) {
-            // Конвертируем в DTO если это массив
+            // Конвертируем в DTO
             if (is_array($row)) {
+                // Если это массив из старого парсера, там уже есть ключи. 
+                // Если из нового stream parser (список значений), нужно маппить.
+                // Предположим, что здесь приходят уже подготовленные ассоциативные массивы или DTO.
+                // EstimateImportService должен позаботиться о маппинге колонок перед передачей сюда.
                 $rowDTO = EstimateImportRowDTO::fromArray($row);
             } elseif ($row instanceof EstimateImportRowDTO) {
                 $rowDTO = $row;
             } else {
-                Log::warning('[EstimateItemProcessor] Invalid row format', ['row_index' => $index]);
-                $context->skippedCount++;
                 continue;
             }
 
-            try {
-                // Обновляем прогресс (50-85%)
-                $progressTracker->update($index, $totalItems, 50, 85);
+            $batch[] = $rowDTO;
+
+            if (count($batch) >= $batchSize) {
+                $this->processBatch($estimate, $batch, $context);
+                $processedCount += count($batch);
                 
-                // Обновляем контекст раздела
-                $this->updateContextSection($rowDTO, $context);
-                
-                // Делегируем стратегии
-                $processed = false;
-                foreach ($this->strategies as $strategy) {
-                    if ($strategy->canHandle($rowDTO)) {
-                        $strategy->process($rowDTO, $context);
-                        $context->incrementStat($rowDTO->itemType);
-                        $context->importedCount++;
-                        $processed = true;
-                        break;
-                    }
+                if ($totalItems > 0) {
+                    $progressTracker->update($processedCount, $totalItems, 50, 85);
                 }
                 
-                if (!$processed) {
-                    Log::warning('[EstimateItemProcessor] No strategy found for item', [
-                        'row' => $rowDTO->rowNumber,
-                        'type' => $rowDTO->itemType
-                    ]);
-                    $context->skippedCount++;
-                }
-                
-            } catch (\Exception $e) {
-                Log::error('[EstimateItemProcessor] Error processing item', [
-                    'row' => $rowDTO->rowNumber,
-                    'error' => $e->getMessage()
-                ]);
-                $context->skippedCount++;
+                $batch = [];
             }
+        }
+
+        if (!empty($batch)) {
+            $this->processBatch($estimate, $batch, $context);
+            $processedCount += count($batch);
         }
         
         Log::info('[EstimateItemProcessor] Completed', [
@@ -103,12 +106,116 @@ class EstimateItemProcessor
         ];
     }
 
-    private function updateContextSection(EstimateImportRowDTO $row, ImportContext $context): void
+    private function processBatch(Estimate $estimate, array $batch, ImportContext $context): void
     {
-        if (!empty($row->sectionPath) && isset($context->sectionsMap[$row->sectionPath])) {
-            $context->currentSectionId = $context->sectionsMap[$row->sectionPath];
-        } else {
-            $context->currentSectionId = null; 
+        // 1. Batch Classification
+        // Prepare items for classification
+        $itemsToClassify = [];
+        foreach ($batch as $index => $dto) {
+            // Классифицируем только если тип еще не определен жестко или требует уточнения
+            // Но наша стратегия "Smart" подразумевает перепроверку всех
+            $itemsToClassify[$index] = [
+                'code' => $dto->code,
+                'name' => $dto->itemName,
+                'unit' => $dto->unit,
+                'price' => $dto->unitPrice
+            ];
+        }
+
+        $classificationResults = $this->classificationService->classifyBatch($itemsToClassify);
+
+        // 2. Process each item
+        foreach ($batch as $index => $dto) {
+            /** @var EstimateImportRowDTO $dto */
+            
+            // Apply classification
+            if (isset($classificationResults[$index])) {
+                $result = $classificationResults[$index];
+                $dto->itemType = $result->type;
+                $dto->confidenceScore = $result->confidenceScore;
+                $dto->classificationSource = $result->source;
+            }
+
+            // Apply normalization
+            if ($dto->unit) {
+                $dto->unit = $this->unitNormalizer->normalize($dto->unit);
+            }
+
+            // Apply validation
+            $mathWarnings = $this->mathValidator->validateRow($dto->quantity, $dto->unitPrice, $dto->currentTotalAmount);
+            if (!empty($mathWarnings)) {
+                $dto->hasMathMismatch = true;
+                foreach ($mathWarnings as $warning) {
+                    $dto->addWarning($warning);
+                }
+            }
+
+            // Handle Sections (Stack Machine)
+            if ($dto->isSection) {
+                $this->handleSection($estimate, $dto, $context);
+                $context->importedCount++; // Считаем разделы как импортированные элементы
+                continue;
+            }
+
+            // Set current section from stack
+            $currentSectionId = $this->sectionStack->getCurrentSectionId();
+            
+            // Если раздела нет в стеке, но в DTO есть sectionPath (из старого парсера), используем его
+            if ($currentSectionId === null && $dto->sectionPath && isset($context->sectionsMap[$dto->sectionPath])) {
+                $currentSectionId = $context->sectionsMap[$dto->sectionPath];
+            }
+            
+            $context->currentSectionId = $currentSectionId;
+
+            // Process Item Strategies
+            $processed = false;
+            foreach ($this->strategies as $strategy) {
+                if ($strategy->canHandle($dto)) {
+                    try {
+                        $strategy->process($dto, $context);
+                        $context->incrementStat($dto->itemType);
+                        $context->importedCount++;
+                        $processed = true;
+                    } catch (\Exception $e) {
+                         Log::error('[EstimateItemProcessor] Strategy error', [
+                            'strategy' => get_class($strategy),
+                            'error' => $e->getMessage()
+                        ]);
+                    }
+                    break;
+                }
+            }
+
+            if (!$processed) {
+                $context->skippedCount++;
+            }
+        }
+    }
+
+    private function handleSection(Estimate $estimate, EstimateImportRowDTO $dto, ImportContext $context): void
+    {
+        // Создаем раздел
+        $parentSectionId = $this->sectionStack->getParentSectionId($dto->level);
+        
+        try {
+            $section = $this->sectionService->createSection([
+                'estimate_id' => $estimate->id,
+                'section_number' => $dto->sectionNumber,
+                'name' => $dto->itemName,
+                'parent_section_id' => $parentSectionId,
+            ]);
+            
+            // Push to stack
+            $this->sectionStack->pushSection($section->id, $dto->level);
+            
+            Log::debug('[EstimateItemProcessor] Section created', [
+                'id' => $section->id,
+                'number' => $dto->sectionNumber,
+                'level' => $dto->level
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('[EstimateItemProcessor] Failed to create section', ['error' => $e->getMessage()]);
         }
     }
 }

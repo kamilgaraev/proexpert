@@ -15,7 +15,8 @@ class EstimateImportDTO
         public ?array $detectedColumns = null,
         public ?array $rawHeaders = null,
         public ?string $estimateType = null,        // Тип сметы: 'grandsmeta', 'rik', 'fer', 'smartsmeta', 'custom'
-        public ?float $typeConfidence = null        // Уверенность в определении типа (0-100)
+        public ?float $typeConfidence = null,       // Уверенность в определении типа (0-100)
+        public array $validationSummary = []        // Сводка по ошибкам и предупреждениям
     ) {}
     
     public function toArray(): array
@@ -40,6 +41,7 @@ class EstimateImportDTO
             'raw_headers' => $this->rawHeaders,
             'estimate_type' => $this->estimateType,
             'type_confidence' => $this->typeConfidence,
+            'validation_summary' => $this->validationSummary,
         ];
     }
     
@@ -61,8 +63,11 @@ class EstimateImportDTO
     public function getUnmatchedItems(): array
     {
         return array_filter($this->items, function($item) {
-            return empty($item['matched_work_type_id']);
+            // Check array or object
+            if (is_array($item)) {
+                return empty($item['matched_work_type_id'] ?? null);
+            }
+            return false; // DTO doesn't have matched_work_type_id yet
         });
     }
 }
-
