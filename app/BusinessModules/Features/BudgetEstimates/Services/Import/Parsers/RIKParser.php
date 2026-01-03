@@ -126,12 +126,15 @@ class RIKParser implements EstimateImportParserInterface
             
             // Базовая логика парсинга (расширить по мере необходимости)
             $items[] = new EstimateImportRowDTO(
-                name: $line,
-                quantity: 0,
+                rowNumber: 0,
+                sectionNumber: null,
+                itemName: !empty($line) ? $line : '[Без наименования]',
                 unit: '',
+                quantity: 0,
                 unitPrice: 0,
-                totalPrice: 0,
-                type: 'work',
+                code: null,
+                isSection: false,
+                itemType: 'work',
                 rawData: ['line' => $line]
             );
         }

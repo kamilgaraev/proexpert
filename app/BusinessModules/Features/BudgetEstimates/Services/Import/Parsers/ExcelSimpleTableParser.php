@@ -645,10 +645,19 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 $rowData['section_number']
             );
             
+            // 🔧 ИСПРАВЛЕНИЕ: itemName не может быть null, используем пустую строку или section_number как fallback
+            $itemName = $rowData['name'] ?? '';
+            if (empty(trim($itemName)) && !empty($rowData['section_number'])) {
+                $itemName = 'Раздел ' . $rowData['section_number'];
+            }
+            if (empty(trim($itemName))) {
+                $itemName = '[Без наименования]';
+            }
+            
             $rows[] = new EstimateImportRowDTO(
                 rowNumber: $rowNum,
                 sectionNumber: $rowData['section_number'],
-                itemName: $rowData['name'],
+                itemName: $itemName,
                 unit: $rowData['unit'],
                 quantity: $rowData['quantity'],
                 unitPrice: $rowData['unit_price'],

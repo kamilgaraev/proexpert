@@ -260,7 +260,7 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
         $sectionDTO = new EstimateImportRowDTO(
             rowNumber: 0, // Will be set during processing
             sectionNumber: $number,
-            itemName: $name,
+            itemName: !empty($name) ? $name : 'Раздел ' . $number,
             unit: null,
             quantity: null,
             unitPrice: null,
@@ -308,7 +308,7 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
         $itemDTO = new EstimateImportRowDTO(
             rowNumber: 0, // Will be set during processing
             sectionNumber: null,
-            itemName: $name,
+            itemName: !empty($name) ? $name : '[Без наименования]',
             unit: $unit ?: null,
             quantity: $quantity > 0 ? $quantity : null,
             unitPrice: $unitPrice > 0 ? $unitPrice : null,
