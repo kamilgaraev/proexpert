@@ -18,6 +18,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\Import\Adapters\Estima
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportContext;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\ImportProgressTracker;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateItemProcessor;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Classification\ItemClassificationService;
 use App\BusinessModules\Features\BudgetEstimates\DTOs\EstimateTypeDetectionDTO;
 use App\Models\Estimate;
 use App\Models\EstimateImportHistory;
@@ -41,7 +42,8 @@ class EstimateImportService
         private NormativeCodeService $codeService,
         private EstimateItemProcessor $itemProcessor,
         private ParserFactory $parserFactory,
-        private SmartMappingService $smartMappingService
+        private SmartMappingService $smartMappingService,
+        private ItemClassificationService $classificationService
     ) {}
 
     public function uploadFile(UploadedFile $file, int $userId, int $organizationId): string
@@ -177,7 +179,7 @@ class EstimateImportService
 
     public function preview(string $fileId, ?array $columnMapping = null): EstimateImportDTO
     {
-        Log::info('[EstimateImport] Starting preview', [
+        Log::info('[EstimateImport] Starting preview with AI classification', [
             'file_id' => $fileId,
             'has_column_mapping' => $columnMapping !== null,
         ]);
@@ -193,6 +195,38 @@ class EstimateImportService
         }
         
         $importDTO = $parser->parse($fileData['file_path']);
+        
+        // 🤖 ДОБАВЛЯЕМ AI КЛАССИФИКАЦИЮ ДЛЯ PREVIEW
+        Log::info('[EstimateImport] Applying AI classification to preview items', [
+            'items_count' => count($importDTO->items),
+        ]);
+        
+        $itemsToClassify = [];
+        foreach ($importDTO->items as $index => $item) {
+            $itemsToClassify[$index] = [
+                'code' => $item['code'] ?? null,
+                'name' => $item['item_name'] ?? '',
+                'unit' => $item['unit'] ?? null,
+                'price' => $item['unit_price'] ?? null,
+            ];
+        }
+        
+        $classificationResults = $this->classificationService->classifyBatch($itemsToClassify);
+        
+        // Применяем результаты классификации к items
+        foreach ($importDTO->items as $index => &$item) {
+            if (isset($classificationResults[$index])) {
+                $result = $classificationResults[$index];
+                $item['item_type'] = $result->type;
+                $item['confidence_score'] = $result->confidenceScore;
+                $item['classification_source'] = $result->source;
+            }
+        }
+        unset($item); // Разрываем ссылку
+        
+        Log::info('[EstimateImport] AI classification completed', [
+            'classified_items' => count($classificationResults),
+        ]);
         
         $previewArray = $importDTO->toArray();
         Cache::put("estimate_import_preview:{$fileId}", $previewArray, now()->addHours(24));
