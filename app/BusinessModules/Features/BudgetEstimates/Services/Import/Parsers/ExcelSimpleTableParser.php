@@ -148,6 +148,10 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $spreadsheet = IOFactory::load($filePath);
         $sheet = $spreadsheet->getActiveSheet();
         
+        // ✅ Включаем вычисление формул
+        $spreadsheet->getActiveSheet()->setShowGridlines(false);
+        \PhpOffice\PhpSpreadsheet\Calculation\Calculation::getInstance($spreadsheet)->disableBranchPruning();
+        
         $structure = $this->detectStructure($filePath);
         $headerRow = $structure['header_row'];
         $columnMapping = $structure['column_mapping'];
@@ -224,6 +228,9 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     {
         $spreadsheet = IOFactory::load($filePath);
         $sheet = $spreadsheet->getActiveSheet();
+        
+        // ✅ Включаем вычисление формул
+        \PhpOffice\PhpSpreadsheet\Calculation\Calculation::getInstance($spreadsheet)->disableBranchPruning();
         
         $headerRow = $this->detectHeaderRow($sheet);
         
@@ -370,7 +377,14 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             $serviceCells = 0;
             
             foreach (range('A', $highestCol) as $col) {
-                $value = $sheet->getCell($col . $currentRow)->getValue();
+                $cell = $sheet->getCell($col . $currentRow);
+                
+                // ✅ Вычисляем формулы
+                try {
+                    $value = $cell->getCalculatedValue();
+                } catch (\Exception $e) {
+                    $value = $cell->getValue();
+                }
                 
                 if ($value === null || trim((string)$value) === '') {
                     continue;
@@ -1174,6 +1188,9 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     {
         $spreadsheet = IOFactory::load($filePath);
         $sheet = $spreadsheet->getActiveSheet();
+        
+        // ✅ Включаем вычисление формул
+        \PhpOffice\PhpSpreadsheet\Calculation\Calculation::getInstance($spreadsheet)->disableBranchPruning();
         
         Log::info('[ExcelParser] Detecting structure from specified row', [
             'header_row' => $headerRow,

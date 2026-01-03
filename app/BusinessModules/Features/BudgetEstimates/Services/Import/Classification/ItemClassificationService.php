@@ -98,19 +98,39 @@ class ItemClassificationService
 
         // 2. Run AI Strategy for uncertain items
         if (!empty($needsAiClassification) && $this->aiStrategy) {
+            Log::info('[ItemClassificationService] Running AI classification', [
+                'items_count' => count($needsAiClassification),
+                'items_needing_ai' => count($needsAiClassification)
+            ]);
+            
             try {
                 // We batch process the subset that needs AI
                 $aiResults = $this->aiStrategy->classifyBatch($needsAiClassification);
                 
+                $aiSuccessCount = 0;
                 foreach ($aiResults as $index => $aiResult) {
                     // Update if AI result is available and (better or we didn't have one)
                     // Usually AI result is considered better for hard cases if it returns something
                     $finalResults[$index] = $aiResult;
+                    $aiSuccessCount++;
                 }
+                
+                Log::info('[ItemClassificationService] AI classification applied', [
+                    'ai_results_received' => count($aiResults),
+                    'ai_results_applied' => $aiSuccessCount
+                ]);
+                
             } catch (\Exception $e) {
-                Log::error("[ItemClassificationService] AI Strategy failed", ['error' => $e->getMessage()]);
+                Log::error("[ItemClassificationService] AI Strategy failed", [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
                 // We implicitly fall back to local results or default
             }
+        } elseif (!empty($needsAiClassification) && !$this->aiStrategy) {
+            Log::warning('[ItemClassificationService] AI strategy not available but needed', [
+                'items_needing_ai' => count($needsAiClassification)
+            ]);
         }
 
         // 3. Fill missing with default

@@ -464,6 +464,9 @@ class EstimateImportService
             $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
             $sheet = $spreadsheet->getActiveSheet();
             
+            // ✅ Включаем вычисление формул
+            \PhpOffice\PhpSpreadsheet\Calculation\Calculation::getInstance($spreadsheet)->disableBranchPruning();
+            
             $headerRow = $structure['header_row'] ?? null;
             if ($headerRow === null) {
                 return [];
@@ -479,7 +482,15 @@ class EstimateImportService
                 $hasData = false;
                 
                 foreach (range('A', $sheet->getHighestColumn()) as $col) {
-                    $value = $sheet->getCell($col . $currentRow)->getValue();
+                    $cell = $sheet->getCell($col . $currentRow);
+                    
+                    // ✅ Вычисляем формулы
+                    try {
+                        $value = $cell->getCalculatedValue();
+                    } catch (\Exception $e) {
+                        $value = $cell->getValue();
+                    }
+                    
                     if ($value !== null && trim((string)$value) !== '') {
                         $hasData = true;
                     }
