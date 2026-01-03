@@ -99,6 +99,16 @@ class AIStrategy implements ClassificationStrategyInterface
             
             foreach ($classifications as $id => $type) {
                 if (isset($items[$id])) {
+                    // 🔧 ИСПРАВЛЕНИЕ: Обрабатываем null значения от AI
+                    if ($type === null || $type === '') {
+                        Log::warning('[AIStrategy] AI returned null/empty type for item', [
+                            'id' => $id,
+                            'item_name' => $items[$id]['name'] ?? 'unknown'
+                        ]);
+                        // Пропускаем этот элемент, будет использован fallback
+                        continue;
+                    }
+                    
                     // Normalize type
                     $normalizedType = $this->normalizeType($type);
                     $results[$id] = new ClassificationResult($normalizedType, 0.85, 'ai_yandex');
@@ -155,8 +165,12 @@ class AIStrategy implements ClassificationStrategyInterface
         return $cleaned;
     }
 
-    private function normalizeType(string $type): string
+    private function normalizeType(?string $type): string
     {
+        if ($type === null || $type === '') {
+            return 'work';
+        }
+        
         $type = strtolower(trim($type));
         return match ($type) {
             'material', 'materials' => 'material',
