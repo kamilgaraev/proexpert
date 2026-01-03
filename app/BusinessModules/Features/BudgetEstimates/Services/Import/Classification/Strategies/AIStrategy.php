@@ -41,12 +41,18 @@ class AIStrategy implements ClassificationStrategyInterface
                 );
             }, $items, array_keys($items));
 
-            $prompt = "You are a construction expert. Classify the following estimate items into types: 'work' (Work/Labor), 'material' (Material), 'equipment' (Machine/Equipment), 'labor' (Pure Labor). \n" .
-                      "Return a JSON object where keys are IDs and values are types. Example: {\"0\": \"work\", \"1\": \"material\"}. \n\n" .
-                      "Items:\n" . implode("\n", $itemsData);
+            $prompt = "Classify the following construction estimate items into types.\n\n" .
+                      "Types:\n" .
+                      "- 'work': Labor/Work (монтаж, установка, укладка, устройство)\n" .
+                      "- 'material': Materials (бетон, кирпич, арматура, краска)\n" .
+                      "- 'equipment': Machinery/Equipment (экскаватор, кран, бетономешалка)\n" .
+                      "- 'labor': Pure labor costs (трудозатраты)\n\n" .
+                      "Items to classify:\n" . implode("\n", $itemsData) . "\n\n" .
+                      "IMPORTANT: Return ONLY a valid JSON object, no markdown, no explanations.\n" .
+                      "Format: {\"0\": \"work\", \"1\": \"material\", \"2\": \"equipment\"}";
 
             $messages = [
-                ['role' => 'system', 'content' => 'You are a precise classifier for construction estimates.'],
+                ['role' => 'system', 'content' => 'You are a precise JSON-only classifier. Return only valid JSON objects without markdown formatting.'],
                 ['role' => 'user', 'content' => $prompt]
             ];
 
@@ -58,22 +64,63 @@ class AIStrategy implements ClassificationStrategyInterface
 
             $content = $response['content'] ?? '';
             
+            if (empty($content)) {
+                Log::warning('[AIStrategy] Empty response from LLM');
+                return [];
+            }
+            
             // Extract JSON from response
             $json = $this->extractJson($content);
+            
+            if (empty($json)) {
+                Log::warning('[AIStrategy] No JSON found in response', ['content' => substr($content, 0, 200)]);
+                return [];
+            }
+            
             $classifications = json_decode($json, true);
 
             if (json_last_error() !== JSON_ERROR_NONE) {
-                Log::warning('[AIStrategy] Failed to parse JSON response', ['error' => json_last_error_msg(), 'content' => $content]);
+                Log::warning('[AIStrategy] Failed to parse JSON response', [
+                    'error' => json_last_error_msg(),
+                    'json' => substr($json, 0, 500),
+                    'original_content' => substr($content, 0, 200)
+                ]);
+                return [];
+            }
+            
+            if (!is_array($classifications)) {
+                Log::warning('[AIStrategy] JSON is not an array', ['type' => gettype($classifications)]);
                 return [];
             }
 
             $results = [];
+            $successCount = 0;
+            $unknownCount = 0;
+            
             foreach ($classifications as $id => $type) {
                 if (isset($items[$id])) {
                     // Normalize type
                     $normalizedType = $this->normalizeType($type);
                     $results[$id] = new ClassificationResult($normalizedType, 0.85, 'ai_yandex');
+                    $successCount++;
+                } else {
+                    $unknownCount++;
                 }
+            }
+            
+            Log::info('[AIStrategy] Classification completed', [
+                'total_items' => count($items),
+                'classified' => $successCount,
+                'unknown_ids' => $unknownCount,
+                'coverage' => count($items) > 0 ? round(($successCount / count($items)) * 100, 1) . '%' : '0%'
+            ]);
+            
+            // If we didn't get results for all items, log it but don't fail
+            if ($successCount < count($items)) {
+                Log::debug('[AIStrategy] Partial classification', [
+                    'missing_count' => count($items) - $successCount,
+                    'missing_ids' => array_diff(array_keys($items), array_keys($results))
+                ]);
             }
 
             return $results;
@@ -85,12 +132,27 @@ class AIStrategy implements ClassificationStrategyInterface
         }
     }
 
+    /**
+     * Extract and clean JSON from LLM response
+     * Handles markdown code blocks and other formatting
+     * 
+     * @param string $text Raw LLM response
+     * @return string Clean JSON string
+     */
     private function extractJson(string $text): string
     {
-        if (preg_match('/\{.*\}/s', $text, $matches)) {
+        // Step 1: Remove markdown code blocks (```json ... ```)
+        $cleaned = preg_replace('/^```(?:json)?\s*/im', '', $text);
+        $cleaned = preg_replace('/```\s*$/m', '', $cleaned);
+        $cleaned = trim($cleaned);
+        
+        // Step 2: Try to extract JSON object if there's surrounding text
+        if (preg_match('/\{(?:[^{}]|(?R))*\}/s', $cleaned, $matches)) {
             return $matches[0];
         }
-        return $text;
+        
+        // Step 3: Return cleaned text as-is if no JSON pattern found
+        return $cleaned;
     }
 
     private function normalizeType(string $type): string
