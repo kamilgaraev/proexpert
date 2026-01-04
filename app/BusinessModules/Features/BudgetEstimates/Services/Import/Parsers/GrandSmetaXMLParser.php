@@ -9,6 +9,9 @@ use Illuminate\Support\Facades\Log;
 
 class GrandSmetaXMLParser implements EstimateImportParserInterface
 {
+    // Common XML namespaces for GrandSmeta/GGE
+    private const NS_GGE = 'http://www.gge.ru/2001/Schema';
+    
     public function parse(string $filePath): EstimateImportDTO
     {
         $xml = $this->loadXML($filePath);
@@ -16,12 +19,18 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
         $sections = [];
         $items = [];
         
-        // Парсим разделы и позиции
-        $this->parseEstimateNode($xml, $sections, $items);
+        // Поиск корневого узла для сметы (может быть разный в разных версиях)
+        $estimateNode = $this->findEstimateNode($xml);
         
-        // Получаем метаданные из заголовка
+        // Парсим структуру
+        $this->parseNodeRecursively($estimateNode, $sections, $items);
+        
+        // Получаем метаданные
         $metadata = $this->parseMetadata($xml);
-        $metadata['estimate_type'] = 'grandsmeta'; // Автоматически устанавливаем тип
+        $metadata['estimate_type'] = 'grandsmeta';
+        
+        // Вычисляем итоговые суммы
+        $totals = $this->calculateTotals($items);
         
         return new EstimateImportDTO(
             fileName: basename($filePath),
@@ -29,36 +38,30 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
             fileFormat: 'grandsmeta_xml',
             sections: $sections,
             items: $items,
-            totals: [
-                'total_amount' => 0,
-                'total_quantity' => 0,
-                'items_count' => count($items),
-            ],
+            totals: $totals,
             metadata: $metadata,
-            estimateType: 'grandsmeta', // Устанавливаем тип сметы
-            typeConfidence: 100.0 // Для XML ГрандСметы confidence = 100%
+            estimateType: 'grandsmeta',
+            typeConfidence: 100.0
         );
     }
 
     public function detectStructure(string $filePath): array
     {
         $xml = $this->loadXML($filePath);
-        
-        // Извлекаем информацию о колонках из структуры XML
         $columns = $this->detectColumns($xml);
         
         return [
             'format' => 'grandsmeta_xml',
             'detected_columns' => $columns,
             'raw_headers' => [],
-            'header_row' => null, // XML не имеет концепции строки заголовков
+            'header_row' => null,
             'column_mapping' => [
-                'section_number' => 'number',
-                'name' => 'name',
-                'unit' => 'unit',
-                'quantity' => 'quantity',
-                'unit_price' => 'unitPrice',
-                'code' => 'code',
+                'section_number' => 'Number',
+                'name' => 'Name',
+                'unit' => 'Measure',
+                'quantity' => 'Quant',
+                'unit_price' => 'Price',
+                'code' => 'Justification',
             ],
         ];
     }
@@ -70,7 +73,7 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
         }
         
         $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
-        if ($extension !== 'xml') {
+        if (!in_array($extension, ['xml', 'gsfx'])) {
             return false;
         }
         
@@ -80,37 +83,25 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
                 return false;
             }
             
-            // Проверяем что это файл ГРАНД-Смета
+            // Проверка корневых тегов, характерных для смет
             $rootName = $xml->getName();
-            return in_array($rootName, ['GrandSmeta', 'estimate', 'Estimate', 'LocalEstimate']);
+            return in_array($rootName, ['GrandSmeta', 'Estimate', 'LocalEstimate', 'ObjectEstimate', 'GGE']);
             
         } catch (\Exception $e) {
-            Log::error('[GrandSmetaXML] Validation failed', [
-                'file' => $filePath,
-                'error' => $e->getMessage(),
-            ]);
             return false;
         }
     }
 
     public function getSupportedExtensions(): array
     {
-        return ['xml'];
+        return ['xml', 'gsfx'];
     }
 
     public function getHeaderCandidates(): array
     {
-        // XML не имеет концепции заголовков - структура фиксирована
         return [];
     }
 
-    /**
-     * Читать содержимое файла для детекции типа (без полного парсинга)
-     * 
-     * @param string $filePath Путь к файлу
-     * @param int $maxRows Максимальное количество строк для чтения (игнорируется для XML)
-     * @return mixed SimpleXMLElement для XML
-     */
     public function readContent(string $filePath, int $maxRows = 100)
     {
         return $this->loadXML($filePath);
@@ -118,207 +109,231 @@ class GrandSmetaXMLParser implements EstimateImportParserInterface
 
     public function detectStructureFromRow(string $filePath, int $headerRow): array
     {
-        // Для XML этот метод не применим
         return $this->detectStructure($filePath);
     }
 
-    /**
-     * Загружает XML файл
-     */
     private function loadXML(string $filePath): \SimpleXMLElement
     {
         libxml_use_internal_errors(true);
-        
         $xml = simplexml_load_file($filePath, 'SimpleXMLElement', LIBXML_NOCDATA);
         
         if ($xml === false) {
             $errors = libxml_get_errors();
             libxml_clear_errors();
-            
-            $errorMessages = array_map(fn($e) => $e->message, $errors);
-            throw new \Exception('Failed to parse XML: ' . implode(', ', $errorMessages));
+            $messages = array_map(fn($e) => $e->message, $errors);
+            throw new \Exception('Failed to parse XML: ' . implode(', ', $messages));
         }
         
         return $xml;
     }
 
-    /**
-     * Парсит метаданные из заголовка файла
-     */
+    private function findEstimateNode(\SimpleXMLElement $xml): \SimpleXMLElement
+    {
+        // Иногда смета вложенная
+        if (isset($xml->Estimate)) return $xml->Estimate;
+        if (isset($xml->LocalEstimate)) return $xml->LocalEstimate;
+        
+        return $xml;
+    }
+
     private function parseMetadata(\SimpleXMLElement $xml): array
     {
-        $metadata = [
+        $header = $xml->Header ?? $xml->Properties ?? null;
+        
+        return [
             'format' => 'grandsmeta_xml',
-            'program_version' => null,
-            'estimate_name' => null,
-            'estimate_code' => null,
-            'base_date' => null,
-            'current_date' => null,
+            'program_version' => (string)($xml['Generator'] ?? $xml['Version'] ?? ''),
+            'estimate_name' => (string)($header->Name ?? $header->Caption ?? ''),
+            'estimate_code' => (string)($header->Code ?? $header->Number ?? ''),
+            'base_date' => (string)($header->BaseDate ?? ''),
+            'current_date' => (string)($header->CurrentDate ?? date('Y-m-d')),
+            'region' => (string)($header->Region ?? ''),
         ];
-        
-        // Извлекаем метаданные из атрибутов и элементов
-        if (isset($xml['version'])) {
-            $metadata['program_version'] = (string) $xml['version'];
-        }
-        
-        if (isset($xml->header)) {
-            $header = $xml->header;
-            
-            $metadata['estimate_name'] = isset($header->name) ? (string) $header->name : null;
-            $metadata['estimate_code'] = isset($header->code) ? (string) $header->code : null;
-            $metadata['base_date'] = isset($header->baseDate) ? (string) $header->baseDate : null;
-            $metadata['current_date'] = isset($header->currentDate) ? (string) $header->currentDate : null;
-        }
-        
-        return $metadata;
     }
 
-    /**
-     * Определяет колонки из структуры XML
-     */
     private function detectColumns(\SimpleXMLElement $xml): array
     {
-        // Стандартные колонки для ГРАНД-Смета
+        // XML структура фиксирована, возвращаем стандартный набор
         return [
-            'number' => [
-                'field' => 'section_number',
-                'header' => '№ п/п',
-                'confidence' => 1.0,
-            ],
-            'code' => [
-                'field' => 'code',
-                'header' => 'Обоснование',
-                'confidence' => 1.0,
-            ],
-            'name' => [
-                'field' => 'name',
-                'header' => 'Наименование',
-                'confidence' => 1.0,
-            ],
-            'unit' => [
-                'field' => 'unit',
-                'header' => 'Ед. изм.',
-                'confidence' => 1.0,
-            ],
-            'quantity' => [
-                'field' => 'quantity',
-                'header' => 'Количество',
-                'confidence' => 1.0,
-            ],
-            'unitPrice' => [
-                'field' => 'unit_price',
-                'header' => 'Цена за ед.',
-                'confidence' => 1.0,
-            ],
+            'number' => ['field' => 'section_number', 'header' => '№ п/п', 'confidence' => 1.0],
+            'code' => ['field' => 'code', 'header' => 'Обоснование', 'confidence' => 1.0],
+            'name' => ['field' => 'name', 'header' => 'Наименование', 'confidence' => 1.0],
+            'unit' => ['field' => 'unit', 'header' => 'Ед. изм.', 'confidence' => 1.0],
+            'quantity' => ['field' => 'quantity', 'header' => 'Количество', 'confidence' => 1.0],
+            'unit_price' => ['field' => 'unit_price', 'header' => 'Цена за ед.', 'confidence' => 1.0],
         ];
     }
 
-    /**
-     * Рекурсивно парсит узлы estimate
-     */
-    private function parseEstimateNode(\SimpleXMLElement $node, array &$sections, array &$items, string $parentPath = '', int $level = 0): void
+    private function parseNodeRecursively(\SimpleXMLElement $node, array &$sections, array &$items, string $parentPath = '', int $level = 0): void
     {
-        // Ищем элементы section или item
-        if (isset($node->sections)) {
-            foreach ($node->sections->section as $section) {
-                $this->parseSection($section, $sections, $items, $parentPath, $level);
-            }
+        // Обработка Разделов (Section, Razdel, Chapter)
+        $sectionNodes = [];
+        if (isset($node->Sections->Section)) $sectionNodes = $node->Sections->Section;
+        elseif (isset($node->Razdel)) $sectionNodes = $node->Razdel;
+        elseif (isset($node->Chapter)) $sectionNodes = $node->Chapter;
+        
+        foreach ($sectionNodes as $section) {
+            $this->processSection($section, $sections, $items, $parentPath, $level);
+        }
+
+        // Обработка Позиций (Positions, Items, Item)
+        $itemNodes = [];
+        if (isset($node->Positions->Position)) $itemNodes = $node->Positions->Position;
+        elseif (isset($node->Items->Item)) $itemNodes = $node->Items->Item;
+        elseif (isset($node->Poz)) $itemNodes = $node->Poz; // GGE style sometimes
+        
+        foreach ($itemNodes as $item) {
+            $this->processItem($item, $items, $parentPath, $level);
         }
         
-        if (isset($node->items)) {
-            foreach ($node->items->item as $item) {
-                $this->parseItem($item, $items, $parentPath);
-            }
-        }
-        
-        // Альтернативный формат - прямые дочерние элементы
-        foreach ($node->children() as $child) {
-            $childName = $child->getName();
-            
-            if ($childName === 'section') {
-                $this->parseSection($child, $sections, $items, $parentPath, $level);
-            } elseif ($childName === 'item') {
-                $this->parseItem($child, $items, $parentPath);
-            }
+        // Если это плоский список и нет явных коллекций, перебираем детей
+        if (empty($sectionNodes) && empty($itemNodes)) {
+             foreach ($node->children() as $child) {
+                 $name = strtolower($child->getName());
+                 if (in_array($name, ['section', 'razdel', 'chapter'])) {
+                     $this->processSection($child, $sections, $items, $parentPath, $level);
+                 } elseif (in_array($name, ['position', 'item', 'poz'])) {
+                     $this->processItem($child, $items, $parentPath, $level);
+                 }
+             }
         }
     }
 
-    /**
-     * Парсит раздел
-     */
-    private function parseSection(\SimpleXMLElement $section, array &$sections, array &$items, string $parentPath, int $level): void
+    private function processSection(\SimpleXMLElement $section, array &$sections, array &$items, string $parentPath, int $level): void
     {
-        $number = isset($section['number']) ? (string) $section['number'] : '';
-        $name = isset($section['name']) ? (string) $section['name'] : '';
+        // Извлечение атрибутов раздела
+        $num = (string)($section['Number'] ?? $section['Num'] ?? $section->Number ?? '');
+        $name = (string)($section['Name'] ?? $section['Caption'] ?? $section->Name ?? $section->Caption ?? '');
         
-        if (isset($section->name)) {
-            $name = (string) $section->name;
-        }
+        $currentPath = $parentPath ? "$parentPath.$num" : $num;
         
-        $sectionPath = $parentPath ? "$parentPath.$number" : $number;
-        
-        $sectionDTO = new EstimateImportRowDTO(
-            rowNumber: 0, // Will be set during processing
-            sectionNumber: $number,
-            itemName: !empty($name) ? $name : 'Раздел ' . $number,
-            unit: null,
-            quantity: null,
-            unitPrice: null,
-            code: isset($section['code']) ? (string) $section['code'] : null,
+        $sections[] = (new EstimateImportRowDTO(
+            rowNumber: 0, 
+            sectionNumber: $num,
+            itemName: $name ?: "Раздел $num",
+            unit: null, 
+            quantity: null, 
+            unitPrice: null, 
+            code: null,
             isSection: true,
-            level: $level,
-            sectionPath: $sectionPath,
-        );
-        
-        $sections[] = $sectionDTO->toArray();
-        
-        // Рекурсивно обрабатываем вложенные разделы и позиции
-        $this->parseEstimateNode($section, $sections, $items, $sectionPath, $level + 1);
+            level: $level + 1,
+            sectionPath: $currentPath,
+            isNotAccounted: false
+        ))->toArray();
+
+        // Рекурсия
+        $this->parseNodeRecursively($section, $sections, $items, $currentPath, $level + 1);
     }
 
-    /**
-     * Парсит позицию сметы
-     */
-    private function parseItem(\SimpleXMLElement $item, array &$items, string $sectionPath): void
+    private function processItem(\SimpleXMLElement $item, array &$items, string $parentPath, int $level): void
     {
-        $number = isset($item['number']) ? (string) $item['number'] : '';
-        $name = isset($item['name']) ? (string) $item['name'] : '';
-        $code = isset($item['code']) ? (string) $item['code'] : '';
-        $unit = isset($item['unit']) ? (string) $item['unit'] : '';
-        $quantity = isset($item['quantity']) ? (float) $item['quantity'] : 0;
-        $unitPrice = isset($item['unitPrice']) ? (float) $item['unitPrice'] : 0;
+        // Извлечение основных полей
+        $num = (string)($item['Number'] ?? $item['Num'] ?? $item->Number ?? '');
+        $code = (string)($item['Justification'] ?? $item['Code'] ?? $item->Code ?? $item->Justification ?? '');
+        $name = (string)($item['Name'] ?? $item['Caption'] ?? $item->Name ?? $item->Caption ?? '');
+        $unit = (string)($item['Measure'] ?? $item['Unit'] ?? $item->Measure ?? $item->Unit ?? '');
         
-        // Альтернативные имена элементов
-        if (isset($item->name)) {
-            $name = (string) $item->name;
+        // Количество
+        $qty = (float)($item['Quant'] ?? $item['Quantity'] ?? $item->Quant ?? $item->Quantity ?? 0);
+        
+        // Цена за единицу (прямые затраты)
+        $price = 0.0;
+        if (isset($item->Price)) {
+            $price = (float)($item->Price['Value'] ?? $item->Price);
+        } elseif (isset($item->UnitCost)) {
+            $price = (float)($item->UnitCost['Value'] ?? $item->UnitCost);
+        } elseif (isset($item->Direct)) {
+            $price = (float)$item->Direct;
         }
-        if (isset($item->code)) {
-            $code = (string) $item->code;
-        }
-        if (isset($item->unit)) {
-            $unit = (string) $item->unit;
-        }
-        if (isset($item->quantity)) {
-            $quantity = (float) $item->quantity;
-        }
-        if (isset($item->unitPrice)) {
-            $unitPrice = (float) $item->unitPrice;
+
+        // Общая стоимость
+        $total = 0.0;
+        if (isset($item->Cost)) {
+            $total = (float)($item->Cost['Value'] ?? $item->Cost);
+        } elseif (isset($item->TotalCost)) {
+            $total = (float)$item->TotalCost;
+        } else {
+            $total = $qty * $price;
         }
         
-        $itemDTO = new EstimateImportRowDTO(
-            rowNumber: 0, // Will be set during processing
-            sectionNumber: null,
-            itemName: !empty($name) ? $name : '[Без наименования]',
-            unit: $unit ?: null,
-            quantity: $quantity > 0 ? $quantity : null,
-            unitPrice: $unitPrice > 0 ? $unitPrice : null,
-            code: $code ?: null,
+        // Проверка на неучтенные ресурсы (часто в тегах <Resource> внутри <Resources>)
+        // Но здесь мы парсим саму позицию. Если это ресурс внутри позиции - он может быть отдельной строкой.
+        // Для простоты, если позиция имеет тип "Material" или "Resource", ставим флаг.
+        // ГрандСмета обычно помечает неучтенные материалы отдельно.
+        
+        $isNotAccounted = false;
+        // Эвристика: если в обосновании есть "ЦЕНА" или текст в скобках (прим), возможно это неучтенка
+        if (mb_stripos($code, 'цена') !== false) {
+             $isNotAccounted = true;
+        }
+
+        $items[] = (new EstimateImportRowDTO(
+            rowNumber: 0,
+            sectionNumber: $num,
+            itemName: $name,
+            unit: $unit,
+            quantity: $qty,
+            unitPrice: $price,
+            code: $code,
             isSection: false,
-            level: 0,
-            sectionPath: $sectionPath,
-        );
+            level: $level,
+            sectionPath: $parentPath,
+            currentTotalAmount: $total,
+            isNotAccounted: $isNotAccounted,
+            rawData: (array)$item
+        ))->toArray();
         
-        $items[] = $itemDTO->toArray();
+        // Обработка вложенных ресурсов (часто ГрандСмета показывает их как подпункты)
+        if (isset($item->Resources->Resource)) {
+            foreach ($item->Resources->Resource as $res) {
+                $this->processResource($res, $items, $parentPath, $level);
+            }
+        }
+    }
+
+    private function processResource(\SimpleXMLElement $res, array &$items, string $parentPath, int $level): void
+    {
+        $code = (string)($res['Code'] ?? $res->Code ?? '');
+        $name = (string)($res['Name'] ?? $res->Name ?? '');
+        $unit = (string)($res['Measure'] ?? $res->Measure ?? '');
+        $qty = (float)($res['Quant'] ?? $res->Quantity ?? 0);
+        $price = (float)($res['Price'] ?? $res->Price ?? 0);
+        
+        $items[] = (new EstimateImportRowDTO(
+            rowNumber: 0,
+            sectionNumber: null,
+            itemName: $name,
+            unit: $unit,
+            quantity: $qty,
+            unitPrice: $price,
+            code: $code,
+            isSection: false,
+            level: $level + 1, // Вложенный уровень
+            sectionPath: $parentPath,
+            isNotAccounted: true, // Ресурсы под позицией часто являются материалами
+            itemType: 'material'
+        ))->toArray();
+    }
+    
+    private function calculateTotals(array $items): array
+    {
+        $totalAmount = 0;
+        $totalQuantity = 0;
+        
+        foreach ($items as $item) {
+            $q = $item['quantity'] ?? 0;
+            $p = $item['unit_price'] ?? 0;
+            // Если есть уже посчитанная сумма, берем её, иначе считаем
+            $amount = $item['current_total_amount'] ?? ($q * $p);
+            
+            $totalAmount += $amount;
+            $totalQuantity += $q;
+        }
+        
+        return [
+            'total_amount' => $totalAmount,
+            'total_quantity' => $totalQuantity,
+            'items_count' => count($items),
+        ];
     }
 }
-
