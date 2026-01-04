@@ -15,7 +15,6 @@ class LocalEstimateCSVParser implements EstimateImportParserInterface
     public function parse(string $filePath): EstimateImportDTO
     {
         $structure = $this->detectStructure($filePath);
-        
         $rows = $this->extractRows($filePath, $structure);
         
         $sections = [];
@@ -29,45 +28,41 @@ class LocalEstimateCSVParser implements EstimateImportParserInterface
             }
         }
         
+        // Calculate totals
+        $totals = $this->calculateTotals($items);
+
         return new EstimateImportDTO(
             fileName: basename($filePath),
             fileSize: filesize($filePath),
             fileFormat: 'csv',
             sections: $sections,
             items: $items,
-            totals: [
-                'total_amount' => 0,
-                'total_quantity' => 0,
-                'items_count' => count($items),
-            ],
+            totals: $totals,
             metadata: [
                 'encoding' => $this->detectedEncoding,
                 'delimiter' => $this->detectedDelimiter,
+                'header_row' => $structure['header_row'],
             ]
         );
     }
 
     public function detectStructure(string $filePath): array
     {
-        // Определяем кодировку
         $this->detectedEncoding = $this->detectEncoding($filePath);
-        
-        // Определяем разделитель
         $this->detectedDelimiter = $this->detectDelimiter($filePath);
         
-        Log::info('[CSVParser] Detected file properties', [
+        Log::info('[CSVParser] Properties detected', [
             'encoding' => $this->detectedEncoding,
             'delimiter' => $this->detectedDelimiter,
         ]);
         
-        // Читаем первые строки для определения заголовков
-        $handle = fopen($filePath, 'r');
+        $handle = $this->openFile($filePath);
         if (!$handle) {
             throw new \Exception('Cannot open file: ' . $filePath);
         }
         
         $firstRows = [];
-        for ($i = 0; $i < 10 && !feof($handle); $i++) {
+        for ($i = 0; $i < 20 && !feof($handle); $i++) {
             $line = fgets($handle);
             if ($line !== false) {
                 $line = $this->convertEncoding($line);
@@ -76,18 +71,8 @@ class LocalEstimateCSVParser implements EstimateImportParserInterface
         }
         fclose($handle);
         
-        // Простой алгоритм: первая строка с наибольшим количеством колонок - заголовок
-        $headerRow = 0;
-        $maxColumns = 0;
-        
-        foreach ($firstRows as $index => $row) {
-            $count = count(array_filter($row, fn($v) => !empty(trim($v))));
-            if ($count > $maxColumns) {
-                $maxColumns = $count;
-                $headerRow = $index;
-            }
-        }
-        
+        // Heuristic: Header row usually has "Наименование" or "Code"
+        $headerRow = $this->findHeaderRow($firstRows);
         $headers = $firstRows[$headerRow] ?? [];
         $columnMapping = $this->mapColumns($headers);
         
@@ -101,56 +86,104 @@ class LocalEstimateCSVParser implements EstimateImportParserInterface
         ];
     }
 
+    private function findHeaderRow(array $rows): int
+    {
+        $bestRow = 0;
+        $maxScore = 0;
+
+        foreach ($rows as $index => $row) {
+            $score = 0;
+            $rowStr = mb_strtolower(implode(' ', $row));
+            
+            // Keywords that strongly indicate a header
+            if (str_contains($rowStr, 'наименование')) $score += 10;
+            if (str_contains($rowStr, 'ед. изм') || str_contains($rowStr, 'ед.изм')) $score += 5;
+            if (str_contains($rowStr, 'кол-во') || str_contains($rowStr, 'количество')) $score += 5;
+            if (str_contains($rowStr, 'цена') || str_contains($rowStr, 'стоимость')) $score += 5;
+            if (str_contains($rowStr, 'код') || str_contains($rowStr, 'обоснование')) $score += 5;
+            
+            // Penalize empty rows
+            if (empty(trim($rowStr))) $score = -1;
+
+            if ($score > $maxScore) {
+                $maxScore = $score;
+                $bestRow = $index;
+            }
+        }
+        
+        // Fallback: row with most columns
+        if ($maxScore < 5) {
+             $maxCols = 0;
+             foreach ($rows as $index => $row) {
+                 $cols = count(array_filter($row, fn($v) => !empty(trim($v))));
+                 if ($cols > $maxCols) {
+                     $maxCols = $cols;
+                     $bestRow = $index;
+                 }
+             }
+        }
+
+        return $bestRow;
+    }
+
     public function validateFile(string $filePath): bool
     {
-        if (!file_exists($filePath)) {
-            return false;
+        if (!file_exists($filePath)) return false;
+        
+        $ext = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        if ($ext !== 'csv' && $ext !== 'txt') return false; // Accept .txt as CSV often comes as .txt
+        
+        // Check if readable
+        $handle = @fopen($filePath, 'r');
+        if ($handle) {
+            fclose($handle);
+            return true;
         }
-        
-        $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
-        if ($extension !== 'csv') {
-            return false;
-        }
-        
-        $handle = fopen($filePath, 'r');
-        if (!$handle) {
-            return false;
-        }
-        
-        $line = fgets($handle);
-        fclose($handle);
-        
-        return $line !== false && !empty(trim($line));
+        return false;
     }
 
     public function getSupportedExtensions(): array
     {
-        return ['csv'];
+        return ['csv', 'txt'];
     }
 
     public function getHeaderCandidates(): array
     {
-        // CSV обычно имеет фиксированную структуру
         return [];
     }
 
     public function detectStructureFromRow(string $filePath, int $headerRow): array
     {
-        // Простая реализация для CSV
-        $structure = $this->detectStructure($filePath);
-        return $structure;
+        $this->detectedEncoding = $this->detectEncoding($filePath);
+        $this->detectedDelimiter = $this->detectDelimiter($filePath);
+        
+        $handle = $this->openFile($filePath);
+        $headers = [];
+        
+        for ($i = 0; $i <= $headerRow && !feof($handle); $i++) {
+            $line = fgets($handle);
+            if ($i === $headerRow && $line !== false) {
+                $line = $this->convertEncoding($line);
+                $headers = str_getcsv($line, $this->detectedDelimiter);
+            }
+        }
+        fclose($handle);
+        
+        $columnMapping = $this->mapColumns($headers);
+        
+        return [
+            'header_row' => $headerRow,
+            'encoding' => $this->detectedEncoding,
+            'delimiter' => $this->detectedDelimiter,
+            'raw_headers' => $headers,
+            'column_mapping' => $columnMapping,
+            'detected_columns' => $this->formatDetectedColumns($headers, $columnMapping),
+        ];
     }
 
-    /**
-     * Читать содержимое файла для детекции типа
-     */
     public function readContent(string $filePath, int $maxRows = 100)
     {
-        $handle = fopen($filePath, 'r');
-        if (!$handle) {
-            throw new \Exception('Cannot open file: ' . $filePath);
-        }
-        
+        $handle = $this->openFile($filePath);
         $content = '';
         for ($i = 0; $i < $maxRows && !feof($handle); $i++) {
             $line = fgets($handle);
@@ -159,199 +192,137 @@ class LocalEstimateCSVParser implements EstimateImportParserInterface
             }
         }
         fclose($handle);
-        
         return $content;
     }
 
-    /**
-     * Определяет кодировку файла
-     */
+    private function openFile(string $filePath)
+    {
+        return fopen($filePath, 'r');
+    }
+
     private function detectEncoding(string $filePath): string
     {
-        $handle = fopen($filePath, 'r');
-        if (!$handle) {
-            return 'UTF-8';
-        }
+        $content = file_get_contents($filePath, false, null, 0, 4096);
+        if ($content === false) return 'UTF-8';
         
-        // Читаем первые 8KB для определения кодировки
-        $sample = fread($handle, 8192);
-        fclose($handle);
+        if (str_starts_with($content, "\xEF\xBB\xBF")) return 'UTF-8';
         
-        // Проверяем BOM
-        if (substr($sample, 0, 3) === "\xEF\xBB\xBF") {
-            return 'UTF-8';
-        }
+        // Try common Russian encodings
+        $encodings = ['UTF-8', 'CP1251', 'KOI8-R', 'ISO-8859-5'];
+        $detected = mb_detect_encoding($content, $encodings, true);
         
-        // Определяем кодировку
-        $encoding = mb_detect_encoding($sample, ['UTF-8', 'Windows-1251', 'ISO-8859-1', 'CP1251'], true);
-        
-        return $encoding ?: 'UTF-8';
+        return $detected ?: 'UTF-8';
     }
 
-    /**
-     * Определяет разделитель CSV
-     */
     private function detectDelimiter(string $filePath): string
     {
-        $handle = fopen($filePath, 'r');
-        if (!$handle) {
-            return ',';
-        }
-        
-        $firstLine = fgets($handle);
+        $handle = $this->openFile($filePath);
+        $line = fgets($handle);
         fclose($handle);
         
-        if ($firstLine === false) {
-            return ',';
+        if (!$line) return ';'; // Default to semicolon for Russian CSVs
+        
+        $line = $this->convertEncoding($line);
+        
+        $delimiters = [';' => 0, ',' => 0, "\t" => 0, '|' => 0];
+        foreach ($delimiters as $sep => $count) {
+            $delimiters[$sep] = substr_count($line, $sep);
         }
         
-        // Конвертируем в UTF-8
-        $firstLine = $this->convertEncoding($firstLine);
-        
-        // Проверяем различные разделители
-        $delimiters = [',', ';', "\t", '|'];
-        $counts = [];
-        
-        foreach ($delimiters as $delimiter) {
-            $counts[$delimiter] = substr_count($firstLine, $delimiter);
-        }
-        
-        arsort($counts);
-        $bestDelimiter = array_key_first($counts);
-        
-        Log::debug('[CSVParser] Delimiter detection', [
-            'counts' => $counts,
-            'selected' => $bestDelimiter,
-        ]);
-        
-        return $bestDelimiter;
+        arsort($delimiters);
+        return array_key_first($delimiters);
     }
 
-    /**
-     * Конвертирует строку в UTF-8
-     */
     private function convertEncoding(string $text): string
     {
-        if (empty($this->detectedEncoding) || $this->detectedEncoding === 'UTF-8') {
-            return $text;
-        }
-        
+        if (empty($this->detectedEncoding) || $this->detectedEncoding === 'UTF-8') return $text;
         return mb_convert_encoding($text, 'UTF-8', $this->detectedEncoding);
     }
 
-    /**
-     * Извлекает строки из CSV
-     */
     private function extractRows(string $filePath, array $structure): array
     {
-        $handle = fopen($filePath, 'r');
-        if (!$handle) {
-            throw new \Exception('Cannot open file: ' . $filePath);
-        }
-        
+        $handle = $this->openFile($filePath);
         $rows = [];
-        $lineNumber = 0;
+        $lineNum = 0;
         $headerRow = $structure['header_row'];
-        $columnMapping = $structure['column_mapping'];
+        $mapping = $structure['column_mapping'];
         
         while (($line = fgets($handle)) !== false) {
-            $lineNumber++;
-            
-            // Пропускаем строки до заголовка и сам заголовок
-            if ($lineNumber <= $headerRow + 1) {
-                continue;
-            }
+            $lineNum++;
+            if ($lineNum <= $headerRow + 1) continue;
             
             $line = $this->convertEncoding($line);
-            $csvRow = str_getcsv($line, $this->detectedDelimiter);
+            // Skip empty lines
+            if (trim($line) === '') continue;
             
-            $rowData = $this->mapRowData($csvRow, $columnMapping);
+            $data = str_getcsv($line, $this->detectedDelimiter);
+            // Fix: sometimes csv row has fewer columns than mapping implies
             
-            if ($this->isEmptyRow($rowData)) {
-                continue;
-            }
+            $rowData = $this->mapRowData($data, $mapping);
+            if ($this->isEmptyRow($rowData)) continue;
             
-            $row = new EstimateImportRowDTO(
-                rowNumber: $lineNumber,
-                sectionNumber: $rowData['section_number'] ?? null,
-                itemName: $rowData['name'] ?? '',
-                unit: $rowData['unit'] ?? null,
-                quantity: $rowData['quantity'] ?? null,
-                unitPrice: $rowData['unit_price'] ?? null,
-                code: $rowData['code'] ?? null,
-                isSection: $this->isSection($rowData),
-                level: $this->calculateSectionLevel($rowData['section_number'] ?? null),
+            $isSection = $this->isSection($rowData);
+            
+            $rows[] = new EstimateImportRowDTO(
+                rowNumber: $lineNum,
+                sectionNumber: $rowData['section_number'],
+                itemName: $rowData['name'] ?: ($isSection ? 'Раздел' : '[Без названия]'),
+                unit: $rowData['unit'],
+                quantity: $rowData['quantity'],
+                unitPrice: $rowData['unit_price'],
+                code: $rowData['code'],
+                isSection: $isSection,
+                level: $this->calculateLevel($rowData['section_number']),
                 sectionPath: null,
+                isNotAccounted: false // TODO: Add logic if CSV has specific flag
             );
-            
-            $rows[] = $row;
         }
-        
         fclose($handle);
-        
         return $rows;
     }
 
-    /**
-     * Мапит данные строки CSV на поля
-     */
-    private function mapRowData(array $csvRow, array $columnMapping): array
+    private function mapRowData(array $csvRow, array $mapping): array
     {
-        $rowData = [
-            'section_number' => null,
-            'name' => null,
-            'unit' => null,
-            'quantity' => null,
-            'unit_price' => null,
-            'code' => null,
+        $result = [
+            'section_number' => null, 'name' => null, 'unit' => null,
+            'quantity' => null, 'unit_price' => null, 'code' => null
         ];
         
-        foreach ($columnMapping as $field => $columnIndex) {
-            if ($columnIndex !== null && isset($csvRow[$columnIndex])) {
-                $value = trim($csvRow[$columnIndex]);
-                
-                // Конвертируем числа
-                if (in_array($field, ['quantity', 'unit_price']) && !empty($value)) {
-                    $value = $this->parseNumber($value);
+        foreach ($mapping as $field => $index) {
+            if ($index !== null && isset($csvRow[$index])) {
+                $val = trim($csvRow[$index]);
+                if (in_array($field, ['quantity', 'unit_price'])) {
+                    $val = $this->parseNumber($val);
                 }
-                
-                $rowData[$field] = $value;
+                $result[$field] = $val;
             }
         }
-        
-        return $rowData;
+        return $result;
     }
 
-    /**
-     * Мапит колонки по заголовкам
-     */
     private function mapColumns(array $headers): array
     {
         $mapping = [
-            'section_number' => null,
-            'name' => null,
-            'unit' => null,
-            'quantity' => null,
-            'unit_price' => null,
-            'code' => null,
+            'section_number' => null, 'name' => null, 'unit' => null,
+            'quantity' => null, 'unit_price' => null, 'code' => null
         ];
         
+        // Enhanced keywords
         $keywords = [
-            'section_number' => ['№', 'номер', 'п/п', 'n'],
-            'name' => ['наименование', 'название', 'работа', 'позиция'],
-            'unit' => ['ед.изм', 'единица', 'ед', 'измерение'],
-            'quantity' => ['количество', 'кол-во', 'объем', 'кол'],
-            'unit_price' => ['цена', 'стоимость', 'расценка'],
-            'code' => ['код', 'шифр', 'обоснование'],
+            'section_number' => ['№', 'номер', 'п/п', 'поз.', '№ п/п'],
+            'name' => ['наименование', 'название', 'работ', 'затрат', 'описание'],
+            'unit' => ['ед.', 'изм', 'единица'],
+            'quantity' => ['кол-во', 'количество', 'объем'],
+            'unit_price' => ['цена', 'стоимость', 'расценка', 'за ед'],
+            'code' => ['код', 'шифр', 'обоснование', 'артикул'],
         ];
         
         foreach ($headers as $index => $header) {
-            $normalized = mb_strtolower(trim($header));
-            
-            foreach ($keywords as $field => $keywordList) {
+            $h = mb_strtolower(trim($header));
+            foreach ($keywords as $field => $keys) {
                 if ($mapping[$field] === null) {
-                    foreach ($keywordList as $keyword) {
-                        if (str_contains($normalized, $keyword)) {
+                    foreach ($keys as $key) {
+                        if (str_contains($h, $key)) {
                             $mapping[$field] = $index;
                             break 2;
                         }
@@ -359,89 +330,57 @@ class LocalEstimateCSVParser implements EstimateImportParserInterface
                 }
             }
         }
-        
         return $mapping;
     }
 
-    /**
-     * Форматирует detected_columns для API
-     */
-    private function formatDetectedColumns(array $headers, array $columnMapping): array
+    private function formatDetectedColumns(array $headers, array $mapping): array
     {
         $detected = [];
-        $reverseMapping = array_flip(array_filter($columnMapping));
-        
-        foreach ($headers as $index => $header) {
-            $field = $reverseMapping[$index] ?? null;
-            
-            $detected[$index] = [
+        $flip = array_flip(array_filter($mapping));
+        foreach ($headers as $i => $h) {
+            $field = $flip[$i] ?? null;
+            $detected[$i] = [
                 'field' => $field,
-                'header' => $header,
-                'confidence' => $field ? 0.8 : 0.0,
+                'header' => $h,
+                'confidence' => $field ? 0.9 : 0.0
             ];
         }
-        
         return $detected;
     }
 
-    /**
-     * Парсит число из строки
-     */
-    private function parseNumber(string $value): float
+    private function parseNumber($val)
     {
-        // Убираем пробелы
-        $value = str_replace([' ', "\xC2\xA0"], '', $value); // Regular space and non-breaking space
-        
-        // Заменяем запятую на точку
-        $value = str_replace(',', '.', $value);
-        
-        return (float) $value;
+        if (is_numeric($val)) return (float)$val;
+        // Handle Russian format: 1 234,56 -> 1234.56
+        $val = str_replace([' ', "\xC2\xA0"], '', $val);
+        $val = str_replace(',', '.', $val);
+        return (float)$val;
     }
 
-    /**
-     * Проверяет пустая ли строка
-     */
-    private function isEmptyRow(array $rowData): bool
+    private function isEmptyRow(array $row): bool
     {
-        return empty(array_filter($rowData, fn($v) => $v !== null && $v !== ''));
+        return empty($row['name']) && empty($row['code']) && empty($row['quantity']);
     }
 
-    /**
-     * Определяет является ли строка разделом
-     */
-    private function isSection(array $rowData): bool
+    private function isSection(array $row): bool
     {
-        $hasName = !empty($rowData['name']);
-        $hasQuantity = !empty($rowData['quantity']) && $rowData['quantity'] > 0;
-        $hasPrice = !empty($rowData['unit_price']) && $rowData['unit_price'] > 0;
-        
-        if (!$hasName) {
-            return false;
-        }
-        
-        if ($hasQuantity && $hasPrice) {
-            return false;
-        }
-        
-        return true;
+        // Logic: has name, no quantity/price, implies section
+        return !empty($row['name']) && empty($row['quantity']) && empty($row['unit_price']);
     }
 
-    /**
-     * Вычисляет уровень раздела
-     */
-    private function calculateSectionLevel(?string $sectionNumber): int
+    private function calculateLevel($num): int
     {
-        if (empty($sectionNumber)) {
-            return 0;
+        if (!$num) return 1;
+        return substr_count($num, '.') + 1;
+    }
+
+    private function calculateTotals(array $items): array
+    {
+        $sum = 0; $qty = 0;
+        foreach ($items as $item) {
+            $sum += ($item['quantity'] ?? 0) * ($item['unit_price'] ?? 0);
+            $qty += ($item['quantity'] ?? 0);
         }
-        
-        $normalized = rtrim($sectionNumber, '.');
-        
-        if (!preg_match('/^\d+(\.\d+)*$/', $normalized)) {
-            return 0;
-        }
-        
-        return substr_count($normalized, '.');
+        return ['total_amount' => $sum, 'total_quantity' => $qty, 'items_count' => count($items)];
     }
 }
-

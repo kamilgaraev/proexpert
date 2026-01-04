@@ -631,13 +631,22 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     {
         $rows = [];
         $maxRow = $sheet->getHighestRow();
+        $consecutiveEmptyRows = 0;
+        $maxConsecutiveEmptyRows = 20; // Увеличиваем лимит пустых строк подряд до остановки
         
         for ($rowNum = $startRow; $rowNum <= $maxRow; $rowNum++) {
             $rowData = $this->extractRowData($sheet, $rowNum, $columnMapping);
             
             if ($this->isEmptyRow($rowData)) {
+                $consecutiveEmptyRows++;
+                if ($consecutiveEmptyRows >= $maxConsecutiveEmptyRows) {
+                    Log::info("[ExcelParser] Stopped at row {$rowNum} after {$consecutiveEmptyRows} empty rows");
+                    break;
+                }
                 continue;
             }
+            
+            $consecutiveEmptyRows = 0; // Сброс счетчика
             
             // ⭐ Пропуск служебных строк (заголовки групп, пояснения)
             if ($this->shouldSkipRow($rowData)) {
@@ -645,6 +654,15 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                     'row' => $rowNum,
                     'code' => $rowData['code'],
                     'name' => substr($rowData['name'] ?? '', 0, 50),
+                ]);
+                continue;
+            }
+            
+            // ⭐ Пропуск "мусорных" строк (цифры колонок 1, 2, 3...)
+            if ($this->isGarbageRow($rowData)) {
+                Log::debug('[ExcelParser] Мусорная строка пропущена', [
+                     'row' => $rowNum,
+                     'name' => $rowData['name'],
                 ]);
                 continue;
             }
@@ -679,11 +697,39 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
                 itemType: $itemType,
                 level: $level,
                 sectionPath: null,
-                rawData: $rowData
+                rawData: $rowData,
+                quantityCoefficient: $rowData['quantity_coefficient'] ?? null,
+                quantityTotal: $rowData['quantity_total'] ?? null,
+                baseUnitPrice: $rowData['base_unit_price'] ?? null,
+                priceIndex: $rowData['price_index'] ?? null,
+                currentUnitPrice: $rowData['current_unit_price'] ?? null,
+                priceCoefficient: $rowData['price_coefficient'] ?? null,
+                currentTotalAmount: $rowData['current_total_amount'] ?? null,
+                isNotAccounted: $rowData['is_not_accounted'] ?? false
             );
         }
         
         return $rows;
+    }
+
+    /**
+     * Проверка на "мусорные" строки (номера колонок, обрывки)
+     */
+    private function isGarbageRow(array $rowData): bool
+    {
+        $name = trim($rowData['name'] ?? '');
+        
+        // 1. Если имя - просто число (1, 2, 3...)
+        if (preg_match('/^\d+$/', $name) && mb_strlen($name) < 4) {
+            return true;
+        }
+        
+        // 2. Если имя слишком короткое (менее 2 символов) и нет кода
+        if (mb_strlen($name) < 2 && empty($rowData['code'])) {
+            return true;
+        }
+        
+        return false;
     }
 
     private function extractRowData(Worksheet $sheet, int $rowNum, array $columnMapping): array
@@ -764,6 +810,30 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             }
         }
         
+        // ⭐ FALLBACK ДЛЯ НАЗВАНИЯ РАЗДЕЛА: Если Name пустое, но в колонке A или B есть текст
+        // Часто разделы пишут в A, объединяя ячейки, а mapping настроен на C (Наименование работ)
+        if (empty($data['name'])) {
+            $fallbackColumns = ['A', 'B'];
+            foreach ($fallbackColumns as $col) {
+                // Не используем fallback, если эта колонка уже замаплена на что-то другое (кроме section_number)
+                // Но section_number часто в A, поэтому проверяем контекст
+                if ($col === ($columnMapping['name'] ?? null)) continue;
+                
+                $cellVal = $sheet->getCell($col . $rowNum)->getValue();
+                $strVal = trim((string)$cellVal);
+                
+                // Если похоже на раздел (начинается с "Раздел", "Глава" или просто длинный текст без цифр в начале)
+                if (!empty($strVal) && mb_strlen($strVal) > 5 && !is_numeric($strVal)) {
+                     // Дополнительная проверка: это не должно быть значением другого поля (например код)
+                     if ($col === ($columnMapping['code'] ?? null)) continue;
+                     
+                     Log::debug("[ExcelParser] Found potential section name in column {$col}", ['val' => $strVal]);
+                     $data['name'] = $strVal;
+                     break;
+                }
+            }
+        }
+        
         // 🔍 ЛОГИРОВАНИЕ (теперь без ограничения <= 10, чтобы видеть все строки)
         if ($rowNum >= 30 && $rowNum <= 50) {
             Log::info("[ExcelParser] Row {$rowNum} extracted data", [
@@ -789,6 +859,15 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
     {
         $originalName = $data['name'] ?? '';
         $codeFromColumn = $data['code'] ?? '';
+        
+        // ⭐ ОБРАБОТКА "ЦЕНА ПОСТАВЩИКА"
+        if (mb_stripos($codeFromColumn, 'цена поставщика') !== false) {
+            $data['code'] = 'PRICE_VENDOR';
+            $data['code_type'] = 'vendor_price';
+            $data['code_normalized'] = 'PRICE_VENDOR';
+            // Если в названии тоже есть мусор про МАТ=..., можно почистить, но обычно это в другой строке
+            return $data;
+        }
         
         // ⭐ ФИЛЬТР ПСЕВДО-КОДОВ: игнорировать служебные строки
         if (!empty($codeFromColumn) && $this->codeService->isPseudoCode($codeFromColumn)) {
@@ -937,6 +1016,12 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             return null;
         }
         
+        // Handle newlines: take the first line if it looks like a number/formula result
+        if (is_string($value) && str_contains($value, "\n")) {
+            $lines = explode("\n", $value);
+            $value = trim($lines[0]);
+        }
+        
         if (is_numeric($value)) {
             return (float)$value;
         }
@@ -1006,23 +1091,7 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         // ПРАВИЛА ДЛЯ РАЗДЕЛОВ
         // ============================================
         
-        // 4. Если строка жирная (BOLD) и нет явных признаков позиции (цена/кол-во)
-        if ($isBold && !$hasQuantity && !$hasPrice) {
-            Log::debug('[ExcelParser] Жирный шрифт и нет данных - ЭТО РАЗДЕЛ', [
-                'name' => substr($rowData['name'] ?? '', 0, 100),
-            ]);
-            return true;
-        }
-        
-        // 5. Если есть иерархический номер (1, 1.1, 1.2)
-        $sectionNumber = $rowData['section_number'] ?? '';
-        $hasHierarchicalNumber = preg_match('/^\d+(\.\d+)*\.?$/', $sectionNumber);
-        
-        if ($hasHierarchicalNumber) {
-            return true; // Это раздел
-        }
-        
-        // 6. Проверяем явные признаки раздела в названии
+        // 4. Проверяем явные признаки раздела в названии (Раздел, Глава)
         $name = mb_strtolower($rowData['name']);
         $sectionPatterns = [
             '/^раздел\s+\d+/u',
@@ -1039,8 +1108,27 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             }
         }
         
-        // 7. Название ПОЛНОСТЬЮ заглавными буквами
-        if (mb_strtoupper($rowData['name']) === $rowData['name'] && mb_strlen($rowData['name']) > 3) {
+        // 5. Если строка жирная (BOLD) или объединенная (MERGED) и нет явных признаков позиции (цена/кол-во)
+        // И это НЕ итоговая строка (Итого, Всего, Накладные, Прибыль, НДС)
+        $isSummary = preg_match('/^(итого|всего|накладные|сметная прибыль|ндс|строительные работы|монтажные работы)/u', $name);
+        
+        if (($isBold || $isMerged) && !$hasQuantity && !$hasPrice && !$isSummary) {
+            Log::debug('[ExcelParser] Жирный/Объединенный шрифт и нет данных - ЭТО РАЗДЕЛ', [
+                'name' => substr($rowData['name'] ?? '', 0, 100),
+            ]);
+            return true;
+        }
+        
+        // 6. Если есть иерархический номер (1, 1.1, 1.2) и нет данных
+        $sectionNumber = $rowData['section_number'] ?? '';
+        $hasHierarchicalNumber = preg_match('/^\d+(\.\d+)*\.?$/', $sectionNumber);
+        
+        if ($hasHierarchicalNumber && !$hasQuantity && !$hasPrice) {
+            return true; // Это раздел
+        }
+        
+        // 7. Название ПОЛНОСТЬЮ заглавными буквами и это не Итоговая строка
+        if (mb_strtoupper($rowData['name']) === $rowData['name'] && mb_strlen($rowData['name']) > 3 && !$isSummary) {
             return true; // Это раздел
         }
         
@@ -1153,8 +1241,9 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
 
     private function calculateSectionLevel(?string $sectionNumber): int
     {
+        // Если номер отсутствует, это может быть корневой раздел (если определен как раздел)
         if (empty($sectionNumber)) {
-            return 0;
+            return 1;
         }
         
         $normalized = rtrim($sectionNumber, '.');
@@ -1165,11 +1254,12 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         }
         
         // Поддержка иерархических номеров (1.1, 1.2.3)
-        if (!preg_match('/^\d+(\.\d+)*$/', $normalized)) {
-            return 0;
+        if (preg_match('/^\d+(\.\d+)+$/', $normalized)) {
+             return substr_count($normalized, '.') + 1;
         }
         
-        return substr_count($normalized, '.') + 1;
+        // Fallback
+        return 1;
     }
 
     private function calculateTotals(array $items): array
