@@ -279,15 +279,45 @@ class EstimateImportService
         // Для этого нужно знать размер файла. Если большой - в очередь.
         // Или количество строк из кэша превью.
         $previewData = Cache::get("estimate_import_preview:{$fileId}");
-        $itemsCount = count($previewData['items'] ?? []);
         
+        $shouldQueue = false;
+        
+        if ($previewData === null) {
+            // Если кэша нет, проверяем размер файла
+            // Если файл > 1MB (примерно 500-1000 строк), сразу в очередь без парсинга
+            if ($fileData['file_size'] > 1024 * 1024) {
+                Log::warning('[EstimateImport] Preview cache missing for large file, forcing async import', [
+                    'file_id' => $fileId,
+                    'file_size' => $fileData['file_size']
+                ]);
+                $shouldQueue = true;
+                $itemsCount = 0; // Неизвестно, но много
+            } else {
+                // Файл маленький, можно перепарсить синхронно
+                Log::warning('[EstimateImport] Preview cache missing in execute, regenerating sync', ['file_id' => $fileId]);
+                try {
+                    $importDTO = $this->preview($fileId, $matchingConfig);
+                    $previewData = $importDTO->toArray();
+                    $itemsCount = count($previewData['items'] ?? []);
+                } catch (\Exception $e) {
+                    Log::error('[EstimateImport] Failed to regenerate preview in execute', ['error' => $e->getMessage()]);
+                    throw $e;
+                }
+            }
+        } else {
+            $itemsCount = count($previewData['items'] ?? []);
+        }
+
         $jobId = Str::uuid()->toString();
         
+        // Логика выбора: если явно forced queue или количество элементов > 500
+        $shouldQueue = $shouldQueue || ($itemsCount > 500);
+
         Log::info('[EstimateImport] 🚀 Начало импорта (Streaming)', [
             'file_id' => $fileId,
             'items_count_estimate' => $itemsCount,
             'job_id' => $jobId,
-            'import_type' => $itemsCount <= 500 ? 'sync' : 'async',
+            'import_type' => $shouldQueue ? 'async' : 'sync',
             'validate_only' => $validateOnly,
         ]);
         
@@ -296,7 +326,7 @@ class EstimateImportService
             return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId, true);
         }
         
-        if ($itemsCount <= 500) {
+        if (!$shouldQueue) {
             return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId);
         } else {
             return $this->queueImport($fileId, $matchingConfig, $estimateSettings);
@@ -652,6 +682,14 @@ class EstimateImportService
                     // Fallback для других парсеров (XML, CSV) - пока через память или их собственные методы
                     // Временное решение: используем превью данные
                     $previewData = Cache::get("estimate_import_preview:{$fileId}");
+                    
+                    if ($previewData === null) {
+                        Log::info('[EstimateImport] Preview cache missing in stream creation, regenerating', ['file_id' => $fileId]);
+                        // Используем matchingConfig как columnMapping
+                        $importDTO = $this->preview($fileId, $matchingConfig);
+                        $previewData = $importDTO->toArray();
+                    }
+
                     $iterator = $previewData['items'] ?? []; 
                 }
             }
