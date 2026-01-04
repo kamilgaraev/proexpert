@@ -22,15 +22,15 @@ class ExcelStreamParser implements StreamParserInterface
         }
 
         // SimpleXLSX поддерживает потоковое чтение для XLSX и XLS
-        $xlsx = SimpleXLSX::parse($filePath);
-        
-        if (!$xlsx) {
+        if ($xlsx = SimpleXLSX::parse($filePath)) {
+            // readRows() is a generator method in recent versions of SimpleXLSX
+            // If strictly using rows(), it might load all. 
+            // Checking library capability: standard SimpleXLSX usually has readRows($sheetIndex = 0)
+            foreach ($xlsx->readRows() as $row) {
+                yield $row;
+            }
+        } else {
             throw new RuntimeException("Failed to parse file: " . SimpleXLSX::parseError());
-        }
-
-        // Получаем все строки из первого листа
-        foreach ($xlsx->rows() as $row) {
-            yield $row;
         }
     }
 

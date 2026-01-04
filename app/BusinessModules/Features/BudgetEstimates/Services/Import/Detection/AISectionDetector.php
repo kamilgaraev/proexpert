@@ -107,6 +107,19 @@ class AISectionDetector
         $hasQuantity = !empty($rowData['quantity']);
         $hasPrice = !empty($rowData['unit_price']);
         
+        // Style info
+        $isBold = $rowData['style']['is_bold'] ?? false;
+        $isItalic = $rowData['style']['is_italic'] ?? false;
+        $indentLevel = $rowData['style']['indent'] ?? 0;
+        $merged = $rowData['style']['is_merged'] ?? false;
+        
+        $styleInfo = [];
+        if ($isBold) $styleInfo[] = 'BOLD';
+        if ($isItalic) $styleInfo[] = 'ITALIC';
+        if ($indentLevel > 0) $styleInfo[] = "INDENT:{$indentLevel}";
+        if ($merged) $styleInfo[] = 'MERGED_CELLS';
+        $styleStr = implode(', ', $styleInfo);
+        
         $contextInfo = '';
         if (!empty($context['previous'])) {
             $contextInfo .= "\nPrevious row: " . ($context['previous']['name'] ?? 'unknown');
@@ -122,13 +135,15 @@ Row data:
 - Code: {$code}
 - Name: {$name}
 - Has quantity: {$hasQuantity}
-- Has price: {$hasPrice}{$contextInfo}
+- Has price: {$hasPrice}
+- Visual Style: {$styleStr}{$contextInfo}
 
 Section headers typically:
 - Have descriptive names (e.g., "Земляные работы", "Фундамент", "Кровля")
 - Often have hierarchical numbers (1, 1.1, 2, etc.)
 - Usually DON'T have quantity or price
-- Are written in UPPERCASE or Title Case
+- Are often BOLD or have colored background
+- Can span multiple columns (MERGED)
 - Group related work items below them
 
 Return ONLY a JSON object:
@@ -148,12 +163,22 @@ PROMPT;
             $name = $row['name'] ?? '';
             $code = $row['code'] ?? '';
             $hasData = !empty($row['quantity']) || !empty($row['unit_price']);
+            
+            // Style info extraction
+            $isBold = $row['style']['is_bold'] ?? false;
+            $merged = $row['style']['is_merged'] ?? false;
+            $styleTags = [];
+            if ($isBold) $styleTags[] = 'BOLD';
+            if ($merged) $styleTags[] = 'MERGED';
+            $styleStr = !empty($styleTags) ? '[' . implode(',', $styleTags) . ']' : '';
+            
             $rowsText .= sprintf(
-                "ID:%d | Code:%s | Name:%s | HasData:%s\n",
+                "ID:%d | Code:%s | Name:%s | HasData:%s | %s\n",
                 $index,
                 $code,
                 $name,
-                $hasData ? 'yes' : 'no'
+                $hasData ? 'yes' : 'no',
+                $styleStr
             );
         }
 
@@ -167,7 +192,7 @@ Section headers typically:
 - Descriptive names grouping work items ("Земляные работы", "Фундамент")
 - Hierarchical numbers (1, 1.1, 2.3, etc.)
 - NO quantity or price data
-- UPPERCASE or Title Case
+- Often BOLD or MERGED cells
 - Keywords: "Раздел", "Глава", specific work types
 
 Return ONLY a JSON array with one object per row:
