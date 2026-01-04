@@ -281,20 +281,22 @@ class EstimateImportService
         $previewData = Cache::get("estimate_import_preview:{$fileId}");
         
         $shouldQueue = false;
+        $itemsCount = count($previewData['items'] ?? []);
         
-        if ($previewData === null) {
-            // Если кэша нет, проверяем размер файла
+        // Если кэша нет ИЛИ в нем нет записей (что странно для нормальной сметы), пробуем восстановить
+        if (empty($previewData) || $itemsCount === 0) {
             // Если файл > 1MB (примерно 500-1000 строк), сразу в очередь без парсинга
             if ($fileData['file_size'] > 1024 * 1024) {
-                Log::warning('[EstimateImport] Preview cache missing for large file, forcing async import', [
+                Log::warning('[EstimateImport] Preview cache missing or empty for large file, forcing async import', [
                     'file_id' => $fileId,
-                    'file_size' => $fileData['file_size']
+                    'file_size' => $fileData['file_size'],
+                    'items_in_cache' => $itemsCount
                 ]);
                 $shouldQueue = true;
-                $itemsCount = 0; // Неизвестно, но много
+                // Items count неизвестен, но мы идем в очередь, там разберемся
             } else {
                 // Файл маленький, можно перепарсить синхронно
-                Log::warning('[EstimateImport] Preview cache missing in execute, regenerating sync', ['file_id' => $fileId]);
+                Log::warning('[EstimateImport] Preview cache missing or empty in execute, regenerating sync', ['file_id' => $fileId]);
                 try {
                     // FIX: Don't use matchingConfig as columnMapping, use cached mapping or auto-detect (null)
                     $columnMapping = Cache::get("estimate_import_mapping:{$fileId}");
@@ -306,8 +308,6 @@ class EstimateImportService
                     throw $e;
                 }
             }
-        } else {
-            $itemsCount = count($previewData['items'] ?? []);
         }
 
         $jobId = Str::uuid()->toString();
@@ -685,8 +685,8 @@ class EstimateImportService
                     // Временное решение: используем превью данные
                     $previewData = Cache::get("estimate_import_preview:{$fileId}");
                     
-                    if ($previewData === null) {
-                        Log::info('[EstimateImport] Preview cache missing in stream creation, regenerating', ['file_id' => $fileId]);
+                    if (empty($previewData['items'])) {
+                        Log::info('[EstimateImport] Preview cache missing/empty in stream creation, regenerating', ['file_id' => $fileId]);
                         // FIX: Don't use matchingConfig as columnMapping
                         $columnMapping = Cache::get("estimate_import_mapping:{$fileId}");
                         $importDTO = $this->preview($fileId, $columnMapping);
