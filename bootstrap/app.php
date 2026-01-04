@@ -3,6 +3,7 @@
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Support\Facades\Log;
 use App\Http\Middleware\JwtMiddleware;
 use App\Http\Middleware\SetOrganizationContext;
 
@@ -88,30 +89,28 @@ return Application::configure(basePath: dirname(__DIR__))
         // === ЛОГИРОВАНИЕ В ОТДЕЛЬНЫЕ ФАЙЛЫ ===
         
         // 1. Ошибки Redis -> logs/redis/redis.log
-        $exceptions->report(function (\RedisException $e) {
-            \Log::channel('redis')->error($e->getMessage(), ['trace' => $e->getTraceAsString()]);
-        });
+        // (RedisException для phpredis опущен из-за отсутствия расширения в среде разработки)
         $exceptions->report(function (\Predis\Connection\ConnectionException $e) {
-            \Log::channel('redis')->error($e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            Log::channel('redis')->error($e->getMessage(), ['trace' => $e->getTraceAsString()]);
         });
 
         // 2. Ошибки БД -> logs/database/database.log
         $exceptions->report(function (\Illuminate\Database\QueryException $e) {
-            \Log::channel('database')->error($e->getMessage(), [
+            Log::channel('database')->error($e->getMessage(), [
                 'sql' => $e->getSql(),
                 'bindings' => $e->getBindings(),
             ]);
         });
         $exceptions->report(function (\PDOException $e) {
-            \Log::channel('database')->error($e->getMessage());
+            Log::channel('database')->error($e->getMessage());
         });
 
         // 3. Ошибки Авторизации -> logs/auth/auth.log
         $exceptions->report(function (\Illuminate\Auth\AuthenticationException $e) {
-            \Log::channel('auth')->info('Authentication failed', ['error' => $e->getMessage()]);
+            Log::channel('auth')->info('Authentication failed', ['error' => $e->getMessage()]);
         });
         $exceptions->report(function (\Illuminate\Auth\Access\AuthorizationException $e) {
-            \Log::channel('auth')->warning('Authorization failed', ['error' => $e->getMessage()]);
+            Log::channel('auth')->warning('Authorization failed', ['error' => $e->getMessage()]);
         });
 
         // Кастомизация обработки исключений
@@ -130,7 +129,7 @@ return Application::configure(basePath: dirname(__DIR__))
                      $message = 'У вас недостаточно прав для выполнения этого действия. Обратитесь к администратору.';
                  }
                  
-                 \Log::info('[bootstrap/app.php] AuthorizationException caught', [
+                 Log::info('[bootstrap/app.php] AuthorizationException caught', [
                      'message' => $message,
                      'uri' => $request->getRequestUri(),
                  ]);
@@ -151,7 +150,7 @@ return Application::configure(basePath: dirname(__DIR__))
                      $message = 'У вас недостаточно прав для выполнения этого действия. Обратитесь к администратору.';
                  }
                  
-                 \Log::info('[bootstrap/app.php] AccessDeniedHttpException caught', [
+                 Log::info('[bootstrap/app.php] AccessDeniedHttpException caught', [
                      'message' => $message,
                      'uri' => $request->getRequestUri(),
                  ]);
@@ -203,7 +202,7 @@ return Application::configure(basePath: dirname(__DIR__))
             $postMaxSizeBytes = convertIniSizeToBytes($postMaxSize);
             $uploadMaxFilesizeBytes = convertIniSizeToBytes($uploadMaxFilesize);
 
-            \Log::error('[bootstrap/app.php] PostTooLargeException - Детальная диагностика', [
+            Log::error('[bootstrap/app.php] PostTooLargeException - Детальная диагностика', [
                 'uri' => $request->getRequestUri(),
                 'method' => $request->method(),
                 'content_length_header' => $contentLength,
@@ -238,7 +237,7 @@ return Application::configure(basePath: dirname(__DIR__))
         // Обработка всех остальных ошибок для API, когда НЕ в режиме отладки
         $exceptions->renderable(function (\Throwable $e, $request) {
              if (($request->expectsJson() || $request->is('api/*')) && !app()->hasDebugModeEnabled()) {
-                \Log::error('[bootstrap/app.php] Throwable caught in general handler', [
+                Log::error('[bootstrap/app.php] Throwable caught in general handler', [
                     'exception_class' => get_class($e),
                     'exception_message' => $e->getMessage(),
                     'exception_code' => $e->getCode(),
