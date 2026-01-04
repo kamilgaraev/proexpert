@@ -18,6 +18,18 @@ class ImportMappingService
 
     public function detectColumns(array $headerRow, array $sampleRows, ?int $headerRowNum = null, ?int $dataStartRow = null): ImportMappingDTO
     {
+        // 1. Try to find smart mapping by content fingerprint first
+        if ($smartMapping = $this->findSmartMapping($headerRow)) {
+            // Apply saved mapping but refresh sample data
+            return new ImportMappingDTO(
+                columnMappings: $smartMapping['column_mappings'],
+                detectedColumns: $smartMapping['detected_columns'], 
+                sampleData: array_slice($sampleRows, 0, 5),
+                headerRow: $headerRowNum,
+                dataStartRow: $dataStartRow
+            );
+        }
+
         $detectedColumns = [];
         $columnMappings = [];
         
@@ -80,6 +92,9 @@ class ImportMappingService
                 ];
             }
         }
+        
+        // Auto-learn: Save this mapping as smart mapping for future use
+        $this->saveSmartMapping($headerRow, $userMapping, $detectedColumns);
         
         return new ImportMappingDTO(
             columnMappings: $userMapping,
@@ -171,6 +186,39 @@ class ImportMappingService
         }
         
         return 0.0;
+    }
+
+    /**
+     * Generates a unique fingerprint for the file structure based on headers
+     */
+    private function generateFingerprint(array $headers): string
+    {
+        // Normalize headers: remove empty, lowercase, sort
+        $normalized = array_map(fn($h) => mb_strtolower(trim($h)), $headers);
+        $normalized = array_filter($normalized); // Remove empty
+        sort($normalized);
+        
+        return md5(implode('|', $normalized));
+    }
+
+    private function saveSmartMapping(array $headers, array $mapping, array $detectedColumns): void
+    {
+        $fingerprint = $this->generateFingerprint($headers);
+        $cacheKey = "estimate_smart_mapping:{$fingerprint}";
+        
+        Cache::put($cacheKey, [
+            'column_mappings' => $mapping,
+            'detected_columns' => $detectedColumns,
+            'last_used_at' => now(),
+        ], now()->addYear()); // Keep for a long time
+    }
+
+    private function findSmartMapping(array $headers): ?array
+    {
+        $fingerprint = $this->generateFingerprint($headers);
+        $cacheKey = "estimate_smart_mapping:{$fingerprint}";
+        
+        return Cache::get($cacheKey);
     }
 }
 

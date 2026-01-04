@@ -703,8 +703,27 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
             'current_total_amount' => null,
             'code' => null,
             'is_not_accounted' => false, // ⭐ Флаг "не учтенного" материала
+            'style' => [], // ⭐ Стиль строки
         ];
         
+        // Извлекаем стиль из колонки с названием (или A, если названия нет в маппинге)
+        $styleColumn = $columnMapping['name'] ?? 'A';
+        try {
+            $styleObject = $sheet->getStyle($styleColumn . $rowNum);
+            $font = $styleObject->getFont();
+            $cell = $sheet->getCell($styleColumn . $rowNum);
+            
+            $data['style'] = [
+                'is_bold' => $font->getBold(),
+                'is_italic' => $font->getItalic(),
+                'size' => $font->getSize(),
+                'is_merged' => $cell->isInMergeRange(),
+                'indent' => $styleObject->getAlignment()->getIndent(), // Отступ важен для иерархии
+            ];
+        } catch (\Exception $e) {
+            $data['style'] = [];
+        }
+
         $numericFields = [
             'quantity',
             'quantity_coefficient',
@@ -749,13 +768,8 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         if ($rowNum >= 30 && $rowNum <= 50) {
             Log::info("[ExcelParser] Row {$rowNum} extracted data", [
                 'row' => $rowNum,
-                'section_number' => $data['section_number'],
-                'name' => substr($data['name'] ?? '', 0, 100), // Первые 100 символов
-                'code' => $data['code'],
-                'unit' => $data['unit'],
-                'quantity' => $data['quantity'],
-                'unit_price' => $data['unit_price'],
-                'is_not_accounted' => $data['is_not_accounted'],
+                'name' => substr($data['name'] ?? '', 0, 50), 
+                'style' => $data['style']
             ]);
         }
         
@@ -953,6 +967,10 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $hasUnit = !empty($rowData['unit']);
         $hasName = !empty($rowData['name']);
         
+        // Style check
+        $isBold = $rowData['style']['is_bold'] ?? false;
+        $isMerged = $rowData['style']['is_merged'] ?? false;
+        
         if (!$hasName) {
             return false; // Нет названия - не раздел и не позиция
         }
@@ -965,83 +983,67 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
         $code = $rowData['code'] ?? '';
         if (!empty($code) && !$this->codeService->isPseudoCode($code)) {
             if ($this->codeService->isValidCode($code)) {
-                Log::debug('[ExcelParser] Код найден - НЕ секция', [
-                    'code' => $code,
-                    'name' => substr($rowData['name'] ?? '', 0, 100),
-                ]);
                 return false; // Это позиция!
             }
         }
         
-        // 2. Если есть количество ИЛИ цена - это точно позиция
+        // 2. Если есть количество ИЛИ цена - это скорее всего позиция
         if ($hasQuantity || $hasPrice) {
-            return false;
+            // Исключение: иногда заголовки разделов имеют суммарную стоимость, но они обычно BOLD и MERGED
+            // Если НЕ Bold и есть цена -> точно позиция
+            if (!$isBold) {
+                return false;
+            }
         }
         
-        // 3. ⭐ КРИТИЧНО: Если есть единица измерения - это ТОЧНО позиция (даже без количества/цены)
-        if ($hasUnit) {
-            Log::debug('[ExcelParser] Единица измерения найдена - НЕ секция', [
-                'unit' => $rowData['unit'],
-                'name' => substr($rowData['name'] ?? '', 0, 100),
-            ]);
-            return false;
+        // 3. ⭐ КРИТИЧНО: Если есть единица измерения - это часто позиция
+        // НО: Если это BOLD строка без цены/количества, это может быть раздел с мусором в колонке ед.изм
+        if ($hasUnit && !$isBold) {
+             return false;
         }
         
         // ============================================
         // ПРАВИЛА ДЛЯ РАЗДЕЛОВ
         // ============================================
         
-        // 4. Если есть иерархический номер (1, 1.1, 1.2) - это может быть раздел
+        // 4. Если строка жирная (BOLD) и нет явных признаков позиции (цена/кол-во)
+        if ($isBold && !$hasQuantity && !$hasPrice) {
+            Log::debug('[ExcelParser] Жирный шрифт и нет данных - ЭТО РАЗДЕЛ', [
+                'name' => substr($rowData['name'] ?? '', 0, 100),
+            ]);
+            return true;
+        }
+        
+        // 5. Если есть иерархический номер (1, 1.1, 1.2)
         $sectionNumber = $rowData['section_number'] ?? '';
         $hasHierarchicalNumber = preg_match('/^\d+(\.\d+)*\.?$/', $sectionNumber);
         
         if ($hasHierarchicalNumber) {
-            Log::debug('[ExcelParser] Иерархический номер найден - ЭТО РАЗДЕЛ', [
-                'section_number' => $sectionNumber,
-                'name' => substr($rowData['name'] ?? '', 0, 100),
-            ]);
             return true; // Это раздел
         }
         
-        // 5. Проверяем явные признаки раздела в названии
+        // 6. Проверяем явные признаки раздела в названии
         $name = mb_strtolower($rowData['name']);
         $sectionPatterns = [
             '/^раздел\s+\d+/u',
-            '/^раздел\s+\d+\./u',  // ← "Раздел 1."
+            '/^раздел\s+\d+\./u',
             '/^глава\s+\d+/u',
             '/^этап\s+\d+/u',
             '/^часть\s+\d+/u',
-            '/^\d+\.\s+[А-ЯЁ]/u',  // ← "1. ЗЕМЛЯНЫЕ РАБОТЫ"
+            '/^\d+\.\s+[А-ЯЁ]/u',
         ];
         
         foreach ($sectionPatterns as $pattern) {
             if (preg_match($pattern, $name)) {
-                Log::debug('[ExcelParser] Явный признак раздела в названии - ЭТО РАЗДЕЛ', [
-                    'pattern' => $pattern,
-                    'name' => substr($rowData['name'] ?? '', 0, 100),
-                ]);
                 return true; // Это раздел
             }
         }
         
-        // 6. Название ПОЛНОСТЬЮ заглавными буквами (часто признак раздела)
+        // 7. Название ПОЛНОСТЬЮ заглавными буквами
         if (mb_strtoupper($rowData['name']) === $rowData['name'] && mb_strlen($rowData['name']) > 3) {
-            // Но не считаем разделом однобуквенные коды (В, Р, М и т.д.)
-            Log::debug('[ExcelParser] Название заглавными буквами - ЭТО РАЗДЕЛ', [
-                'name' => substr($rowData['name'] ?? '', 0, 100),
-            ]);
             return true; // Это раздел
         }
         
-        // ============================================
-        // ИТОГ: Если ничего из вышеперечисленного не подошло - это НЕ раздел
-        // ============================================
-        Log::debug('[ExcelParser] Ни один признак раздела не подошел - НЕ РАЗДЕЛ', [
-            'name' => substr($rowData['name'] ?? '', 0, 100),
-            'has_unit' => $hasUnit,
-            'has_quantity' => $hasQuantity,
-            'has_price' => $hasPrice,
-        ]);
         return false;
     }
 
@@ -1380,28 +1382,40 @@ class ExcelSimpleTableParser implements EstimateImportParserInterface
      */
     private function isSectionRowWithAI(array $rowData, array $context = []): bool
     {
-        // Сначала применяем жесткие правила (быстро)
+        // Сначала применяем жесткие правила
         $ruleBasedResult = $this->isSectionRow($rowData);
         
-        // Если AI недоступен или правила уверены, возвращаем результат правил
         if (!$this->useAI || !$this->aiSectionDetector) {
             return $ruleBasedResult;
         }
         
-        // Если правила не уверены (пограничный случай), спрашиваем AI
+        // Если правила сказали "ДА" - верим правилам
+        if ($ruleBasedResult) {
+            return true;
+        }
+        
+        // Если правила сказали "НЕТ", но у нас есть сомнения (например, жирный шрифт), спрашиваем AI
+        $isBold = $rowData['style']['is_bold'] ?? false;
         $hasData = ($rowData['quantity'] ?? 0) > 0 || ($rowData['unit_price'] ?? 0) > 0;
         
-        if (!$hasData && !empty($rowData['name'])) {
-            // Пограничный случай - нет данных, но есть название
-            // Спрашиваем AI
+        // Если это строка с данными (цена/кол-во) и она НЕ жирная - это точно позиция, AI не нужен
+        if ($hasData && !$isBold) {
+            return false;
+        }
+        
+        // Сомнения возникают если:
+        // 1. Нет данных, но есть название (пограничный случай)
+        // 2. Есть данные, но строка ЖИРНАЯ (может быть заголовок с суммой)
+        // 3. Есть единица измерения, но нет цены (заголовок с мусором)
+        
+        if ($isBold || !$hasData) {
             $aiResult = $this->aiSectionDetector->detectSection($rowData, $context);
             
-            if ($aiResult['confidence'] >= 0.75) {
-                Log::debug('[ExcelParser] AI section detection override', [
-                    'name' => substr($rowData['name'], 0, 50),
-                    'rule_result' => $ruleBasedResult,
-                    'ai_result' => $aiResult['is_section'],
-                    'ai_confidence' => $aiResult['confidence']
+            if ($aiResult['confidence'] >= 0.7) {
+                 Log::debug('[ExcelParser] AI section override', [
+                    'name' => substr($rowData['name'] ?? '', 0, 50),
+                    'is_section' => $aiResult['is_section'],
+                    'confidence' => $aiResult['confidence']
                 ]);
                 return $aiResult['is_section'];
             }

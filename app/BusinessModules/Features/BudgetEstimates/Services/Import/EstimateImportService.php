@@ -270,7 +270,7 @@ class EstimateImportService
         ];
     }
 
-    public function execute(string $fileId, array $matchingConfig, array $estimateSettings): array
+    public function execute(string $fileId, array $matchingConfig, array $estimateSettings, bool $validateOnly = false): array
     {
         // Используем потоковый парсинг для выполнения
         $fileData = $this->getFileData($fileId);
@@ -288,7 +288,13 @@ class EstimateImportService
             'items_count_estimate' => $itemsCount,
             'job_id' => $jobId,
             'import_type' => $itemsCount <= 500 ? 'sync' : 'async',
+            'validate_only' => $validateOnly,
         ]);
+        
+        // Dry Run всегда синхронно (пока)
+        if ($validateOnly) {
+            return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId, true);
+        }
         
         if ($itemsCount <= 500) {
             return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId);
@@ -297,7 +303,7 @@ class EstimateImportService
         }
     }
 
-    public function syncImport(string $fileId, array $matchingConfig, array $estimateSettings, ?string $jobId = null): array
+    public function syncImport(string $fileId, array $matchingConfig, array $estimateSettings, ?string $jobId = null, bool $validateOnly = false): array
     {
         $startTime = microtime(true);
         $fileData = $this->getFileData($fileId);
@@ -316,12 +322,13 @@ class EstimateImportService
                 'file_format' => $this->detectFileFormat($fileData['file_path']),
                 'status' => 'processing',
                 'progress' => 0,
+                'result_log' => $validateOnly ? ['mode' => 'dry_run'] : [],
             ]);
         }
         
         try {
             // Используем новый потоковый метод
-            $result = $this->createEstimateFromStream($fileId, $matchingConfig, $estimateSettings, $progressTracker, $jobId);
+            $result = $this->createEstimateFromStream($fileId, $matchingConfig, $estimateSettings, $progressTracker, $jobId, null, $validateOnly);
             
             $processingTime = (microtime(true) - $startTime) * 1000;
             $result->processingTimeMs = (int)$processingTime;
@@ -329,7 +336,7 @@ class EstimateImportService
             if ($jobId) {
                 EstimateImportHistory::where('job_id', $jobId)->update([
                     'status' => 'completed',
-                    'estimate_id' => $result->estimateId,
+                    'estimate_id' => $result->estimateId, // Может быть null если validateOnly
                     'items_imported' => $result->itemsImported,
                     'result_log' => $result->toArray(),
                     'processing_time_ms' => $result->processingTimeMs,
@@ -337,13 +344,16 @@ class EstimateImportService
                 ]);
             }
             
-            $this->cleanup($fileId);
+            if (!$validateOnly) {
+                $this->cleanup($fileId);
+            }
             
             return [
                 'status' => 'completed',
                 'job_id' => $jobId,
                 'estimate_id' => $result->estimateId,
                 'result' => $result->toArray(),
+                'validate_only' => $validateOnly,
             ];
             
         } catch (\Exception $e) {
@@ -519,6 +529,24 @@ class EstimateImportService
         }
     }
 
+    private function columnIndexFromString(?string $columnLetter): ?int
+    {
+        if (empty($columnLetter)) {
+            return null;
+        }
+        
+        $columnLetter = strtoupper($columnLetter);
+        $length = strlen($columnLetter);
+        $index = 0;
+        
+        for ($i = 0; $i < $length; $i++) {
+            $index *= 26;
+            $index += ord($columnLetter[$i]) - 64;
+        }
+        
+        return $index - 1; // 0-based index
+    }
+
     private function getParser(string $filePath): EstimateImportParserInterface
     {
         // Используем старый фабричный метод для совместимости в методах, где нужен EstimateImportParserInterface
@@ -556,15 +584,18 @@ class EstimateImportService
         array $settings,
         ImportProgressTracker $progressTracker,
         ?string $jobId = null,
-        ?array $preloadedItems = null
+        ?array $preloadedItems = null,
+        bool $validateOnly = false
     ): EstimateImportResultDTO {
         DB::beginTransaction();
         
         try {
             $progressTracker->update(10, 100, 0, 10);
             
+            // Если validateOnly, мы все равно создаем смету, но потом откатим транзакцию
+            // Это нужно, чтобы работали внешние ключи (section.estimate_id и т.д.)
             $estimate = $this->estimateService->create([
-                'name' => $settings['name'],
+                'name' => $settings['name'] . ($validateOnly ? ' [DRY RUN]' : ''),
                 'type' => $settings['type'],
                 'project_id' => $settings['project_id'] ?? null,
                 'contract_id' => $settings['contract_id'] ?? null,
@@ -580,17 +611,49 @@ class EstimateImportService
                 $iterator = $preloadedItems;
             } else {
                 $fileData = $this->getFileData($fileId);
-                $parser = $this->parserFactory->getParser($fileData['file_path']);
-                // TODO: Здесь нужно применить маппинг колонок к генератору
-                // Сейчас просто получаем сырые строки.
-                // Для MVP Enterprise реализации мы будем полагаться на то, что processItems может принять DTO
-                // Но ExcelStreamParser возвращает array.
-                // Нам нужен адаптер, который берет generator и mapping и выдает DTO.
                 
-                // Временное решение: используем превью данные (не настоящий стриминг, но безопасно)
-                // Для настоящего стриминга нужно переписать парсер, чтобы он принимал маппинг.
-                $previewData = Cache::get("estimate_import_preview:{$fileId}");
-                $iterator = $previewData['items']; 
+                // Получаем парсер
+                $parser = $this->parserFactory->getParser($fileData['file_path']);
+                
+                if ($parser instanceof ExcelStreamParser) {
+                    // Для стриминга используем генератор напрямую
+                    $rawIterator = $parser->parse($fileData['file_path']);
+                    
+                    // Обертка для маппинга "на лету"
+                    // Нам нужно передать mapping из конфига
+                    $columnMapping = $matchingConfig ?? [];
+                    
+                    $iterator = (function() use ($rawIterator, $columnMapping) {
+                        foreach ($rawIterator as $row) {
+                            // Преобразуем индексированный массив (строку excel) в именованный массив через маппинг
+                            $mappedRow = [];
+                            foreach ($columnMapping as $field => $columnIndex) {
+                                // Преобразуем букву колонки в индекс (A -> 0, B -> 1) если нужно
+                                // SimpleXLSX возвращает индексированный массив [0 => 'Val', 1 => 'Val']
+                                // А маппинг у нас может быть ['name' => 'A', 'price' => 'F']
+                                
+                                $idx = $this->columnIndexFromString($columnIndex);
+                                if ($idx !== null && isset($row[$idx])) {
+                                    $mappedRow[$field] = $row[$idx];
+                                }
+                            }
+                            
+                            // Пропускаем пустые строки
+                            if (empty($mappedRow)) {
+                                continue;
+                            }
+                            
+                            // Добавляем метаданные если нужны (например номер строки, если SimpleXLSX его не дает)
+                            yield $mappedRow;
+                        }
+                    })();
+                    
+                } else {
+                    // Fallback для других парсеров (XML, CSV) - пока через память или их собственные методы
+                    // Временное решение: используем превью данные
+                    $previewData = Cache::get("estimate_import_preview:{$fileId}");
+                    $iterator = $previewData['items'] ?? []; 
+                }
             }
             
             // Инициализация контекста импорта
@@ -615,6 +678,24 @@ class EstimateImportService
             $this->calculationService->recalculateAll($estimate);
             
             $progressTracker->update(95, 100, 0, 95);
+            
+            if ($validateOnly) {
+                // В режиме валидации откатываем транзакцию, чтобы ничего не сохранилось
+                DB::rollBack();
+                
+                // Возвращаем результат с пометкой валидации
+                return new EstimateImportResultDTO(
+                    estimateId: null, // Сметы нет
+                    itemsTotal: is_array($iterator) ? count($iterator) : 0,
+                    itemsImported: $itemsResult['imported'],
+                    itemsSkipped: $itemsResult['skipped'],
+                    sectionsCreated: 0,
+                    newWorkTypesCreated: [], 
+                    warnings: $itemsResult['warnings'] ?? [], 
+                    errors: [],
+                    status: 'validated'
+                );
+            }
             
             DB::commit();
             
