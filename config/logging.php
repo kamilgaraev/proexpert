@@ -218,6 +218,27 @@ return [
             'level' => 'warning',
         ],
 
+        'redis' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/redis/redis.log'),
+            'level' => 'debug',
+            'days' => 14,
+        ],
+
+        'database' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/database/database.log'),
+            'level' => 'warning', // Usually only errors matter
+            'days' => 14,
+        ],
+
+        'auth' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/auth/auth.log'),
+            'level' => 'info',
+            'days' => 14,
+        ],
+
     ],
 
 ];
