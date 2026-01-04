@@ -12,6 +12,7 @@ class ImportMappingService
         'unit' => ['ед.изм', 'единица', 'ед', 'измерение', 'ед. изм'],
         'quantity' => ['количество', 'кол-во', 'объем', 'кол', 'объём'],
         'unit_price' => ['цена', 'стоимость', 'расценка', 'цена за ед', 'стоимость единицы'],
+        'total_amount' => ['всего', 'общая стоимость', 'сумма', 'итого', 'стоимость всего'], // Added
         'code' => ['код', 'шифр', 'обоснование', 'гэсн', 'фер', 'шифр расценки'],
         'section_number' => ['№', 'номер', '№ п/п', 'п/п', 'n'],
     ];
@@ -173,16 +174,28 @@ class ImportMappingService
 
     private function calculateConfidence(string $text, string $keyword): float
     {
+        // 1. Exact match
         if ($text === $keyword) {
             return 1.0;
         }
         
+        // 2. Starts with (strong signal)
         if (str_starts_with($text, $keyword)) {
-            return 0.9;
+            return 0.95;
         }
         
+        // 3. Contains the keyword
         if (str_contains($text, $keyword)) {
-            return mb_strlen($keyword) / max(mb_strlen($text), 1);
+            // New logic: Base confidence 0.6 + length bonus
+            // This ensures that even in long strings ("Total cost of construction works in 2001 prices")
+            // finding "Total cost" gives at least 0.6, plus some bonus.
+            
+            $ratio = mb_strlen($keyword) / max(mb_strlen($text), 1);
+            
+            // If keyword is multi-word (e.g. "unit price"), it's very specific, so boost base confidence
+            $baseConfidence = str_contains($keyword, ' ') ? 0.8 : 0.6;
+            
+            return min(1.0, $baseConfidence + ($ratio * 0.4));
         }
         
         return 0.0;
