@@ -85,6 +85,35 @@ return Application::configure(basePath: dirname(__DIR__))
         // $middleware->web([...]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
+        // === ЛОГИРОВАНИЕ В ОТДЕЛЬНЫЕ ФАЙЛЫ ===
+        
+        // 1. Ошибки Redis -> logs/redis/redis.log
+        $exceptions->report(function (\RedisException $e) {
+            \Log::channel('redis')->error($e->getMessage(), ['trace' => $e->getTraceAsString()]);
+        });
+        $exceptions->report(function (\Predis\Connection\ConnectionException $e) {
+            \Log::channel('redis')->error($e->getMessage(), ['trace' => $e->getTraceAsString()]);
+        });
+
+        // 2. Ошибки БД -> logs/database/database.log
+        $exceptions->report(function (\Illuminate\Database\QueryException $e) {
+            \Log::channel('database')->error($e->getMessage(), [
+                'sql' => $e->getSql(),
+                'bindings' => $e->getBindings(),
+            ]);
+        });
+        $exceptions->report(function (\PDOException $e) {
+            \Log::channel('database')->error($e->getMessage());
+        });
+
+        // 3. Ошибки Авторизации -> logs/auth/auth.log
+        $exceptions->report(function (\Illuminate\Auth\AuthenticationException $e) {
+            \Log::channel('auth')->info('Authentication failed', ['error' => $e->getMessage()]);
+        });
+        $exceptions->report(function (\Illuminate\Auth\Access\AuthorizationException $e) {
+            \Log::channel('auth')->warning('Authorization failed', ['error' => $e->getMessage()]);
+        });
+
         // Кастомизация обработки исключений
         $exceptions->renderable(function (\Illuminate\Auth\AuthenticationException $e, $request) {
             if ($request->expectsJson()) {
