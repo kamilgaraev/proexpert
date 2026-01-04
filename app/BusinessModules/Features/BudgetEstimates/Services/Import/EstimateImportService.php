@@ -296,7 +296,9 @@ class EstimateImportService
                 // Файл маленький, можно перепарсить синхронно
                 Log::warning('[EstimateImport] Preview cache missing in execute, regenerating sync', ['file_id' => $fileId]);
                 try {
-                    $importDTO = $this->preview($fileId, $matchingConfig);
+                    // FIX: Don't use matchingConfig as columnMapping, use cached mapping or auto-detect (null)
+                    $columnMapping = Cache::get("estimate_import_mapping:{$fileId}");
+                    $importDTO = $this->preview($fileId, $columnMapping);
                     $previewData = $importDTO->toArray();
                     $itemsCount = count($previewData['items'] ?? []);
                 } catch (\Exception $e) {
@@ -685,12 +687,18 @@ class EstimateImportService
                     
                     if ($previewData === null) {
                         Log::info('[EstimateImport] Preview cache missing in stream creation, regenerating', ['file_id' => $fileId]);
-                        // Используем matchingConfig как columnMapping
-                        $importDTO = $this->preview($fileId, $matchingConfig);
+                        // FIX: Don't use matchingConfig as columnMapping
+                        $columnMapping = Cache::get("estimate_import_mapping:{$fileId}");
+                        $importDTO = $this->preview($fileId, $columnMapping);
                         $previewData = $importDTO->toArray();
                     }
 
                     $iterator = $previewData['items'] ?? []; 
+                    
+                    Log::info('[EstimateImport] Stream iterator prepared', [
+                        'count' => is_array($iterator) ? count($iterator) : 'unknown (generator)',
+                        'first_item' => is_array($iterator) && !empty($iterator) ? array_keys($iterator[0]) : null
+                    ]); 
                 }
             }
             
