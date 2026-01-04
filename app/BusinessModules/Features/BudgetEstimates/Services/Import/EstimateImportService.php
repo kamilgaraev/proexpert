@@ -325,17 +325,17 @@ class EstimateImportService
         
         // Dry Run всегда синхронно (пока)
         if ($validateOnly) {
-            return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId, true);
+            return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId, true, $previewData['items'] ?? null);
         }
         
         if (!$shouldQueue) {
-            return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId);
+            return $this->syncImport($fileId, $matchingConfig, $estimateSettings, $jobId, false, $previewData['items'] ?? null);
         } else {
             return $this->queueImport($fileId, $matchingConfig, $estimateSettings);
         }
     }
 
-    public function syncImport(string $fileId, array $matchingConfig, array $estimateSettings, ?string $jobId = null, bool $validateOnly = false): array
+    public function syncImport(string $fileId, array $matchingConfig, array $estimateSettings, ?string $jobId = null, bool $validateOnly = false, ?array $preloadedItems = null): array
     {
         $startTime = microtime(true);
         $fileData = $this->getFileData($fileId);
@@ -360,7 +360,7 @@ class EstimateImportService
         
         try {
             // Используем новый потоковый метод
-            $result = $this->createEstimateFromStream($fileId, $matchingConfig, $estimateSettings, $progressTracker, $jobId, null, $validateOnly);
+            $result = $this->createEstimateFromStream($fileId, $matchingConfig, $estimateSettings, $progressTracker, $jobId, $preloadedItems, $validateOnly);
             
             $processingTime = (microtime(true) - $startTime) * 1000;
             $result->processingTimeMs = (int)$processingTime;
@@ -687,8 +687,10 @@ class EstimateImportService
                     
                     if (empty($previewData['items'])) {
                         Log::info('[EstimateImport] Preview cache missing/empty in stream creation, regenerating', ['file_id' => $fileId]);
+                        
                         // FIX: Don't use matchingConfig as columnMapping
                         $columnMapping = Cache::get("estimate_import_mapping:{$fileId}");
+                        // Если маппинга нет, передаем null, чтобы сработал автодетект
                         $importDTO = $this->preview($fileId, $columnMapping);
                         $previewData = $importDTO->toArray();
                     }
