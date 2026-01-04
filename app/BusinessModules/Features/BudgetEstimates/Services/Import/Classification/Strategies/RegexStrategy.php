@@ -26,7 +26,36 @@ class RegexStrategy implements ClassificationStrategyInterface
         }
 
         // ⭐ РАБОТЫ: ГЭСН, ФЕР, ТЕР
-        if (preg_match('/^(ГЭСН|ГСН|ФЕР|ТЕР)/ui', $code)) {
+        // Улучшенная логика: проверяем суффикс (м - монтаж, р - ремонт) и контекст имени
+        if (preg_match('/^(ГЭСН|ГСН|ФЕР|ТЕР)([мрп])?/ui', $code, $matches)) {
+            $suffix = mb_strtolower($matches[2] ?? '');
+            
+            // Если это монтажный сборник ('м'), но название не начинается с явного действия (Монтаж...),
+            // то это может быть оборудование/материал (Светильник, Кабель).
+            // Отдаем AI на перепроверку (confidence < 0.8).
+            if ($suffix === 'м') {
+                 $nameLower = mb_strtolower($name);
+                 $isActivity = false;
+                 // Список слов, указывающих на работу
+                 $activities = [
+                     'монтаж', 'установка', 'укладка', 'устройство', 'разборка', 
+                     'смена', 'демонтаж', 'прокладка', 'врезка', 'заделка', 
+                     'окраска', 'изоляция', 'присоединение', 'сборка', 'настройка'
+                 ];
+                 
+                 foreach ($activities as $act) {
+                     if (str_starts_with($nameLower, $act)) {
+                         $isActivity = true;
+                         break;
+                     }
+                 }
+                 
+                 if (!$isActivity) {
+                     // Возвращаем work, но с низкой уверенностью (0.6), чтобы AI мог переопределить в material/equipment
+                     return new ClassificationResult('work', 0.6, 'regex_pattern_weak');
+                 }
+            }
+
             return new ClassificationResult('work', 1.0, 'regex_strict');
         }
 
@@ -63,23 +92,6 @@ class RegexStrategy implements ClassificationStrategyInterface
             }
         }
         
-        // Дополнительные проверки из старого детектора
-        
-        // Трудозатраты
-        if (preg_match('/^(ОТм|ЭТм|ТЗ|ТЗм|ТЗп|ФОТ)/ui', $code)) {
-            return new ClassificationResult('labor', 1.0, 'regex_prefix');
-        }
-        
-        // Материалы
-        if (preg_match('/^(МАТ|ГЭСНм|ФЕРм|ТЕРм)/ui', $code)) {
-            return new ClassificationResult('material', 1.0, 'regex_prefix');
-        }
-        
-        // Механизмы
-        if (preg_match('/^(МР|ЭМ|ГЭСНр|ФЕРр|ТЕРр)/ui', $code)) {
-            return new ClassificationResult('equipment', 1.0, 'regex_prefix');
-        }
-
         return null;
     }
 
