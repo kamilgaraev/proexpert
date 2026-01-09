@@ -29,7 +29,7 @@ class ContractorInvitationController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         $type = $request->input('type', 'sent');
@@ -58,7 +58,7 @@ class ContractorInvitationController extends Controller
                 'type' => $type,
             ]);
 
-            return AdminResponse::error(__('contract.invitations_retrieve_error'), 500);
+            return AdminResponse::error(trans_message('contract.invitations_retrieve_error'), 500);
         }
     }
 
@@ -68,7 +68,7 @@ class ContractorInvitationController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         $validated = $request->validated();
@@ -84,7 +84,7 @@ class ContractorInvitationController extends Controller
 
             return AdminResponse::success(
                 new ContractorInvitationResource($invitation->load(['invitedOrganization', 'invitedBy'])),
-                __('contract.invitation_sent'),
+                trans_message('contract.invitation_sent'),
                 201
             );
 
@@ -99,7 +99,7 @@ class ContractorInvitationController extends Controller
                 'user_id' => $user->id,
             ]);
 
-            return AdminResponse::error(__('contract.invitation_create_error'), 500);
+            return AdminResponse::error(trans_message('contract.invitation_create_error'), 500);
         }
     }
 
@@ -109,7 +109,7 @@ class ContractorInvitationController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -124,7 +124,7 @@ class ContractorInvitationController extends Controller
             return AdminResponse::success(new ContractorInvitationResource($invitation));
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return AdminResponse::error(__('contract.invitation_not_found'), 404);
+            return AdminResponse::error(trans_message('contract.invitation_not_found'), 404);
 
         } catch (\Exception $e) {
             Log::error('Failed to fetch contractor invitation', [
@@ -133,7 +133,7 @@ class ContractorInvitationController extends Controller
                 'organization_id' => $organizationId,
             ]);
 
-            return AdminResponse::error(__('contract.invitation_retrieve_error'), 500);
+            return AdminResponse::error(trans_message('contract.invitation_retrieve_error'), 500);
         }
     }
 
@@ -143,7 +143,7 @@ class ContractorInvitationController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -160,10 +160,10 @@ class ContractorInvitationController extends Controller
                 'organization_id' => $organizationId,
             ]);
 
-            return AdminResponse::success(null, __('contract.invitation_cancelled'));
+            return AdminResponse::success(null, trans_message('contract.invitation_cancelled'));
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return AdminResponse::error(__('contract.invitation_not_found'), 404);
+            return AdminResponse::error(trans_message('contract.invitation_not_found'), 404);
 
         } catch (\Exception $e) {
             Log::error('Failed to cancel contractor invitation', [
@@ -172,7 +172,7 @@ class ContractorInvitationController extends Controller
                 'organization_id' => $organizationId,
             ]);
 
-            return AdminResponse::error(__('contract.invitation_cancel_error'), 500);
+            return AdminResponse::error(trans_message('contract.invitation_cancel_error'), 500);
         }
     }
 
@@ -182,7 +182,7 @@ class ContractorInvitationController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -196,7 +196,7 @@ class ContractorInvitationController extends Controller
                 'organization_id' => $organizationId,
             ]);
 
-            return AdminResponse::error(__('contract.invitation_stats_error'), 500);
+            return AdminResponse::error(trans_message('contract.invitation_stats_error'), 500);
         }
     }
 }

@@ -43,7 +43,7 @@ class ContractController extends Controller
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
         
         // Получаем project_id из URL (обязательный параметр для project-based маршрутов)
@@ -139,7 +139,7 @@ class ContractController extends Controller
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
         
         try {
@@ -152,7 +152,7 @@ class ContractController extends Controller
             
             return AdminResponse::success(new ContractResource($contract), null, Response::HTTP_CREATED);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.create_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(trans_message('contract.create_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         }
     }
 
@@ -174,7 +174,7 @@ class ContractController extends Controller
         ]);
         
         if (!$contract) {
-            return AdminResponse::error(__('contract.contract_id_missing'), 400);
+            return AdminResponse::error(trans_message('contract.contract_id_missing'), 400);
         }
         
         $user = $request->user();
@@ -206,7 +206,7 @@ class ContractController extends Controller
                 'contract_id' => $contract,
                 'organization_id' => $organizationId
             ]);
-            return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
         }
         
         // Проверка принадлежности контракта к проекту (для обычных и мультипроектных контрактов)
@@ -228,7 +228,7 @@ class ContractController extends Controller
                     'is_multi_project' => $contractData->is_multi_project,
                     'requested_project_id' => (int)$projectId,
                 ]);
-                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
         }
         
@@ -247,7 +247,7 @@ class ContractController extends Controller
                     'contract_contractor_id' => $contractData->contractor_id,
                     'user_contractor_id' => $contractor->id,
                 ]);
-                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             // Если подрядчик не найден - значит контракт не его
@@ -257,7 +257,7 @@ class ContractController extends Controller
                     'contract_organization_id' => $contractData->organization_id,
                     'contractor_source_org_id' => $projectContext->organizationId,
                 ]);
-                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
         }
         
@@ -283,7 +283,7 @@ class ContractController extends Controller
             $existingContract = \App\Models\Contract::find($contractId);
             
             if (!$existingContract) {
-                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             Log::info('ContractController::update - EXISTING CONTRACT FOUND', [
@@ -323,9 +323,9 @@ class ContractController extends Controller
             $updatedContract = $this->contractService->updateContract($contractId, $organizationId, $contractDTO);
             return AdminResponse::success(new ContractResource($updatedContract));
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
         } catch (\InvalidArgumentException $e) {
-            return AdminResponse::error(__('contract.invalid_data') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(trans_message('contract.invalid_data') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         } catch (Exception $e) {
             Log::error('Ошибка обновления контракта', [
                 'contract_id' => $contractId,
@@ -333,7 +333,7 @@ class ContractController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            return AdminResponse::error(__('contract.update_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(trans_message('contract.update_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -346,7 +346,7 @@ class ContractController extends Controller
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
         
         $projectId = $project;
@@ -354,7 +354,7 @@ class ContractController extends Controller
         try {
             $existingContract = $this->contractService->getContractById($contract, $organizationId);
             if (!$existingContract) {
-                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             // Проверка принадлежности контракта к проекту (для обычных и мультипроектных контрактов)
@@ -370,14 +370,14 @@ class ContractController extends Controller
                 }
                 
                 if (!$belongsToProject) {
-                    return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+                    return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
                 }
             }
             
             $this->contractService->deleteContract($contract, $organizationId);
-            return AdminResponse::success(null, __('contract.deleted'), Response::HTTP_NO_CONTENT);
+            return AdminResponse::success(null, trans_message('contract.deleted'), Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.delete_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(trans_message('contract.delete_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -398,7 +398,7 @@ class ContractController extends Controller
         $contract = $this->contractService->getContractById($contract, $organizationId);
         
         if (!$contract) {
-            return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
         }
         
         // Проверка принадлежности контракта к проекту
@@ -408,7 +408,7 @@ class ContractController extends Controller
                 : (int)$contract->project_id === (int)$projectId;
             
             if (!$belongsToProject) {
-                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
         }
 
@@ -448,7 +448,7 @@ class ContractController extends Controller
         $contract = $this->contractService->getContractById($contract, $organizationId);
         
         if (!$contract) {
-            return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
         }
         
         // Проверка принадлежности контракта к проекту
@@ -458,7 +458,7 @@ class ContractController extends Controller
                 : (int)$contract->project_id === (int)$projectId;
             
             if (!$belongsToProject) {
-                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
         }
 
@@ -496,7 +496,7 @@ class ContractController extends Controller
                     : (int)$contract->project_id === (int)$projectId;
                 
                 if (!$belongsToProject) {
-                    return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+                    return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
                 }
             }
             
@@ -536,10 +536,10 @@ class ContractController extends Controller
             
             return AdminResponse::success(
                 new ContractResource($contract), 
-                __('contract.attached_to_parent')
+                trans_message('contract.attached_to_parent')
             );
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.attach_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(trans_message('contract.attach_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         }
     }
 
@@ -557,10 +557,10 @@ class ContractController extends Controller
             
             return AdminResponse::success(
                 new ContractResource($contract), 
-                __('contract.detached_from_parent')
+                trans_message('contract.detached_from_parent')
             );
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.detach_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(trans_message('contract.detach_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         }
     }
 } 

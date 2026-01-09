@@ -41,7 +41,7 @@ class UserManagementController extends Controller
             Log::error('Error in UserManagementController@index', [
                 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return AdminResponse::error(__('user.list_error'), 500);
+            return AdminResponse::error(trans_message('user.list_error'), 500);
         }
     }
 
@@ -72,7 +72,7 @@ class UserManagementController extends Controller
 
             // Загружаем pivot данные для ресурса, если пользователь успешно создан
             $foreman->load('organizations'); 
-            return AdminResponse::success(new ForemanUserResource($foreman), __('user.created'), 201);
+            return AdminResponse::success(new ForemanUserResource($foreman), trans_message('user.created'), 201);
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
@@ -82,7 +82,7 @@ class UserManagementController extends Controller
             Log::error('Error in UserManagementController@store', [
                 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return AdminResponse::error(__('user.create_error'), 500);
+            return AdminResponse::error(trans_message('user.create_error'), 500);
         }
     }
 
@@ -93,7 +93,7 @@ class UserManagementController extends Controller
             $foreman = $this->userService->findForemanById((int)$id, $request);
             if (!$foreman) {
                 // Это специфичный случай "не найдено", который не является BusinessLogicException от сервиса
-                return AdminResponse::error(__('user.not_found'), 404);
+                return AdminResponse::error(trans_message('user.not_found'), 404);
             }
             $foreman->load('organizations');
             return AdminResponse::success(new ForemanUserResource($foreman));
@@ -103,7 +103,7 @@ class UserManagementController extends Controller
             Log::error('Error in UserManagementController@show', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return AdminResponse::error(__('user.show_error'), 500);
+            return AdminResponse::error(trans_message('user.show_error'), 500);
         }
     }
 
@@ -116,7 +116,7 @@ class UserManagementController extends Controller
             $foreman = $this->userService->updateForeman((int)$id, $request->validated(), $request);
             
             if (!$foreman) {
-                 return AdminResponse::error(__('user.not_found'), 404);
+                 return AdminResponse::error(trans_message('user.not_found'), 404);
             }
 
             $avatarChanged = false;
@@ -138,7 +138,7 @@ class UserManagementController extends Controller
                 } else {
                     Log::error('[UserManagementController@update] Failed to upload new avatar for user.', ['user_id' => $foreman->id]);
                     // Можно вернуть ошибку, если загрузка аватара критична
-                    return AdminResponse::error(__('user.avatar_upload_error'), 500);
+                    return AdminResponse::error(trans_message('user.avatar_upload_error'), 500);
                 }
             }
 
@@ -149,14 +149,14 @@ class UserManagementController extends Controller
 
             // Загружаем pivot данные для ресурса
             $foreman->load('organizations');
-            return AdminResponse::success(new ForemanUserResource($foreman), __('user.updated'));
+            return AdminResponse::success(new ForemanUserResource($foreman), trans_message('user.updated'));
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in UserManagementController@update', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return AdminResponse::error(__('user.update_error'), 500);
+            return AdminResponse::error(trans_message('user.update_error'), 500);
         }
     }
 
@@ -165,14 +165,14 @@ class UserManagementController extends Controller
     {
         try {
             $this->userService->deleteForeman((int)$id, $request);
-            return AdminResponse::success(null, __('user.deleted'));
+            return AdminResponse::success(null, trans_message('user.deleted'));
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in UserManagementController@destroy', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return AdminResponse::error(__('user.delete_error'), 500);
+            return AdminResponse::error(trans_message('user.delete_error'), 500);
         }
     }
 
@@ -183,14 +183,14 @@ class UserManagementController extends Controller
     {
         try {
             $this->userService->blockForeman((int)$id, $request);
-            return AdminResponse::success(null, __('user.blocked'));
+            return AdminResponse::success(null, trans_message('user.blocked'));
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in UserManagementController@block', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return AdminResponse::error(__('user.block_error'), 500);
+            return AdminResponse::error(trans_message('user.block_error'), 500);
         }
     }
 
@@ -201,14 +201,14 @@ class UserManagementController extends Controller
     {
          try {
             $this->userService->unblockForeman((int)$id, $request);
-            return AdminResponse::success(null, __('user.unblocked'));
+            return AdminResponse::success(null, trans_message('user.unblocked'));
         } catch (BusinessLogicException $e) {
             return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in UserManagementController@unblock', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return AdminResponse::error(__('user.unblock_error'), 500);
+            return AdminResponse::error(trans_message('user.unblock_error'), 500);
         }
     }
 }
