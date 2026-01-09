@@ -12,7 +12,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Carbon\Carbon;
 use App\Http\Responses\AdminResponse;
-use function App\Helpers\trans_message;
+
+use function trans_message;
 
 class EstimateExportController extends Controller
 {
@@ -25,7 +26,7 @@ class EstimateExportController extends Controller
      * Экспорт сметы в Excel формат
      * GET /api/v1/admin/projects/{project}/estimates/{estimate}/export/excel
      */
-    public function exportEstimateToExcel(Request $request, int $projectId, int $estimateId): Response
+    public function exportEstimateToExcel(Request $request, int $projectId, int $estimateId): Response|JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
 
@@ -59,7 +60,7 @@ class EstimateExportController extends Controller
                 ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
                 ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
         } catch (\Throwable $e) {
-            return response()->json(AdminResponse::error(trans_message('estimate.export_error'), Response::HTTP_INTERNAL_SERVER_ERROR)->getData(), Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(trans_message('estimate.export_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -67,7 +68,7 @@ class EstimateExportController extends Controller
      * Экспорт сметы в PDF формат
      * GET /api/v1/admin/projects/{project}/estimates/{estimate}/export/pdf
      */
-    public function exportEstimateToPdf(Request $request, int $projectId, int $estimateId): Response
+    public function exportEstimateToPdf(Request $request, int $projectId, int $estimateId): Response|JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
 
@@ -101,14 +102,14 @@ class EstimateExportController extends Controller
                 ->header('Content-Type', 'application/pdf')
                 ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
         } catch (\Throwable $e) {
-            return response()->json(AdminResponse::error(trans_message('estimate.export_error'), Response::HTTP_INTERNAL_SERVER_ERROR)->getData(), Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(trans_message('estimate.export_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
     /**
      * Экспорт формы КС-2 по смете
      */
-    public function exportKS2(Request $request, int $projectId, int $estimateId): Response
+    public function exportKS2(Request $request, int $projectId, int $estimateId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
         
@@ -126,16 +127,13 @@ class EstimateExportController extends Controller
 
         // TODO: Реализовать экспорт КС-2 на основе сметы и данных журнала за период
         // Пока возвращаем заглушку
-        return response()->json([
-            'success' => false,
-            'message' => 'Экспорт КС-2 по смете будет реализован в следующей версии',
-        ], 501);
+        return AdminResponse::error('Экспорт КС-2 по смете будет реализован в следующей версии', 501);
     }
 
     /**
      * Экспорт формы КС-3 по смете
      */
-    public function exportKS3(Request $request, int $projectId, int $estimateId): Response
+    public function exportKS3(Request $request, int $projectId, int $estimateId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
         
@@ -151,16 +149,13 @@ class EstimateExportController extends Controller
         ]);
 
         // TODO: Реализовать экспорт КС-3 на основе сметы
-        return response()->json([
-            'success' => false,
-            'message' => 'Экспорт КС-3 по смете будет реализован в следующей версии',
-        ], 501);
+        return AdminResponse::error('Экспорт КС-3 по смете будет реализован в следующей версии', 501);
     }
 
     /**
      * Экспорт сводки по смете
      */
-    public function exportSummary(Request $request, int $projectId, int $estimateId): Response
+    public function exportSummary(Request $request, int $projectId, int $estimateId): JsonResponse
     {
         $organizationId = $request->attributes->get('current_organization_id');
         
@@ -177,10 +172,7 @@ class EstimateExportController extends Controller
         ]);
 
         // TODO: Реализовать экспорт сводки
-        return response()->json([
-            'success' => false,
-            'message' => 'Экспорт сводки по смете будет реализован в следующей версии',
-        ], 501);
+        return AdminResponse::error('Экспорт сводки по смете будет реализован в следующей версии', 501);
     }
 
     /**
