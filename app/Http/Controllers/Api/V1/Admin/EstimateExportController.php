@@ -63,16 +63,15 @@ class EstimateExportController extends Controller
         ]);
 
         try {
-            $filePath = $this->estimateExportService->exportToExcel($estimate, $validated);
+            $result = $this->estimateExportService->exportToExcel($estimate, $validated);
 
-            $filename = basename($filePath);
-            $content = file_get_contents($filePath);
-
-            unlink($filePath);
+            $filename = $result['filename'];
+            $content = $result['content'];
 
             return response($content)
                 ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-                ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
+                ->header('Content-Disposition', "attachment; filename=\"{$filename}\"")
+                ->header('X-S3-Path', $result['s3_path'] ?? ''); // Для отладки
         } catch (\Throwable $e) {
             Log::error('estimate_export.controller_error', [
                 'estimate_id' => $estimateId,
@@ -128,16 +127,15 @@ class EstimateExportController extends Controller
         ]);
 
         try {
-            $filePath = $this->estimateExportService->exportToPdf($estimate, $validated);
+            $result = $this->estimateExportService->exportToPdf($estimate, $validated);
 
-            $filename = basename($filePath);
-            $content = file_get_contents($filePath);
-
-            unlink($filePath);
+            $filename = $result['filename'];
+            $content = $result['content'];
 
             return response($content)
                 ->header('Content-Type', 'application/pdf')
-                ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
+                ->header('Content-Disposition', "attachment; filename=\"{$filename}\"")
+                ->header('X-S3-Path', $result['s3_path'] ?? ''); // Для отладки
         } catch (\Throwable $e) {
             Log::error('estimate_export.pdf_controller_error', [
                 'estimate_id' => $estimateId,

@@ -13,9 +13,9 @@ class PDFEstimateBuilder
      * @param Estimate $estimate
      * @param array $data
      * @param array $options
-     * @return string Path to generated file
+     * @return array ['content' => binary content, 'filename' => filename]
      */
-    public function build(Estimate $estimate, array $data, array $options): string
+    public function build(Estimate $estimate, array $data, array $options): array
     {
         // Prepare view data
         $viewData = [
@@ -31,22 +31,19 @@ class PDFEstimateBuilder
 
         // Configure PDF settings
         $pdf->setPaper('a4', 'portrait');
-        $pdf->setOption('margin-top', '15mm');
-        $pdf->setOption('margin-bottom', '15mm');
-        $pdf->setOption('margin-left', '10mm');
-        $pdf->setOption('margin-right', '10mm');
+        $pdf->setOption('margin-top', '12mm');
+        $pdf->setOption('margin-bottom', '12mm');
+        $pdf->setOption('margin-left', '15mm');
+        $pdf->setOption('margin-right', '15mm');
 
-        // Save to file
+        // Generate content in memory
+        $content = $pdf->output();
         $filename = $this->generateFilename($estimate);
-        $tempPath = storage_path("app/temp/{$filename}");
 
-        if (!file_exists(dirname($tempPath))) {
-            mkdir(dirname($tempPath), 0755, true);
-        }
-
-        $pdf->save($tempPath);
-
-        return $tempPath;
+        return [
+            'content' => $content,
+            'filename' => $filename,
+        ];
     }
 
     /**
@@ -55,7 +52,7 @@ class PDFEstimateBuilder
     protected function generateFilename(Estimate $estimate): string
     {
         $number = $estimate->number ?? $estimate->id;
-        $date = now()->format('Ymd_His');
-        return "Smeta_Prohelper_{$number}_{$date}.pdf";
+        $date = now()->format('d.m.Y');
+        return "Смета_{$number}_{$date}.pdf";
     }
 }
