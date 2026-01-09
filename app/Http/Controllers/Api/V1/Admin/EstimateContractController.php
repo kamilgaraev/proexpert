@@ -41,7 +41,7 @@ class EstimateContractController extends Controller
 
         return AdminResponse::success(
             ['estimate_id' => $estimate->id],
-            __('contract.estimate_created'),
+            trans_message('contract.estimate_created'),
             201
         );
     }
@@ -65,7 +65,7 @@ class EstimateContractController extends Controller
         try {
             $this->integrationService->linkToContract($estimate, $validated['contract_id']);
 
-            return AdminResponse::success(null, __('contract.estimate_linked'));
+            return AdminResponse::success(null, trans_message('contract.estimate_linked'));
         } catch (\Exception $e) {
             return AdminResponse::error($e->getMessage(), 422);
         }
@@ -87,7 +87,7 @@ class EstimateContractController extends Controller
             'contract_id' => null,
         ]);
 
-        return AdminResponse::success(null, __('contract.estimate_unlinked'));
+        return AdminResponse::success(null, trans_message('contract.estimate_unlinked'));
     }
 
     /**

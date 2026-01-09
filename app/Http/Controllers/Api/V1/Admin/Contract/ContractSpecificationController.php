@@ -60,7 +60,7 @@ class ContractSpecificationController extends Controller
         $projectId = $project;
         
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -68,12 +68,12 @@ class ContractSpecificationController extends Controller
             $contractExists = \App\Models\Contract::withTrashed()->find($contract);
             
             if (!$contractExists) {
-                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             // Проверяем, не удален ли контракт
             if ($contractExists->trashed()) {
-                return AdminResponse::error(__('contract.contract_deleted'), Response::HTTP_GONE);
+                return AdminResponse::error(trans_message('contract.contract_deleted'), Response::HTTP_GONE);
             }
             
             // Проверяем принадлежность проекту
@@ -86,7 +86,7 @@ class ContractSpecificationController extends Controller
                 }
 
                 if (!$belongsToProject) {
-                    return AdminResponse::error(__('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
+                    return AdminResponse::error(trans_message('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
                 }
             }
             
@@ -94,14 +94,14 @@ class ContractSpecificationController extends Controller
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contractModel) {
-                return AdminResponse::error(__('contract.access_denied'), Response::HTTP_FORBIDDEN);
+                return AdminResponse::error(trans_message('contract.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
             $specifications = $contractModel->specifications()->get();
 
             return AdminResponse::success(SpecificationResource::collection($specifications));
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.specification_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.specification_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -111,7 +111,7 @@ class ContractSpecificationController extends Controller
         $projectId = $project;
         
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -120,7 +120,7 @@ class ContractSpecificationController extends Controller
             
             if (!$contractExists) {
                 return AdminResponse::error(
-                    __('contract.contract_not_found'), 
+                    trans_message('contract.contract_not_found'), 
                     Response::HTTP_NOT_FOUND, 
                     [
                         'contract_id' => $contract,
@@ -132,7 +132,7 @@ class ContractSpecificationController extends Controller
             // Проверяем, не удален ли контракт
             if ($contractExists->trashed()) {
                 return AdminResponse::error(
-                    __('contract.contract_deleted'), 
+                    trans_message('contract.contract_deleted'), 
                     Response::HTTP_GONE,
                     [
                         'contract_id' => $contract,
@@ -152,7 +152,7 @@ class ContractSpecificationController extends Controller
 
                 if (!$belongsToProject) {
                     return AdminResponse::error(
-                        __('contract.contract_mismatch'), 
+                        trans_message('contract.contract_mismatch'), 
                         Response::HTTP_NOT_FOUND,
                         [
                             'contract_id' => $contract,
@@ -168,7 +168,7 @@ class ContractSpecificationController extends Controller
             
             if (!$contractModel) {
                 return AdminResponse::error(
-                    __('contract.access_denied'), 
+                    trans_message('contract.access_denied'), 
                     Response::HTTP_FORBIDDEN,
                     [
                         'contract_id' => $contract,
@@ -271,9 +271,9 @@ class ContractSpecificationController extends Controller
 
             $specification->load(['contracts']);
 
-            return AdminResponse::success(new SpecificationResource($specification), __('contract.specification_created'), Response::HTTP_CREATED);
+            return AdminResponse::success(new SpecificationResource($specification), trans_message('contract.specification_created'), Response::HTTP_CREATED);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.specification_create_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.specification_create_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -283,7 +283,7 @@ class ContractSpecificationController extends Controller
         $projectId = $project;
         
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -291,12 +291,12 @@ class ContractSpecificationController extends Controller
             $contractExists = \App\Models\Contract::withTrashed()->find($contract);
             
             if (!$contractExists) {
-                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             // Проверяем, не удален ли контракт
             if ($contractExists->trashed()) {
-                return AdminResponse::error(__('contract.contract_deleted'), Response::HTTP_GONE);
+                return AdminResponse::error(trans_message('contract.contract_deleted'), Response::HTTP_GONE);
             }
             
             // Проверяем принадлежность проекту
@@ -309,7 +309,7 @@ class ContractSpecificationController extends Controller
                 }
 
                 if (!$belongsToProject) {
-                    return AdminResponse::error(__('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
+                    return AdminResponse::error(trans_message('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
                 }
             }
             
@@ -317,13 +317,13 @@ class ContractSpecificationController extends Controller
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contractModel) {
-                return AdminResponse::error(__('contract.access_denied'), Response::HTTP_FORBIDDEN);
+                return AdminResponse::error(trans_message('contract.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
             $specificationId = $request->input('specification_id');
 
             if ($contractModel->specifications()->where('specification_id', $specificationId)->exists()) {
-                return AdminResponse::error(__('contract.specification_already_attached'), Response::HTTP_CONFLICT);
+                return AdminResponse::error(trans_message('contract.specification_already_attached'), Response::HTTP_CONFLICT);
             }
 
             // Деактивируем все предыдущие спецификации
@@ -394,9 +394,9 @@ class ContractSpecificationController extends Controller
                 }
             }
 
-            return AdminResponse::success(new SpecificationResource($specification), __('contract.specification_attached'));
+            return AdminResponse::success(new SpecificationResource($specification), trans_message('contract.specification_attached'));
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.specification_attach_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.specification_attach_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -406,7 +406,7 @@ class ContractSpecificationController extends Controller
         $projectId = $project;
         
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -414,12 +414,12 @@ class ContractSpecificationController extends Controller
             $contractExists = \App\Models\Contract::withTrashed()->find($contract);
             
             if (!$contractExists) {
-                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             // Проверяем, не удален ли контракт
             if ($contractExists->trashed()) {
-                return AdminResponse::error(__('contract.contract_deleted'), Response::HTTP_GONE);
+                return AdminResponse::error(trans_message('contract.contract_deleted'), Response::HTTP_GONE);
             }
             
             // Проверяем принадлежность проекту
@@ -432,7 +432,7 @@ class ContractSpecificationController extends Controller
                 }
 
                 if (!$belongsToProject) {
-                    return AdminResponse::error(__('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
+                    return AdminResponse::error(trans_message('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
                 }
             }
             
@@ -440,18 +440,18 @@ class ContractSpecificationController extends Controller
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contractModel) {
-                return AdminResponse::error(__('contract.access_denied'), Response::HTTP_FORBIDDEN);
+                return AdminResponse::error(trans_message('contract.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
             if (!$contractModel->specifications()->where('specification_id', $specification)->exists()) {
-                return AdminResponse::error(__('contract.specification_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.specification_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $contractModel->specifications()->detach($specification);
 
-            return AdminResponse::success(null, __('contract.specification_detached'));
+            return AdminResponse::success(null, trans_message('contract.specification_detached'));
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.specification_detach_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.specification_detach_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 

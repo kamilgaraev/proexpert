@@ -26,7 +26,7 @@ class ProfileController extends Controller
                 'error' => $e->getMessage()
             ]);
             
-            return AdminResponse::error(__('auth.profile_get_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(trans_message('auth.profile_get_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -68,7 +68,7 @@ class ProfileController extends Controller
                 'updated_fields' => array_keys($profileData)
             ]);
 
-            return AdminResponse::success(new UserResource($user), __('auth.profile_updated'));
+            return AdminResponse::success(new UserResource($user), trans_message('auth.profile_updated'));
 
         } catch (\Exception $e) {
             Log::error('Error updating admin profile', [
@@ -101,10 +101,10 @@ class ProfileController extends Controller
                 'has_completed_onboarding' => $validated['has_completed_onboarding'],
             ]);
 
-            return AdminResponse::success(null, __('auth.onboarding_updated'));
+            return AdminResponse::success(null, trans_message('auth.onboarding_updated'));
 
         } catch (\Illuminate\Validation\ValidationException $e) {
-            return AdminResponse::error(__('auth.validation_error'), Response::HTTP_UNPROCESSABLE_ENTITY, $e->errors());
+            return AdminResponse::error(trans_message('auth.validation_error'), Response::HTTP_UNPROCESSABLE_ENTITY, $e->errors());
 
         } catch (\Exception $e) {
             Log::error('Error updating onboarding status', [
@@ -113,7 +113,7 @@ class ProfileController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return AdminResponse::error(__('auth.profile_update_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(trans_message('auth.profile_update_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 } 

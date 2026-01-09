@@ -22,11 +22,11 @@ class ContractorVerificationController extends Controller
                 ->firstOrFail();
 
             if ($verification->isConfirmed()) {
-                return AdminResponse::error(__('contract.contractor_already_confirmed'), 400);
+                return AdminResponse::error(trans_message('contract.contractor_already_confirmed'), 400);
             }
 
             if ($verification->isExpired()) {
-                return AdminResponse::error(__('contract.verification_expired'), 400);
+                return AdminResponse::error(trans_message('contract.verification_expired'), 400);
             }
 
             DB::transaction(function () use ($verification) {
@@ -55,7 +55,7 @@ class ContractorVerificationController extends Controller
                     'id' => $verification->registeredOrganization->id,
                     'name' => $verification->registeredOrganization->name,
                 ]
-            ], __('contract.verification_confirmed'));
+            ], trans_message('contract.verification_confirmed'));
 
         } catch (\Exception $e) {
             Log::error('Contractor verification confirmation failed', [
@@ -63,7 +63,7 @@ class ContractorVerificationController extends Controller
                 'error' => $e->getMessage()
             ]);
 
-            return AdminResponse::error(__('contract.verification_error'), 500);
+            return AdminResponse::error(trans_message('contract.verification_error'), 500);
         }
     }
 
@@ -75,7 +75,7 @@ class ContractorVerificationController extends Controller
                 ->firstOrFail();
 
             if ($verification->isRejected()) {
-                return AdminResponse::error(__('contract.contractor_already_rejected'), 400);
+                return AdminResponse::error(trans_message('contract.contractor_already_rejected'), 400);
             }
 
             $reason = $request->input('reason', 'Заказчик указал, что это не его подрядчик');
@@ -110,7 +110,7 @@ class ContractorVerificationController extends Controller
                     'name' => $verification->registeredOrganization->name,
                     'status' => 'blocked'
                 ]
-            ], __('contract.verification_rejected'));
+            ], trans_message('contract.verification_rejected'));
 
         } catch (\Exception $e) {
             Log::error('Contractor verification rejection failed', [
@@ -118,7 +118,7 @@ class ContractorVerificationController extends Controller
                 'error' => $e->getMessage()
             ]);
 
-            return AdminResponse::error(__('contract.rejection_error'), 500);
+            return AdminResponse::error(trans_message('contract.rejection_error'), 500);
         }
     }
 
@@ -146,7 +146,7 @@ class ContractorVerificationController extends Controller
             return AdminResponse::success([
                 'dispute_id' => $dispute->id,
                 'status' => 'under_investigation'
-            ], __('contract.dispute_created'));
+            ], trans_message('contract.dispute_created'));
 
         } catch (\Exception $e) {
             Log::error('Dispute creation failed', [
@@ -154,7 +154,7 @@ class ContractorVerificationController extends Controller
                 'error' => $e->getMessage()
             ]);
 
-            return AdminResponse::error(__('contract.dispute_error'), 500);
+            return AdminResponse::error(trans_message('contract.dispute_error'), 500);
         }
     }
 

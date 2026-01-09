@@ -27,7 +27,7 @@ class ContractorInvitationController extends Controller
         $organizationId = $user->current_organization_id;
         
         if (!$organizationId) {
-            return LandingResponse::error(__('contract.organization_context_missing'), 400);
+            return LandingResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         $perPage = min((int) $request->input('per_page', 15), 50);
@@ -55,7 +55,7 @@ class ContractorInvitationController extends Controller
                 'organization_id' => $organizationId,
             ]);
 
-            return LandingResponse::error(__('contract.invitations_retrieve_error'), 500);
+            return LandingResponse::error(trans_message('contract.invitations_retrieve_error'), 500);
         }
     }
 
@@ -67,13 +67,13 @@ class ContractorInvitationController extends Controller
                 ->firstOrFail();
 
             if ($invitation->isExpired()) {
-                return LandingResponse::error(__('contract.invitation_expired'), 410);
+                return LandingResponse::error(trans_message('contract.invitation_expired'), 410);
             }
 
             return LandingResponse::success(new ContractorInvitationResource($invitation));
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return LandingResponse::error(__('contract.invitation_not_found'), 404);
+            return LandingResponse::error(trans_message('contract.invitation_not_found'), 404);
 
         } catch (\Exception $e) {
             Log::error('Failed to fetch contractor invitation by token', [
@@ -81,7 +81,7 @@ class ContractorInvitationController extends Controller
                 'token' => $token,
             ]);
 
-            return LandingResponse::error(__('contract.invitation_retrieve_error'), 500);
+            return LandingResponse::error(trans_message('contract.invitation_retrieve_error'), 500);
         }
     }
 
@@ -100,7 +100,7 @@ class ContractorInvitationController extends Controller
 
             return LandingResponse::success([
                 'contractor' => $contractor->only(['id', 'name', 'connected_at']),
-                'message' => __('contract.invitation_accepted')
+                'message' => trans_message('contract.invitation_accepted')
             ]);
 
         } catch (BusinessLogicException $e) {
@@ -113,7 +113,7 @@ class ContractorInvitationController extends Controller
                 'user_id' => $user->id,
             ]);
 
-            return LandingResponse::error(__('contract.invitation_accept_error'), 500);
+            return LandingResponse::error(trans_message('contract.invitation_accept_error'), 500);
         }
     }
 
@@ -129,7 +129,7 @@ class ContractorInvitationController extends Controller
             $declined = $this->invitationService->declineInvitation($token, $user);
 
             if (!$declined) {
-                return LandingResponse::error(__('contract.invitation_decline_error'), 400);
+                return LandingResponse::error(trans_message('contract.invitation_decline_error'), 400);
             }
 
             Log::info('Contractor invitation declined via landing', [
@@ -138,7 +138,7 @@ class ContractorInvitationController extends Controller
                 'reason' => $request->input('reason'),
             ]);
 
-            return LandingResponse::success(null, __('contract.invitation_declined'));
+            return LandingResponse::success(null, trans_message('contract.invitation_declined'));
 
         } catch (BusinessLogicException $e) {
             return LandingResponse::error($e->getMessage(), 400);
@@ -150,7 +150,7 @@ class ContractorInvitationController extends Controller
                 'user_id' => $user->id,
             ]);
 
-            return LandingResponse::error(__('contract.invitation_decline_error'), 500);
+            return LandingResponse::error(trans_message('contract.invitation_decline_error'), 500);
         }
     }
 
@@ -160,7 +160,7 @@ class ContractorInvitationController extends Controller
         $organizationId = $user->current_organization_id;
         
         if (!$organizationId) {
-            return LandingResponse::error(__('contract.organization_context_missing'), 400);
+            return LandingResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -177,7 +177,7 @@ class ContractorInvitationController extends Controller
                 'organization_id' => $organizationId,
             ]);
 
-            return LandingResponse::error(__('contract.invitation_stats_error'), 500);
+            return LandingResponse::error(trans_message('contract.invitation_stats_error'), 500);
         }
     }
 }

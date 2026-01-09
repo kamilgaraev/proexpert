@@ -30,7 +30,7 @@ class ContractorController extends Controller
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
         $filters = $request->only(['name', 'inn']);
         $sortBy = $request->input('sort_by', 'name');
@@ -46,14 +46,14 @@ class ContractorController extends Controller
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
         try {
             $contractorDTO = $request->toDto();
             $contractor = $this->contractorService->createContractor($organizationId, $contractorDTO);
             return AdminResponse::success(new ContractorResource($contractor), null, Response::HTTP_CREATED);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.contractor_create_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.contractor_create_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -62,11 +62,11 @@ class ContractorController extends Controller
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
         $contractor = $this->contractorService->getContractorById($contractorId, $organizationId);
         if (!$contractor) {
-            return AdminResponse::error(__('contract.contractor_not_found'), Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(trans_message('contract.contractor_not_found'), Response::HTTP_NOT_FOUND);
         }
         return new ContractorResource($contractor);
     }
@@ -76,14 +76,14 @@ class ContractorController extends Controller
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
         try {
             $contractorDTO = $request->toDto();
             $contractor = $this->contractorService->updateContractor($contractorId, $organizationId, $contractorDTO);
             return new ContractorResource($contractor);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.contractor_update_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.contractor_update_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -92,13 +92,13 @@ class ContractorController extends Controller
         $user = $request->user();
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), 400);
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
         }
         try {
             $this->contractorService->deleteContractor($contractorId, $organizationId);
-            return AdminResponse::success(null,(__('contract.contractor_deleted')), Response::HTTP_NO_CONTENT);
+            return AdminResponse::success(null,(trans_message('contract.contractor_deleted')), Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.contractor_delete_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.contractor_delete_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 } 

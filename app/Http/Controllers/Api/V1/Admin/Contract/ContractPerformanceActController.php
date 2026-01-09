@@ -71,7 +71,7 @@ class ContractPerformanceActController extends Controller
             // Assuming AdminResponse expects array or resource collection, but to be consistent with resource usage:
             return new ContractPerformanceActCollection($acts);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.act_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.act_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -105,7 +105,7 @@ class ContractPerformanceActController extends Controller
             $actDTO = $request->toDto();
             $act = $this->actService->createActForContract($contract, $organizationId, $actDTO, $projectId);
             
-            return AdminResponse::success(new ContractPerformanceActResource($act), __('contract.act_created'), Response::HTTP_CREATED);
+            return AdminResponse::success(new ContractPerformanceActResource($act), trans_message('contract.act_created'), Response::HTTP_CREATED);
 
         } catch (\DomainException $e) {
             // Бизнес-ошибки (валидация, лимиты и т.д.)
@@ -122,7 +122,7 @@ class ContractPerformanceActController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return AdminResponse::error(__('contract.act_create_error'), Response::HTTP_INTERNAL_SERVER_ERROR, config('app.debug') ? $e->getMessage() : null);
+            return AdminResponse::error(trans_message('contract.act_create_error'), Response::HTTP_INTERNAL_SERVER_ERROR, config('app.debug') ? $e->getMessage() : null);
         }
     }
 
@@ -138,16 +138,16 @@ class ContractPerformanceActController extends Controller
         try {
             $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$actModel) {
-                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $actModel)) {
-                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             return new ContractPerformanceActResource($actModel);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.act_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.act_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -163,19 +163,19 @@ class ContractPerformanceActController extends Controller
         try {
             $existingAct = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$existingAct) {
-                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $existingAct)) {
-                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             $actDTO = $request->toDto();
             $updatedAct = $this->actService->updateAct($act, $contract, $organizationId, $actDTO, $projectId);
             
-            return AdminResponse::success(new ContractPerformanceActResource($updatedAct), __('contract.act_updated'));
+            return AdminResponse::success(new ContractPerformanceActResource($updatedAct), trans_message('contract.act_updated'));
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.act_update_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.act_update_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -191,17 +191,17 @@ class ContractPerformanceActController extends Controller
         try {
             $existingAct = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$existingAct) {
-                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $existingAct)) {
-                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             $this->actService->deleteAct($act, $contract, $organizationId, $projectId);
-            return AdminResponse::success(null, __('contract.act_deleted'), Response::HTTP_NO_CONTENT);
+            return AdminResponse::success(null, trans_message('contract.act_deleted'), Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.act_delete_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.act_delete_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -215,7 +215,7 @@ class ContractPerformanceActController extends Controller
         
         $contractModel = \App\Models\Contract::find($contract);
         if (!$contractModel) {
-            return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(trans_message('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
         }
         
         $organizationId = $contractModel->organization_id;
@@ -224,7 +224,7 @@ class ContractPerformanceActController extends Controller
             $works = $this->actService->getAvailableWorksForAct($contract, $organizationId, $projectId);
             return AdminResponse::success($works);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.available_works_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.available_works_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -239,16 +239,16 @@ class ContractPerformanceActController extends Controller
             $projectId = $project;
 
             if (!$organizationId) {
-                return AdminResponse::error(__('contract.organization_context_missing'), 400);
+                return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
             }
 
             $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$actModel) {
-                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $actModel)) {
-                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $actModel->load([
@@ -285,7 +285,7 @@ class ContractPerformanceActController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return AdminResponse::error(__('contract.act_export_error'), 500, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.act_export_error'), 500, $e->getMessage());
         }
     }
 
@@ -300,16 +300,16 @@ class ContractPerformanceActController extends Controller
             $projectId = $project;
 
             if (!$organizationId) {
-                return AdminResponse::error(__('contract.organization_context_missing'), 400);
+                return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
             }
 
             $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$actModel) {
-                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $actModel)) {
-                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $actModel->load([
@@ -386,7 +386,7 @@ class ContractPerformanceActController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return AdminResponse::error(__('contract.act_export_error'), 500, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.act_export_error'), 500, $e->getMessage());
         }
     }
 
@@ -401,19 +401,19 @@ class ContractPerformanceActController extends Controller
             $organizationId = $organization?->id ?? $user?->current_organization_id;
 
             if (!$organizationId) {
-                return AdminResponse::error(__('contract.organization_context_missing'), 400);
+                return AdminResponse::error(trans_message('contract.organization_context_missing'), 400);
             }
 
             // Получаем акт с контрактом напрямую
             $performanceAct = \App\Models\ContractPerformanceAct::with('contract')->find($act);
             
             if (!$performanceAct) {
-                return AdminResponse::error(__('contract.act_not_found'), 404);
+                return AdminResponse::error(trans_message('contract.act_not_found'), 404);
             }
 
             // Проверяем доступ к организации
             if ($performanceAct->contract->organization_id !== $organizationId) {
-                return AdminResponse::error(__('contract.access_denied'), 403);
+                return AdminResponse::error(trans_message('contract.access_denied'), 403);
             }
 
             // Загружаем файлы с информацией о пользователях
@@ -457,7 +457,7 @@ class ContractPerformanceActController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return AdminResponse::error(__('contract.act_files_error'), 500, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.act_files_error'), 500, $e->getMessage());
         }
     }
 } 

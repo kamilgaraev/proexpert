@@ -81,14 +81,14 @@ class ContractPaymentController extends Controller
         $projectId = $project;
 
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST, 'MISSING_ORGANIZATION_CONTEXT');
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST, 'MISSING_ORGANIZATION_CONTEXT');
         }
 
         try {
             $payments = $this->paymentService->getAllPaymentsForContract($contract, $organizationId, [], $projectId);
             return new ContractPaymentCollection($payments);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.payment_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.payment_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -100,16 +100,16 @@ class ContractPaymentController extends Controller
         $projectId = $project;
 
         if (!$organizationId) {
-            return AdminResponse::error(__('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST, 'MISSING_ORGANIZATION_CONTEXT');
+            return AdminResponse::error(trans_message('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST, 'MISSING_ORGANIZATION_CONTEXT');
         }
 
         try {
             $paymentDTO = $request->toDto();
             $payment = $this->paymentService->createPaymentForContract($contract, $organizationId, $paymentDTO, $projectId);
             
-            return AdminResponse::success(new ContractPaymentResource($payment), __('contract.payment_created'), Response::HTTP_CREATED);
+            return AdminResponse::success(new ContractPaymentResource($payment), trans_message('contract.payment_created'), Response::HTTP_CREATED);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.payment_create_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.payment_create_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -122,16 +122,16 @@ class ContractPaymentController extends Controller
         try {
             $contractModel = $payment->contract;
             if (!$contractModel || !$this->canAccessContract($contractModel, $organizationId)) {
-                return AdminResponse::error(__('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $payment)) {
-                return AdminResponse::error(__('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             return new ContractPaymentResource($payment);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.payment_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.payment_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -144,18 +144,18 @@ class ContractPaymentController extends Controller
         try {
             $contractModel = $payment->contract;
             if (!$contractModel || !$this->canAccessContract($contractModel, $organizationId)) {
-                return AdminResponse::error(__('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $payment)) {
-                return AdminResponse::error(__('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $paymentDTO = $request->toDto();
             $updatedPayment = $this->paymentService->updatePayment($payment->id, null, $organizationId, $paymentDTO);
-            return AdminResponse::success(new ContractPaymentResource($updatedPayment), __('contract.payment_updated'));
+            return AdminResponse::success(new ContractPaymentResource($updatedPayment), trans_message('contract.payment_updated'));
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.payment_update_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.payment_update_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -168,17 +168,17 @@ class ContractPaymentController extends Controller
         try {
             $contractModel = $payment->contract;
             if (!$contractModel || !$this->canAccessContract($contractModel, $organizationId)) {
-                return AdminResponse::error(__('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $payment)) {
-                return AdminResponse::error(__('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(trans_message('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $this->paymentService->deletePayment($payment->id, null, $organizationId);
-            return AdminResponse::success(null, __('contract.payment_deleted'), Response::HTTP_NO_CONTENT);
+            return AdminResponse::success(null, trans_message('contract.payment_deleted'), Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
-            return AdminResponse::error(__('contract.payment_delete_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
+            return AdminResponse::error(trans_message('contract.payment_delete_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 } 

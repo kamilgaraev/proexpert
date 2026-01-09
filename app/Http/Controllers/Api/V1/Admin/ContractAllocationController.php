@@ -110,11 +110,11 @@ class ContractAllocationController extends Controller
                         'allocated_amount' => $allocation->calculateAllocatedAmount(),
                     ];
                 }),
-                __('contract.allocation_updated')
+                trans_message('contract.allocation_updated')
             );
         } catch (\Exception $e) {
             return AdminResponse::error(
-                __('contract.allocation_update_error') . ': ' . $e->getMessage(),
+                trans_message('contract.allocation_update_error') . ': ' . $e->getMessage(),
                 Response::HTTP_UNPROCESSABLE_ENTITY
             );
         }
@@ -135,7 +135,7 @@ class ContractAllocationController extends Controller
 
         if (!$contract->is_multi_project) {
             return AdminResponse::error(
-                __('contract.auto_allocation_multi_project_only'),
+                trans_message('contract.auto_allocation_multi_project_only'),
                 Response::HTTP_UNPROCESSABLE_ENTITY
             );
         }
@@ -145,11 +145,11 @@ class ContractAllocationController extends Controller
 
             return AdminResponse::success(
                 $allocations,
-                __('contract.auto_equal_allocation_created')
+                trans_message('contract.auto_equal_allocation_created')
             );
         } catch (\Exception $e) {
             return AdminResponse::error(
-                __('contract.allocation_create_error') . ': ' . $e->getMessage(),
+                trans_message('contract.allocation_create_error') . ': ' . $e->getMessage(),
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
         }
@@ -170,7 +170,7 @@ class ContractAllocationController extends Controller
 
         if (!$contract->is_multi_project) {
             return AdminResponse::error(
-                __('contract.acts_allocation_multi_project_only'),
+                trans_message('contract.acts_allocation_multi_project_only'),
                 Response::HTTP_UNPROCESSABLE_ENTITY
             );
         }
@@ -180,11 +180,11 @@ class ContractAllocationController extends Controller
 
             return AdminResponse::success(
                 $allocations,
-                __('contract.acts_allocation_created')
+                trans_message('contract.acts_allocation_created')
             );
         } catch (\Exception $e) {
             return AdminResponse::error(
-                __('contract.allocation_create_error') . ': ' . $e->getMessage(),
+                trans_message('contract.allocation_create_error') . ': ' . $e->getMessage(),
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
         }
@@ -213,11 +213,11 @@ class ContractAllocationController extends Controller
                     'allocation_type' => $updatedAllocation->allocation_type->value,
                     'allocated_amount' => $updatedAllocation->allocated_amount,
                 ],
-                __('contract.allocation_converted_to_fixed')
+                trans_message('contract.allocation_converted_to_fixed')
             );
         } catch (\Exception $e) {
             return AdminResponse::error(
-                __('contract.allocation_convert_error') . ': ' . $e->getMessage(),
+                trans_message('contract.allocation_convert_error') . ': ' . $e->getMessage(),
                 Response::HTTP_UNPROCESSABLE_ENTITY
             );
         }
@@ -242,11 +242,11 @@ class ContractAllocationController extends Controller
 
             return AdminResponse::success(
                 null,
-                __('contract.allocation_deleted')
+                trans_message('contract.allocation_deleted')
             );
         } catch (\Exception $e) {
             return AdminResponse::error(
-                __('contract.allocation_delete_error') . ': ' . $e->getMessage(),
+                trans_message('contract.allocation_delete_error') . ': ' . $e->getMessage(),
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
         }
@@ -311,11 +311,11 @@ class ContractAllocationController extends Controller
                         'allocated_amount' => $allocation->calculateAllocatedAmount(),
                     ];
                 }),
-                __('contract.auto_allocations_recalculated')
+                trans_message('contract.auto_allocations_recalculated')
             );
         } catch (\Exception $e) {
             return AdminResponse::error(
-                __('contract.recalculation_error') . ': ' . $e->getMessage(),
+                trans_message('contract.recalculation_error') . ': ' . $e->getMessage(),
                 Response::HTTP_INTERNAL_SERVER_ERROR
             );
         }

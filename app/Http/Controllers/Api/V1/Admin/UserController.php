@@ -37,7 +37,7 @@ class UserController extends Controller
     {
         // Проверяем, что пользователь принадлежит текущей организации
         if (!$this->checkUserOrganization($user)) {
-            return AdminResponse::error(__('user.advance_balance_error'), Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(trans_message('user.advance_balance_error'), Response::HTTP_NOT_FOUND);
         }
 
         return AdminResponse::success([
@@ -62,7 +62,7 @@ class UserController extends Controller
     {
         // Проверяем, что пользователь принадлежит текущей организации
         if (!$this->checkUserOrganization($user)) {
-            return AdminResponse::error(__('user.advance_transactions_error'), Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(trans_message('user.advance_transactions_error'), Response::HTTP_NOT_FOUND);
         }
 
         $filters = $request->only(['date_from', 'date_to', 'type', 'reporting_status']);
@@ -86,7 +86,7 @@ class UserController extends Controller
     {
         // Проверяем, что пользователь принадлежит текущей организации
         if (!$this->checkUserOrganization($user)) {
-            return AdminResponse::error(__('user.advance_balance_error'), Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(trans_message('user.advance_balance_error'), Response::HTTP_NOT_FOUND);
         }
 
         // Валидация запроса
@@ -106,9 +106,9 @@ class UserController extends Controller
 
             $transaction = $this->advanceService->createTransaction($transactionData);
             
-            return AdminResponse::success($transaction, __('user.issue_funds_success'), Response::HTTP_CREATED);
+            return AdminResponse::success($transaction, trans_message('user.issue_funds_success'), Response::HTTP_CREATED);
         } catch (\Exception $e) {
-            return AdminResponse::error(__('user.issue_funds_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(trans_message('user.issue_funds_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -123,7 +123,7 @@ class UserController extends Controller
     {
         // Проверяем, что пользователь принадлежит текущей организации
         if (!$this->checkUserOrganization($user)) {
-            return AdminResponse::error(__('user.advance_balance_error'), Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(trans_message('user.advance_balance_error'), Response::HTTP_NOT_FOUND);
         }
 
         // Валидация запроса
@@ -143,14 +143,14 @@ class UserController extends Controller
 
             // Проверяем, что у пользователя достаточно средств для возврата
             if ((float)$user->current_balance < (float)$request->input('amount')) {
-                return AdminResponse::error(__('user.insufficient_funds'), Response::HTTP_BAD_REQUEST);
+                return AdminResponse::error(trans_message('user.insufficient_funds'), Response::HTTP_BAD_REQUEST);
             }
 
             $transaction = $this->advanceService->createTransaction($transactionData);
             
-            return AdminResponse::success($transaction, __('user.return_funds_success'), Response::HTTP_CREATED);
+            return AdminResponse::success($transaction, trans_message('user.return_funds_success'), Response::HTTP_CREATED);
         } catch (\Exception $e) {
-            return AdminResponse::error(__('user.return_funds_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(trans_message('user.return_funds_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 

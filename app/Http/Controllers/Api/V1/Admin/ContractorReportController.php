@@ -35,7 +35,7 @@ class ContractorReportController extends Controller
 
             return AdminResponse::success($reportOutput);
         } catch (\Exception $e) {
-            return AdminResponse::error(__('contract.report_error') . ': ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('contract.report_error') . ': ' . $e->getMessage(), 500);
         }
     }
 
@@ -57,7 +57,7 @@ class ContractorReportController extends Controller
 
             return AdminResponse::success($reportOutput);
         } catch (\Exception $e) {
-            return AdminResponse::error(__('contract.report_error') . ': ' . $e->getMessage(), 500);
+            return AdminResponse::error(trans_message('contract.report_error') . ': ' . $e->getMessage(), 500);
         }
     }
 }

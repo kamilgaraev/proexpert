@@ -109,7 +109,7 @@ class AuthController extends Controller
                         'interface' => 'admin_panel'
                     ]);
                     
-                    return AdminResponse::error(__('auth.access_denied'), Response::HTTP_FORBIDDEN);
+                    return AdminResponse::error(trans_message('auth.access_denied'), Response::HTTP_FORBIDDEN);
                 }
 
                 // SECURITY & AUDIT: Успешный вход в админ-панель - критическое событие для compliance
@@ -138,7 +138,7 @@ class AuthController extends Controller
                     'token' => $result['token'],
                     'token_type' => 'bearer',
                     'expires_in' => $guard->factory()->getTTL() * 60
-                ], __('auth.login_success'));
+                ], trans_message('auth.login_success'));
             } else {
                 // SECURITY: Неуспешная аутентификация - потенциальная атака
                 $this->logging->security('auth.admin.login.failed', [
@@ -147,7 +147,7 @@ class AuthController extends Controller
                     'error_message' => $result['message'] ?? 'Authentication failed'
                 ], 'warning');
                 
-                return AdminResponse::error($result['message'] ?? __('auth.login_failed'), Response::HTTP_UNAUTHORIZED);
+                return AdminResponse::error($result['message'] ?? trans_message('auth.login_failed'), Response::HTTP_UNAUTHORIZED);
             }
         } catch (\Throwable $e) {
             // TECHNICAL: Системная ошибка при аутентификации
@@ -159,7 +159,7 @@ class AuthController extends Controller
                 'line' => $e->getLine()
             ], 'error');
             
-            return AdminResponse::error(__('auth.server_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(trans_message('auth.server_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -174,7 +174,7 @@ class AuthController extends Controller
             $result = $this->authService->me($this->guard);
 
             if (!$result['success']) {
-                return AdminResponse::error($result['message'] ?? __('auth.profile_not_found'), Response::HTTP_NOT_FOUND);
+                return AdminResponse::error($result['message'] ?? trans_message('auth.profile_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             return AdminResponse::success(['user' => $result['user']]);
@@ -202,7 +202,7 @@ class AuthController extends Controller
                 'token' => $result['token'],
                 'token_type' => 'bearer',
                 'expires_in' => $guard->factory()->getTTL() * 60
-            ], __('auth.token_refreshed'));
+            ], trans_message('auth.token_refreshed'));
         });
     }
 
@@ -217,10 +217,10 @@ class AuthController extends Controller
             $result = $this->authService->logout($this->guard);
 
             if (!$result['success']) {
-                return AdminResponse::error($result['message'] ?? __('auth.token_error'), $result['status_code'] ?? Response::HTTP_UNAUTHORIZED);
+                return AdminResponse::error($result['message'] ?? trans_message('auth.token_error'), $result['status_code'] ?? Response::HTTP_UNAUTHORIZED);
             }
 
-            return AdminResponse::success(null, __('auth.logout_success'));
+            return AdminResponse::success(null, trans_message('auth.logout_success'));
         });
     }
 }
