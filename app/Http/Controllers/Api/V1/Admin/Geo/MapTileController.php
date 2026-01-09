@@ -8,6 +8,9 @@ use App\Services\Geo\TileService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use App\Http\Responses\AdminResponse;
+use Illuminate\Http\Response;
 
 class MapTileController extends Controller
 {
@@ -27,33 +30,27 @@ class MapTileController extends Controller
      */
     public function getTile(Request $request, int $z, int $x, int $y): JsonResponse
     {
-        $organizationId = Auth::user()->current_organization_id;
-
-        // Validate zoom level
-        if ($z < 0 || $z > 20) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Invalid zoom level. Must be between 0 and 20.',
-            ], 400);
-        }
-
-        $options = [
-            'layer' => $request->input('layer', 'projects'),
-            'filters' => $request->input('filters', []),
-        ];
-
         try {
+            $organizationId = Auth::user()->current_organization_id;
+
+            // Validate zoom level
+            if ($z < 0 || $z > 20) {
+                return AdminResponse::error('Invalid zoom level. Must be between 0 and 20.', Response::HTTP_BAD_REQUEST);
+            }
+
+            $options = [
+                'layer' => $request->input('layer', 'projects'),
+                'filters' => $request->input('filters', []),
+            ];
+
             $tile = $this->tileService->getTile($organizationId, $z, $x, $y, $options);
 
-            return response()->json([
-                'success' => true,
-                'data' => $tile,
+            return AdminResponse::success($tile);
+        } catch (\Throwable $e) {
+            Log::error('Error in MapTileController@getTile', [
+                'z' => $z, 'x' => $x, 'y' => $y, 'message' => $e->getMessage()
             ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to generate tile: ' . $e->getMessage(),
-            ], 500);
+            return AdminResponse::error(trans_message('dashboard.map_tile_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -66,10 +63,10 @@ class MapTileController extends Controller
      */
     public function getProjects(Request $request): JsonResponse
     {
-        $organizationId = Auth::user()->current_organization_id;
-        $filters = $request->input('filters', []);
-
         try {
+            $organizationId = Auth::user()->current_organization_id;
+            $filters = $request->input('filters', []);
+
             // Получаем проекты напрямую из БД без тайловой системы
             $query = Project::where('organization_id', $organizationId)
                 ->whereNotNull('latitude')
@@ -117,18 +114,15 @@ class MapTileController extends Controller
                 ];
             }
 
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'type' => 'FeatureCollection',
-                    'features' => $features,
-                ],
+            return AdminResponse::success([
+                'type' => 'FeatureCollection',
+                'features' => $features,
             ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to get projects: ' . $e->getMessage(),
-            ], 500);
+        } catch (\Throwable $e) {
+            Log::error('Error in MapTileController@getProjects', [
+                'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return AdminResponse::error(trans_message('dashboard.map_projects_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 

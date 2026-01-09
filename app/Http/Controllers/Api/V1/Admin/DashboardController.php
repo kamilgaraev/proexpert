@@ -14,7 +14,9 @@ use App\Models\Project;
 use App\Enums\Contract\ContractStatusEnum;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
+use App\Http\Responses\AdminResponse;
 
 class DashboardController extends Controller
 {
@@ -37,10 +39,7 @@ class DashboardController extends Controller
         $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
 
         if (!$organizationId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization context is required.'
-            ], 400);
+            return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
         }
 
         // Валидация обязательного параметра project_id
@@ -53,10 +52,7 @@ class DashboardController extends Controller
         // Используем упрощенный подход - возвращаем всю структуру дашборда
         $dashboard = $this->dashboardService->getFullDashboard($organizationId, $projectId);
         
-        return response()->json([
-            'success' => true,
-            'data' => $dashboard
-        ]);
+        return AdminResponse::success($dashboard);
     }
 
     /**
@@ -67,10 +63,7 @@ class DashboardController extends Controller
         $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
 
         if (!$organizationId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization context is required.'
-            ], 400);
+            return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
         }
 
         $request->validate([
@@ -213,10 +206,7 @@ class DashboardController extends Controller
                 ];
             });
 
-        return response()->json([
-            'success' => true,
-            'data' => $contracts
-        ]);
+        return AdminResponse::success($contracts);
     }
 
     /**
@@ -278,23 +268,20 @@ class DashboardController extends Controller
             })
             ->count();
 
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'contracts' => [
-                    'total' => $stats->total_contracts,
-                    'active' => $stats->active_contracts,
-                    'completed' => $stats->completed_contracts,
-                    'draft' => $stats->draft_contracts,
-                    'requiring_attention' => $contractsNeedingAttention,
-                    'total_amount' => (float) $stats->total_amount,
-                    'avg_amount' => (float) $stats->avg_amount,
-                ],
-                'completed_works' => [
-                    'total' => $worksStats->total_works,
-                    'confirmed' => $worksStats->confirmed_works,
-                    'confirmed_amount' => (float) $worksStats->confirmed_amount,
-                ]
+        return AdminResponse::success([
+            'contracts' => [
+                'total' => $stats->total_contracts,
+                'active' => $stats->active_contracts,
+                'completed' => $stats->completed_contracts,
+                'draft' => $stats->draft_contracts,
+                'requiring_attention' => $contractsNeedingAttention,
+                'total_amount' => (float) $stats->total_amount,
+                'avg_amount' => (float) $stats->avg_amount,
+            ],
+            'completed_works' => [
+                'total' => $worksStats->total_works,
+                'confirmed' => $worksStats->confirmed_works,
+                'confirmed_amount' => (float) $worksStats->confirmed_amount,
             ]
         ]);
     }
@@ -310,10 +297,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getTopContractsByAmount($organizationId, $projectId, $limit);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -351,10 +335,7 @@ class DashboardController extends Controller
                 ];
             });
 
-        return response()->json([
-            'success' => true,
-            'data' => $activity
-        ]);
+        return AdminResponse::success($activity);
     }
 
     /**
@@ -365,20 +346,14 @@ class DashboardController extends Controller
         $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
 
         if (!$organizationId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization context is required.'
-            ], 400);
+            return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
         }
 
         $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
 
         $data = $this->dashboardService->getFinancialMetrics($organizationId, $projectId);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -392,10 +367,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getContractsAnalytics($organizationId, $projectId, $filters);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -406,19 +378,13 @@ class DashboardController extends Controller
         $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
 
         if (!$organizationId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization context is required.'
-            ], 400);
+            return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
         }
 
         $filters = $request->only(['status', 'is_archived']);
         $data = $this->dashboardService->getProjectsAnalytics($organizationId, $filters);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -429,19 +395,13 @@ class DashboardController extends Controller
         $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
 
         if (!$organizationId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization context is required.'
-            ], 400);
+            return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
         }
 
         $filters = $request->only(['category', 'is_active']);
         $data = $this->dashboardService->getMaterialsAnalytics($organizationId, $filters);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -452,10 +412,7 @@ class DashboardController extends Controller
         $organizationId = $request->input('organization_id') ?? (Auth::user()->current_organization_id ?? null);
 
         if (!$organizationId) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization context is required.'
-            ], 400);
+            return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
         }
 
         $projectId = $request->input('project_id') ? (int)$request->input('project_id') : null;
@@ -463,10 +420,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getComparisonData($organizationId, $projectId, $period);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -479,10 +433,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getContractsByStatus($organizationId, $projectId);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -494,10 +445,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getProjectsByStatus($organizationId);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -511,10 +459,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getContractsByContractor($organizationId, $projectId, $limit);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -527,10 +472,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getMaterialsByProject($organizationId, $limit);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
 
@@ -544,10 +486,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getTopProjectsByBudget($organizationId, $limit);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -560,10 +499,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getTopMaterialsByUsage($organizationId, $limit);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -576,10 +512,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getTopContractorsByVolume($organizationId, $limit);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -592,10 +525,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getCompletedWorksAnalytics($organizationId, $projectId);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -608,10 +538,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getMonthlyTrends($organizationId, $projectId);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -625,10 +552,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getFinancialFlow($organizationId, $projectId, $period);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -641,10 +565,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getContractPerformance($organizationId, $projectId);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -657,10 +578,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getProjectProgress($organizationId, $projectId);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -674,10 +592,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getMaterialConsumption($organizationId, $projectId, $period);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -690,10 +605,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getWorksEfficiency($organizationId, $projectId);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -705,10 +617,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getMaterialsByCategory($organizationId);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**
@@ -721,10 +630,7 @@ class DashboardController extends Controller
 
         $data = $this->dashboardService->getWorksByType($organizationId, $projectId);
         
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
+        return AdminResponse::success($data);
     }
 
     /**

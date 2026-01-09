@@ -7,6 +7,9 @@ use App\Services\Geo\HeatmapService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use App\Http\Responses\AdminResponse;
+use Illuminate\Http\Response;
 
 class MapLayerController extends Controller
 {
@@ -23,30 +26,27 @@ class MapLayerController extends Controller
      */
     public function getHeatmap(Request $request): JsonResponse
     {
-        $request->validate([
-            'metric' => 'sometimes|in:budget,problems,activity',
-            'north' => 'sometimes|numeric|between:-90,90',
-            'south' => 'sometimes|numeric|between:-90,90',
-            'east' => 'sometimes|numeric|between:-180,180',
-            'west' => 'sometimes|numeric|between:-180,180',
-        ]);
-
-        $organizationId = Auth::user()->current_organization_id;
-        $metric = $request->input('metric', 'budget');
-        $bounds = $this->parseBounds($request);
-
         try {
+            $request->validate([
+                'metric' => 'sometimes|in:budget,problems,activity',
+                'north' => 'sometimes|numeric|between:-90,90',
+                'south' => 'sometimes|numeric|between:-90,90',
+                'east' => 'sometimes|numeric|between:-180,180',
+                'west' => 'sometimes|numeric|between:-180,180',
+            ]);
+
+            $organizationId = Auth::user()->current_organization_id;
+            $metric = $request->input('metric', 'budget');
+            $bounds = $this->parseBounds($request);
+
             $heatmap = $this->heatmapService->generate($organizationId, $metric, $bounds);
 
-            return response()->json([
-                'success' => true,
-                'data' => $heatmap,
+            return AdminResponse::success($heatmap);
+        } catch (\Throwable $e) {
+            Log::error('Error in MapLayerController@getHeatmap', [
+                'metric' => $request->input('metric'), 'message' => $e->getMessage()
             ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to generate heatmap: ' . $e->getMessage(),
-            ], 500);
+            return AdminResponse::error(trans_message('dashboard.map_heatmap_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -59,28 +59,25 @@ class MapLayerController extends Controller
      */
     public function getDensity(Request $request): JsonResponse
     {
-        $request->validate([
-            'north' => 'sometimes|numeric|between:-90,90',
-            'south' => 'sometimes|numeric|between:-90,90',
-            'east' => 'sometimes|numeric|between:-180,180',
-            'west' => 'sometimes|numeric|between:-180,180',
-        ]);
-
-        $organizationId = Auth::user()->current_organization_id;
-        $bounds = $this->parseBounds($request);
-
         try {
+            $request->validate([
+                'north' => 'sometimes|numeric|between:-90,90',
+                'south' => 'sometimes|numeric|between:-90,90',
+                'east' => 'sometimes|numeric|between:-180,180',
+                'west' => 'sometimes|numeric|between:-180,180',
+            ]);
+
+            $organizationId = Auth::user()->current_organization_id;
+            $bounds = $this->parseBounds($request);
+
             $density = $this->heatmapService->generateDensityMap($organizationId, $bounds);
 
-            return response()->json([
-                'success' => true,
-                'data' => $density,
+            return AdminResponse::success($density);
+        } catch (\Throwable $e) {
+            Log::error('Error in MapLayerController@getDensity', [
+                'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to generate density map: ' . $e->getMessage(),
-            ], 500);
+            return AdminResponse::error(trans_message('dashboard.map_density_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 

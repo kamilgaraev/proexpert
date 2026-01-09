@@ -7,6 +7,9 @@ use App\Services\Analytics\MapService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use App\Http\Responses\AdminResponse;
+use Illuminate\Http\Response;
 
 class DashboardMapController extends Controller
 {
@@ -25,23 +28,24 @@ class DashboardMapController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $organizationId = Auth::user()->current_organization_id;
+        try {
+            $organizationId = Auth::user()->current_organization_id;
 
-        if (!$organizationId) {
-            return response()->json(['message' => 'Organization context required'], 400);
+            if (!$organizationId) {
+                return AdminResponse::error(trans_message('dashboard.organization_required'), Response::HTTP_BAD_REQUEST);
+            }
+
+            $zoom = (int) $request->input('zoom', 12);
+
+            $data = $this->mapService->getMapData($organizationId, ['zoom' => $zoom]);
+
+            return AdminResponse::success($data);
+        } catch (\Throwable $e) {
+            Log::error('Error in DashboardMapController@index', [
+                'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
+            ]);
+            return AdminResponse::error(trans_message('dashboard.map_data_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
-
-        $zoom = (int) $request->input('zoom', 12);
-        
-        // Pass bounds if provided
-        // $bounds = $request->only(['north', 'south', 'east', 'west']);
-
-        $data = $this->mapService->getMapData($organizationId, ['zoom' => $zoom]);
-
-        return response()->json([
-            'success' => true,
-            'data' => $data
-        ]);
     }
 }
 
