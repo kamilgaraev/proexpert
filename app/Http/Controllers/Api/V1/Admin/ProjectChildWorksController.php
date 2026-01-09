@@ -7,9 +7,11 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use App\Services\Project\CrossOrgWorkReadService;
 use App\Services\Project\ProjectContextService;
+use App\Http\Responses\AdminResponse;
 use App\Models\Project;
 use App\Models\Organization;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Http\Response;
 
 class ProjectChildWorksController extends Controller
 {
@@ -38,20 +40,14 @@ class ProjectChildWorksController extends Controller
 
             $user = $request->user();
             if (!$user) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Unauthorized',
-                ], 401);
+                return AdminResponse::error(trans_message('project.unauthorized'), 401);
             }
 
             $currentOrgId = $user->current_organization_id;
             $organization = Organization::find($currentOrgId);
             
             if (!$organization) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Organization not found',
-                ], 404);
+                return AdminResponse::error(trans_message('project.organization_not_found'), 404);
             }
 
             // Проверяем доступ: владелец проекта ИЛИ участник (подрядчик/субподрядчик)
@@ -64,10 +60,7 @@ class ProjectChildWorksController extends Controller
                     'reason' => 'Organization is not project owner or participant',
                 ]);
                 
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Access denied. You are not a participant of this project.',
-                ], 403);
+                return AdminResponse::error(trans_message('project.child_works_access_denied'), 403);
             }
 
             $filters = $request->only([
@@ -113,8 +106,7 @@ class ProjectChildWorksController extends Controller
                 ];
             });
 
-            return response()->json([
-                'success' => true,
+            return AdminResponse::success([
                 'data' => $items,
                 'meta' => [
                     'current_page' => $worksPaginator->currentPage(),
@@ -130,10 +122,10 @@ class ProjectChildWorksController extends Controller
                 'trace' => substr($e->getTraceAsString(), 0, 2000),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => app()->environment('production') ? 'Internal Server Error' : $e->getMessage(),
-            ], 500);
+            return AdminResponse::error(
+                app()->environment('production') ? trans_message('project.child_works_error') : $e->getMessage(),
+                500
+            );
         }
     }
 } 
