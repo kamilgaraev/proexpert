@@ -33,6 +33,11 @@ class CustomTableDetector implements EstimateTypeDetectorInterface
         $indicators = [];
         $confidence = 30; // Базовый confidence (низкий, т.к. это fallback)
         
+        // Если передан Spreadsheet, берем первый лист
+        if ($content instanceof \PhpOffice\PhpSpreadsheet\Spreadsheet) {
+            $content = $content->getSheet(0);
+        }
+        
         // 1. КЛЮЧЕВОЙ ПРИЗНАК: Отсутствие кодов нормативов
         $hasNormativeCodes = $this->hasNormativeCodes($content);
         

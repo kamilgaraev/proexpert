@@ -26,6 +26,11 @@ class FERDetector implements EstimateTypeDetectorInterface
         $indicators = [];
         $confidence = 0;
         
+        // Если передан Spreadsheet, берем первый лист
+        if ($content instanceof \PhpOffice\PhpSpreadsheet\Spreadsheet) {
+            $content = $content->getSheet(0);
+        }
+        
         // 1. Ищем коды ФЕР/ГЭСН/ТЕР в содержимом
         $codes = $this->findNormativeCodes($content);
         

@@ -18,6 +18,11 @@ class GrandSmetaDetector implements EstimateTypeDetectorInterface
         $indicators = [];
         $confidence = 0;
         
+        // Если передан Spreadsheet, берем первый лист
+        if ($content instanceof \PhpOffice\PhpSpreadsheet\Spreadsheet) {
+            $content = $content->getSheet(0);
+        }
+        
         // Проверяем наличие характерных заголовков и структуры ГрандСметы
         
         // 1. Ищем характерный заголовок "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЕТ"
