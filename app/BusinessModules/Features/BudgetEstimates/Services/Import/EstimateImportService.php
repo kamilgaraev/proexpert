@@ -9,6 +9,7 @@ use App\BusinessModules\Features\BudgetEstimates\Services\EstimateService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateCalculationService;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelSimpleTableParser;
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ProhelperEstimateParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\Factory\ParserFactory;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\ExcelStreamParser;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\NormativeMatchingService;
@@ -583,6 +584,15 @@ class EstimateImportService
     {
         // Используем старый фабричный метод для совместимости в методах, где нужен EstimateImportParserInterface
         $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+        
+        // Check if it's a Prohelper format (for Excel files)
+        if ($extension === 'xlsx' || $extension === 'xls') {
+            $prohelperParser = new ProhelperEstimateParser();
+            if ($prohelperParser->canParse($filePath)) {
+                Log::info('estimate_import.prohelper_format_detected', ['file' => $filePath]);
+                return $prohelperParser;
+            }
+        }
         
         return match ($extension) {
             'xml' => new \App\BusinessModules\Features\BudgetEstimates\Services\Import\Parsers\GrandSmetaXMLParser(),

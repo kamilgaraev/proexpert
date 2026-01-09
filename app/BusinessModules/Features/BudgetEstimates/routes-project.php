@@ -98,6 +98,11 @@ Route::middleware(['api', 'auth:api_admin', 'auth.jwt:api_admin', 'organization.
             
             // Экспорт смет
             Route::prefix('{estimate}/export')->name('export.')->group(function () {
+                // Экспорт сметы в форматах Prohelper
+                Route::get('/excel', [EstimateExportController::class, 'exportEstimateToExcel'])->name('excel');
+                Route::get('/pdf', [EstimateExportController::class, 'exportEstimateToPdf'])->name('pdf');
+                
+                // Экспорт официальных форм
                 Route::post('/ks2', [EstimateExportController::class, 'exportKS2'])->name('ks2');
                 Route::post('/ks3', [EstimateExportController::class, 'exportKS3'])->name('ks3');
                 Route::post('/summary', [EstimateExportController::class, 'exportSummary'])->name('summary');
