@@ -7,11 +7,13 @@ use App\Services\User\UserService;
 use App\Http\Requests\Api\V1\Admin\UserManagement\StoreForemanRequest;
 use App\Http\Requests\Api\V1\Admin\UserManagement\UpdateForemanRequest;
 use App\Http\Resources\Api\V1\Admin\User\ForemanUserResource;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use App\Exceptions\BusinessLogicException;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Http\Response;
 
 class UserManagementController extends Controller
 {
@@ -32,25 +34,19 @@ class UserManagementController extends Controller
         try {
             $perPage = $request->query('per_page', 15);
             $foremenPaginator = $this->userService->getForemenForCurrentOrg($request, (int)$perPage);
-            return ForemanUserResource::collection($foremenPaginator);
+            return AdminResponse::success(ForemanUserResource::collection($foremenPaginator));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in UserManagementController@index', [
                 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении списка прорабов.',
-            ], 500);
+            return AdminResponse::error(__('user.list_error'), 500);
         }
     }
 
     // Создать нового прораба
-    public function store(StoreForemanRequest $request): ForemanUserResource | JsonResponse
+    public function store(StoreForemanRequest $request): JsonResponse
     {
         try {
             // Лимиты проверяются через middleware subscription.limit:max_users
@@ -76,12 +72,9 @@ class UserManagementController extends Controller
 
             // Загружаем pivot данные для ресурса, если пользователь успешно создан
             $foreman->load('organizations'); 
-            return new ForemanUserResource($foreman);
+            return AdminResponse::success(new ForemanUserResource($foreman), __('user.created'), 201);
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             // Ошибка abort(500, ...) из сервиса может быть поймана здесь как HttpException
             // или другая общая ошибка, если сервис вернул null/false и контроллер вызвал abort.
@@ -89,45 +82,33 @@ class UserManagementController extends Controller
             Log::error('Error in UserManagementController@store', [
                 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при создании прораба.',
-            ], 500);
+            return AdminResponse::error(__('user.create_error'), 500);
         }
     }
 
     // Показать конкретного прораба
-    public function show(Request $request, string $id): ForemanUserResource | JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
         try {
             $foreman = $this->userService->findForemanById((int)$id, $request);
             if (!$foreman) {
                 // Это специфичный случай "не найдено", который не является BusinessLogicException от сервиса
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Прораб не найден.'
-                ], 404);
+                return AdminResponse::error(__('user.not_found'), 404);
             }
             $foreman->load('organizations');
-            return new ForemanUserResource($foreman);
+            return AdminResponse::success(new ForemanUserResource($foreman));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in UserManagementController@show', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении данных прораба.',
-            ], 500);
+            return AdminResponse::error(__('user.show_error'), 500);
         }
     }
 
     // Обновить данные прораба
-    public function update(UpdateForemanRequest $request, string $id): ForemanUserResource | JsonResponse
+    public function update(UpdateForemanRequest $request, string $id): JsonResponse
     {
         try {
             // Сначала получаем пользователя, затем обновляем его данные из $request->validated()
@@ -135,7 +116,7 @@ class UserManagementController extends Controller
             $foreman = $this->userService->updateForeman((int)$id, $request->validated(), $request);
             
             if (!$foreman) {
-                 return response()->json(['success' => false, 'message' => 'Прораб не найден или не удалось обновить основные данные.'], 404);
+                 return AdminResponse::error(__('user.not_found'), 404);
             }
 
             $avatarChanged = false;
@@ -157,7 +138,7 @@ class UserManagementController extends Controller
                 } else {
                     Log::error('[UserManagementController@update] Failed to upload new avatar for user.', ['user_id' => $foreman->id]);
                     // Можно вернуть ошибку, если загрузка аватара критична
-                    return response()->json(['success' => false, 'message' => 'Не удалось загрузить новый аватар.'], 500);
+                    return AdminResponse::error(__('user.avatar_upload_error'), 500);
                 }
             }
 
@@ -168,20 +149,14 @@ class UserManagementController extends Controller
 
             // Загружаем pivot данные для ресурса
             $foreman->load('organizations');
-            return new ForemanUserResource($foreman);
+            return AdminResponse::success(new ForemanUserResource($foreman), __('user.updated'));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in UserManagementController@update', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при обновлении данных прораба.',
-            ], 500);
+            return AdminResponse::error(__('user.update_error'), 500);
         }
     }
 
@@ -190,23 +165,14 @@ class UserManagementController extends Controller
     {
         try {
             $this->userService->deleteForeman((int)$id, $request);
-            return response()->json([
-                'success' => true,
-                'message' => 'Прораб успешно удален/деактивирован.'
-            ], 200); // Или 204, если не возвращаем тело
+            return AdminResponse::success(null, __('user.deleted'));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in UserManagementController@destroy', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при удалении прораба.',
-            ], 500);
+            return AdminResponse::error(__('user.delete_error'), 500);
         }
     }
 
@@ -217,23 +183,14 @@ class UserManagementController extends Controller
     {
         try {
             $this->userService->blockForeman((int)$id, $request);
-            return response()->json([
-                'success' => true,
-                'message' => 'Прораб успешно заблокирован.'
-            ]);
+            return AdminResponse::success(null, __('user.blocked'));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in UserManagementController@block', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при блокировке прораба.',
-            ], 500);
+            return AdminResponse::error(__('user.block_error'), 500);
         }
     }
 
@@ -244,23 +201,14 @@ class UserManagementController extends Controller
     {
          try {
             $this->userService->unblockForeman((int)$id, $request);
-            return response()->json([
-                'success' => true,
-                'message' => 'Прораб успешно разблокирован.'
-            ]);
+            return AdminResponse::success(null, __('user.unblocked'));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in UserManagementController@unblock', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при разблокировке прораба.',
-            ], 500);
+            return AdminResponse::error(__('user.unblock_error'), 500);
         }
     }
 }

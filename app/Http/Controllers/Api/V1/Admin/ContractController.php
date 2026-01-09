@@ -501,20 +501,20 @@ class ContractController extends Controller
             }
             
             return AdminResponse::success([
-                'contract' => new ContractResource($contract),
-                'analytics' => $fullDetails['analytics'],
-                'works_statistics' => $fullDetails['works_statistics'],
-                'recent_works' => $fullDetails['recent_works'],
-                'performance_acts' => $contract->relationLoaded('performanceActs') ? 
-                    ContractPerformanceActResource::collection($contract->performanceActs) : [],
-                'payments' => $contract->relationLoaded('payments') ? 
-                    ContractPaymentResource::collection($contract->payments) : [],
-                'child_contracts' => $contract->relationLoaded('childContracts') ? 
-                    ContractMiniResource::collection($contract->childContracts) : [],
-                'agreements' => $contract->relationLoaded('agreements') ?
-                    SupplementaryAgreementResource::collection($contract->agreements) : [],
-                'specifications' => $contract->relationLoaded('specifications') ?
-                    SpecificationResource::collection($contract->specifications) : [],
+                    'contract' => new ContractResource($contract),
+                    'analytics' => $fullDetails['analytics'],
+                    'works_statistics' => $fullDetails['works_statistics'],
+                    'recent_works' => $fullDetails['recent_works'],
+                    'performance_acts' => $contract->relationLoaded('performanceActs') ? 
+                        ContractPerformanceActResource::collection($contract->performanceActs) : [],
+                    'payments' => $contract->relationLoaded('payments') ? 
+                        ContractPaymentResource::collection($contract->payments) : [],
+                    'child_contracts' => $contract->relationLoaded('childContracts') ? 
+                        ContractMiniResource::collection($contract->childContracts) : [],
+                    'agreements' => $contract->relationLoaded('agreements') ?
+                        SupplementaryAgreementResource::collection($contract->agreements) : [],
+                    'specifications' => $contract->relationLoaded('specifications') ?
+                        SpecificationResource::collection($contract->specifications) : [],
             ]);
         } catch (Exception $e) {
             return AdminResponse::error($e->getMessage(), Response::HTTP_NOT_FOUND);

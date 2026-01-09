@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Services\AdvanceAccountService;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Http\Response;
 
 class UserController extends Controller
 {
@@ -35,22 +37,17 @@ class UserController extends Controller
     {
         // Проверяем, что пользователь принадлежит текущей организации
         if (!$this->checkUserOrganization($user)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'User not found or access denied'
-            ], 404);
+            return AdminResponse::error(__('user.advance_balance_error'), Response::HTTP_NOT_FOUND);
         }
 
-        return response()->json([
-            'data' => [
-                'user_id' => $user->id,
-                'name' => $user->name,
-                'current_balance' => (float)$user->current_balance,
-                'total_issued' => (float)$user->total_issued,
-                'total_reported' => (float)$user->total_reported,
-                'has_overdue_balance' => (bool)$user->has_overdue_balance,
-                'last_transaction_at' => $user->last_transaction_at ? $user->last_transaction_at->format('Y-m-d H:i:s') : null
-            ]
+        return AdminResponse::success([
+            'user_id' => $user->id,
+            'name' => $user->name,
+            'current_balance' => (float)$user->current_balance,
+            'total_issued' => (float)$user->total_issued,
+            'total_reported' => (float)$user->total_reported,
+            'has_overdue_balance' => (bool)$user->has_overdue_balance,
+            'last_transaction_at' => $user->last_transaction_at ? $user->last_transaction_at->format('Y-m-d H:i:s') : null
         ]);
     }
 
@@ -65,10 +62,7 @@ class UserController extends Controller
     {
         // Проверяем, что пользователь принадлежит текущей организации
         if (!$this->checkUserOrganization($user)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'User not found or access denied'
-            ], 404);
+            return AdminResponse::error(__('user.advance_transactions_error'), Response::HTTP_NOT_FOUND);
         }
 
         $filters = $request->only(['date_from', 'date_to', 'type', 'reporting_status']);
@@ -78,7 +72,7 @@ class UserController extends Controller
         $perPage = $request->input('per_page', 15);
         $transactions = $this->advanceService->getTransactions($filters, $perPage);
 
-        return response()->json($transactions);
+        return AdminResponse::success($transactions);
     }
 
     /**
@@ -92,10 +86,7 @@ class UserController extends Controller
     {
         // Проверяем, что пользователь принадлежит текущей организации
         if (!$this->checkUserOrganization($user)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'User not found or access denied'
-            ], 404);
+            return AdminResponse::error(__('user.advance_balance_error'), Response::HTTP_NOT_FOUND);
         }
 
         // Валидация запроса
@@ -115,16 +106,9 @@ class UserController extends Controller
 
             $transaction = $this->advanceService->createTransaction($transactionData);
             
-            return response()->json([
-                'success' => true,
-                'message' => 'Funds issued successfully',
-                'data' => $transaction
-            ], 201);
+            return AdminResponse::success($transaction, __('user.issue_funds_success'), Response::HTTP_CREATED);
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to issue funds: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(__('user.issue_funds_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -139,10 +123,7 @@ class UserController extends Controller
     {
         // Проверяем, что пользователь принадлежит текущей организации
         if (!$this->checkUserOrganization($user)) {
-            return response()->json([
-                'success' => false,
-                'message' => 'User not found or access denied'
-            ], 404);
+            return AdminResponse::error(__('user.advance_balance_error'), Response::HTTP_NOT_FOUND);
         }
 
         // Валидация запроса
@@ -162,24 +143,14 @@ class UserController extends Controller
 
             // Проверяем, что у пользователя достаточно средств для возврата
             if ((float)$user->current_balance < (float)$request->input('amount')) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Insufficient funds for return'
-                ], 400);
+                return AdminResponse::error(__('user.insufficient_funds'), Response::HTTP_BAD_REQUEST);
             }
 
             $transaction = $this->advanceService->createTransaction($transactionData);
             
-            return response()->json([
-                'success' => true,
-                'message' => 'Funds returned successfully',
-                'data' => $transaction
-            ], 201);
+            return AdminResponse::success($transaction, __('user.return_funds_success'), Response::HTTP_CREATED);
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to return funds: ' . $e->getMessage()
-            ], 500);
+            return AdminResponse::error(__('user.return_funds_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 

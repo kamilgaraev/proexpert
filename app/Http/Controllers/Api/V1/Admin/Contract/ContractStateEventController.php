@@ -204,9 +204,9 @@ class ContractStateEventController extends Controller
             }, $combined);
             
             return AdminResponse::success([
-                'contract_id' => $contractModel->id,
-                'as_of_date' => $asOfDate?->format('Y-m-d'),
-                'events' => $combined
+                    'contract_id' => $contractModel->id,
+                    'as_of_date' => $asOfDate?->format('Y-m-d'),
+                    'events' => $combined
             ]);
         } catch (Exception $e) {
             return AdminResponse::error(__('contract.timeline_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
@@ -238,10 +238,10 @@ class ContractStateEventController extends Controller
             if (!$contractModel->usesEventSourcing()) {
                 // Для legacy договоров возвращаем простое состояние
                 return AdminResponse::success([
-                    'contract_id' => $contractModel->id,
-                    'uses_event_sourcing' => false,
-                    'total_amount' => $contractModel->total_amount,
-                    'active_specification' => $contractModel->specifications()->first(),
+                        'contract_id' => $contractModel->id,
+                        'uses_event_sourcing' => false,
+                        'total_amount' => $contractModel->total_amount,
+                        'active_specification' => $contractModel->specifications()->first(),
                     'message' => __('contract.legacy_event_sourcing_unavailable'),
                     'activation_hint' => __('contract.event_sourcing_activation_hint')
                 ]);
@@ -250,15 +250,15 @@ class ContractStateEventController extends Controller
             $state = $this->stateEventService->getCurrentState($contractModel);
             
             return AdminResponse::success([
-                'contract_id' => $state['contract_id'],
-                'total_amount' => $state['total_amount'],
-                'active_specification' => $state['active_specification'] ? [
-                    'id' => $state['active_specification']->id,
-                    'number' => $state['active_specification']->number,
-                    'total_amount' => $state['active_specification']->total_amount,
-                ] : null,
-                'active_events_count' => $state['active_events']->count(),
-                'as_of_date' => $state['as_of_date']->format('Y-m-d'),
+                    'contract_id' => $state['contract_id'],
+                    'total_amount' => $state['total_amount'],
+                    'active_specification' => $state['active_specification'] ? [
+                        'id' => $state['active_specification']->id,
+                        'number' => $state['active_specification']->number,
+                        'total_amount' => $state['active_specification']->total_amount,
+                    ] : null,
+                    'active_events_count' => $state['active_events']->count(),
+                    'as_of_date' => $state['as_of_date']->format('Y-m-d'),
             ]);
         } catch (Exception $e) {
             return AdminResponse::error(__('contract.state_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
@@ -299,15 +299,15 @@ class ContractStateEventController extends Controller
             $state = $this->stateEventService->getStateAtDate($contractModel, $asOfDate);
             
             return AdminResponse::success([
-                'contract_id' => $state['contract_id'],
-                'total_amount' => $state['total_amount'],
-                'active_specification' => $state['active_specification'] ? [
-                    'id' => $state['active_specification']->id,
-                    'number' => $state['active_specification']->number,
-                    'total_amount' => $state['active_specification']->total_amount,
-                ] : null,
-                'active_events_count' => $state['active_events']->count(),
-                'as_of_date' => $state['as_of_date']->format('Y-m-d'),
+                    'contract_id' => $state['contract_id'],
+                    'total_amount' => $state['total_amount'],
+                    'active_specification' => $state['active_specification'] ? [
+                        'id' => $state['active_specification']->id,
+                        'number' => $state['active_specification']->number,
+                        'total_amount' => $state['active_specification']->total_amount,
+                    ] : null,
+                    'active_events_count' => $state['active_events']->count(),
+                    'as_of_date' => $state['as_of_date']->format('Y-m-d'),
             ]);
         } catch (Exception $e) {
             return AdminResponse::error(__('contract.state_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
