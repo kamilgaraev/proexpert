@@ -29,6 +29,10 @@ class MapLayerController extends Controller
         try {
             $request->validate([
                 'metric' => 'sometimes|in:budget,problems,activity',
+                'zoom' => 'sometimes|integer|min:1|max:20',
+                'status' => 'sometimes|string|in:active,completed,draft,archived',
+                'date_from' => 'sometimes|date',
+                'date_to' => 'sometimes|date|after_or_equal:date_from',
                 'north' => 'sometimes|numeric|between:-90,90',
                 'south' => 'sometimes|numeric|between:-90,90',
                 'east' => 'sometimes|numeric|between:-180,180',
@@ -37,14 +41,20 @@ class MapLayerController extends Controller
 
             $organizationId = Auth::user()->current_organization_id;
             $metric = $request->input('metric', 'budget');
+            $zoom = (int) $request->input('zoom', 10);
             $bounds = $this->parseBounds($request);
+            
+            $filters = $request->only(['status', 'date_from', 'date_to']);
 
-            $heatmap = $this->heatmapService->generate($organizationId, $metric, $bounds);
+            $heatmap = $this->heatmapService->generate($organizationId, $metric, $bounds, $zoom, $filters);
 
             return AdminResponse::success($heatmap);
         } catch (\Throwable $e) {
             Log::error('Error in MapLayerController@getHeatmap', [
-                'metric' => $request->input('metric'), 'message' => $e->getMessage()
+                'metric' => $request->input('metric'), 
+                'zoom' => $request->input('zoom'),
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
             return AdminResponse::error(trans_message('dashboard.map_heatmap_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
