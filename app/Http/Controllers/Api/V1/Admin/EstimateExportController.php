@@ -68,9 +68,12 @@ class EstimateExportController extends Controller
             $filename = $result['filename'];
             $content = $result['content'];
 
+            // Правильное кодирование имени файла с кириллицей (RFC 5987)
+            $encodedFilename = rawurlencode($filename);
+            
             return response($content)
                 ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-                ->header('Content-Disposition', "attachment; filename=\"{$filename}\"")
+                ->header('Content-Disposition', "attachment; filename=\"{$filename}\"; filename*=UTF-8''{$encodedFilename}")
                 ->header('X-S3-Path', $result['s3_path'] ?? ''); // Для отладки
         } catch (\Throwable $e) {
             Log::error('estimate_export.controller_error', [
@@ -132,9 +135,12 @@ class EstimateExportController extends Controller
             $filename = $result['filename'];
             $content = $result['content'];
 
+            // Правильное кодирование имени файла с кириллицей (RFC 5987)
+            $encodedFilename = rawurlencode($filename);
+
             return response($content)
                 ->header('Content-Type', 'application/pdf')
-                ->header('Content-Disposition', "attachment; filename=\"{$filename}\"")
+                ->header('Content-Disposition', "attachment; filename=\"{$filename}\"; filename*=UTF-8''{$encodedFilename}")
                 ->header('X-S3-Path', $result['s3_path'] ?? ''); // Для отладки
         } catch (\Throwable $e) {
             Log::error('estimate_export.pdf_controller_error', [

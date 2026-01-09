@@ -687,14 +687,20 @@ class ExcelEstimateBuilder
      */
     protected function applyColumnWidths(Worksheet $sheet): void
     {
+        // Устанавливаем минимальную ширину для основных колонок
         $sheet->getColumnDimension('A')->setWidth(8);  // №
         $sheet->getColumnDimension('B')->setWidth(15); // Код
-        $sheet->getColumnDimension('C')->setWidth(50); // Наименование
-        $sheet->getColumnDimension('D')->setWidth(10); // Ед.изм.
-        $sheet->getColumnDimension('E')->setWidth(12); // Кол-во
-        $sheet->getColumnDimension('F')->setWidth(15); // Цена
-        $sheet->getColumnDimension('G')->setWidth(15); // Сумма
-        $sheet->getColumnDimension('H')->setWidth(30); // Примечание
+        $sheet->getColumnDimension('C')->setWidth(60); // Наименование - увеличено
+        $sheet->getColumnDimension('D')->setWidth(12); // Ед.изм.
+        $sheet->getColumnDimension('E')->setWidth(14); // Кол-во
+        $sheet->getColumnDimension('F')->setWidth(18); // Цена
+        $sheet->getColumnDimension('G')->setWidth(18); // Сумма
+        $sheet->getColumnDimension('H')->setWidth(35); // Примечание
+        
+        // Включаем автоподбор ширины для колонок с динамическим контентом
+        foreach (['B', 'C', 'D', 'E', 'F', 'G', 'H'] as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
     }
 
     /**
