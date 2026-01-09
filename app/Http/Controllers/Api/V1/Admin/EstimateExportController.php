@@ -35,6 +35,19 @@ class EstimateExportController extends Controller
             ->where('organization_id', $organizationId)
             ->firstOrFail();
 
+        // Преобразуем строковые boolean значения из query string
+        $this->normalizeBooleanParams($request, [
+            'include_sections',
+            'include_works',
+            'include_materials',
+            'include_machinery',
+            'include_labor',
+            'include_resources',
+            'include_coefficients',
+            'include_formulas',
+            'show_prices',
+        ]);
+
         $validated = $request->validate([
             'include_sections' => 'sometimes|boolean',
             'include_works' => 'sometimes|boolean',
@@ -76,6 +89,19 @@ class EstimateExportController extends Controller
             ->where('project_id', $projectId)
             ->where('organization_id', $organizationId)
             ->firstOrFail();
+
+        // Преобразуем строковые boolean значения из query string
+        $this->normalizeBooleanParams($request, [
+            'include_sections',
+            'include_works',
+            'include_materials',
+            'include_machinery',
+            'include_labor',
+            'include_resources',
+            'include_coefficients',
+            'include_formulas',
+            'show_prices',
+        ]);
 
         $validated = $request->validate([
             'include_sections' => 'sometimes|boolean',
@@ -165,6 +191,12 @@ class EstimateExportController extends Controller
             ->with(['sections.items', 'project', 'contract'])
             ->firstOrFail();
 
+        // Преобразуем строковые boolean значения из query string
+        $this->normalizeBooleanParams($request, [
+            'include_sections',
+            'include_prices',
+        ]);
+
         $validated = $request->validate([
             'include_sections' => 'boolean',
             'include_prices' => 'boolean',
@@ -223,6 +255,14 @@ class EstimateExportController extends Controller
             abort(404);
         }
 
+        // Преобразуем строковые boolean значения из query string
+        $this->normalizeBooleanParams($request, [
+            'include_volumes',
+            'include_workers',
+            'include_equipment',
+            'include_materials',
+        ]);
+
         $validated = $request->validate([
             'date_from' => 'required|date',
             'date_to' => 'required|date|after_or_equal:date_from',
@@ -261,6 +301,28 @@ class EstimateExportController extends Controller
         return response($content)
             ->header('Content-Type', $mimeType)
             ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
+    }
+
+    /**
+     * Преобразует строковые boolean значения из query string в настоящие boolean
+     * 
+     * @param Request $request
+     * @param array $params Список параметров для преобразования
+     */
+    private function normalizeBooleanParams(Request $request, array $params): void
+    {
+        foreach ($params as $param) {
+            if ($request->has($param)) {
+                $value = $request->input($param);
+                
+                // Преобразуем строковые значения в boolean
+                if ($value === 'true' || $value === '1' || $value === 1) {
+                    $request->merge([$param => true]);
+                } elseif ($value === 'false' || $value === '0' || $value === 0) {
+                    $request->merge([$param => false]);
+                }
+            }
+        }
     }
 }
 
