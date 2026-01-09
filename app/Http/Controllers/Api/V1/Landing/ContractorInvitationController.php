@@ -7,6 +7,7 @@ use App\Services\Contractor\ContractorInvitationService;
 use App\Http\Resources\Api\V1\Landing\ContractorInvitation\ContractorInvitationResource;
 use App\Http\Resources\Api\V1\Landing\ContractorInvitation\ContractorInvitationCollection;
 use App\Exceptions\BusinessLogicException;
+use App\Http\Responses\LandingResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
@@ -26,7 +27,7 @@ class ContractorInvitationController extends Controller
         $organizationId = $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return LandingResponse::error(__('contract.organization_context_missing'), 400);
         }
 
         $perPage = min((int) $request->input('per_page', 15), 50);
@@ -40,8 +41,7 @@ class ContractorInvitationController extends Controller
                 $filters
             );
 
-            return response()->json([
-                'success' => true,
+            return LandingResponse::success([
                 'data' => new ContractorInvitationCollection($receivedInvitations),
                 'meta' => [
                     'type' => 'received',
@@ -55,10 +55,7 @@ class ContractorInvitationController extends Controller
                 'organization_id' => $organizationId,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении приглашений'
-            ], 500);
+            return LandingResponse::error(__('contract.invitations_retrieve_error'), 500);
         }
     }
 
@@ -70,22 +67,13 @@ class ContractorInvitationController extends Controller
                 ->firstOrFail();
 
             if ($invitation->isExpired()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Срок действия приглашения истек'
-                ], 410);
+                return LandingResponse::error(__('contract.invitation_expired'), 410);
             }
 
-            return response()->json([
-                'success' => true,
-                'data' => new ContractorInvitationResource($invitation)
-            ]);
+            return LandingResponse::success(new ContractorInvitationResource($invitation));
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Приглашение не найдено'
-            ], 404);
+            return LandingResponse::error(__('contract.invitation_not_found'), 404);
 
         } catch (\Exception $e) {
             Log::error('Failed to fetch contractor invitation by token', [
@@ -93,10 +81,7 @@ class ContractorInvitationController extends Controller
                 'token' => $token,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении приглашения'
-            ], 500);
+            return LandingResponse::error(__('contract.invitation_retrieve_error'), 500);
         }
     }
 
@@ -113,19 +98,13 @@ class ContractorInvitationController extends Controller
                 'contractor_id' => $contractor->id,
             ]);
 
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'contractor' => $contractor->only(['id', 'name', 'connected_at']),
-                    'message' => 'Приглашение принято. Теперь вы можете работать с данной организацией как подрядчик.'
-                ]
+            return LandingResponse::success([
+                'contractor' => $contractor->only(['id', 'name', 'connected_at']),
+                'message' => __('contract.invitation_accepted')
             ]);
 
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 400);
+            return LandingResponse::error($e->getMessage(), 400);
 
         } catch (\Exception $e) {
             Log::error('Failed to accept contractor invitation', [
@@ -134,10 +113,7 @@ class ContractorInvitationController extends Controller
                 'user_id' => $user->id,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при принятии приглашения'
-            ], 500);
+            return LandingResponse::error(__('contract.invitation_accept_error'), 500);
         }
     }
 
@@ -153,10 +129,7 @@ class ContractorInvitationController extends Controller
             $declined = $this->invitationService->declineInvitation($token, $user);
 
             if (!$declined) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Не удалось отклонить приглашение'
-                ], 400);
+                return LandingResponse::error(__('contract.invitation_decline_error'), 400);
             }
 
             Log::info('Contractor invitation declined via landing', [
@@ -165,16 +138,10 @@ class ContractorInvitationController extends Controller
                 'reason' => $request->input('reason'),
             ]);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Приглашение отклонено'
-            ]);
+            return LandingResponse::success(null, __('contract.invitation_declined'));
 
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 400);
+            return LandingResponse::error($e->getMessage(), 400);
 
         } catch (\Exception $e) {
             Log::error('Failed to decline contractor invitation', [
@@ -183,10 +150,7 @@ class ContractorInvitationController extends Controller
                 'user_id' => $user->id,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при отклонении приглашения'
-            ], 500);
+            return LandingResponse::error(__('contract.invitation_decline_error'), 500);
         }
     }
 
@@ -196,18 +160,15 @@ class ContractorInvitationController extends Controller
         $organizationId = $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return LandingResponse::error(__('contract.organization_context_missing'), 400);
         }
 
         try {
             $stats = $this->invitationService->getInvitationStats($organizationId);
 
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'received_invitations' => $stats['received'],
-                    'sent_invitations' => $stats['sent'],
-                ]
+            return LandingResponse::success([
+                'received_invitations' => $stats['received'],
+                'sent_invitations' => $stats['sent'],
             ]);
 
         } catch (\Exception $e) {
@@ -216,10 +177,7 @@ class ContractorInvitationController extends Controller
                 'organization_id' => $organizationId,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении статистики'
-            ], 500);
+            return LandingResponse::error(__('contract.invitation_stats_error'), 500);
         }
     }
 }

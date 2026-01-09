@@ -8,6 +8,7 @@ use App\Http\Requests\Api\V1\Admin\ContractorInvitation\StoreContractorInvitatio
 use App\Http\Resources\Api\V1\Admin\ContractorInvitation\ContractorInvitationResource;
 use App\Http\Resources\Api\V1\Admin\ContractorInvitation\ContractorInvitationCollection;
 use App\Exceptions\BusinessLogicException;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Auth;
@@ -28,7 +29,7 @@ class ContractorInvitationController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error(__('contract.organization_context_missing'), 400);
         }
 
         $type = $request->input('type', 'sent');
@@ -43,8 +44,7 @@ class ContractorInvitationController extends Controller
                 $filters
             );
 
-            return response()->json([
-                'success' => true,
+            return AdminResponse::success([
                 'data' => new ContractorInvitationCollection($invitations),
                 'meta' => [
                     'type' => $type,
@@ -58,10 +58,7 @@ class ContractorInvitationController extends Controller
                 'type' => $type,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении приглашений'
-            ], 500);
+            return AdminResponse::error(__('contract.invitations_retrieve_error'), 500);
         }
     }
 
@@ -71,7 +68,7 @@ class ContractorInvitationController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error(__('contract.organization_context_missing'), 400);
         }
 
         $validated = $request->validated();
@@ -85,17 +82,14 @@ class ContractorInvitationController extends Controller
                 $validated['metadata'] ?? []
             );
 
-            return response()->json([
-                'success' => true,
-                'data' => new ContractorInvitationResource($invitation->load(['invitedOrganization', 'invitedBy'])),
-                'message' => 'Приглашение успешно отправлено'
-            ], 201);
+            return AdminResponse::success(
+                new ContractorInvitationResource($invitation->load(['invitedOrganization', 'invitedBy'])),
+                __('contract.invitation_sent'),
+                201
+            );
 
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage()
-            ], 400);
+            return AdminResponse::error($e->getMessage(), 400);
 
         } catch (\Exception $e) {
             Log::error('Failed to create contractor invitation', [
@@ -105,10 +99,7 @@ class ContractorInvitationController extends Controller
                 'user_id' => $user->id,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при создании приглашения'
-            ], 500);
+            return AdminResponse::error(__('contract.invitation_create_error'), 500);
         }
     }
 
@@ -118,7 +109,7 @@ class ContractorInvitationController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error(__('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -130,16 +121,10 @@ class ContractorInvitationController extends Controller
                 })
                 ->firstOrFail();
 
-            return response()->json([
-                'success' => true,
-                'data' => new ContractorInvitationResource($invitation)
-            ]);
+            return AdminResponse::success(new ContractorInvitationResource($invitation));
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Приглашение не найдено'
-            ], 404);
+            return AdminResponse::error(__('contract.invitation_not_found'), 404);
 
         } catch (\Exception $e) {
             Log::error('Failed to fetch contractor invitation', [
@@ -148,10 +133,7 @@ class ContractorInvitationController extends Controller
                 'organization_id' => $organizationId,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении приглашения'
-            ], 500);
+            return AdminResponse::error(__('contract.invitation_retrieve_error'), 500);
         }
     }
 
@@ -161,7 +143,7 @@ class ContractorInvitationController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error(__('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -178,16 +160,10 @@ class ContractorInvitationController extends Controller
                 'organization_id' => $organizationId,
             ]);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Приглашение отменено'
-            ]);
+            return AdminResponse::success(null, __('contract.invitation_cancelled'));
 
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Приглашение не найдено или уже обработано'
-            ], 404);
+            return AdminResponse::error(__('contract.invitation_not_found'), 404);
 
         } catch (\Exception $e) {
             Log::error('Failed to cancel contractor invitation', [
@@ -196,10 +172,7 @@ class ContractorInvitationController extends Controller
                 'organization_id' => $organizationId,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при отмене приглашения'
-            ], 500);
+            return AdminResponse::error(__('contract.invitation_cancel_error'), 500);
         }
     }
 
@@ -209,16 +182,13 @@ class ContractorInvitationController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error(__('contract.organization_context_missing'), 400);
         }
 
         try {
             $stats = $this->invitationService->getInvitationStats($organizationId);
 
-            return response()->json([
-                'success' => true,
-                'data' => $stats
-            ]);
+            return AdminResponse::success($stats);
 
         } catch (\Exception $e) {
             Log::error('Failed to fetch contractor invitation stats', [
@@ -226,10 +196,7 @@ class ContractorInvitationController extends Controller
                 'organization_id' => $organizationId,
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении статистики'
-            ], 500);
+            return AdminResponse::error(__('contract.invitation_stats_error'), 500);
         }
     }
 }

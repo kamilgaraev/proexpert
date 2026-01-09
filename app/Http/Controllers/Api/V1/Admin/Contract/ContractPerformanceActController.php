@@ -2,16 +2,17 @@
 
 namespace App\Http\Controllers\Api\V1\Admin\Contract;
 
-use App\Http\Controllers\Controller; // Убедимся, что базовый контроллер существует и используется
+use App\Http\Controllers\Controller;
 use App\Services\Contract\ContractPerformanceActService;
 use App\Http\Requests\Api\V1\Admin\Contract\PerformanceAct\StoreContractPerformanceActRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\PerformanceAct\UpdateContractPerformanceActRequest;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActResource;
 use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceActCollection;
-use Illuminate\Http\Request; // Для $request->input()
+use App\Http\Responses\AdminResponse;
+use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Support\Facades\Auth; // Для Auth::user()
+use Illuminate\Support\Facades\Auth;
 use App\Services\Export\ExcelExporterService;
 use App\Services\Storage\FileService;
 use App\Models\Organization;
@@ -67,9 +68,10 @@ class ContractPerformanceActController extends Controller
 
         try {
             $acts = $this->actService->getAllActsForContract($contract, $organizationId, [], $projectId);
+            // Assuming AdminResponse expects array or resource collection, but to be consistent with resource usage:
             return new ContractPerformanceActCollection($acts);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to retrieve performance acts', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.act_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -92,33 +94,25 @@ class ContractPerformanceActController extends Controller
                 'has_user' => $request->user() !== null,
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'Не определена организация. Требуется аутентификация и контекст организации.',
-                'error' => 'Organization context is required'
-            ], Response::HTTP_UNAUTHORIZED);
+            return AdminResponse::error(
+                'Не определена организация. Требуется аутентификация и контекст организации.', 
+                Response::HTTP_UNAUTHORIZED, 
+                'Organization context is required'
+            );
         }
 
         try {
             $actDTO = $request->toDto();
             $act = $this->actService->createActForContract($contract, $organizationId, $actDTO, $projectId);
-            return (new ContractPerformanceActResource($act))
-                    ->response()
-                    ->setStatusCode(Response::HTTP_CREATED);
+            
+            return AdminResponse::success(new ContractPerformanceActResource($act), __('contract.act_created'), Response::HTTP_CREATED);
+
         } catch (\DomainException $e) {
             // Бизнес-ошибки (валидация, лимиты и т.д.)
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-                'error' => $e->getMessage()
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (\InvalidArgumentException $e) {
             // Ошибки валидации данных
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-                'error' => $e->getMessage()
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error($e->getMessage(), Response::HTTP_BAD_REQUEST);
         } catch (Exception $e) {
             Log::error('performance_act.store.error', [
                 'project_id' => $projectId,
@@ -128,11 +122,7 @@ class ContractPerformanceActController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'Не удалось создать акт выполненных работ',
-                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(__('contract.act_create_error'), Response::HTTP_INTERNAL_SERVER_ERROR, config('app.debug') ? $e->getMessage() : null);
         }
     }
 
@@ -148,16 +138,16 @@ class ContractPerformanceActController extends Controller
         try {
             $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$actModel) {
-                return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $actModel)) {
-                return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             return new ContractPerformanceActResource($actModel);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to retrieve performance act', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.act_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -173,18 +163,19 @@ class ContractPerformanceActController extends Controller
         try {
             $existingAct = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$existingAct) {
-                return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $existingAct)) {
-                return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             $actDTO = $request->toDto();
             $updatedAct = $this->actService->updateAct($act, $contract, $organizationId, $actDTO, $projectId);
-            return new ContractPerformanceActResource($updatedAct);
+            
+            return AdminResponse::success(new ContractPerformanceActResource($updatedAct), __('contract.act_updated'));
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to update performance act', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.act_update_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -200,17 +191,17 @@ class ContractPerformanceActController extends Controller
         try {
             $existingAct = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$existingAct) {
-                return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $existingAct)) {
-                return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             $this->actService->deleteAct($act, $contract, $organizationId, $projectId);
-            return response()->json(null, Response::HTTP_NO_CONTENT);
+            return AdminResponse::success(null, __('contract.act_deleted'), Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to delete performance act', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.act_delete_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -224,16 +215,16 @@ class ContractPerformanceActController extends Controller
         
         $contractModel = \App\Models\Contract::find($contract);
         if (!$contractModel) {
-            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
         }
         
         $organizationId = $contractModel->organization_id;
 
         try {
             $works = $this->actService->getAvailableWorksForAct($contract, $organizationId, $projectId);
-            return response()->json(['data' => $works]);
+            return AdminResponse::success($works);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to retrieve available works', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.available_works_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -248,16 +239,16 @@ class ContractPerformanceActController extends Controller
             $projectId = $project;
 
             if (!$organizationId) {
-                return response()->json(['error' => 'Не определена организация пользователя'], 400);
+                return AdminResponse::error(__('contract.organization_context_missing'), 400);
             }
 
             $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$actModel) {
-                return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $actModel)) {
-                return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $actModel->load([
@@ -294,10 +285,7 @@ class ContractPerformanceActController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'error' => 'Ошибка при экспорте в PDF',
-                'message' => $e->getMessage()
-            ], 500);
+            return AdminResponse::error(__('contract.act_export_error'), 500, $e->getMessage());
         }
     }
 
@@ -312,16 +300,16 @@ class ContractPerformanceActController extends Controller
             $projectId = $project;
 
             if (!$organizationId) {
-                return response()->json(['error' => 'Не определена организация пользователя'], 400);
+                return AdminResponse::error(__('contract.organization_context_missing'), 400);
             }
 
             $actModel = $this->actService->getActById($act, $contract, $organizationId, $projectId);
             if (!$actModel) {
-                return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $actModel)) {
-                return response()->json(['message' => 'Performance act not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.act_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $actModel->load([
@@ -398,10 +386,7 @@ class ContractPerformanceActController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'error' => 'Ошибка при экспорте в Excel',
-                'message' => $e->getMessage()
-            ], 500);
+            return AdminResponse::error(__('contract.act_export_error'), 500, $e->getMessage());
         }
     }
 
@@ -416,28 +401,19 @@ class ContractPerformanceActController extends Controller
             $organizationId = $organization?->id ?? $user?->current_organization_id;
 
             if (!$organizationId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Не определена организация пользователя'
-                ], 400);
+                return AdminResponse::error(__('contract.organization_context_missing'), 400);
             }
 
             // Получаем акт с контрактом напрямую
             $performanceAct = \App\Models\ContractPerformanceAct::with('contract')->find($act);
             
             if (!$performanceAct) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Акт не найден'
-                ], 404);
+                return AdminResponse::error(__('contract.act_not_found'), 404);
             }
 
             // Проверяем доступ к организации
             if ($performanceAct->contract->organization_id !== $organizationId) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Доступ запрещен'
-                ], 403);
+                return AdminResponse::error(__('contract.access_denied'), 403);
             }
 
             // Загружаем файлы с информацией о пользователях
@@ -472,10 +448,7 @@ class ContractPerformanceActController extends Controller
                 ];
             });
 
-            return response()->json([
-                'success' => true,
-                'data' => $files
-            ]);
+            return AdminResponse::success($files);
 
         } catch (Exception $e) {
             Log::error('Ошибка получения файлов акта', [
@@ -484,11 +457,7 @@ class ContractPerformanceActController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении файлов',
-                'error' => $e->getMessage()
-            ], 500);
+            return AdminResponse::error(__('contract.act_files_error'), 500, $e->getMessage());
         }
     }
 } 
