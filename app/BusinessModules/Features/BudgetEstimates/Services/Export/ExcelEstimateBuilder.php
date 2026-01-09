@@ -355,40 +355,47 @@ class ExcelEstimateBuilder
      */
     protected function buildItem(Worksheet $sheet, int $row, array $item, array $options, int $indent = 0): int
     {
-        $col = 0;
+        $col = 'A';
 
         // Position number
-        $sheet->setCellValueByColumnAndRow(++$col, $row, $item['position_number']);
+        $sheet->setCellValue("{$col}{$row}", $item['position_number']);
+        $col++;
 
         // Code
         $code = $item['normative_rate_code'] ?? '';
         if ($item['is_not_accounted']) {
             $code .= ' (Н)';
         }
-        $sheet->setCellValueByColumnAndRow(++$col, $row, $code);
+        $sheet->setCellValue("{$col}{$row}", $code);
+        $col++;
 
         // Name with indent
         $name = str_repeat('  ', $indent) . $item['name'];
-        $sheet->setCellValueByColumnAndRow(++$col, $row, $name);
+        $sheet->setCellValue("{$col}{$row}", $name);
+        $col++;
 
         // Measurement unit
-        $sheet->setCellValueByColumnAndRow(++$col, $row, $item['measurement_unit'] ?? '');
+        $sheet->setCellValue("{$col}{$row}", $item['measurement_unit'] ?? '');
+        $col++;
 
         // Quantity
-        $sheet->setCellValueByColumnAndRow(++$col, $row, $item['quantity_total']);
-        $sheet->getStyleByColumnAndRow($col, $row)->getNumberFormat()->setFormatCode('#,##0.0000');
-        $sheet->getStyleByColumnAndRow($col, $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        $sheet->setCellValue("{$col}{$row}", $item['quantity_total']);
+        $sheet->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode('#,##0.0000');
+        $sheet->getStyle("{$col}{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+        $col++;
 
         if ($options['show_prices']) {
             // Unit price
-            $sheet->setCellValueByColumnAndRow(++$col, $row, $item['unit_price']);
-            $sheet->getStyleByColumnAndRow($col, $row)->getNumberFormat()->setFormatCode('#,##0.00');
-            $sheet->getStyleByColumnAndRow($col, $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+            $sheet->setCellValue("{$col}{$row}", $item['unit_price']);
+            $sheet->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode('#,##0.00');
+            $sheet->getStyle("{$col}{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+            $col++;
 
             // Total amount
-            $sheet->setCellValueByColumnAndRow(++$col, $row, $item['total_amount']);
-            $sheet->getStyleByColumnAndRow($col, $row)->getNumberFormat()->setFormatCode('#,##0.00');
-            $sheet->getStyleByColumnAndRow($col, $row)->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+            $sheet->setCellValue("{$col}{$row}", $item['total_amount']);
+            $sheet->getStyle("{$col}{$row}")->getNumberFormat()->setFormatCode('#,##0.00');
+            $sheet->getStyle("{$col}{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_RIGHT);
+            $col++;
         }
 
         // Notes
@@ -404,11 +411,11 @@ class ExcelEstimateBuilder
             ));
             $notes[] = $coeffStr;
         }
-        $sheet->setCellValueByColumnAndRow(++$col, $row, implode('; ', $notes));
+        $sheet->setCellValue("{$col}{$row}", implode('; ', $notes));
 
-        // Apply borders
+        // Apply borders - determine last column
         $lastCol = $col;
-        $sheet->getStyle("A{$row}:" . chr(ord('A') + $lastCol - 1) . "{$row}")->applyFromArray([
+        $sheet->getStyle("A{$row}:{$lastCol}{$row}")->applyFromArray([
             'borders' => [
                 'allBorders' => [
                     'borderStyle' => Border::BORDER_THIN,
