@@ -8,6 +8,9 @@ use App\Models\Project;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use App\Http\Responses\AdminResponse;
+use Illuminate\Http\Response;
 
 class DashboardEVMController extends Controller
 {
@@ -26,23 +29,22 @@ class DashboardEVMController extends Controller
      */
     public function metrics(Request $request): JsonResponse
     {
-        $request->validate([
-            'project_id' => 'required|integer|exists:projects,id',
-        ]);
+        try {
+            $request->validate([
+                'project_id' => 'required|integer|exists:projects,id',
+            ]);
 
-        $project = Project::findOrFail($request->input('project_id'));
-        
-        // Authorization check
-        $user = Auth::user();
-        if ($project->organization_id !== $user->current_organization_id) {
-            return response()->json(['message' => 'Forbidden'], 403);
-        }
+            $project = Project::findOrFail($request->input('project_id'));
+            
+            // Authorization check
+            $user = Auth::user();
+            if ($project->organization_id !== $user->current_organization_id) {
+                return AdminResponse::error(trans_message('dashboard.access_denied'), Response::HTTP_FORBIDDEN);
+            }
 
-        $metrics = $this->evmService->calculateMetrics($project);
+            $metrics = $this->evmService->calculateMetrics($project);
 
-        return response()->json([
-            'success' => true,
-            'data' => [
+            return AdminResponse::success([
                 'bac' => $metrics['bac'],
                 'pv' => $metrics['pv'],
                 'ev' => $metrics['ev'],
@@ -51,8 +53,13 @@ class DashboardEVMController extends Controller
                 'cv' => $metrics['cv'],
                 'spi' => $metrics['spi'],
                 'cpi' => $metrics['cpi'],
-            ]
-        ]);
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error in DashboardEVMController@metrics', [
+                'project_id' => $request->input('project_id'), 'message' => $e->getMessage()
+            ]);
+            return AdminResponse::error(trans_message('dashboard.evm_metrics_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
     }
 
     /**
@@ -63,28 +70,32 @@ class DashboardEVMController extends Controller
      */
     public function forecast(Request $request): JsonResponse
     {
-        $request->validate([
-            'project_id' => 'required|integer|exists:projects,id',
-        ]);
+        try {
+            $request->validate([
+                'project_id' => 'required|integer|exists:projects,id',
+            ]);
 
-        $project = Project::findOrFail($request->input('project_id'));
-        
-        // Authorization check
-        $user = Auth::user();
-        if ($project->organization_id !== $user->current_organization_id) {
-            return response()->json(['message' => 'Forbidden'], 403);
-        }
+            $project = Project::findOrFail($request->input('project_id'));
+            
+            // Authorization check
+            $user = Auth::user();
+            if ($project->organization_id !== $user->current_organization_id) {
+                return AdminResponse::error(trans_message('dashboard.access_denied'), Response::HTTP_FORBIDDEN);
+            }
 
-        $metrics = $this->evmService->calculateMetrics($project);
+            $metrics = $this->evmService->calculateMetrics($project);
 
-        return response()->json([
-            'success' => true,
-            'data' => [
+            return AdminResponse::success([
                 'eac' => $metrics['eac'],
                 'vac' => $metrics['vac'],
                 'tcpi' => $metrics['tcpi'],
-            ]
-        ]);
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Error in DashboardEVMController@forecast', [
+                'project_id' => $request->input('project_id'), 'message' => $e->getMessage()
+            ]);
+            return AdminResponse::error(trans_message('dashboard.evm_forecast_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
     }
 }
 
