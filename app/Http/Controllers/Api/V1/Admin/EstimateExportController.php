@@ -4,18 +4,106 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\Export\OfficialFormsExportService;
+use App\BusinessModules\Features\BudgetEstimates\Services\Export\EstimateExportService;
 use App\Models\Estimate;
 use App\Models\ConstructionJournal;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Carbon\Carbon;
+use App\Http\Responses\AdminResponse;
+use function App\Helpers\trans_message;
 
 class EstimateExportController extends Controller
 {
     public function __construct(
-        protected OfficialFormsExportService $exportService
+        protected OfficialFormsExportService $exportService,
+        protected EstimateExportService $estimateExportService
     ) {}
+
+    /**
+     * Экспорт сметы в Excel формат
+     * GET /api/v1/admin/projects/{project}/estimates/{estimate}/export/excel
+     */
+    public function exportEstimateToExcel(Request $request, int $projectId, int $estimateId): Response
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+
+        $estimate = Estimate::where('id', $estimateId)
+            ->where('project_id', $projectId)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+
+        $validated = $request->validate([
+            'include_sections' => 'sometimes|boolean',
+            'include_works' => 'sometimes|boolean',
+            'include_materials' => 'sometimes|boolean',
+            'include_machinery' => 'sometimes|boolean',
+            'include_labor' => 'sometimes|boolean',
+            'include_resources' => 'sometimes|boolean',
+            'include_coefficients' => 'sometimes|boolean',
+            'include_formulas' => 'sometimes|boolean',
+            'show_prices' => 'sometimes|boolean',
+            'signature_fields' => 'sometimes|array',
+        ]);
+
+        try {
+            $filePath = $this->estimateExportService->exportToExcel($estimate, $validated);
+
+            $filename = basename($filePath);
+            $content = file_get_contents($filePath);
+
+            unlink($filePath);
+
+            return response($content)
+                ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+                ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
+        } catch (\Throwable $e) {
+            return response()->json(AdminResponse::error(trans_message('estimate.export_error'), Response::HTTP_INTERNAL_SERVER_ERROR)->getData(), Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    /**
+     * Экспорт сметы в PDF формат
+     * GET /api/v1/admin/projects/{project}/estimates/{estimate}/export/pdf
+     */
+    public function exportEstimateToPdf(Request $request, int $projectId, int $estimateId): Response
+    {
+        $organizationId = $request->attributes->get('current_organization_id');
+
+        $estimate = Estimate::where('id', $estimateId)
+            ->where('project_id', $projectId)
+            ->where('organization_id', $organizationId)
+            ->firstOrFail();
+
+        $validated = $request->validate([
+            'include_sections' => 'sometimes|boolean',
+            'include_works' => 'sometimes|boolean',
+            'include_materials' => 'sometimes|boolean',
+            'include_machinery' => 'sometimes|boolean',
+            'include_labor' => 'sometimes|boolean',
+            'include_resources' => 'sometimes|boolean',
+            'include_coefficients' => 'sometimes|boolean',
+            'include_formulas' => 'sometimes|boolean',
+            'show_prices' => 'sometimes|boolean',
+            'signature_fields' => 'sometimes|array',
+        ]);
+
+        try {
+            $filePath = $this->estimateExportService->exportToPdf($estimate, $validated);
+
+            $filename = basename($filePath);
+            $content = file_get_contents($filePath);
+
+            unlink($filePath);
+
+            return response($content)
+                ->header('Content-Type', 'application/pdf')
+                ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
+        } catch (\Throwable $e) {
+            return response()->json(AdminResponse::error(trans_message('estimate.export_error'), Response::HTTP_INTERNAL_SERVER_ERROR)->getData(), Response::HTTP_INTERNAL_SERVER_ERROR);
+        }
+    }
 
     /**
      * Экспорт формы КС-2 по смете

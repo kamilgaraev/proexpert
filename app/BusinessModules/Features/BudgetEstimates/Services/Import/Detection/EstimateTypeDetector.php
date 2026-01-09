@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\Detectors\ProhelperDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\Detectors\GrandSmetaDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\Detectors\RIKDetector;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Detection\Detectors\FERDetector;
@@ -23,8 +24,9 @@ class EstimateTypeDetector
     
     public function __construct()
     {
-        // Порядок важен: сначала специфичные, потом generic
+        // Порядок важен: Prohelper первый (highest priority), потом специфичные, потом generic
         $this->detectors = [
+            new ProhelperDetector(), // Highest priority - native format
             new GrandSmetaDetector(),
             new RIKDetector(),
             new FERDetector(),

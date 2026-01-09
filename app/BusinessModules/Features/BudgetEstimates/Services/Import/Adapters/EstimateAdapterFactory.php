@@ -2,6 +2,7 @@
 
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Import\Adapters;
 
+use App\BusinessModules\Features\BudgetEstimates\Services\Import\Adapters\ProhelperAdapter;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Adapters\GrandSmetaAdapter;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Adapters\RIKAdapter;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\Adapters\FERAdapter;
@@ -25,6 +26,7 @@ class EstimateAdapterFactory
     {
         // Регистрируем все доступные адаптеры
         $this->adapters = [
+            new ProhelperAdapter(), // Highest priority - native format
             new GrandSmetaAdapter(),
             new RIKAdapter(),
             new FERAdapter(),
