@@ -5,11 +5,12 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Admin\Profile\UpdateProfileRequest;
 use App\Http\Resources\Api\V1\UserResource;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
-use Symfony\Component\HttpFoundation\Response;
+use Illuminate\Http\Response;
 
 class ProfileController extends Controller
 {
@@ -18,20 +19,14 @@ class ProfileController extends Controller
         try {
             $user = Auth::user();
             
-            return response()->json([
-                'success' => true,
-                'data' => new UserResource($user)
-            ]);
+            return AdminResponse::success(new UserResource($user));
         } catch (\Exception $e) {
             Log::error('Error getting admin profile', [
                 'user_id' => Auth::id(),
                 'error' => $e->getMessage()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении данных профиля.'
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(__('auth.profile_get_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -73,11 +68,7 @@ class ProfileController extends Controller
                 'updated_fields' => array_keys($profileData)
             ]);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Профиль успешно обновлен.',
-                'data' => new UserResource($user)
-            ]);
+            return AdminResponse::success(new UserResource($user), __('auth.profile_updated'));
 
         } catch (\Exception $e) {
             Log::error('Error updating admin profile', [
@@ -86,10 +77,7 @@ class ProfileController extends Controller
                 'trace' => $e->getTraceAsString()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'Произошла ошибка при обновлении профиля.'
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(__('auth.profile_update_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -113,16 +101,10 @@ class ProfileController extends Controller
                 'has_completed_onboarding' => $validated['has_completed_onboarding'],
             ]);
 
-            return response()->json([
-                'success' => true,
-            ]);
+            return AdminResponse::success(null, __('auth.onboarding_updated'));
 
         } catch (\Illuminate\Validation\ValidationException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка валидации.',
-                'errors' => $e->errors(),
-            ], Response::HTTP_UNPROCESSABLE_ENTITY);
+            return AdminResponse::error(__('auth.validation_error'), Response::HTTP_UNPROCESSABLE_ENTITY, $e->errors());
 
         } catch (\Exception $e) {
             Log::error('Error updating onboarding status', [
@@ -131,10 +113,7 @@ class ProfileController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Произошла ошибка при обновлении статуса обучения.'
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(__('auth.profile_update_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 } 

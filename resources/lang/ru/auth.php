@@ -1,0 +1,18 @@
+<?php
+
+return [
+    'login_success' => 'Вы успешно вошли в систему',
+    'login_failed' => 'Ошибка входа',
+    'access_denied' => 'У вас нет доступа к панели администратора',
+    'unauthorized' => 'Неавторизованный доступ',
+    'server_error' => 'Внутренняя ошибка сервера',
+    'profile_not_found' => 'Профиль не найден',
+    'token_error' => 'Ошибка токена',
+    'token_refreshed' => 'Токен успешно обновлен',
+    'logout_success' => 'Вы успешно вышли из системы',
+    'onboarding_updated' => 'Статус обучения обновлен',
+    'validation_error' => 'Ошибка валидации',
+    'profile_updated' => 'Профиль успешно обновлен',
+    'profile_update_error' => 'Произошла ошибка при обновлении профиля',
+    'profile_get_error' => 'Ошибка при получении данных профиля',
+];
