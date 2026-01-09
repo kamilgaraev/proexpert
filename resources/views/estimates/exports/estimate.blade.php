@@ -482,7 +482,7 @@
 
     {{-- Footer --}}
     <footer>
-        <strong>Prohelper</strong> - Профессиональная система сметных расчётов | 
+        <strong>Prohelper</strong> - Профессиональная система управления строительством | 
         Экспорт: {{ $metadata['export_date'] ? \Carbon\Carbon::parse($metadata['export_date'])->format('d.m.Y H:i') : '' }}
     </footer>
 </body>
