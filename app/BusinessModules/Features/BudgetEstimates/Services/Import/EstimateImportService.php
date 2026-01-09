@@ -103,21 +103,19 @@ class EstimateImportService
 
     public function detectEstimateType(string $fileId): EstimateTypeDetectionDTO
     {
-        // ... (оставляем старую логику для типа сметы пока что, или обновляем на новый парсер)
-        // Для простоты используем старый парсер здесь, так как он читает первые 100 строк
         Log::info('[EstimateImport] detectEstimateType started', [
             'file_id' => $fileId,
         ]);
         
         try {
             $fileData = $this->getFileData($fileId);
-            // Используем старый парсер для совместимости с детектором пока
-            $parser = new ExcelSimpleTableParser();
             
-            $content = $parser->readContent($fileData['file_path'], maxRows: 100);
+            // Загружаем полный Spreadsheet объект для детектора
+            // ProhelperDetector нуждается в доступе ко всем листам, включая скрытые
+            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($fileData['file_path']);
             
             $detector = new EstimateTypeDetector();
-            $result = $detector->detectAll($content);
+            $result = $detector->detectAll($spreadsheet);
             
             $detectionDTO = EstimateTypeDetectionDTO::fromDetectorResult($result);
             
