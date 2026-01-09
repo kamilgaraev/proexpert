@@ -19,9 +19,9 @@ class ExcelEstimateBuilder
      * @param Estimate $estimate
      * @param array $data
      * @param array $options
-     * @return string Path to generated file
+     * @return array ['content' => binary content, 'filename' => filename]
      */
-    public function build(Estimate $estimate, array $data, array $options): string
+    public function build(Estimate $estimate, array $data, array $options): array
     {
         $spreadsheet = new Spreadsheet();
 
@@ -36,18 +36,24 @@ class ExcelEstimateBuilder
         $this->buildMetadataSheet($metadataSheet, $data);
         $metadataSheet->setSheetState(Worksheet::SHEETSTATE_HIDDEN);
 
-        // Save to file
-        $filename = $this->generateFilename($estimate);
-        $tempPath = storage_path("app/temp/{$filename}");
+        // ВАЖНО: Устанавливаем активным первый лист (Смета), а не метаданные
+        $spreadsheet->setActiveSheetIndex(0);
 
-        if (!file_exists(dirname($tempPath))) {
-            mkdir(dirname($tempPath), 0755, true);
-        }
-
+        // Generate content in memory
         $writer = new Xlsx($spreadsheet);
-        $writer->save($tempPath);
+        
+        // Save to temporary stream
+        $tempFile = tempnam(sys_get_temp_dir(), 'estimate_');
+        $writer->save($tempFile);
+        $content = file_get_contents($tempFile);
+        unlink($tempFile);
 
-        return $tempPath;
+        $filename = $this->generateFilename($estimate);
+
+        return [
+            'content' => $content,
+            'filename' => $filename,
+        ];
     }
 
     /**
@@ -697,8 +703,8 @@ class ExcelEstimateBuilder
     protected function generateFilename(Estimate $estimate): string
     {
         $number = $estimate->number ?? $estimate->id;
-        $date = now()->format('Ymd_His');
-        return "Smeta_Prohelper_{$number}_{$date}.xlsx";
+        $date = now()->format('d.m.Y');
+        return "Смета_{$number}_{$date}.xlsx";
     }
 
     /**

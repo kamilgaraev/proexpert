@@ -1,10 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\BusinessModules\Features\BudgetEstimates\Services\Export;
 
 use App\Models\Estimate;
+use App\Models\File;
+use App\Services\Storage\FileService;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 
 class EstimateExportService
 {
@@ -13,7 +19,8 @@ class EstimateExportService
 
     public function __construct(
         protected ExcelEstimateBuilder $excelBuilder,
-        protected PDFEstimateBuilder $pdfBuilder
+        protected PDFEstimateBuilder $pdfBuilder,
+        protected FileService $fileService
     ) {}
 
     /**
@@ -21,9 +28,9 @@ class EstimateExportService
      *
      * @param Estimate $estimate
      * @param array $options
-     * @return string Path to generated file
+     * @return array ['content' => binary, 'filename' => string, 's3_path' => string]
      */
-    public function exportToExcel(Estimate $estimate, array $options = []): string
+    public function exportToExcel(Estimate $estimate, array $options = []): array
     {
         Log::info('estimate_export.excel_started', [
             'estimate_id' => $estimate->id,
@@ -36,15 +43,24 @@ class EstimateExportService
             $data = $this->prepareExportData($estimate, $options);
 
             // Build Excel file
-            $filePath = $this->excelBuilder->build($estimate, $data, $options);
+            $result = $this->excelBuilder->build($estimate, $data, $options);
+            $content = $result['content'];
+            $filename = $result['filename'];
+
+            // Save to S3
+            $s3Path = $this->saveToS3($estimate, $content, $filename, 'xlsx');
 
             Log::info('estimate_export.excel_completed', [
                 'estimate_id' => $estimate->id,
-                'file_path' => $filePath,
-                'file_size' => filesize($filePath),
+                's3_path' => $s3Path,
+                'file_size' => strlen($content),
             ]);
 
-            return $filePath;
+            return [
+                'content' => $content,
+                'filename' => $filename,
+                's3_path' => $s3Path,
+            ];
         } catch (\Throwable $e) {
             Log::error('estimate_export.excel_failed', [
                 'estimate_id' => $estimate->id,
@@ -60,9 +76,9 @@ class EstimateExportService
      *
      * @param Estimate $estimate
      * @param array $options
-     * @return string Path to generated file
+     * @return array ['content' => binary, 'filename' => string, 's3_path' => string]
      */
-    public function exportToPdf(Estimate $estimate, array $options = []): string
+    public function exportToPdf(Estimate $estimate, array $options = []): array
     {
         Log::info('estimate_export.pdf_started', [
             'estimate_id' => $estimate->id,
@@ -75,15 +91,24 @@ class EstimateExportService
             $data = $this->prepareExportData($estimate, $options);
 
             // Build PDF file
-            $filePath = $this->pdfBuilder->build($estimate, $data, $options);
+            $result = $this->pdfBuilder->build($estimate, $data, $options);
+            $content = $result['content'];
+            $filename = $result['filename'];
+
+            // Save to S3
+            $s3Path = $this->saveToS3($estimate, $content, $filename, 'pdf');
 
             Log::info('estimate_export.pdf_completed', [
                 'estimate_id' => $estimate->id,
-                'file_path' => $filePath,
-                'file_size' => filesize($filePath),
+                's3_path' => $s3Path,
+                'file_size' => strlen($content),
             ]);
 
-            return $filePath;
+            return [
+                'content' => $content,
+                'filename' => $filename,
+                's3_path' => $s3Path,
+            ];
         } catch (\Throwable $e) {
             Log::error('estimate_export.pdf_failed', [
                 'estimate_id' => $estimate->id,
@@ -404,5 +429,66 @@ class EstimateExportService
         // Cache::forget не работает с wildcard, поэтому используем tags если доступно
         // Иначе просто логируем
         Log::info('estimate_export.cache_cleared', ['estimate_id' => $estimateId]);
+    }
+
+    /**
+     * Сохранить файл на S3
+     *
+     * @param Estimate $estimate
+     * @param string $content
+     * @param string $filename
+     * @param string $extension
+     * @return string S3 path
+     */
+    protected function saveToS3(Estimate $estimate, string $content, string $filename, string $extension): string
+    {
+        try {
+            $user = Auth::user();
+            $org = $estimate->organization;
+            $disk = $this->fileService->disk($org);
+
+            // Формируем путь: org-{id}/estimates/{YYYY-MM-DD}/{uuid}.ext
+            $date = now()->format('Y-m-d');
+            $uuid = Str::uuid()->toString();
+            $s3Path = "org-{$org->id}/estimates/{$date}/{$uuid}.{$extension}";
+
+            // Сохраняем в S3
+            $disk->put($s3Path, $content);
+
+            // Создаем запись в БД
+            File::create([
+                'organization_id' => $org->id,
+                'fileable_id' => $estimate->id,
+                'fileable_type' => Estimate::class,
+                'user_id' => $user->id,
+                'name' => $filename,
+                'original_name' => $filename,
+                'path' => $s3Path,
+                'mime_type' => $extension === 'pdf' ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                'size' => strlen($content),
+                'disk' => 's3',
+                'type' => $extension === 'pdf' ? 'pdf_export' : 'excel_export',
+                'category' => 'estimate_export',
+            ]);
+
+            Log::info('estimate_export.saved_to_s3', [
+                'estimate_id' => $estimate->id,
+                'organization_id' => $org->id,
+                's3_path' => $s3Path,
+                'file_size' => strlen($content),
+                'extension' => $extension,
+            ]);
+
+            return $s3Path;
+        } catch (\Throwable $e) {
+            Log::error('estimate_export.s3_save_failed', [
+                'estimate_id' => $estimate->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            
+            // Не прерываем выполнение, продолжаем работу
+            return '';
+        }
     }
 }
