@@ -8,6 +8,8 @@ use Illuminate\Http\JsonResponse;
 use App\Http\Middleware\ProjectContextMiddleware;
 use App\Enums\OrganizationCapability;
 use App\Enums\ProjectOrganizationRole;
+use App\Http\Responses\AdminResponse;
+use Illuminate\Http\Response;
 
 class ProjectContextController extends Controller
 {
@@ -22,24 +24,19 @@ class ProjectContextController extends Controller
         $project = ProjectContextMiddleware::getProject($request);
         
         if (!$projectContext) {
-            return response()->json([
-                'message' => 'Project context not available',
-            ], 500);
+            return AdminResponse::error(trans_message('project.context_not_available'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
         
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'context' => $projectContext->toArray(),
-                'project' => [
-                    'id' => $project->id,
-                    'name' => $project->name,
-                    'address' => $project->address,
-                    'status' => $project->status,
-                    'start_date' => $project->start_date?->format('Y-m-d'),
-                    'end_date' => $project->end_date?->format('Y-m-d'),
-                    'budget_amount' => $project->budget_amount,
-                ],
+        return AdminResponse::success([
+            'context' => $projectContext->toArray(),
+            'project' => [
+                'id' => $project->id,
+                'name' => $project->name,
+                'address' => $project->address,
+                'status' => $project->status,
+                'start_date' => $project->start_date?->format('Y-m-d'),
+                'end_date' => $project->end_date?->format('Y-m-d'),
+                'budget_amount' => $project->budget_amount,
             ],
         ]);
     }
@@ -54,21 +51,16 @@ class ProjectContextController extends Controller
         $projectContext = ProjectContextMiddleware::getProjectContext($request);
         
         if (!$projectContext) {
-            return response()->json([
-                'message' => 'Project context not available',
-            ], 500);
+            return AdminResponse::error(trans_message('project.context_not_available'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
         
         $role = $projectContext->roleConfig->role;
         
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'contractor_field' => $this->getContractorFieldMeta($role),
-                'fields_visibility' => $this->getFieldsVisibility($role),
-                'available_actions' => $this->getAvailableActions($projectContext),
-                'ui_hints' => $this->getUIHints($role),
-            ],
+        return AdminResponse::success([
+            'contractor_field' => $this->getContractorFieldMeta($role),
+            'fields_visibility' => $this->getFieldsVisibility($role),
+            'available_actions' => $this->getAvailableActions($projectContext),
+            'ui_hints' => $this->getUIHints($role),
         ]);
     }
     
@@ -82,26 +74,21 @@ class ProjectContextController extends Controller
         $projectContext = ProjectContextMiddleware::getProjectContext($request);
         
         if (!$projectContext) {
-            return response()->json([
-                'message' => 'Project context not available',
-            ], 500);
+            return AdminResponse::error(trans_message('project.context_not_available'), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
         
-        return response()->json([
-            'success' => true,
-            'data' => [
-                'permissions' => $projectContext->roleConfig->permissions,
-                'role' => [
-                    'value' => $projectContext->roleConfig->role->value,
-                    'label' => $projectContext->roleConfig->displayLabel,
-                ],
-                'capabilities' => [
-                    'can_manage_contracts' => $projectContext->roleConfig->canManageContracts,
-                    'can_view_finances' => $projectContext->roleConfig->canViewFinances,
-                    'can_manage_works' => $projectContext->roleConfig->canManageWorks,
-                    'can_manage_warehouse' => $projectContext->roleConfig->canManageWarehouse,
-                    'can_invite_participants' => $projectContext->roleConfig->canInviteParticipants,
-                ],
+        return AdminResponse::success([
+            'permissions' => $projectContext->roleConfig->permissions,
+            'role' => [
+                'value' => $projectContext->roleConfig->role->value,
+                'label' => $projectContext->roleConfig->displayLabel,
+            ],
+            'capabilities' => [
+                'can_manage_contracts' => $projectContext->roleConfig->canManageContracts,
+                'can_view_finances' => $projectContext->roleConfig->canViewFinances,
+                'can_manage_works' => $projectContext->roleConfig->canManageWorks,
+                'can_manage_warehouse' => $projectContext->roleConfig->canManageWarehouse,
+                'can_invite_participants' => $projectContext->roleConfig->canInviteParticipants,
             ],
         ]);
     }
