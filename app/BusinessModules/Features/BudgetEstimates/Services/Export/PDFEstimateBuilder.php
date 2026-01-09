@@ -35,6 +35,11 @@ class PDFEstimateBuilder
         $pdf->setOption('margin-bottom', '12mm');
         $pdf->setOption('margin-left', '15mm');
         $pdf->setOption('margin-right', '15mm');
+        
+        // Включаем поддержку Unicode для корректного отображения кириллицы
+        $pdf->setOption('isHtml5ParserEnabled', true);
+        $pdf->setOption('isRemoteEnabled', true);
+        $pdf->setOption('defaultFont', 'DejaVu Sans');
 
         // Generate content in memory
         $content = $pdf->output();
