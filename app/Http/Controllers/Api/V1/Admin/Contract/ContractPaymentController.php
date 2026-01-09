@@ -10,6 +10,7 @@ use App\Http\Resources\Api\V1\Admin\Contract\Payment\ContractPaymentResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Payment\ContractPaymentCollection;
 use App\Models\Contract; // Для Route Model Binding
 use App\Models\ContractPayment; // Для Route Model Binding
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
@@ -80,17 +81,14 @@ class ContractPaymentController extends Controller
         $projectId = $project;
 
         if (!$organizationId) {
-            return response()->json([
-                'message' => 'Organization context is required',
-                'error' => 'MISSING_ORGANIZATION_CONTEXT'
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST, 'MISSING_ORGANIZATION_CONTEXT');
         }
 
         try {
             $payments = $this->paymentService->getAllPaymentsForContract($contract, $organizationId, [], $projectId);
             return new ContractPaymentCollection($payments);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to retrieve payments', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.payment_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -102,20 +100,16 @@ class ContractPaymentController extends Controller
         $projectId = $project;
 
         if (!$organizationId) {
-            return response()->json([
-                'message' => 'Organization context is required',
-                'error' => 'MISSING_ORGANIZATION_CONTEXT'
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST, 'MISSING_ORGANIZATION_CONTEXT');
         }
 
         try {
             $paymentDTO = $request->toDto();
             $payment = $this->paymentService->createPaymentForContract($contract, $organizationId, $paymentDTO, $projectId);
-            return (new ContractPaymentResource($payment))
-                    ->response()
-                    ->setStatusCode(Response::HTTP_CREATED);
+            
+            return AdminResponse::success(new ContractPaymentResource($payment), __('contract.payment_created'), Response::HTTP_CREATED);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to create payment', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.payment_create_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -128,16 +122,16 @@ class ContractPaymentController extends Controller
         try {
             $contractModel = $payment->contract;
             if (!$contractModel || !$this->canAccessContract($contractModel, $organizationId)) {
-                return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $payment)) {
-                return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             return new ContractPaymentResource($payment);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to retrieve payment', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.payment_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -150,18 +144,18 @@ class ContractPaymentController extends Controller
         try {
             $contractModel = $payment->contract;
             if (!$contractModel || !$this->canAccessContract($contractModel, $organizationId)) {
-                return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $payment)) {
-                return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $paymentDTO = $request->toDto();
             $updatedPayment = $this->paymentService->updatePayment($payment->id, null, $organizationId, $paymentDTO);
-            return new ContractPaymentResource($updatedPayment);
+            return AdminResponse::success(new ContractPaymentResource($updatedPayment), __('contract.payment_updated'));
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to update payment', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.payment_update_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -174,17 +168,17 @@ class ContractPaymentController extends Controller
         try {
             $contractModel = $payment->contract;
             if (!$contractModel || !$this->canAccessContract($contractModel, $organizationId)) {
-                return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             if (!$this->validateProjectContext($request, $payment)) {
-                return response()->json(['message' => 'Payment not found or access denied'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.payment_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $this->paymentService->deletePayment($payment->id, null, $organizationId);
-            return response()->json(null, Response::HTTP_NO_CONTENT);
+            return AdminResponse::success(null, __('contract.payment_deleted'), Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to delete payment', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.payment_delete_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 } 

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\EstimateContractIntegrationService;
 use App\Models\Estimate;
 use App\Models\Contract;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -38,11 +39,11 @@ class EstimateContractController extends Controller
             'description' => $validated['description'] ?? null,
         ]);
 
-        return response()->json([
-            'success' => true,
-            'estimate_id' => $estimate->id,
-            'message' => 'Смета успешно создана из договора',
-        ], 201);
+        return AdminResponse::success(
+            ['estimate_id' => $estimate->id],
+            __('contract.estimate_created'),
+            201
+        );
     }
 
     /**
@@ -64,15 +65,9 @@ class EstimateContractController extends Controller
         try {
             $this->integrationService->linkToContract($estimate, $validated['contract_id']);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Смета успешно привязана к договору',
-            ]);
+            return AdminResponse::success(null, __('contract.estimate_linked'));
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), 422);
         }
     }
 
@@ -92,10 +87,7 @@ class EstimateContractController extends Controller
             'contract_id' => null,
         ]);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Смета успешно отвязана от договора',
-        ]);
+        return AdminResponse::success(null, __('contract.estimate_unlinked'));
     }
 
     /**
@@ -112,8 +104,7 @@ class EstimateContractController extends Controller
 
         $validation = $this->integrationService->validateContractAmount($estimate);
 
-        return response()->json([
-            'success' => true,
+        return AdminResponse::success([
             'is_valid' => $validation['valid'],
             'estimate_total' => $validation['estimate_amount'],
             'contract_total' => $validation['contract_amount'],
@@ -136,9 +127,8 @@ class EstimateContractController extends Controller
 
         $estimates = $this->integrationService->getEstimatesByContract($contract);
 
-        return response()->json([
-            'success' => true,
-            'data' => $estimates->map(function ($estimate) {
+        return AdminResponse::success(
+            $estimates->map(function ($estimate) {
                 return [
                     'id' => $estimate->id,
                     'name' => $estimate->name,
@@ -146,8 +136,8 @@ class EstimateContractController extends Controller
                     'created_at' => $estimate->created_at->toISOString(),
                     'status' => $estimate->status,
                 ];
-            }),
-        ]);
+            })
+        );
     }
 }
 

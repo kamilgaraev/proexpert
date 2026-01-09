@@ -15,7 +15,7 @@ use App\Http\Resources\Api\V1\Admin\Contract\PerformanceAct\ContractPerformanceA
 use App\Http\Resources\Api\V1\Admin\Contract\Payment\ContractPaymentResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Agreement\SupplementaryAgreementResource;
 use App\Http\Resources\Api\V1\Admin\Contract\Specification\SpecificationResource;
-use App\Http\Middleware\ProjectContextMiddleware;
+use App\Http\Responses\AdminResponse;
 use App\Models\Organization;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -31,12 +31,6 @@ class ContractController extends Controller
     public function __construct(ContractService $contractService)
     {
         $this->contractService = $contractService;
-        // Middleware для авторизации можно добавить здесь или в роутах
-        // $this->middleware('can:viewAny,App\Models\Contract')->only('index');
-        // $this->middleware('can:create,App\Models\Contract')->only('store');
-        // $this->middleware('can:view,contract')->only('show');
-        // $this->middleware('can:update,contract')->only('update');
-        // $this->middleware('can:delete,contract')->only('destroy');
     }
 
     /**
@@ -48,7 +42,7 @@ class ContractController extends Controller
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error(__('contract.organization_context_missing'), 400);
         }
         
         // Получаем project_id из URL (обязательный параметр для project-based маршрутов)
@@ -131,7 +125,8 @@ class ContractController extends Controller
         $contracts = $this->contractService->getAllContracts($organizationId, $perPage, $filters, $sortBy, $sortDirection);
         $summary = $this->contractService->getContractsSummary($organizationId, $filters);
         
-        return (new ContractCollection($contracts))->additional(['summary' => $summary]);
+        $collection = (new ContractCollection($contracts))->additional(['summary' => $summary]);
+        return AdminResponse::success($collection);
     }
 
     /**
@@ -143,7 +138,7 @@ class ContractController extends Controller
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error(__('contract.organization_context_missing'), 400);
         }
         
         try {
@@ -154,15 +149,9 @@ class ContractController extends Controller
             
             $contract = $this->contractService->createContract($organizationId, $contractDTO, $projectContext);
             
-            return (new ContractResource($contract))
-                    ->response()
-                    ->setStatusCode(Response::HTTP_CREATED);
+            return AdminResponse::success(new ContractResource($contract), null, Response::HTTP_CREATED);
         } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to create contract',
-                'error' => $e->getMessage()
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.create_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         }
     }
 
@@ -184,7 +173,7 @@ class ContractController extends Controller
         ]);
         
         if (!$contract) {
-            return response()->json(['message' => 'Contract ID не указан'], 400);
+            return AdminResponse::error(__('contract.contract_id_missing'), 400);
         }
         
         $user = $request->user();
@@ -192,7 +181,7 @@ class ContractController extends Controller
         $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error('Не определён контекст организации', 400);
         }
         
         Log::info('ContractController@show attempt', [
@@ -216,7 +205,7 @@ class ContractController extends Controller
                 'contract_id' => $contract,
                 'organization_id' => $organizationId
             ]);
-            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
         }
         
         // Проверка принадлежности контракта к проекту (для обычных и мультипроектных контрактов)
@@ -238,7 +227,7 @@ class ContractController extends Controller
                     'is_multi_project' => $contractData->is_multi_project,
                     'requested_project_id' => (int)$projectId,
                 ]);
-                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
         }
         
@@ -257,7 +246,7 @@ class ContractController extends Controller
                     'contract_contractor_id' => $contractData->contractor_id,
                     'user_contractor_id' => $contractor->id,
                 ]);
-                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             // Если подрядчик не найден - значит контракт не его
@@ -267,11 +256,11 @@ class ContractController extends Controller
                     'contract_organization_id' => $contractData->organization_id,
                     'contractor_source_org_id' => $projectContext->organizationId,
                 ]);
-                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
         }
         
-        return new ContractResource($contractData);
+        return AdminResponse::success(new ContractResource($contractData));
     }
 
     /**
@@ -293,7 +282,7 @@ class ContractController extends Controller
             $existingContract = \App\Models\Contract::find($contractId);
             
             if (!$existingContract) {
-                return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             Log::info('ContractController::update - EXISTING CONTRACT FOUND', [
@@ -316,7 +305,7 @@ class ContractController extends Controller
                 }
                 
                 if (!$belongsToProject) {
-                    return response()->json(['message' => 'Контракт не найден'], Response::HTTP_NOT_FOUND);
+                    return AdminResponse::error('Контракт не найден', Response::HTTP_NOT_FOUND);
                 }
             }
             
@@ -331,11 +320,11 @@ class ContractController extends Controller
             ]);
             
             $updatedContract = $this->contractService->updateContract($contractId, $organizationId, $contractDTO);
-            return new ContractResource($updatedContract);
+            return AdminResponse::success(new ContractResource($updatedContract));
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            return response()->json(['message' => 'Контракт не найден (ModelNotFoundException)'], Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
         } catch (\InvalidArgumentException $e) {
-            return response()->json(['message' => 'Некорректные данные', 'error' => $e->getMessage()], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.invalid_data') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         } catch (Exception $e) {
             Log::error('Ошибка обновления контракта', [
                 'contract_id' => $contractId,
@@ -343,7 +332,7 @@ class ContractController extends Controller
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
-            return response()->json(['message' => 'Не удалось обновить контракт', 'error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(__('contract.update_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -356,7 +345,7 @@ class ContractController extends Controller
         $organization = $request->attributes->get('current_organization');
         $organizationId = $organization?->id ?? ($request->attributes->get('current_organization_id') ?? $user->current_organization_id);
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error(__('contract.organization_context_missing'), 400);
         }
         
         $projectId = $project;
@@ -364,7 +353,7 @@ class ContractController extends Controller
         try {
             $existingContract = $this->contractService->getContractById($contract, $organizationId);
             if (!$existingContract) {
-                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             // Проверка принадлежности контракта к проекту (для обычных и мультипроектных контрактов)
@@ -380,14 +369,14 @@ class ContractController extends Controller
                 }
                 
                 if (!$belongsToProject) {
-                    return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+                    return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
                 }
             }
             
             $this->contractService->deleteContract($contract, $organizationId);
-            return response()->json(null, Response::HTTP_NO_CONTENT);
+            return AdminResponse::success(null, __('contract.deleted'), Response::HTTP_NO_CONTENT);
         } catch (Exception $e) {
-            return response()->json(['message' => 'Failed to delete contract', 'error' => $e->getMessage()], Response::HTTP_INTERNAL_SERVER_ERROR);
+            return AdminResponse::error(__('contract.delete_error') . ': ' . $e->getMessage(), Response::HTTP_INTERNAL_SERVER_ERROR);
         }
     }
 
@@ -400,7 +389,7 @@ class ContractController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error('Не определён контекст организации', 400);
         }
         
         $projectId = $project;
@@ -408,7 +397,7 @@ class ContractController extends Controller
         $contract = $this->contractService->getContractById($contract, $organizationId);
         
         if (!$contract) {
-            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
         }
         
         // Проверка принадлежности контракта к проекту
@@ -418,7 +407,7 @@ class ContractController extends Controller
                 : (int)$contract->project_id === (int)$projectId;
             
             if (!$belongsToProject) {
-                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
         }
 
@@ -438,10 +427,7 @@ class ContractController extends Controller
             'confirmed_works_count' => $contract->completedWorks()->where('status', 'confirmed')->count(),
         ];
 
-        return response()->json([
-            'success' => true,
-            'data' => $analytics
-        ]);
+        return AdminResponse::success($analytics);
     }
 
     /**
@@ -453,7 +439,7 @@ class ContractController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error('Не определён контекст организации', 400);
         }
         
         $projectId = $project;
@@ -461,7 +447,7 @@ class ContractController extends Controller
         $contract = $this->contractService->getContractById($contract, $organizationId);
         
         if (!$contract) {
-            return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+            return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
         }
         
         // Проверка принадлежности контракта к проекту
@@ -471,7 +457,7 @@ class ContractController extends Controller
                 : (int)$contract->project_id === (int)$projectId;
             
             if (!$belongsToProject) {
-                return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
         }
 
@@ -481,10 +467,7 @@ class ContractController extends Controller
             ->orderBy('completion_date', 'desc')
             ->paginate($perPage);
 
-        return response()->json([
-            'success' => true,
-            'data' => $completedWorks
-        ]);
+        return AdminResponse::success($completedWorks);
     }
 
     /**
@@ -496,7 +479,7 @@ class ContractController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error('Не определён контекст организации', 400);
         }
         
         $projectId = $project;
@@ -512,31 +495,28 @@ class ContractController extends Controller
                     : (int)$contract->project_id === (int)$projectId;
                 
                 if (!$belongsToProject) {
-                    return response()->json(['message' => 'Contract not found'], Response::HTTP_NOT_FOUND);
+                    return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
                 }
             }
             
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'contract' => new ContractResource($contract),
-                    'analytics' => $fullDetails['analytics'],
-                    'works_statistics' => $fullDetails['works_statistics'],
-                    'recent_works' => $fullDetails['recent_works'],
-                    'performance_acts' => $contract->relationLoaded('performanceActs') ? 
-                        ContractPerformanceActResource::collection($contract->performanceActs) : [],
-                    'payments' => $contract->relationLoaded('payments') ? 
-                        ContractPaymentResource::collection($contract->payments) : [],
-                    'child_contracts' => $contract->relationLoaded('childContracts') ? 
-                        ContractMiniResource::collection($contract->childContracts) : [],
-                    'agreements' => $contract->relationLoaded('agreements') ?
-                        SupplementaryAgreementResource::collection($contract->agreements) : [],
-                    'specifications' => $contract->relationLoaded('specifications') ?
-                        SpecificationResource::collection($contract->specifications) : [],
-                ]
+            return AdminResponse::success([
+                'contract' => new ContractResource($contract),
+                'analytics' => $fullDetails['analytics'],
+                'works_statistics' => $fullDetails['works_statistics'],
+                'recent_works' => $fullDetails['recent_works'],
+                'performance_acts' => $contract->relationLoaded('performanceActs') ? 
+                    ContractPerformanceActResource::collection($contract->performanceActs) : [],
+                'payments' => $contract->relationLoaded('payments') ? 
+                    ContractPaymentResource::collection($contract->payments) : [],
+                'child_contracts' => $contract->relationLoaded('childContracts') ? 
+                    ContractMiniResource::collection($contract->childContracts) : [],
+                'agreements' => $contract->relationLoaded('agreements') ?
+                    SupplementaryAgreementResource::collection($contract->agreements) : [],
+                'specifications' => $contract->relationLoaded('specifications') ?
+                    SpecificationResource::collection($contract->specifications) : [],
             ]);
         } catch (Exception $e) {
-            return response()->json(['message' => $e->getMessage()], Response::HTTP_NOT_FOUND);
+            return AdminResponse::error($e->getMessage(), Response::HTTP_NOT_FOUND);
         }
     }
 
@@ -546,24 +526,19 @@ class ContractController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error('Не определён контекст организации', 400);
         }
 
         try {
             $parentContractId = $request->input('parent_contract_id');
             $contract = $this->contractService->attachToParentContract($contract, $organizationId, $parentContractId);
             
-            return response()->json([
-                'success' => true,
-                'message' => 'Контракт успешно привязан к родительскому контракту',
-                'data' => new ContractResource($contract)
-            ]);
+            return AdminResponse::success(
+                new ContractResource($contract), 
+                __('contract.attached_to_parent')
+            );
         } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при привязке контракта',
-                'error' => $e->getMessage()
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.attach_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         }
     }
 
@@ -573,23 +548,18 @@ class ContractController extends Controller
         $organizationId = $request->attributes->get('current_organization_id') ?? $user->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error('Не определён контекст организации', 400);
         }
 
         try {
             $contract = $this->contractService->detachFromParentContract($contract, $organizationId);
             
-            return response()->json([
-                'success' => true,
-                'message' => 'Контракт успешно отвязан от родительского контракта',
-                'data' => new ContractResource($contract)
-            ]);
+            return AdminResponse::success(
+                new ContractResource($contract), 
+                __('contract.detached_from_parent')
+            );
         } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при отвязке контракта',
-                'error' => $e->getMessage()
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.detach_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         }
     }
 } 

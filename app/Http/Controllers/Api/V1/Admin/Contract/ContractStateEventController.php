@@ -8,6 +8,7 @@ use App\Services\Contract\ContractStateEventService;
 use App\Services\Contract\ContractStateCalculatorService;
 use App\Models\Contract;
 use App\Repositories\Interfaces\ContractPerformanceActRepositoryInterface;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
@@ -60,39 +61,28 @@ class ContractStateEventController extends Controller
         $organizationId = $request->user()?->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST);
         }
 
         try {
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contractModel) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не найден или нет доступа'
-                ], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             if (!$this->validateProjectContext($request, $contractModel)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не принадлежит текущему проекту'
-                ], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
             }
 
             if (!$contractModel->usesEventSourcing()) {
-                return response()->json([
-                    'success' => true,
-                    'data' => [],
-                    'message' => 'Договор не использует Event Sourcing (legacy)'
-                ]);
+                return AdminResponse::success([], __('contract.legacy_unavailable'));
             }
 
             $timeline = $this->stateEventService->getTimeline($contractModel);
             
-            return response()->json([
-                'success' => true,
-                'data' => $timeline->map(function ($event) {
+            return AdminResponse::success(
+                $timeline->map(function ($event) {
                     return [
                         'id' => $event->id,
                         'event_type' => $event->event_type->value,
@@ -116,13 +106,9 @@ class ContractStateEventController extends Controller
                         'is_active' => $event->isActive(),
                     ];
                 })
-            ]);
+            );
         } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении истории событий',
-                'error' => $e->getMessage()
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.timeline_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         }
     }
 
@@ -135,32 +121,22 @@ class ContractStateEventController extends Controller
         $asOfDate = $request->query('as_of_date') ? Carbon::parse($request->query('as_of_date')) : null;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST);
         }
 
         try {
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contractModel) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не найден или нет доступа'
-                ], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             if (!$this->validateProjectContext($request, $contractModel)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не принадлежит текущему проекту'
-                ], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
             }
 
             if (!$contractModel->usesEventSourcing()) {
-                return response()->json([
-                    'success' => true,
-                    'data' => [],
-                    'message' => 'Договор не использует Event Sourcing (legacy)'
-                ]);
+                return AdminResponse::success([], __('contract.legacy_unavailable'));
             }
 
             // Получаем события
@@ -227,20 +203,13 @@ class ContractStateEventController extends Controller
                 return $item;
             }, $combined);
             
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'contract_id' => $contractModel->id,
-                    'as_of_date' => $asOfDate?->format('Y-m-d'),
-                    'events' => $combined
-                ]
+            return AdminResponse::success([
+                'contract_id' => $contractModel->id,
+                'as_of_date' => $asOfDate?->format('Y-m-d'),
+                'events' => $combined
             ]);
         } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении timeline',
-                'error' => $e->getMessage()
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.timeline_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         }
     }
 
@@ -252,63 +221,47 @@ class ContractStateEventController extends Controller
         $organizationId = $request->user()?->current_organization_id;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST);
         }
 
         try {
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contractModel) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не найден или нет доступа'
-                ], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             if (!$this->validateProjectContext($request, $contractModel)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не принадлежит текущему проекту'
-                ], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
             }
 
             if (!$contractModel->usesEventSourcing()) {
                 // Для legacy договоров возвращаем простое состояние
-                return response()->json([
-                    'success' => true,
-                    'data' => [
-                        'contract_id' => $contractModel->id,
-                        'uses_event_sourcing' => false,
-                        'total_amount' => $contractModel->total_amount,
-                        'active_specification' => $contractModel->specifications()->first(),
-                        'message' => __('contract.legacy_event_sourcing_unavailable', [], 'ru'),
-                        'activation_hint' => __('contract.event_sourcing_activation_hint', [], 'ru')
-                    ]
+                return AdminResponse::success([
+                    'contract_id' => $contractModel->id,
+                    'uses_event_sourcing' => false,
+                    'total_amount' => $contractModel->total_amount,
+                    'active_specification' => $contractModel->specifications()->first(),
+                    'message' => __('contract.legacy_event_sourcing_unavailable'),
+                    'activation_hint' => __('contract.event_sourcing_activation_hint')
                 ]);
             }
 
             $state = $this->stateEventService->getCurrentState($contractModel);
             
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'contract_id' => $state['contract_id'],
-                    'total_amount' => $state['total_amount'],
-                    'active_specification' => $state['active_specification'] ? [
-                        'id' => $state['active_specification']->id,
-                        'number' => $state['active_specification']->number,
-                        'total_amount' => $state['active_specification']->total_amount,
-                    ] : null,
-                    'active_events_count' => $state['active_events']->count(),
-                    'as_of_date' => $state['as_of_date']->format('Y-m-d'),
-                ]
+            return AdminResponse::success([
+                'contract_id' => $state['contract_id'],
+                'total_amount' => $state['total_amount'],
+                'active_specification' => $state['active_specification'] ? [
+                    'id' => $state['active_specification']->id,
+                    'number' => $state['active_specification']->number,
+                    'total_amount' => $state['active_specification']->total_amount,
+                ] : null,
+                'active_events_count' => $state['active_events']->count(),
+                'as_of_date' => $state['as_of_date']->format('Y-m-d'),
             ]);
         } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении состояния',
-                'error' => $e->getMessage()
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.state_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         }
     }
 
@@ -321,62 +274,43 @@ class ContractStateEventController extends Controller
         $asOfDate = $request->query('as_of_date') ? Carbon::parse($request->query('as_of_date')) : null;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.organization_context_missing'), Response::HTTP_BAD_REQUEST);
         }
 
         if (!$asOfDate) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Параметр as_of_date обязателен'
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error('Параметр as_of_date обязателен', Response::HTTP_BAD_REQUEST);
         }
 
         try {
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contractModel) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не найден или нет доступа'
-                ], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             if (!$this->validateProjectContext($request, $contractModel)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не принадлежит текущему проекту'
-                ], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
             }
 
             if (!$contractModel->usesEventSourcing()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Договор не использует Event Sourcing (legacy)'
-                ], Response::HTTP_BAD_REQUEST);
+                return AdminResponse::error(__('contract.legacy_unavailable'), Response::HTTP_BAD_REQUEST);
             }
 
             $state = $this->stateEventService->getStateAtDate($contractModel, $asOfDate);
             
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'contract_id' => $state['contract_id'],
-                    'total_amount' => $state['total_amount'],
-                    'active_specification' => $state['active_specification'] ? [
-                        'id' => $state['active_specification']->id,
-                        'number' => $state['active_specification']->number,
-                        'total_amount' => $state['active_specification']->total_amount,
-                    ] : null,
-                    'active_events_count' => $state['active_events']->count(),
-                    'as_of_date' => $state['as_of_date']->format('Y-m-d'),
-                ]
+            return AdminResponse::success([
+                'contract_id' => $state['contract_id'],
+                'total_amount' => $state['total_amount'],
+                'active_specification' => $state['active_specification'] ? [
+                    'id' => $state['active_specification']->id,
+                    'number' => $state['active_specification']->number,
+                    'total_amount' => $state['active_specification']->total_amount,
+                ] : null,
+                'active_events_count' => $state['active_events']->count(),
+                'as_of_date' => $state['as_of_date']->format('Y-m-d'),
             ]);
         } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении состояния на дату',
-                'error' => $e->getMessage()
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.state_error') . ': ' . $e->getMessage(), Response::HTTP_BAD_REQUEST);
         }
     }
 

@@ -6,10 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\Contract;
 use App\Models\ContractProjectAllocation;
 use App\Services\Contract\ContractAllocationService;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\Rule;
+use Illuminate\Http\Response;
 
 class ContractAllocationController extends Controller
 {
@@ -35,10 +37,7 @@ class ContractAllocationController extends Controller
 
         $summary = $this->allocationService->getAllocationSummary($contract);
 
-        return response()->json([
-            'success' => true,
-            'data' => $summary,
-        ]);
+        return AdminResponse::success($summary);
     }
 
     /**
@@ -73,10 +72,7 @@ class ContractAllocationController extends Controller
                 ];
             });
 
-        return response()->json([
-            'success' => true,
-            'data' => $allocations,
-        ]);
+        return AdminResponse::success($allocations);
     }
 
     /**
@@ -105,10 +101,8 @@ class ContractAllocationController extends Controller
         try {
             $allocations = $this->allocationService->syncAllocations($contract, $validated['allocations']);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Распределение контракта успешно обновлено',
-                'data' => $allocations->map(function ($allocation) {
+            return AdminResponse::success(
+                $allocations->map(function ($allocation) {
                     return [
                         'id' => $allocation->id,
                         'project_id' => $allocation->project_id,
@@ -116,12 +110,13 @@ class ContractAllocationController extends Controller
                         'allocated_amount' => $allocation->calculateAllocatedAmount(),
                     ];
                 }),
-            ]);
+                __('contract.allocation_updated')
+            );
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при обновлении распределения: ' . $e->getMessage(),
-            ], 422);
+            return AdminResponse::error(
+                __('contract.allocation_update_error') . ': ' . $e->getMessage(),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         }
     }
 
@@ -139,25 +134,24 @@ class ContractAllocationController extends Controller
             ->firstOrFail();
 
         if (!$contract->is_multi_project) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Автоматическое распределение доступно только для мультипроектных контрактов',
-            ], 422);
+            return AdminResponse::error(
+                __('contract.auto_allocation_multi_project_only'),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         }
 
         try {
             $allocations = $this->allocationService->createAutoEqualDistribution($contract);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Создано равномерное распределение',
-                'data' => $allocations,
-            ]);
+            return AdminResponse::success(
+                $allocations,
+                __('contract.auto_equal_allocation_created')
+            );
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при создании распределения: ' . $e->getMessage(),
-            ], 500);
+            return AdminResponse::error(
+                __('contract.allocation_create_error') . ': ' . $e->getMessage(),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -175,25 +169,24 @@ class ContractAllocationController extends Controller
             ->firstOrFail();
 
         if (!$contract->is_multi_project) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Распределение на основе актов доступно только для мультипроектных контрактов',
-            ], 422);
+            return AdminResponse::error(
+                __('contract.acts_allocation_multi_project_only'),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         }
 
         try {
             $allocations = $this->allocationService->createDistributionBasedOnActs($contract);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Создано распределение на основе актов',
-                'data' => $allocations,
-            ]);
+            return AdminResponse::success(
+                $allocations,
+                __('contract.acts_allocation_created')
+            );
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при создании распределения: ' . $e->getMessage(),
-            ], 500);
+            return AdminResponse::error(
+                __('contract.allocation_create_error') . ': ' . $e->getMessage(),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -214,20 +207,19 @@ class ContractAllocationController extends Controller
         try {
             $updatedAllocation = $this->allocationService->convertAutoToFixed($allocationId);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Распределение конвертировано в фиксированное',
-                'data' => [
+            return AdminResponse::success(
+                [
                     'id' => $updatedAllocation->id,
                     'allocation_type' => $updatedAllocation->allocation_type->value,
                     'allocated_amount' => $updatedAllocation->allocated_amount,
                 ],
-            ]);
+                __('contract.allocation_converted_to_fixed')
+            );
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при конвертации: ' . $e->getMessage(),
-            ], 422);
+            return AdminResponse::error(
+                __('contract.allocation_convert_error') . ': ' . $e->getMessage(),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         }
     }
 
@@ -248,15 +240,15 @@ class ContractAllocationController extends Controller
         try {
             $this->allocationService->deleteAllocation($allocationId);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Распределение успешно удалено',
-            ]);
+            return AdminResponse::success(
+                null,
+                __('contract.allocation_deleted')
+            );
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при удалении: ' . $e->getMessage(),
-            ], 500);
+            return AdminResponse::error(
+                __('contract.allocation_delete_error') . ': ' . $e->getMessage(),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -276,9 +268,8 @@ class ContractAllocationController extends Controller
 
         $history = $this->allocationService->getAllocationHistory($allocationId);
 
-        return response()->json([
-            'success' => true,
-            'data' => $history->map(function ($item) {
+        return AdminResponse::success(
+            $history->map(function ($item) {
                 return [
                     'id' => $item->id,
                     'action' => $item->action,
@@ -292,8 +283,8 @@ class ContractAllocationController extends Controller
                     'ip_address' => $item->ip_address,
                     'created_at' => $item->created_at,
                 ];
-            }),
-        ]);
+            })
+        );
     }
 
     /**
@@ -312,22 +303,21 @@ class ContractAllocationController extends Controller
         try {
             $allocations = $this->allocationService->recalculateAutoAllocations($contract);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Автоматические распределения пересчитаны',
-                'data' => $allocations->map(function ($allocation) {
+            return AdminResponse::success(
+                $allocations->map(function ($allocation) {
                     return [
                         'id' => $allocation->id,
                         'project_id' => $allocation->project_id,
                         'allocated_amount' => $allocation->calculateAllocatedAmount(),
                     ];
                 }),
-            ]);
+                __('contract.auto_allocations_recalculated')
+            );
         } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при пересчете: ' . $e->getMessage(),
-            ], 500);
+            return AdminResponse::error(
+                __('contract.recalculation_error') . ': ' . $e->getMessage(),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 }

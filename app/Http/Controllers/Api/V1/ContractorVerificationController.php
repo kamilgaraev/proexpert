@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ContractorVerification;
 use App\Models\OrganizationAccessRestriction;
 use App\Models\OrganizationDispute;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,17 +22,11 @@ class ContractorVerificationController extends Controller
                 ->firstOrFail();
 
             if ($verification->isConfirmed()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Подрядчик уже подтвержден'
-                ], 400);
+                return AdminResponse::error(__('contract.contractor_already_confirmed'), 400);
             }
 
             if ($verification->isExpired()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Срок подтверждения истек'
-                ], 400);
+                return AdminResponse::error(__('contract.verification_expired'), 400);
             }
 
             DB::transaction(function () use ($verification) {
@@ -51,20 +46,16 @@ class ContractorVerificationController extends Controller
                 ]);
             });
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Подрядчик успешно подтвержден. Ограничения доступа сняты.',
-                'data' => [
-                    'contractor' => [
-                        'id' => $verification->contractor->id,
-                        'name' => $verification->contractor->name,
-                    ],
-                    'organization' => [
-                        'id' => $verification->registeredOrganization->id,
-                        'name' => $verification->registeredOrganization->name,
-                    ]
+            return AdminResponse::success([
+                'contractor' => [
+                    'id' => $verification->contractor->id,
+                    'name' => $verification->contractor->name,
+                ],
+                'organization' => [
+                    'id' => $verification->registeredOrganization->id,
+                    'name' => $verification->registeredOrganization->name,
                 ]
-            ]);
+            ], __('contract.verification_confirmed'));
 
         } catch (\Exception $e) {
             Log::error('Contractor verification confirmation failed', [
@@ -72,10 +63,7 @@ class ContractorVerificationController extends Controller
                 'error' => $e->getMessage()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при подтверждении подрядчика'
-            ], 500);
+            return AdminResponse::error(__('contract.verification_error'), 500);
         }
     }
 
@@ -87,10 +75,7 @@ class ContractorVerificationController extends Controller
                 ->firstOrFail();
 
             if ($verification->isRejected()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Подрядчик уже отклонен'
-                ], 400);
+                return AdminResponse::error(__('contract.contractor_already_rejected'), 400);
             }
 
             $reason = $request->input('reason', 'Заказчик указал, что это не его подрядчик');
@@ -115,21 +100,17 @@ class ContractorVerificationController extends Controller
                 ]);
             });
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Доступ заблокирован. Мы начали расследование.',
-                'data' => [
-                    'contractor' => [
-                        'id' => $verification->contractor->id,
-                        'name' => $verification->contractor->name,
-                    ],
-                    'organization' => [
-                        'id' => $verification->registeredOrganization->id,
-                        'name' => $verification->registeredOrganization->name,
-                        'status' => 'blocked'
-                    ]
+            return AdminResponse::success([
+                'contractor' => [
+                    'id' => $verification->contractor->id,
+                    'name' => $verification->contractor->name,
+                ],
+                'organization' => [
+                    'id' => $verification->registeredOrganization->id,
+                    'name' => $verification->registeredOrganization->name,
+                    'status' => 'blocked'
                 ]
-            ]);
+            ], __('contract.verification_rejected'));
 
         } catch (\Exception $e) {
             Log::error('Contractor verification rejection failed', [
@@ -137,10 +118,7 @@ class ContractorVerificationController extends Controller
                 'error' => $e->getMessage()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при отклонении подрядчика'
-            ], 500);
+            return AdminResponse::error(__('contract.rejection_error'), 500);
         }
     }
 
@@ -165,14 +143,10 @@ class ContractorVerificationController extends Controller
                 'reported_by' => auth()->id()
             ]);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Жалоба принята. Мы проверим ситуацию.',
-                'data' => [
-                    'dispute_id' => $dispute->id,
-                    'status' => 'under_investigation'
-                ]
-            ]);
+            return AdminResponse::success([
+                'dispute_id' => $dispute->id,
+                'status' => 'under_investigation'
+            ], __('contract.dispute_created'));
 
         } catch (\Exception $e) {
             Log::error('Dispute creation failed', [
@@ -180,10 +154,7 @@ class ContractorVerificationController extends Controller
                 'error' => $e->getMessage()
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при создании жалобы'
-            ], 500);
+            return AdminResponse::error(__('contract.dispute_error'), 500);
         }
     }
 

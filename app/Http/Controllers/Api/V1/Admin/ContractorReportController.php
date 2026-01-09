@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Services\Report\ContractorReportService;
 use App\Http\Requests\Api\V1\Admin\ContractorReportRequest;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\JsonResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -25,13 +26,17 @@ class ContractorReportController extends Controller
      */
     public function contractorSummaryReport(ContractorReportRequest $request): JsonResponse | StreamedResponse
     {
-        $reportOutput = $this->contractorReportService->getContractorSummaryReport($request);
+        try {
+            $reportOutput = $this->contractorReportService->getContractorSummaryReport($request);
 
-        if ($reportOutput instanceof StreamedResponse) {
-            return $reportOutput;
+            if ($reportOutput instanceof StreamedResponse) {
+                return $reportOutput;
+            }
+
+            return AdminResponse::success($reportOutput);
+        } catch (\Exception $e) {
+            return AdminResponse::error(__('contract.report_error') . ': ' . $e->getMessage(), 500);
         }
-
-        return response()->json($reportOutput);
     }
 
     /**
@@ -43,12 +48,16 @@ class ContractorReportController extends Controller
      */
     public function contractorDetailReport(ContractorReportRequest $request, int $contractorId): JsonResponse | StreamedResponse
     {
-        $reportOutput = $this->contractorReportService->getContractorDetailReport($request, $contractorId);
+        try {
+            $reportOutput = $this->contractorReportService->getContractorDetailReport($request, $contractorId);
 
-        if ($reportOutput instanceof StreamedResponse) {
-            return $reportOutput;
+            if ($reportOutput instanceof StreamedResponse) {
+                return $reportOutput;
+            }
+
+            return AdminResponse::success($reportOutput);
+        } catch (\Exception $e) {
+            return AdminResponse::error(__('contract.report_error') . ': ' . $e->getMessage(), 500);
         }
-
-        return response()->json($reportOutput);
     }
 }

@@ -10,6 +10,7 @@ use App\Services\Contract\ContractStateCalculatorService;
 use App\Http\Requests\Api\V1\Admin\Contract\Specification\StoreContractSpecificationRequest;
 use App\Http\Requests\Api\V1\Admin\Contract\Specification\AttachSpecificationRequest;
 use App\Http\Resources\Api\V1\Admin\Contract\Specification\SpecificationResource;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Http\JsonResponse;
@@ -59,7 +60,7 @@ class ContractSpecificationController extends Controller
         $projectId = $project;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error(__('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -67,18 +68,12 @@ class ContractSpecificationController extends Controller
             $contractExists = \App\Models\Contract::withTrashed()->find($contract);
             
             if (!$contractExists) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не найден в системе'
-                ], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             // Проверяем, не удален ли контракт
             if ($contractExists->trashed()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт был удален'
-                ], Response::HTTP_GONE);
+                return AdminResponse::error(__('contract.contract_deleted'), Response::HTTP_GONE);
             }
             
             // Проверяем принадлежность проекту
@@ -91,10 +86,7 @@ class ContractSpecificationController extends Controller
                 }
 
                 if (!$belongsToProject) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Контракт принадлежит другому проекту'
-                    ], Response::HTTP_NOT_FOUND);
+                    return AdminResponse::error(__('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
                 }
             }
             
@@ -102,24 +94,14 @@ class ContractSpecificationController extends Controller
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contractModel) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Нет доступа к контракту'
-                ], Response::HTTP_FORBIDDEN);
+                return AdminResponse::error(__('contract.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
             $specifications = $contractModel->specifications()->get();
 
-            return response()->json([
-                'success' => true,
-                'data' => SpecificationResource::collection($specifications)
-            ]);
+            return AdminResponse::success(SpecificationResource::collection($specifications));
         } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при получении спецификаций',
-                'error' => $e->getMessage()
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.specification_retrieve_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -129,7 +111,7 @@ class ContractSpecificationController extends Controller
         $projectId = $project;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error(__('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -137,26 +119,26 @@ class ContractSpecificationController extends Controller
             $contractExists = \App\Models\Contract::withTrashed()->find($contract);
             
             if (!$contractExists) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не найден в системе',
-                    'debug' => [
+                return AdminResponse::error(
+                    __('contract.contract_not_found'), 
+                    Response::HTTP_NOT_FOUND, 
+                    [
                         'contract_id' => $contract,
                         'contract_id_type' => gettype($contract)
                     ]
-                ], Response::HTTP_NOT_FOUND);
+                );
             }
             
             // Проверяем, не удален ли контракт
             if ($contractExists->trashed()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт был удален',
-                    'debug' => [
+                return AdminResponse::error(
+                    __('contract.contract_deleted'), 
+                    Response::HTTP_GONE,
+                    [
                         'contract_id' => $contract,
                         'deleted_at' => $contractExists->deleted_at
                     ]
-                ], Response::HTTP_GONE);
+                );
             }
             
             // Проверяем принадлежность проекту ДО проверки организации
@@ -169,15 +151,15 @@ class ContractSpecificationController extends Controller
                 }
 
                 if (!$belongsToProject) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Контракт принадлежит другому проекту',
-                        'debug' => [
+                    return AdminResponse::error(
+                        __('contract.contract_mismatch'), 
+                        Response::HTTP_NOT_FOUND,
+                        [
                             'contract_id' => $contract,
                             'is_multi_project' => $contractExists->is_multi_project,
                             'requested_project_id' => $projectId
                         ]
-                    ], Response::HTTP_NOT_FOUND);
+                    );
                 }
             }
             
@@ -185,15 +167,15 @@ class ContractSpecificationController extends Controller
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contractModel) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Нет доступа к контракту',
-                    'debug' => [
+                return AdminResponse::error(
+                    __('contract.access_denied'), 
+                    Response::HTTP_FORBIDDEN,
+                    [
                         'contract_id' => $contract,
                         'contract_organization_id' => $contractExists->organization_id ?? null,
                         'your_organization_id' => $organizationId
                     ]
-                ], Response::HTTP_FORBIDDEN);
+                );
             }
 
             $specificationDTO = $request->toDto();
@@ -289,17 +271,9 @@ class ContractSpecificationController extends Controller
 
             $specification->load(['contracts']);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Спецификация успешно создана и привязана к контракту',
-                'data' => new SpecificationResource($specification)
-            ], Response::HTTP_CREATED);
+            return AdminResponse::success(new SpecificationResource($specification), __('contract.specification_created'), Response::HTTP_CREATED);
         } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при создании спецификации',
-                'error' => $e->getMessage()
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.specification_create_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -309,7 +283,7 @@ class ContractSpecificationController extends Controller
         $projectId = $project;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error(__('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -317,18 +291,12 @@ class ContractSpecificationController extends Controller
             $contractExists = \App\Models\Contract::withTrashed()->find($contract);
             
             if (!$contractExists) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не найден в системе'
-                ], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             // Проверяем, не удален ли контракт
             if ($contractExists->trashed()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт был удален'
-                ], Response::HTTP_GONE);
+                return AdminResponse::error(__('contract.contract_deleted'), Response::HTTP_GONE);
             }
             
             // Проверяем принадлежность проекту
@@ -341,10 +309,7 @@ class ContractSpecificationController extends Controller
                 }
 
                 if (!$belongsToProject) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Контракт принадлежит другому проекту'
-                    ], Response::HTTP_NOT_FOUND);
+                    return AdminResponse::error(__('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
                 }
             }
             
@@ -352,19 +317,13 @@ class ContractSpecificationController extends Controller
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contractModel) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Нет доступа к контракту'
-                ], Response::HTTP_FORBIDDEN);
+                return AdminResponse::error(__('contract.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
             $specificationId = $request->input('specification_id');
 
             if ($contractModel->specifications()->where('specification_id', $specificationId)->exists()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Спецификация уже привязана к контракту'
-                ], Response::HTTP_CONFLICT);
+                return AdminResponse::error(__('contract.specification_already_attached'), Response::HTTP_CONFLICT);
             }
 
             // Деактивируем все предыдущие спецификации
@@ -435,17 +394,9 @@ class ContractSpecificationController extends Controller
                 }
             }
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Спецификация успешно привязана к контракту',
-                'data' => new SpecificationResource($specification)
-            ], Response::HTTP_OK);
+            return AdminResponse::success(new SpecificationResource($specification), __('contract.specification_attached'));
         } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при привязке спецификации',
-                'error' => $e->getMessage()
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.specification_attach_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
@@ -455,7 +406,7 @@ class ContractSpecificationController extends Controller
         $projectId = $project;
         
         if (!$organizationId) {
-            return response()->json(['message' => 'Не определён контекст организации'], 400);
+            return AdminResponse::error(__('contract.organization_context_missing'), 400);
         }
 
         try {
@@ -463,18 +414,12 @@ class ContractSpecificationController extends Controller
             $contractExists = \App\Models\Contract::withTrashed()->find($contract);
             
             if (!$contractExists) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт не найден в системе'
-                ], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.contract_not_found'), Response::HTTP_NOT_FOUND);
             }
             
             // Проверяем, не удален ли контракт
             if ($contractExists->trashed()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Контракт был удален'
-                ], Response::HTTP_GONE);
+                return AdminResponse::error(__('contract.contract_deleted'), Response::HTTP_GONE);
             }
             
             // Проверяем принадлежность проекту
@@ -487,10 +432,7 @@ class ContractSpecificationController extends Controller
                 }
 
                 if (!$belongsToProject) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Контракт принадлежит другому проекту'
-                    ], Response::HTTP_NOT_FOUND);
+                    return AdminResponse::error(__('contract.contract_mismatch'), Response::HTTP_NOT_FOUND);
                 }
             }
             
@@ -498,31 +440,18 @@ class ContractSpecificationController extends Controller
             $contractModel = $this->contractService->getContractById($contract, $organizationId);
             
             if (!$contractModel) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Нет доступа к контракту'
-                ], Response::HTTP_FORBIDDEN);
+                return AdminResponse::error(__('contract.access_denied'), Response::HTTP_FORBIDDEN);
             }
 
             if (!$contractModel->specifications()->where('specification_id', $specification)->exists()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Спецификация не привязана к контракту'
-                ], Response::HTTP_NOT_FOUND);
+                return AdminResponse::error(__('contract.specification_not_found'), Response::HTTP_NOT_FOUND);
             }
 
             $contractModel->specifications()->detach($specification);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Спецификация успешно отвязана от контракта'
-            ], Response::HTTP_OK);
+            return AdminResponse::success(null, __('contract.specification_detached'));
         } catch (Exception $e) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Ошибка при отвязке спецификации',
-                'error' => $e->getMessage()
-            ], Response::HTTP_BAD_REQUEST);
+            return AdminResponse::error(__('contract.specification_detach_error'), Response::HTTP_BAD_REQUEST, $e->getMessage());
         }
     }
 
