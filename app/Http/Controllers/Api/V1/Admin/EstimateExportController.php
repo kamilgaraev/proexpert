@@ -10,6 +10,7 @@ use App\Models\ConstructionJournal;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use App\Http\Responses\AdminResponse;
 
@@ -73,7 +74,17 @@ class EstimateExportController extends Controller
                 ->header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
                 ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
         } catch (\Throwable $e) {
-            return AdminResponse::error(trans_message('estimate.export_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
+            Log::error('estimate_export.controller_error', [
+                'estimate_id' => $estimateId,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return AdminResponse::error(
+                trans_message('estimate.export_error') . ' [' . $e->getMessage() . ']',
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -128,7 +139,17 @@ class EstimateExportController extends Controller
                 ->header('Content-Type', 'application/pdf')
                 ->header('Content-Disposition', "attachment; filename=\"{$filename}\"");
         } catch (\Throwable $e) {
-            return AdminResponse::error(trans_message('estimate.export_error'), Response::HTTP_INTERNAL_SERVER_ERROR);
+            Log::error('estimate_export.pdf_controller_error', [
+                'estimate_id' => $estimateId,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString(),
+            ]);
+            return AdminResponse::error(
+                trans_message('estimate.export_error') . ' [' . $e->getMessage() . ']',
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
