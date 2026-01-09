@@ -10,6 +10,7 @@ use App\Services\Project\ProjectService;
 use App\Http\Requests\Api\V1\Admin\Project\StoreProjectRequest;
 use App\Http\Requests\Api\V1\Admin\Project\UpdateProjectRequest;
 use App\Http\Resources\Api\V1\Admin\Project\ProjectResource;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
@@ -17,6 +18,7 @@ use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Log;
 use App\Exceptions\BusinessLogicException;
 use App\DTOs\Project\ProjectDTO;
+use Illuminate\Http\Response;
 
 class ProjectController extends Controller
 {
@@ -32,111 +34,81 @@ class ProjectController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index(Request $request): AnonymousResourceCollection | JsonResponse
+    public function index(Request $request): JsonResponse
     {
         try {
             $perPage = $request->query('per_page', 15);
             $projects = $this->projectService->getProjectsForCurrentOrg($request, (int)$perPage);
-            return ProjectResource::collection($projects);
+            return AdminResponse::success(ProjectResource::collection($projects));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@index', [
                 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении списка проектов.',
-            ], 500);
+            return AdminResponse::error(trans_message('project.list_error'), 500);
         }
     }
 
     /**
      * Store a newly created resource in storage.
      */
-    public function store(StoreProjectRequest $request): ProjectResource | JsonResponse
+    public function store(StoreProjectRequest $request): JsonResponse
     {
         try {
             $projectDTO = $request->toDto();
 
             $project = $this->projectService->createProject($projectDTO, $request);
-            return new ProjectResource($project);
+            return AdminResponse::success(new ProjectResource($project), trans_message('project.created'), Response::HTTP_CREATED);
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@store', [
                 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при создании проекта.',
-            ], 500);
+            return AdminResponse::error(trans_message('project.create_error'), 500);
         }
     }
 
     /**
      * Display the specified resource.
      */
-    public function show(Request $request, string $id): ProjectResource | JsonResponse
+    public function show(Request $request, string $id): JsonResponse
     {
         try {
             $project = $this->projectService->findProjectByIdForCurrentOrg((int)$id, $request);
             if (!$project) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Проект не найден в вашей организации.'
-                ], 404);
+                return AdminResponse::error(trans_message('project.not_found'), 404);
             }
-            return new ProjectResource($project->load(['users', 'costCategory']));
+            return AdminResponse::success(new ProjectResource($project->load(['users', 'costCategory'])));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@show', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении проекта.',
-            ], 500);
+            return AdminResponse::error(trans_message('project.show_error'), 500);
         }
     }
 
     /**
      * Update the specified resource in storage.
      */
-    public function update(UpdateProjectRequest $request, string $id): ProjectResource | JsonResponse
+    public function update(UpdateProjectRequest $request, string $id): JsonResponse
     {
         try {
             $project = $this->projectService->updateProject((int)$id, $request->toDto(), $request);
             if (!$project) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Не удалось обновить проект или проект не найден.'
-                ], 404);
+                return AdminResponse::error(trans_message('project.update_not_found'), 404);
             }
-            return new ProjectResource($project);
+            return AdminResponse::success(new ProjectResource($project), trans_message('project.updated'));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@update', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при обновлении проекта.',
-            ], 500);
+            return AdminResponse::error(trans_message('project.update_error'), 500);
         }
     }
 
@@ -148,28 +120,16 @@ class ProjectController extends Controller
         try {
             $success = $this->projectService->deleteProject((int)$id, $request);
             if (!$success) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Не удалось удалить проект или проект не найден.'
-                ], 404);
+                return AdminResponse::error(trans_message('project.delete_not_found'), 404);
             }
-            return response()->json([
-                'success' => true,
-                'message' => 'Проект успешно удален.'
-            ], 200);
+            return AdminResponse::success(null, trans_message('project.deleted'));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@destroy', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при удалении проекта.',
-            ], 500);
+            return AdminResponse::error(trans_message('project.delete_error'), 500);
         }
     }
 
@@ -180,24 +140,14 @@ class ProjectController extends Controller
     {
         try {
             $this->projectService->assignForemanToProject((int)$projectId, (int)$userId, $request);
-            // Если assignForemanToProject не выбросил исключение, считаем успешным
-            return response()->json([
-                'success' => true,
-                'message' => 'Прораб успешно назначен на проект.'
-            ]);
+            return AdminResponse::success(null, trans_message('project.foreman_assigned'));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@assignForeman', [
                 'projectId' => $projectId, 'userId' => $userId, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при назначении прораба на проект.',
-            ], 500);
+            return AdminResponse::error(trans_message('project.foreman_assign_error'), 500);
         }
     }
 
@@ -208,24 +158,14 @@ class ProjectController extends Controller
     {
         try {
             $this->projectService->detachForemanFromProject((int)$projectId, (int)$userId, $request);
-            // Если detachForemanFromProject не выбросил исключение, считаем успешным
-            return response()->json([
-                'success' => true,
-                'message' => 'Прораб успешно откреплен от проекта.'
-            ]);
+            return AdminResponse::success(null, trans_message('project.foreman_detached'));
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@detachForeman', [
                 'projectId' => $projectId, 'userId' => $userId, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при откреплении прораба от проекта.',
-            ], 500);
+            return AdminResponse::error(trans_message('project.foreman_detach_error'), 500);
         }
     }
 
@@ -233,18 +173,12 @@ class ProjectController extends Controller
     {
         try {
             $statistics = $this->projectService->getProjectStatistics($id);
-            return response()->json([
-                'success' => true, // Условно true, так как метод-заглушка отработал
-                'data' => $statistics
-            ]);
+            return AdminResponse::success($statistics);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@statistics', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении статистики по проекту.',
-            ], 500);
+            return AdminResponse::error(trans_message('project.statistics_error'), 500);
         }
     }
 
@@ -258,18 +192,12 @@ class ProjectController extends Controller
                 $request->get('sort_by', 'created_at'),
                 $request->get('sort_direction', 'desc')
             );
-            return response()->json([
-                'success' => true, // Условно true
-                'data' => $materials
-            ]);
+            return AdminResponse::success($materials);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@getProjectMaterials', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении материалов проекта.',
-            ], 500);
+            return AdminResponse::error(trans_message('project.materials_error'), 500);
         }
     }
 
@@ -283,18 +211,12 @@ class ProjectController extends Controller
                 $request->get('sort_by', 'created_at'),
                 $request->get('sort_direction', 'desc')
             );
-            return response()->json([
-                'success' => true, // Условно true
-                'data' => $workTypes
-            ]);
+            return AdminResponse::success($workTypes);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@getProjectWorkTypes', [
                 'id' => $id, 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении видов работ проекта.',
-            ], 500);
+            return AdminResponse::error(trans_message('project.work_types_error'), 500);
         }
     }
 
@@ -309,18 +231,12 @@ class ProjectController extends Controller
             $costCategories = CostCategory::activeForOrganization($organizationId)
                 ->get(['id', 'name', 'code', 'external_code', 'parent_id']);
             
-            return response()->json([
-                'success' => true,
-                'data' => $costCategories
-            ]);
+            return AdminResponse::success($costCategories);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@getAvailableCostCategories', [
                 'message' => $e->getMessage(), 'file' => $e->getFile(), 'line' => $e->getLine()
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении категорий затрат.',
-            ], 500);
+            return AdminResponse::error(trans_message('project.cost_categories_error'), 500);
         }
     }
 
@@ -331,24 +247,15 @@ class ProjectController extends Controller
     {
         try {
             $details = $this->projectService->getFullProjectDetails($id, $request);
-            return response()->json([
-                'success' => true,
-                'data' => $details,
-            ]);
+            return AdminResponse::success($details);
         } catch (BusinessLogicException $e) {
-            return response()->json([
-                'success' => false,
-                'message' => $e->getMessage(),
-            ], $e->getCode() ?: 400);
+            return AdminResponse::error($e->getMessage(), $e->getCode() ?: 400);
         } catch (\Throwable $e) {
             Log::error('Error in ProjectController@fullDetails', [
                 'projectId' => $id,
                 'error' => $e->getMessage(),
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Внутренняя ошибка сервера при получении полной информации по проекту.',
-            ], 500);
+            return AdminResponse::error(trans_message('project.full_details_error'), 500);
         }
     }
 } 
