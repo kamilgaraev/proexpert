@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\Integration\JournalEstimateIntegrationService;
+use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\ConstructionJournalEntry;
@@ -30,10 +31,7 @@ class EstimateProgressController extends Controller
 
         $comparison = $this->integrationService->getActualVsPlannedVolumes($estimate);
 
-        return response()->json([
-            'success' => true,
-            'items' => $comparison,
-        ]);
+        return AdminResponse::success(['items' => $comparison]);
     }
 
     /**
@@ -67,8 +65,7 @@ class EstimateProgressController extends Controller
             }
         }
 
-        return response()->json([
-            'success' => true,
+        return AdminResponse::success([
             'total_items' => $stats['total_items'],
             'completed_items' => $completedItems,
             'in_progress_items' => $inProgressItems,
@@ -124,10 +121,7 @@ class EstimateProgressController extends Controller
             ];
         });
 
-        return response()->json([
-            'success' => true,
-            'data' => $result,
-        ]);
+        return AdminResponse::success($result);
     }
 }
 

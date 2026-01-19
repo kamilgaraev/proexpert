@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\Services\EstimatePositionCatalog\EstimatePositionCatalogService;
 use App\Http\Requests\Api\V1\Admin\EstimatePosition\StoreEstimatePositionRequest;
 use App\Http\Requests\Api\V1\Admin\EstimatePosition\UpdateEstimatePositionRequest;
@@ -10,7 +11,10 @@ use App\Http\Resources\Api\V1\Admin\EstimatePosition\EstimatePositionResource;
 use App\Http\Resources\Api\V1\Admin\EstimatePosition\EstimatePositionCollection;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class EstimatePositionCatalogController extends Controller
 {
@@ -51,10 +55,10 @@ class EstimatePositionCatalogController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить позиции',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.catalog_load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -69,26 +73,23 @@ class EstimatePositionCatalogController extends Controller
             $position = $this->service->getPositionById($id, $organizationId);
 
             if (!$position) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Позиция не найдена',
-                ], 404);
+                return AdminResponse::error(
+                    trans_message('estimate.catalog_position_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
-            return response()->json([
-                'success' => true,
-                'data' => new EstimatePositionResource($position),
-            ]);
+            return AdminResponse::success(new EstimatePositionResource($position));
         } catch (\Exception $e) {
             Log::error('estimate_position_catalog.show.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить позицию',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.catalog_position_load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -107,21 +108,21 @@ class EstimatePositionCatalogController extends Controller
                 $request->validated()
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Позиция успешно создана',
-                'data' => new EstimatePositionResource($position),
-            ], 201);
+            return AdminResponse::success(
+                new EstimatePositionResource($position),
+                trans_message('estimate.catalog_position_created'),
+                Response::HTTP_CREATED
+            );
         } catch (\Exception $e) {
             Log::error('estimate_position_catalog.store.error', [
                 'data' => $request->validated(),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать позицию',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.catalog_position_create_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -141,26 +142,25 @@ class EstimatePositionCatalogController extends Controller
                 $userId
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Позиция успешно обновлена',
-                'data' => new EstimatePositionResource($position),
-            ]);
+            return AdminResponse::success(
+                new EstimatePositionResource($position),
+                trans_message('estimate.catalog_position_updated')
+            );
         } catch (\RuntimeException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 404);
+            return AdminResponse::error(
+                $e->getMessage(),
+                Response::HTTP_NOT_FOUND
+            );
         } catch (\Exception $e) {
             Log::error('estimate_position_catalog.update.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось обновить позицию',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.catalog_position_update_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -174,30 +174,27 @@ class EstimatePositionCatalogController extends Controller
 
             $this->service->deletePosition($id, $organizationId);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Позиция успешно удалена',
-            ]);
+            return AdminResponse::success(null, trans_message('estimate.catalog_position_deleted'));
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error(
+                $e->getMessage(),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         } catch (\RuntimeException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 404);
+            return AdminResponse::error(
+                $e->getMessage(),
+                Response::HTTP_NOT_FOUND
+            );
         } catch (\Exception $e) {
             Log::error('estimate_position_catalog.destroy.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось удалить позицию',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.catalog_position_delete_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -211,10 +208,10 @@ class EstimatePositionCatalogController extends Controller
             $query = $request->input('q', '');
 
             if (empty($query)) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Поисковый запрос не может быть пустым',
-                ], 422);
+                return AdminResponse::error(
+                    trans_message('estimate.catalog_search_query_empty'),
+                    Response::HTTP_UNPROCESSABLE_ENTITY
+                );
             }
 
             $filters = $request->only(['category_id', 'item_type', 'is_active']);
@@ -227,10 +224,10 @@ class EstimatePositionCatalogController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Ошибка при поиске позиций',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.catalog_search_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 }

@@ -5,10 +5,14 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Services\EstimatePositionCatalog\ImportExportService;
 use App\Http\Requests\Api\V1\Admin\EstimatePosition\ImportPositionsRequest;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+
+use function trans_message;
 
 class EstimatePositionImportExportController extends Controller
 {
@@ -32,7 +36,7 @@ class EstimatePositionImportExportController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            abort(500, 'Не удалось создать шаблон');
+            abort(500, trans_message('estimate.template_generation_error'));
         }
     }
 
@@ -48,22 +52,23 @@ class EstimatePositionImportExportController extends Controller
 
             $result = $this->service->importFromExcel($organizationId, $file, $userId);
 
-            $statusCode = $result['skipped'] > 0 ? 207 : 200; // 207 Multi-Status if some failed
+            $message = __('estimate.positions_import_completed', [
+                'imported' => $result['imported'],
+                'skipped' => $result['skipped']
+            ]);
 
-            return response()->json([
-                'success' => true,
-                'message' => "Импорт завершен. Импортировано: {$result['imported']}, пропущено: {$result['skipped']}",
-                'data' => $result,
-            ], $statusCode);
+            $statusCode = $result['skipped'] > 0 ? Response::HTTP_MULTI_STATUS : Response::HTTP_OK;
+
+            return AdminResponse::success($result, $message, $statusCode);
         } catch (\Exception $e) {
             Log::error('estimate_position_import.import.error', [
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Ошибка при импорте: ' . $e->getMessage(),
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.positions_import_error') . ': ' . $e->getMessage(),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -87,7 +92,7 @@ class EstimatePositionImportExportController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            abort(500, 'Не удалось экспортировать данные');
+            abort(500, trans_message('estimate.positions_export_error'));
         }
     }
 
@@ -111,8 +116,7 @@ class EstimatePositionImportExportController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            abort(500, 'Не удалось экспортировать данные');
+            abort(500, trans_message('estimate.positions_export_error'));
         }
     }
 }
-

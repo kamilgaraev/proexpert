@@ -7,12 +7,16 @@ use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemService;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateItemNumberingService;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateItemResource;
+use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
 use App\Models\EstimateItem;
 use App\Models\EstimateSection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class EstimateItemController extends Controller
 {
@@ -40,14 +44,16 @@ class EstimateItemController extends Controller
             ->with(['workType', 'measurementUnit', 'section'])
             ->paginate($request->input('per_page', 50));
         
-        return response()->json([
-            'data' => EstimateItemResource::collection($items),
-            'meta' => [
+        return AdminResponse::success(
+            EstimateItemResource::collection($items),
+            null,
+            Response::HTTP_OK,
+            [
                 'current_page' => $items->currentPage(),
                 'per_page' => $items->perPage(),
                 'total' => $items->total(),
             ]
-        ]);
+        );
     }
 
     public function store(Request $request, $project, int $estimate): JsonResponse
@@ -88,10 +94,11 @@ class EstimateItemController extends Controller
         
         $item = $this->itemService->addItem($validated, $estimateModel);
         
-        return response()->json([
-            'data' => new EstimateItemResource($item),
-            'message' => 'Позиция успешно добавлена'
-        ], 201);
+        return AdminResponse::success(
+            new EstimateItemResource($item),
+            trans_message('estimate.item_added'),
+            Response::HTTP_CREATED
+        );
     }
 
     public function bulkStore(Request $request, $project, int $estimate): JsonResponse
@@ -121,10 +128,11 @@ class EstimateItemController extends Controller
         
         $items = $this->itemService->bulkAdd($validated['items'], $estimateModel);
         
-        return response()->json([
-            'data' => EstimateItemResource::collection($items),
-            'message' => 'Позиции успешно добавлены'
-        ], 201);
+        return AdminResponse::success(
+            EstimateItemResource::collection($items),
+            trans_message('estimate.items_added'),
+            Response::HTTP_CREATED
+        );
     }
 
     public function show(EstimateItem $item): JsonResponse
@@ -136,9 +144,9 @@ class EstimateItemController extends Controller
         
         $this->authorize('view', $item->estimate);
         
-        return response()->json([
-            'data' => new EstimateItemResource($item->load(['workType', 'measurementUnit', 'resources']))
-        ]);
+        return AdminResponse::success(
+            new EstimateItemResource($item->load(['workType', 'measurementUnit', 'resources']))
+        );
     }
 
     public function update(Request $request, EstimateItem $item): JsonResponse
@@ -277,10 +285,10 @@ class EstimateItemController extends Controller
         
         $item = $this->itemService->updateItem($item, $validated);
         
-        return response()->json([
-            'data' => new EstimateItemResource($item),
-            'message' => 'Позиция успешно обновлена'
-        ]);
+        return AdminResponse::success(
+            new EstimateItemResource($item),
+            trans_message('estimate.item_updated')
+        );
     }
 
     public function destroy(EstimateItem $item): JsonResponse
@@ -294,9 +302,7 @@ class EstimateItemController extends Controller
         
         $this->itemService->deleteItem($item);
         
-        return response()->json([
-            'message' => 'Позиция успешно удалена'
-        ]);
+        return AdminResponse::success(null, trans_message('estimate.item_deleted'));
     }
 
     public function move(Request $request, EstimateItem $item): JsonResponse
@@ -314,10 +320,10 @@ class EstimateItemController extends Controller
         
         $item = $this->itemService->moveToSection($item, $validated['section_id']);
         
-        return response()->json([
-            'data' => new EstimateItemResource($item),
-            'message' => 'Позиция успешно перемещена'
-        ]);
+        return AdminResponse::success(
+            new EstimateItemResource($item),
+            trans_message('estimate.item_moved')
+        );
     }
 
     /**
@@ -365,10 +371,10 @@ class EstimateItemController extends Controller
                 
                 // Проверяем, что позиция принадлежит данной смете
                 if ($item->estimate_id !== $estimateModel->id) {
-                    return response()->json([
-                        'success' => false,
-                        'error' => "Позиция {$itemData['id']} не принадлежит данной смете"
-                    ], 422);
+                    return AdminResponse::error(
+                        trans_message('estimate.item_not_belongs_to_estimate'),
+                        Response::HTTP_UNPROCESSABLE_ENTITY
+                    );
                 }
                 
                 $item->update([
@@ -387,22 +393,21 @@ class EstimateItemController extends Controller
                 ->orderBy('position_number')
                 ->get();
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Порядок позиций успешно обновлен',
-                'data' => EstimateItemResource::collection($items)
-            ]);
+            return AdminResponse::success(
+                EstimateItemResource::collection($items),
+                trans_message('estimate.items_reordered')
+            );
         } catch (\Exception $e) {
-            \Log::error('estimate.items.reorder.error', [
+            Log::error('estimate.items.reorder.error', [
                 'estimate_id' => $estimateModel->id,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось обновить порядок позиций'
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.items_reorder_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -433,21 +438,20 @@ class EstimateItemController extends Controller
         try {
             $this->numberingService->recalculateAllItemNumbers($estimateModel->id, $numberingMode);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Нумерация позиций успешно пересчитана',
-                'numbering_mode' => $numberingMode
-            ]);
+            return AdminResponse::success(
+                ['numbering_mode' => $numberingMode],
+                trans_message('estimate.item_numbering_recalculated')
+            );
         } catch (\Exception $e) {
-            \Log::error('estimate.items.recalculate_numbers.error', [
+            Log::error('estimate.items.recalculate_numbers.error', [
                 'estimate_id' => $estimateModel->id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось пересчитать нумерацию'
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.item_numbering_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 }

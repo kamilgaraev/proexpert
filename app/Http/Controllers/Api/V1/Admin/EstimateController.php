@@ -10,10 +10,15 @@ use App\Http\Requests\Admin\Estimate\UpdateEstimateRequest;
 use App\Http\Requests\Admin\Estimate\UpdateEstimateStatusRequest;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateResource;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateListResource;
+use App\Http\Responses\AdminResponse;
 use App\Repositories\EstimateRepository;
 use App\Models\Estimate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class EstimateController extends Controller
 {
@@ -41,14 +46,16 @@ class EstimateController extends Controller
             $request->input('per_page', 15)
         );
         
-        return response()->json([
-            'data' => EstimateListResource::collection($estimates),
-            'meta' => [
+        return AdminResponse::success(
+            EstimateListResource::collection($estimates),
+            null,
+            Response::HTTP_OK,
+            [
                 'current_page' => $estimates->currentPage(),
                 'per_page' => $estimates->perPage(),
                 'total' => $estimates->total(),
             ]
-        ]);
+        );
     }
 
     public function store(CreateEstimateRequest $request): JsonResponse
@@ -58,19 +65,18 @@ class EstimateController extends Controller
         
         $projectId = $request->route('project');
         if (!$projectId) {
-            return response()->json([
-                'message' => 'Смета должна быть создана в контексте проекта'
-            ], 422);
+            return AdminResponse::error(trans_message('estimate.project_context_required'), Response::HTTP_UNPROCESSABLE_ENTITY);
         }
         
         $data['project_id'] = $projectId;
         
         $estimate = $this->estimateService->create($data);
         
-        return response()->json([
-            'data' => new EstimateResource($estimate),
-            'message' => 'Смета успешно создана'
-        ], 201);
+        return AdminResponse::success(
+            new EstimateResource($estimate),
+            trans_message('estimate.created'),
+            Response::HTTP_CREATED
+        );
     }
 
     public function show(Request $request, $project, int $estimate): JsonResponse
@@ -122,9 +128,7 @@ class EstimateController extends Controller
             'approvedBy',
         ]);
         
-        return response()->json([
-            'data' => new EstimateResource($estimateModel)
-        ]);
+        return AdminResponse::success(new EstimateResource($estimateModel));
     }
 
     public function update(UpdateEstimateRequest $request, $project, int $estimate): JsonResponse
@@ -139,10 +143,10 @@ class EstimateController extends Controller
         
         $estimate = $this->estimateService->update($estimateModel, $request->validated());
         
-        return response()->json([
-            'data' => new EstimateResource($estimate),
-            'message' => 'Смета успешно обновлена'
-        ]);
+        return AdminResponse::success(
+            new EstimateResource($estimate),
+            trans_message('estimate.updated')
+        );
     }
 
     public function destroy(Request $request, $project, int $estimate): JsonResponse
@@ -158,13 +162,9 @@ class EstimateController extends Controller
         try {
             $this->estimateService->delete($estimateModel);
             
-            return response()->json([
-                'message' => 'Смета успешно удалена'
-            ]);
+            return AdminResponse::success(null, trans_message('estimate.deleted'));
         } catch (\Exception $e) {
-            return response()->json([
-                'message' => $e->getMessage()
-            ], 400);
+            return AdminResponse::error(trans_message('estimate.delete_error'), Response::HTTP_BAD_REQUEST);
         }
     }
 
@@ -184,10 +184,11 @@ class EstimateController extends Controller
             $request->input('name')
         );
         
-        return response()->json([
-            'data' => new EstimateResource($newEstimate),
-            'message' => 'Смета успешно дублирована'
-        ], 201);
+        return AdminResponse::success(
+            new EstimateResource($newEstimate),
+            trans_message('estimate.duplicated'),
+            Response::HTTP_CREATED
+        );
     }
 
     public function recalculate(Request $request, $project, int $estimate): JsonResponse
@@ -202,10 +203,7 @@ class EstimateController extends Controller
         
         $totals = $this->calculationService->recalculateAll($estimateModel);
         
-        return response()->json([
-            'data' => $totals,
-            'message' => 'Смета пересчитана'
-        ]);
+        return AdminResponse::success($totals, trans_message('estimate.recalculated'));
     }
 
     public function dashboard(Request $request, $project, int $estimate): JsonResponse
@@ -225,26 +223,24 @@ class EstimateController extends Controller
         
         $versions = $this->repository->getVersions($estimateModel);
         
-        return response()->json([
-            'data' => [
-                'estimate' => new EstimateResource($estimateModel),
-                'statistics' => [
-                    'items_count' => $itemsCount,
-                    'sections_count' => $sectionsCount,
-                    'total_amount' => $estimateModel->total_amount,
-                    'total_amount_with_vat' => $estimateModel->total_amount_with_vat,
-                ],
-                'cost_structure' => $structure,
-                'versions' => $versions->map(fn($v) => [
-                    'id' => $v->id,
-                    'version' => $v->version,
-                    'created_at' => $v->created_at,
-                ]),
-                'related' => [
-                    'project' => $estimateModel->project,
-                    'contract' => $estimateModel->contract,
-                ],
-            ]
+        return AdminResponse::success([
+            'estimate' => new EstimateResource($estimateModel),
+            'statistics' => [
+                'items_count' => $itemsCount,
+                'sections_count' => $sectionsCount,
+                'total_amount' => $estimateModel->total_amount,
+                'total_amount_with_vat' => $estimateModel->total_amount_with_vat,
+            ],
+            'cost_structure' => $structure,
+            'versions' => $versions->map(fn($v) => [
+                'id' => $v->id,
+                'version' => $v->version,
+                'created_at' => $v->created_at,
+            ]),
+            'related' => [
+                'project' => $estimateModel->project,
+                'contract' => $estimateModel->contract,
+            ],
         ]);
     }
 
@@ -280,9 +276,7 @@ class EstimateController extends Controller
             ->orderBy('sort_order')
             ->get();
         
-        return response()->json([
-            'data' => $sections
-        ]);
+        return AdminResponse::success($sections);
     }
 
     /**
@@ -317,24 +311,24 @@ class EstimateController extends Controller
         
         // Если статус "утверждено", сохраняем информацию об утвердившем
         if ($newStatus === 'approved') {
-            $estimateModel->approved_by_user_id = auth()->id();
+            $estimateModel->approved_by_user_id = $request->user()->id;
             $estimateModel->approved_at = now();
         }
         
         $estimateModel->save();
         
-        \Log::info('estimate.status_updated', [
+        Log::info('estimate.status_updated', [
             'estimate_id' => $estimateModel->id,
             'old_status' => $estimateModel->getOriginal('status'),
             'new_status' => $newStatus,
-            'user_id' => auth()->id(),
+            'user_id' => $request->user()->id,
             'comment' => $comment,
         ]);
         
-        return response()->json([
-            'data' => new EstimateResource($estimateModel->fresh()),
-            'message' => $this->getStatusChangeMessage($newStatus),
-        ]);
+        return AdminResponse::success(
+            new EstimateResource($estimateModel->fresh()),
+            $this->getStatusChangeMessage($newStatus)
+        );
     }
 
     /**
@@ -354,19 +348,19 @@ class EstimateController extends Controller
         
         // Проверка на отмененный статус
         if ($currentStatus === 'cancelled') {
-            throw new \DomainException('Нельзя изменить статус отмененной сметы');
+            throw new \DomainException(trans_message('estimate.status_cannot_change_cancelled'));
         }
         
         // Проверка разрешенных переходов
         if (!in_array($newStatus, $allowedTransitions[$currentStatus] ?? [])) {
             throw new \DomainException(
-                "Недопустимый переход статуса из '{$currentStatus}' в '{$newStatus}'"
+                __('estimate.status_invalid_transition', ['from' => $currentStatus, 'to' => $newStatus])
             );
         }
         
         // Дополнительная проверка для перехода в "утверждено"
         if ($newStatus === 'approved' && $currentStatus !== 'in_review') {
-            throw new \DomainException('Утвердить можно только смету со статусом "На проверке"');
+            throw new \DomainException(trans_message('estimate.status_can_approve_only_in_review'));
         }
     }
 
@@ -376,11 +370,11 @@ class EstimateController extends Controller
     private function getStatusChangeMessage(string $status): string
     {
         return match ($status) {
-            'draft' => 'Смета возвращена в черновик',
-            'in_review' => 'Смета отправлена на проверку',
-            'approved' => 'Смета успешно утверждена',
-            'cancelled' => 'Смета отменена',
-            default => 'Статус сметы успешно изменен',
+            'draft' => trans_message('estimate.status_changed_to_draft'),
+            'in_review' => trans_message('estimate.status_changed_to_review'),
+            'approved' => trans_message('estimate.status_changed_to_approved'),
+            'cancelled' => trans_message('estimate.status_changed_to_cancelled'),
+            default => trans_message('estimate.status_changed'),
         };
     }
 }
