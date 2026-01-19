@@ -5,9 +5,13 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateVersionService;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateResource;
+use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+
+use function trans_message;
 
 class EstimateVersionController extends Controller
 {
@@ -21,9 +25,7 @@ class EstimateVersionController extends Controller
         
         $history = $this->versionService->getVersionHistory($estimate);
         
-        return response()->json([
-            'data' => $history
-        ]);
+        return AdminResponse::success($history);
     }
 
     public function store(Request $request, Estimate $estimate): JsonResponse
@@ -39,10 +41,11 @@ class EstimateVersionController extends Controller
             $validated['description'] ?? null
         );
         
-        return response()->json([
-            'data' => new EstimateResource($newVersion),
-            'message' => 'Новая версия сметы создана'
-        ], 201);
+        return AdminResponse::success(
+            new EstimateResource($newVersion),
+            trans_message('estimate.version_created'),
+            Response::HTTP_CREATED
+        );
     }
 
     public function compare(Request $request): JsonResponse
@@ -60,9 +63,7 @@ class EstimateVersionController extends Controller
         
         $comparison = $this->versionService->compareVersions($version1, $version2);
         
-        return response()->json([
-            'data' => $comparison
-        ]);
+        return AdminResponse::success($comparison);
     }
 
     public function rollback(Estimate $version): JsonResponse
@@ -71,10 +72,11 @@ class EstimateVersionController extends Controller
         
         $newVersion = $this->versionService->rollback($version);
         
-        return response()->json([
-            'data' => new EstimateResource($newVersion),
-            'message' => 'Выполнен откат к версии сметы'
-        ], 201);
+        return AdminResponse::success(
+            new EstimateResource($newVersion),
+            trans_message('estimate.version_rollback'),
+            Response::HTTP_CREATED
+        );
     }
 }
 

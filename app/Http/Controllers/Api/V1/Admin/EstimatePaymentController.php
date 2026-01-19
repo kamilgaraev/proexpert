@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
 use App\BusinessModules\Core\Payments\Models\PaymentDocument;
+use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -29,9 +30,8 @@ class EstimatePaymentController extends Controller
             ->orderBy('document_date', 'desc')
             ->get();
 
-        return response()->json([
-            'success' => true,
-            'data' => $payments->map(function ($payment) {
+        return AdminResponse::success(
+            $payments->map(function ($payment) {
                 return [
                     'id' => $payment->id,
                     'document_date' => $payment->document_date->format('Y-m-d'),
@@ -44,8 +44,8 @@ class EstimatePaymentController extends Controller
                         'name' => $payment->payeeContractor->name,
                     ] : null,
                 ];
-            }),
-        ]);
+            })
+        );
     }
 }
 

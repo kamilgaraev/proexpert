@@ -5,10 +5,14 @@ namespace App\Http\Controllers\Api\V1\Admin;
 use App\Http\Controllers\Controller;
 use App\Services\EstimatePositionCatalog\PriceHistoryService;
 use App\Http\Resources\Api\V1\Admin\EstimatePosition\PriceHistoryResource;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
+
+use function trans_message;
 
 class EstimatePositionPriceHistoryController extends Controller
 {
@@ -32,8 +36,7 @@ class EstimatePositionPriceHistoryController extends Controller
 
             $history = $this->service->getPriceHistory($id, $dateFrom, $dateTo);
 
-            return response()->json([
-                'success' => true,
+            return AdminResponse::success([
                 'data' => PriceHistoryResource::collection($history),
                 'statistics' => $this->service->getPriceStatistics($id),
             ]);
@@ -43,10 +46,10 @@ class EstimatePositionPriceHistoryController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить историю цен',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.price_history_load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -68,20 +71,16 @@ class EstimatePositionPriceHistoryController extends Controller
 
             $comparison = $this->service->comparePrice($catalogItemId, $date1, $date2);
 
-            return response()->json([
-                'success' => true,
-                'data' => $comparison,
-            ]);
+            return AdminResponse::success($comparison);
         } catch (\Exception $e) {
             Log::error('estimate_position_price_history.compare.error', [
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось сравнить цены',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.price_compare_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 }
-

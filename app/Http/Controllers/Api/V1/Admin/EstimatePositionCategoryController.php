@@ -7,9 +7,13 @@ use App\Services\EstimatePositionCatalog\CategoryService;
 use App\Http\Requests\Api\V1\Admin\EstimatePosition\StoreCategoryRequest;
 use App\Http\Requests\Api\V1\Admin\EstimatePosition\UpdateCategoryRequest;
 use App\Http\Resources\Api\V1\Admin\EstimatePosition\CategoryResource;
+use App\Http\Responses\AdminResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class EstimatePositionCategoryController extends Controller
 {
@@ -27,19 +31,16 @@ class EstimatePositionCategoryController extends Controller
 
             $categories = $this->service->getAllCategories($organizationId);
 
-            return response()->json([
-                'success' => true,
-                'data' => CategoryResource::collection($categories),
-            ]);
+            return AdminResponse::success(CategoryResource::collection($categories));
         } catch (\Exception $e) {
             Log::error('estimate_position_category.index.error', [
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить категории',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.categories_load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -53,19 +54,16 @@ class EstimatePositionCategoryController extends Controller
 
             $tree = $this->service->getCategoryTree($organizationId);
 
-            return response()->json([
-                'success' => true,
-                'data' => $tree,
-            ]);
+            return AdminResponse::success($tree);
         } catch (\Exception $e) {
             Log::error('estimate_position_category.tree.error', [
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить дерево категорий',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.category_tree_load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -80,26 +78,23 @@ class EstimatePositionCategoryController extends Controller
             $category = $this->service->getCategoryById($id, $organizationId);
 
             if (!$category) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Категория не найдена',
-                ], 404);
+                return AdminResponse::error(
+                    trans_message('estimate.category_not_found'),
+                    Response::HTTP_NOT_FOUND
+                );
             }
 
-            return response()->json([
-                'success' => true,
-                'data' => new CategoryResource($category),
-            ]);
+            return AdminResponse::success(new CategoryResource($category));
         } catch (\Exception $e) {
             Log::error('estimate_position_category.show.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось загрузить категорию',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.category_load_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -116,21 +111,21 @@ class EstimatePositionCategoryController extends Controller
                 $request->validated()
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Категория успешно создана',
-                'data' => new CategoryResource($category),
-            ], 201);
+            return AdminResponse::success(
+                new CategoryResource($category),
+                trans_message('estimate.category_created'),
+                Response::HTTP_CREATED
+            );
         } catch (\Exception $e) {
             Log::error('estimate_position_category.store.error', [
                 'data' => $request->validated(),
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось создать категорию',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.category_create_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -148,26 +143,22 @@ class EstimatePositionCategoryController extends Controller
                 $request->validated()
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Категория успешно обновлена',
-                'data' => new CategoryResource($category),
-            ]);
+            return AdminResponse::success(
+                new CategoryResource($category),
+                trans_message('estimate.category_updated')
+            );
         } catch (\RuntimeException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 404);
+            return AdminResponse::error($e->getMessage(), Response::HTTP_NOT_FOUND);
         } catch (\Exception $e) {
             Log::error('estimate_position_category.update.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось обновить категорию',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.category_update_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -181,30 +172,21 @@ class EstimatePositionCategoryController extends Controller
 
             $this->service->deleteCategory($id, $organizationId);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Категория успешно удалена',
-            ]);
+            return AdminResponse::success(null, trans_message('estimate.category_deleted'));
         } catch (\DomainException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error($e->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
         } catch (\RuntimeException $e) {
-            return response()->json([
-                'success' => false,
-                'error' => $e->getMessage(),
-            ], 404);
+            return AdminResponse::error($e->getMessage(), Response::HTTP_NOT_FOUND);
         } catch (\Exception $e) {
             Log::error('estimate_position_category.destroy.error', [
                 'id' => $id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось удалить категорию',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.category_delete_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -227,20 +209,16 @@ class EstimatePositionCategoryController extends Controller
                 $request->input('categories')
             );
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Порядок категорий успешно изменен',
-            ]);
+            return AdminResponse::success(null, trans_message('estimate.categories_reordered'));
         } catch (\Exception $e) {
             Log::error('estimate_position_category.reorder.error', [
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось изменить порядок категорий',
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.categories_reorder_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 }
-

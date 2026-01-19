@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Http\Responses\AdminResponse;
 use App\BusinessModules\Features\BudgetEstimates\Services\Import\EstimateImportService;
 use App\Http\Requests\Admin\Estimate\UploadEstimateImportRequest;
 use App\Http\Requests\Admin\Estimate\DetectEstimateTypeRequest;
@@ -15,8 +16,11 @@ use App\Http\Resources\Api\V1\Admin\Estimate\EstimateImportHistoryResource;
 use App\Services\Organization\OrganizationContext;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class EstimateImportController extends Controller
 {
@@ -34,10 +38,10 @@ class EstimateImportController extends Controller
         
         if (!$file) {
             Log::error('[EstimateImport] No file in request');
-            return response()->json([
-                'success' => false,
-                'message' => 'No file uploaded',
-            ], 400);
+            return AdminResponse::error(
+                trans_message('estimate.import_no_file'),
+                Response::HTTP_BAD_REQUEST
+            );
         }
         
         // Get file info IMMEDIATELY while file is still available
@@ -58,20 +62,20 @@ class EstimateImportController extends Controller
                 'error' => $e->getMessage(),
                 'user_id' => $user?->id,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to process uploaded file: ' . $e->getMessage(),
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.import_file_process_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
         
         if (!$organization) {
             Log::error('[EstimateImport] Organization not found', [
                 'user_id' => $user?->id,
             ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Organization context not found',
-            ], 400);
+            return AdminResponse::error(
+                trans_message('estimate.import_organization_not_found'),
+                Response::HTTP_BAD_REQUEST
+            );
         }
         
         try {
@@ -84,7 +88,7 @@ class EstimateImportController extends Controller
             
             Log::info('[EstimateImport] Upload successful', ['file_id' => $fileId]);
             
-            return response()->json([
+            return AdminResponse::success([
                 'file_id' => $fileId,
                 'file_name' => $fileName,
                 'file_size' => $fileSize,
@@ -96,10 +100,10 @@ class EstimateImportController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to upload file: ' . $e->getMessage(),
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.import_upload_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -118,16 +122,13 @@ class EstimateImportController extends Controller
             
             $detectionDTO = $this->importService->detectEstimateType($fileId);
             
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'detected_type' => $detectionDTO->detectedType,
-                    'type_description' => $detectionDTO->getTypeDescription(),
-                    'confidence' => $detectionDTO->confidence,
-                    'is_high_confidence' => $detectionDTO->isHighConfidence(),
-                    'indicators' => $detectionDTO->indicators,
-                    'candidates' => $detectionDTO->candidates,
-                ],
+            return AdminResponse::success([
+                'detected_type' => $detectionDTO->detectedType,
+                'type_description' => $detectionDTO->getTypeDescription(),
+                'confidence' => $detectionDTO->confidence,
+                'is_high_confidence' => $detectionDTO->isHighConfidence(),
+                'indicators' => $detectionDTO->indicators,
+                'candidates' => $detectionDTO->candidates,
             ]);
         } catch (\Exception $e) {
             Log::error('[EstimateImport] detectType failed', [
@@ -135,10 +136,10 @@ class EstimateImportController extends Controller
                 'error' => $e->getMessage(),
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to detect estimate type: ' . $e->getMessage(),
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.import_detect_type_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -160,13 +161,12 @@ class EstimateImportController extends Controller
                 'candidates_count' => count($detection['header_candidates'] ?? []),
             ]);
             
-            return response()->json([
-                'success' => true,
+            return AdminResponse::success([
                 'format' => $detection['format'],
                 'detected_columns' => $detection['detected_columns'],
                 'raw_headers' => $detection['raw_headers'],
                 'header_row' => $detection['header_row'],
-                'header_candidates' => $detection['header_candidates'], // Топ кандидатов для UI
+                'header_candidates' => $detection['header_candidates'],
                 'sample_rows' => $detection['sample_rows'],
             ]);
             
@@ -177,10 +177,10 @@ class EstimateImportController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'Не удалось определить структуру файла: ' . $e->getMessage(),
-            ], 422);
+            return AdminResponse::error(
+                trans_message('estimate.import_detect_format_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         }
     }
 
@@ -193,7 +193,7 @@ class EstimateImportController extends Controller
         try {
             $preview = $this->importService->preview($fileId, $columnMapping);
             
-            return response()->json([
+            return AdminResponse::success([
                 'preview' => new EstimateImportPreviewResource($preview),
                 'validation' => [
                     'errors' => [],
@@ -202,10 +202,10 @@ class EstimateImportController extends Controller
             ]);
             
         } catch (\Exception $e) {
-            return response()->json([
-                'error' => 'Ошибка при создании preview',
-                'message' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error(
+                trans_message('estimate.import_preview_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         }
     }
 
@@ -234,11 +234,10 @@ class EstimateImportController extends Controller
                 'request_data' => $request->all(),
             ]);
             
-            return response()->json([
-                'error' => 'Некорректный запрос',
-                'message' => 'file_id не может быть пустым. Убедитесь, что вы передаете file_id полученный от /upload.',
-                'hint' => 'Проверьте документацию: @docs/FRONTEND_FIX_MATCH_ENDPOINT.md',
-            ], 422);
+            return AdminResponse::error(
+                trans_message('estimate.import_file_id_empty'),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         }
         
         $organization = OrganizationContext::getOrganization() ?? Auth::user()?->currentOrganization;
@@ -246,13 +245,13 @@ class EstimateImportController extends Controller
         try {
             $matchResult = $this->importService->analyzeMatches($fileId, $organization->id);
             
-            return response()->json($matchResult);
+            return AdminResponse::success($matchResult);
             
         } catch (\Exception $e) {
-            return response()->json([
-                'error' => 'Ошибка при сопоставлении работ',
-                'message' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error(
+                trans_message('estimate.import_match_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         }
     }
 
@@ -272,22 +271,22 @@ class EstimateImportController extends Controller
         }
         
         if (!isset($estimateSettings['project_id'])) {
-            return response()->json([
-                'error' => 'Смета должна быть импортирована в контексте проекта',
-                'message' => 'Параметр project_id обязателен',
-            ], 422);
+            return AdminResponse::error(
+                trans_message('estimate.import_project_required'),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         }
         
         try {
             $result = $this->importService->execute($fileId, $matchingConfig, $estimateSettings);
             
-            return response()->json($result);
+            return AdminResponse::success($result);
             
         } catch (\Exception $e) {
-            return response()->json([
-                'error' => 'Ошибка при выполнении импорта',
-                'message' => $e->getMessage(),
-            ], 422);
+            return AdminResponse::error(
+                trans_message('estimate.import_execute_error'),
+                Response::HTTP_UNPROCESSABLE_ENTITY
+            );
         }
     }
 
@@ -302,7 +301,7 @@ class EstimateImportController extends Controller
             
             $status = $this->importService->getImportStatus($jobId);
             
-            return response()->json($status);
+            return AdminResponse::success($status);
             
         } catch (\Exception $e) {
             Log::error('[EstimateImport] ❌ Status endpoint error', [
@@ -311,10 +310,10 @@ class EstimateImportController extends Controller
                 'error' => $e->getMessage(),
             ]);
             
-            return response()->json([
-                'error' => 'Статус импорта не найден',
-                'message' => $e->getMessage(),
-            ], 404);
+            return AdminResponse::error(
+                trans_message('estimate.import_status_not_found'),
+                Response::HTTP_NOT_FOUND
+            );
         }
     }
 
@@ -325,9 +324,9 @@ class EstimateImportController extends Controller
         
         $history = $this->importService->getImportHistory($organization->id, $limit);
         
-        return response()->json([
-            'data' => EstimateImportHistoryResource::collection($history),
-        ]);
+        return AdminResponse::success(
+            EstimateImportHistoryResource::collection($history)
+        );
     }
 }
 

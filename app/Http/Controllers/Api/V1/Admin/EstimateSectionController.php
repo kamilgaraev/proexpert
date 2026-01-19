@@ -8,11 +8,15 @@ use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionNumberi
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateSectionService;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateSectionResource;
+use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
 use App\Models\EstimateSection;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
+
+use function trans_message;
 
 class EstimateSectionController extends Controller
 {
@@ -40,9 +44,7 @@ class EstimateSectionController extends Controller
             ->orderBy('sort_order')
             ->get();
         
-        return response()->json([
-            'data' => EstimateSectionResource::collection($sections)
-        ]);
+        return AdminResponse::success(EstimateSectionResource::collection($sections));
     }
 
     public function store(StoreSectionRequest $request, $project, int $estimateId): JsonResponse
@@ -56,10 +58,11 @@ class EstimateSectionController extends Controller
         
         $section = $this->sectionService->createSection($data);
         
-        return response()->json([
-            'data' => new EstimateSectionResource($section),
-            'message' => 'Раздел успешно создан'
-        ], 201);
+        return AdminResponse::success(
+            new EstimateSectionResource($section),
+            trans_message('estimate.section_created'),
+            Response::HTTP_CREATED
+        );
     }
 
     public function show(EstimateSection $section): JsonResponse
@@ -74,9 +77,7 @@ class EstimateSectionController extends Controller
             'children.children.children.items',
         ]);
         
-        return response()->json([
-            'data' => new EstimateSectionResource($section)
-        ]);
+        return AdminResponse::success(new EstimateSectionResource($section));
     }
 
     public function update(UpdateSectionRequest $request, EstimateSection $section): JsonResponse
@@ -85,10 +86,10 @@ class EstimateSectionController extends Controller
         
         $section = $this->sectionService->updateSection($section, $request->validated());
         
-        return response()->json([
-            'data' => new EstimateSectionResource($section),
-            'message' => 'Раздел успешно обновлен'
-        ]);
+        return AdminResponse::success(
+            new EstimateSectionResource($section),
+            trans_message('estimate.section_updated')
+        );
     }
 
     public function destroy(Request $request, EstimateSection $section): JsonResponse
@@ -112,9 +113,7 @@ class EstimateSectionController extends Controller
         
         $this->sectionService->deleteSection($section, $cascade);
         
-        return response()->json([
-            'message' => 'Раздел успешно удален'
-        ]);
+        return AdminResponse::success(null, trans_message('estimate.section_deleted'));
     }
 
     public function move(Request $request, EstimateSection $section): JsonResponse
@@ -132,10 +131,10 @@ class EstimateSectionController extends Controller
             $validated['sort_order'] ?? null
         );
         
-        return response()->json([
-            'data' => new EstimateSectionResource($section),
-            'message' => 'Раздел успешно перемещен'
-        ]);
+        return AdminResponse::success(
+            new EstimateSectionResource($section),
+            trans_message('estimate.section_moved')
+        );
     }
 
     /**
@@ -168,10 +167,10 @@ class EstimateSectionController extends Controller
                 
                 // Проверяем принадлежность к смете
                 if ($section->estimate_id !== $estimate->id) {
-                    return response()->json([
-                        'success' => false,
-                        'error' => "Раздел {$section->id} не принадлежит данной смете"
-                    ], 422);
+                    return AdminResponse::error(
+                        trans_message('estimate.section_not_belongs_to_estimate'),
+                        Response::HTTP_UNPROCESSABLE_ENTITY
+                    );
                 }
                 
                 $section->update([
@@ -197,11 +196,10 @@ class EstimateSectionController extends Controller
                 ->orderBy('sort_order')
                 ->get();
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Порядок разделов успешно обновлен',
-                'data' => EstimateSectionResource::collection($updatedSections)
-            ]);
+            return AdminResponse::success(
+                EstimateSectionResource::collection($updatedSections),
+                trans_message('estimate.sections_reordered')
+            );
         } catch (\Exception $e) {
             Log::error('estimate.sections.reorder.error', [
                 'estimate_id' => $estimate->id,
@@ -209,10 +207,10 @@ class EstimateSectionController extends Controller
                 'trace' => $e->getTraceAsString(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось обновить порядок разделов'
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.sections_reorder_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -225,20 +223,17 @@ class EstimateSectionController extends Controller
         try {
             $this->numberingService->recalculateAllSectionNumbers($estimate->id);
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Нумерация разделов успешно пересчитана'
-            ]);
+            return AdminResponse::success(null, trans_message('estimate.section_numbering_recalculated'));
         } catch (\Exception $e) {
             Log::error('estimate.sections.recalculate_numbers.error', [
                 'estimate_id' => $estimate->id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось пересчитать нумерацию'
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.section_numbering_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 
@@ -251,24 +246,25 @@ class EstimateSectionController extends Controller
         try {
             $errors = $this->numberingService->validateNumbering($estimate->id);
 
-            return response()->json([
-                'success' => true,
-                'is_valid' => empty($errors),
-                'errors' => $errors,
-                'message' => empty($errors) 
-                    ? 'Нумерация корректна' 
-                    : 'Обнаружены ошибки в нумерации'
-            ]);
+            return AdminResponse::success(
+                [
+                    'is_valid' => empty($errors),
+                    'errors' => $errors,
+                ],
+                empty($errors) 
+                    ? trans_message('estimate.section_numbering_valid') 
+                    : trans_message('estimate.section_numbering_invalid')
+            );
         } catch (\Exception $e) {
             Log::error('estimate.sections.validate_numbering.error', [
                 'estimate_id' => $estimate->id,
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'error' => 'Не удалось выполнить валидацию'
-            ], 500);
+            return AdminResponse::error(
+                trans_message('estimate.section_validation_error'),
+                Response::HTTP_INTERNAL_SERVER_ERROR
+            );
         }
     }
 

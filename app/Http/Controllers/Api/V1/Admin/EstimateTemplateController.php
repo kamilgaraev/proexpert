@@ -6,10 +6,14 @@ use App\Http\Controllers\Controller;
 use App\BusinessModules\Features\BudgetEstimates\Services\EstimateTemplateService;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateTemplateResource;
 use App\Http\Resources\Api\V1\Admin\Estimate\EstimateResource;
+use App\Http\Responses\AdminResponse;
 use App\Models\Estimate;
 use App\Models\EstimateTemplate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+
+use function trans_message;
 
 class EstimateTemplateController extends Controller
 {
@@ -23,9 +27,7 @@ class EstimateTemplateController extends Controller
         
         $templates = $this->templateService->getTemplates($organizationId, true);
         
-        return response()->json([
-            'data' => EstimateTemplateResource::collection($templates)
-        ]);
+        return AdminResponse::success(EstimateTemplateResource::collection($templates));
     }
 
     public function store(Request $request): JsonResponse
@@ -45,17 +47,18 @@ class EstimateTemplateController extends Controller
             $validated['description'] ?? null
         );
         
-        return response()->json([
-            'data' => new EstimateTemplateResource($template),
-            'message' => 'Шаблон успешно создан'
-        ], 201);
+        return AdminResponse::success(
+            new EstimateTemplateResource($template),
+            trans_message('estimate.template_created'),
+            Response::HTTP_CREATED
+        );
     }
 
     public function show(EstimateTemplate $template): JsonResponse
     {
-        return response()->json([
-            'data' => new EstimateTemplateResource($template->load(['organization', 'createdBy']))
-        ]);
+        return AdminResponse::success(
+            new EstimateTemplateResource($template->load(['organization', 'createdBy']))
+        );
     }
 
     public function apply(Request $request, EstimateTemplate $template): JsonResponse
@@ -73,29 +76,28 @@ class EstimateTemplateController extends Controller
         
         $estimate = $this->templateService->applyTemplate($template, $validated);
         
-        return response()->json([
-            'data' => new EstimateResource($estimate),
-            'message' => 'Смета создана из шаблона'
-        ], 201);
+        return AdminResponse::success(
+            new EstimateResource($estimate),
+            trans_message('estimate.template_applied'),
+            Response::HTTP_CREATED
+        );
     }
 
     public function destroy(EstimateTemplate $template): JsonResponse
     {
         $this->templateService->delete($template);
         
-        return response()->json([
-            'message' => 'Шаблон успешно удален'
-        ]);
+        return AdminResponse::success(null, trans_message('estimate.template_deleted'));
     }
 
     public function share(EstimateTemplate $template): JsonResponse
     {
         $template = $this->templateService->shareWithHolding($template);
         
-        return response()->json([
-            'data' => new EstimateTemplateResource($template),
-            'message' => 'Шаблон сделан доступным для холдинга'
-        ]);
+        return AdminResponse::success(
+            new EstimateTemplateResource($template),
+            trans_message('estimate.template_shared')
+        );
     }
 }
 
