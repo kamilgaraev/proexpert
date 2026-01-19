@@ -10,11 +10,17 @@ use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 use Symfony\Component\Routing\Exception\RouteNotFoundException;
+use Illuminate\Support\Facades\Log;
 use App\Services\Monitoring\PrometheusService;
 use App\Services\Logging\LoggingService;
 use App\Services\ErrorTracking\ErrorTrackingService;
 use App\Exceptions\Billing\InsufficientBalanceException;
 use App\Exceptions\BusinessLogicException;
+use App\Http\Responses\AdminResponse;
+use App\Http\Responses\MobileResponse;
+use App\Http\Responses\LandingResponse;
+
+use function trans_message;
 
 class Handler extends ExceptionHandler
 {
@@ -78,7 +84,7 @@ class Handler extends ExceptionHandler
         // Для API запросов мы хотим всегда возвращать JSON
         $this->renderable(function (Throwable $e, $request) {
             if ($request->expectsJson() || $request->is('api/*')) {
-                \Log::info('[Handler] renderable() called', [
+                Log::info('[Handler] renderable() called', [
                     'exception_class' => get_class($e),
                     'exception_message' => $e->getMessage(),
                     'exception_code' => $e->getCode(),
@@ -89,96 +95,88 @@ class Handler extends ExceptionHandler
                 // Получаем CORS заголовки из CorsMiddleware если есть
                 $corsHeaders = $request->attributes->get('cors_headers', []);
                 
+                $responseClass = $this->getResponseClassForRequest($request);
+                
+                // ValidationException - ошибки валидации
                 if ($e instanceof ValidationException) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => $e->getMessage() ?: 'Данные не прошли валидацию.',
+                    $data = [
                         'errors' => $e->errors(),
-                    ], $e->status, $corsHeaders);
+                    ];
+                    $message = $e->getMessage() ?: trans_message('errors.validation_failed');
+                    return $responseClass::error($message, $e->status, $data);
                 }
 
+                // BusinessLogicException - ошибки бизнес-логики
                 if ($e instanceof BusinessLogicException) {
                     $status = $e->getCode();
                     if (!is_int($status) || $status < 400 || $status >= 600) {
                         $status = 400;
                     }
-                    return response()->json([
-                        'success' => false,
-                        'message' => $e->getMessage() ?: 'Ошибка бизнес-логики.',
-                    ], $status, $corsHeaders);
+                    $message = $e->getMessage() ?: trans_message('errors.business_logic_error');
+                    return $responseClass::error($message, $status);
                 }
 
+                // AuthorizationException - нет прав
                 if ($e instanceof AuthorizationException) {
-                    \Log::info('[Handler] AuthorizationException caught', [
+                    Log::info('[Handler] AuthorizationException caught', [
                         'message' => $e->getMessage(),
                         'file' => $e->getFile(),
                         'line' => $e->getLine(),
                     ]);
                     
                     $message = $e->getMessage();
-                    
-                    // Делаем сообщение более понятным
                     if (empty($message) || $message === 'This action is unauthorized.') {
-                        $message = 'У вас недостаточно прав для выполнения этого действия. Обратитесь к администратору.';
+                        $message = trans_message('errors.unauthorized');
                     }
                     
-                    \Log::info('[Handler] Returning 403 response');
-                    
-                    return response()->json([
-                        'success' => false,
-                        'message' => $message,
-                    ], 403, $corsHeaders);
+                    Log::info('[Handler] Returning 403 response');
+                    return $responseClass::error($message, 403);
                 }
 
+                // AuthenticationException - не аутентифицирован
                 if ($e instanceof AuthenticationException) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => $e->getMessage() ?: 'Требуется аутентификация.',
-                    ], 401, $corsHeaders);
+                    $message = $e->getMessage() ?: trans_message('errors.unauthenticated');
+                    return $responseClass::error($message, 401);
                 }
 
+                // ModelNotFoundException - модель не найдена
                 if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Запрашиваемый ресурс не найден.'
-                    ], 404, $corsHeaders);
+                    return $responseClass::error(trans_message('errors.resource_not_found'), 404);
                 }
 
+                // RouteNotFoundException - маршрут не найден
                 if ($e instanceof RouteNotFoundException) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Маршрут не найден или доступ запрещён.'
-                    ], 401, $corsHeaders);
+                    return $responseClass::error(trans_message('errors.route_not_found'), 401);
                 }
 
+                // NotFoundHttpException - 404
+                if ($e instanceof \Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
+                    return $responseClass::error(trans_message('errors.resource_not_found'), 404);
+                }
+
+                // InsufficientBalanceException - недостаточно средств
                 if ($e instanceof InsufficientBalanceException) {
-                    return response()->json([
-                        'success' => false,
-                        'message' => $e->getMessage() ?: 'Недостаточно средств на балансе для выполнения операции.'
-                    ], 402, $corsHeaders); // 402 Payment Required
+                    $message = $e->getMessage() ?: trans_message('errors.insufficient_balance');
+                    return $responseClass::error($message, 402); // 402 Payment Required
                 }
 
+                // Остальные ошибки
                 $statusCode = $e instanceof HttpExceptionInterface ? $e->getStatusCode() : 500;
                 $message = $e->getMessage();
 
                 if ($statusCode >= 500 && !config('app.debug')) {
-                    $message = 'Произошла внутренняя ошибка сервера. Мы уже работаем над её исправлением. ' .
-                               'Если проблема повторяется, пожалуйста, свяжитесь с администрацией.';
+                    $message = trans_message('errors.server_error');
                 }
                 
-                $response = [
-                    'success' => false,
-                    'message' => $message
-                ];
-
+                $data = [];
                 if (config('app.debug')) {
-                    $response['exception'] = get_class($e);
-                    $response['file'] = $e->getFile();
-                    $response['line'] = $e->getLine();
-                    // $response['trace'] = $e->getTraceAsString(); // Трассировка может быть очень большой
+                    $data['exception'] = get_class($e);
+                    $data['file'] = $e->getFile();
+                    $data['line'] = $e->getLine();
+                    // $data['trace'] = $e->getTraceAsString(); // Трассировка может быть очень большой
                 }
 
-                return response()->json($response, $statusCode, $corsHeaders);
+                return $responseClass::error($message, $statusCode, $data);
             }
         });
     }
@@ -223,13 +221,13 @@ class Handler extends ExceptionHandler
                     
                     $errorTracking->track($exception, [
                         'organization_id' => request()->attributes->get('current_organization_id'),
-                        'user_id' => auth()->id(),
+                        'user_id' => request()->user()?->id,
                         'module' => $this->detectModuleFromRequest(),
                     ]);
                 }
             } catch (\Exception $e) {
                 // Не ломаем приложение если error tracking упал
-                \Log::error('error_tracking.integration_failed', [
+                Log::error('error_tracking.integration_failed', [
                     'error' => $e->getMessage(),
                 ]);
             }
@@ -390,6 +388,32 @@ class Handler extends ExceptionHandler
         return 'unknown';
     }
 
+    /**
+     * Определить класс Response в зависимости от типа API
+     */
+    protected function getResponseClassForRequest($request): string
+    {
+        $path = $request->path();
+        
+        // Admin API
+        if (str_starts_with($path, 'api/v1/admin/')) {
+            return AdminResponse::class;
+        }
+        
+        // Mobile API
+        if (str_starts_with($path, 'api/v1/mobile/') || str_starts_with($path, 'api/mobile/')) {
+            return MobileResponse::class;
+        }
+        
+        // Landing/LK API
+        if (str_starts_with($path, 'api/v1/lk/') || str_starts_with($path, 'api/landing/')) {
+            return LandingResponse::class;
+        }
+        
+        // По умолчанию AdminResponse
+        return AdminResponse::class;
+    }
+
     public function render($request, Throwable $e)
     {
         // Для JSON/API отвечает register()->renderable выше
@@ -400,8 +424,7 @@ class Handler extends ExceptionHandler
             $status = $response->getStatusCode();
             if ($status >= 500) {
                 return response(
-                    'Произошла внутренняя ошибка сервера. Мы уже работаем над её исправлением. ' .
-                    'Если проблема повторяется, пожалуйста, свяжитесь с администрацией.',
+                    trans_message('errors.server_error'),
                     $status,
                     ['Content-Type' => 'text/plain; charset=utf-8']
                 );
