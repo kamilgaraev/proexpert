@@ -247,6 +247,37 @@
       "admin.ai_assistant.system_analysis.analyze",
       "admin.ai_assistant.system_analysis.export",
       "admin.ai_assistant.system_analysis.delete"
+    ],
+    "ai-estimates": [
+      "ai_estimates.generate",
+      "ai_estimates.view_history",
+      "ai_estimates.view_generation",
+      "ai_estimates.provide_feedback",
+      "ai_estimates.export",
+      "ai_estimates.clear_cache",
+      "ai_estimates.configure"
+    ],
+    "procurement": [
+      "procurement.view",
+      "procurement.manage",
+      "procurement.purchase_requests.view",
+      "procurement.purchase_requests.create",
+      "procurement.purchase_requests.edit",
+      "procurement.purchase_requests.delete",
+      "procurement.purchase_requests.approve",
+      "procurement.purchase_orders.view",
+      "procurement.purchase_orders.create",
+      "procurement.purchase_orders.edit",
+      "procurement.purchase_orders.delete",
+      "procurement.purchase_orders.send",
+      "procurement.supplier_proposals.view",
+      "procurement.supplier_proposals.create",
+      "procurement.supplier_proposals.accept",
+      "procurement.contracts.view",
+      "procurement.contracts.create",
+      "procurement.contracts.edit",
+      "procurement.dashboard.view",
+      "procurement.statistics.view"
     ]
   },
   

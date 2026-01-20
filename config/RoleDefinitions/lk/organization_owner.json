@@ -56,7 +56,9 @@
     "advanced-warehouse": ["*"],
     "budget-estimates": ["*"],
     "payments": ["*"],
-    "site-requests": ["*"]
+    "site-requests": ["*"],
+    "ai-estimates": ["*"],
+    "procurement": ["*"]
   },
   
   "interface_access": ["lk", "admin", "mobile"],
