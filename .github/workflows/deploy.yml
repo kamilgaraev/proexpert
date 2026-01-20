@@ -45,11 +45,20 @@ jobs:
           script: |
             set -e # Остановить выполнение при первой ошибке
             cd /var/www/prohelper
+            
+            # Настройка Git safe.directory для работы от root
+            git config --global --add safe.directory /var/www/prohelper
+            git config --global --add safe.directory '*'
+            
             git reset --hard HEAD
             git clean -fd -e public/docs -e public/docs/**
             git fetch --all --prune
             git reset --hard origin/main
             php artisan down || true
+            
+            # Полная очистка vendor для предотвращения конфликтов
+            rm -rf vendor/
+            
             composer install --no-interaction --prefer-dist --optimize-autoloader
             php artisan storage:link || true
             if [ ! -f /usr/local/bin/rr ]; then vendor/bin/rr get-binary --location=/usr/local/bin --no-config --stability=stable; fi
