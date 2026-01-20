@@ -261,15 +261,56 @@ class UserPermissionsController extends Controller
                     if ($permission === '*') {
                         // Разворачиваем wildcard в конкретные права модуля
                         $moduleSpecificPermissions = $this->getModulePermissions($module);
-                        $flat = array_merge($flat, $moduleSpecificPermissions);
+                        // Нормализуем права модуля (они могут быть массивами объектов или строками)
+                        $normalized = $this->normalizePermissions($moduleSpecificPermissions);
+                        $flat = array_merge($flat, $normalized);
                     } else {
-                        $flat[] = $permission;
+                        // Нормализуем одиночное право
+                        $normalizedPermission = $this->normalizePermission($permission);
+                        if ($normalizedPermission !== null) {
+                            $flat[] = $normalizedPermission;
+                        }
                     }
                 }
             }
         }
         
         return array_unique($flat);
+    }
+
+    /**
+     * Нормализовать одиночное право (может быть строкой или массивом с 'name')
+     */
+    protected function normalizePermission($permission): ?string
+    {
+        if (is_string($permission)) {
+            return $permission;
+        }
+        
+        if (is_array($permission) && isset($permission['name'])) {
+            return $permission['name'];
+        }
+        
+        // Неизвестный формат - логируем и пропускаем
+        Log::warning('Unknown permission format', ['permission' => $permission]);
+        return null;
+    }
+
+    /**
+     * Нормализовать массив прав (элементы могут быть строками или массивами с 'name')
+     */
+    protected function normalizePermissions(array $permissions): array
+    {
+        $normalized = [];
+        
+        foreach ($permissions as $permission) {
+            $normalizedPermission = $this->normalizePermission($permission);
+            if ($normalizedPermission !== null) {
+                $normalized[] = $normalizedPermission;
+            }
+        }
+        
+        return $normalized;
     }
 
     /**
@@ -285,7 +326,8 @@ class UserPermissionsController extends Controller
                     'count' => count($module->permissions),
                     'permissions' => $module->permissions
                 ]);
-                return $module->permissions;
+                // Нормализуем права перед возвратом
+                return $this->normalizePermissions($module->permissions);
             }
 
             // Если в БД нет, ищем в файлах конфигурации
