@@ -6,8 +6,12 @@
   "type": "addon",
   "billing_model": "subscription",
   "category": "estimates",
+  "class_name": "App\\BusinessModules\\Addons\\AIEstimates\\AIEstimatesModule",
   "icon": "sparkles",
   "color": "#7C3AED",
+  "can_deactivate": true,
+  "is_active": true,
+  "development_status": "beta",
   "dependencies": [
     "organizations",
     "users",
