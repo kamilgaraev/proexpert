@@ -197,6 +197,7 @@ class PermissionResolver
             'schedule' => 'schedule-management',
             'construction-journal' => 'budget-estimates',
             'estimates' => 'budget-estimates',
+            'ai_estimates' => 'ai-estimates',
         ];
         
         // Обратный маппинг: budget-estimates.* -> estimates.* (для обратной совместимости)
