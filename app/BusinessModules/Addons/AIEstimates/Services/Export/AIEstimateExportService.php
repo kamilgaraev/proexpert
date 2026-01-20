@@ -12,7 +12,9 @@ class AIEstimateExportService
 {
     public function __construct(
         protected EstimateExportService $estimateExportService
-    ) {}
+    ) {
+        \Illuminate\Support\Facades\Log::info('AIEstimateExportService instantiated');
+    }
 
     public function export(AIGenerationHistory $generation, string $format = 'pdf'): array
     {

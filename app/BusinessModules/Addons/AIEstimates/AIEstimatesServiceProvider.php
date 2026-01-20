@@ -22,6 +22,8 @@ use App\BusinessModules\Addons\AIEstimates\Services\YandexGPT\YandexGPTClient;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\ServiceProvider;
 
+use Illuminate\Support\Facades\Log;
+
 class AIEstimatesServiceProvider extends ServiceProvider
 {
     /**
@@ -29,37 +31,43 @@ class AIEstimatesServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        // Регистрация основного модуля
-        $this->app->singleton(AIEstimatesModule::class);
+        try {
+            // Регистрация основного модуля
+            $this->app->singleton(AIEstimatesModule::class);
 
-        // YandexGPT и YandexVision клиенты
-        $this->app->singleton(YandexGPTClient::class);
-        $this->app->singleton(YandexVisionClient::class);
-        $this->app->singleton(PromptBuilder::class);
+            // YandexGPT и YandexVision клиенты
+            $this->app->singleton(YandexGPTClient::class);
+            $this->app->singleton(YandexVisionClient::class);
+            $this->app->singleton(PromptBuilder::class);
 
-        // Основные сервисы
-        $this->app->singleton(AIEstimateGenerationService::class);
-        $this->app->singleton(CatalogMatchingService::class);
-        $this->app->singleton(ProjectHistoryAnalysisService::class);
-        $this->app->singleton(EstimateBuilderService::class);
-        $this->app->singleton(UsageLimitService::class);
-        $this->app->singleton(FeedbackCollectorService::class);
+            // Основные сервисы
+            $this->app->singleton(AIEstimateGenerationService::class);
+            $this->app->singleton(CatalogMatchingService::class);
+            $this->app->singleton(ProjectHistoryAnalysisService::class);
+            $this->app->singleton(EstimateBuilderService::class);
+            $this->app->singleton(UsageLimitService::class);
+            $this->app->singleton(FeedbackCollectorService::class);
 
-        // Кеширование
-        $this->app->singleton(CacheService::class);
-        $this->app->singleton(CacheKeyGenerator::class);
+            // Кеширование
+            $this->app->singleton(CacheService::class);
+            $this->app->singleton(CacheKeyGenerator::class);
 
-        // Обработка файлов
-        $this->app->singleton(FileParserService::class);
+            // Обработка файлов
+            $this->app->singleton(FileParserService::class);
 
-        // Экспорт
-        $this->app->singleton(AIEstimateExportService::class);
+            // Экспорт
+            $this->app->singleton(AIEstimateExportService::class);
 
-        // Загрузка конфигурации модуля
-        $this->mergeConfigFrom(
-            config_path('ai-estimates.php'),
-            'ai-estimates'
-        );
+            // Загрузка конфигурации модуля
+            if (file_exists(config_path('ai-estimates.php'))) {
+                $this->mergeConfigFrom(
+                    config_path('ai-estimates.php'),
+                    'ai-estimates'
+                );
+            }
+        } catch (\Throwable $e) {
+            Log::error('AIEstimatesServiceProvider register failed: ' . $e->getMessage());
+        }
     }
 
     /**
