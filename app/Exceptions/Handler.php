@@ -120,146 +120,112 @@ class Handler extends ExceptionHandler
             
             // ValidationException - ошибки валидации
             if ($e instanceof ValidationException) {
-                    $data = [
-                        'errors' => $e->errors(),
-                    ];
-                    $message = $e->getMessage() ?: trans_message('errors.validation_failed');
-                    return $responseClass::error($message, $e->status, $data);
-                }
+                $data = [
+                    'errors' => $e->errors(),
+                ];
+                $message = $e->getMessage() ?: trans_message('errors.validation_failed');
+                return $responseClass::error($message, $e->status, $data);
+            }
 
-                // BusinessLogicException - ошибки бизнес-логики
-                if ($e instanceof BusinessLogicException) {
-                    $status = $e->getCode();
-                    if (!is_int($status) || $status < 400 || $status >= 600) {
-                        $status = 400;
-                    }
-                    $message = $e->getMessage() ?: trans_message('errors.business_logic_error');
-                    return $responseClass::error($message, $status);
+            // BusinessLogicException - ошибки бизнес-логики
+            if ($e instanceof BusinessLogicException) {
+                $status = $e->getCode();
+                if (!is_int($status) || $status < 400 || $status >= 600) {
+                    $status = 400;
                 }
+                $message = $e->getMessage() ?: trans_message('errors.business_logic_error');
+                return $responseClass::error($message, $status);
+            }
 
-                // AuthorizationException - нет прав
-                if ($e instanceof AuthorizationException) {
-                    $message = $e->getMessage();
-                    if (empty($message) || $message === 'This action is unauthorized.') {
-                        $message = trans_message('errors.unauthorized');
-                    }
-                    return $responseClass::error($message, 403);
+            // AuthorizationException - нет прав
+            if ($e instanceof AuthorizationException) {
+                $message = $e->getMessage();
+                if (empty($message) || $message === 'This action is unauthorized.') {
+                    $message = trans_message('errors.unauthorized');
                 }
-                
-                // AccessDeniedHttpException - доступ запрещён
-                if ($e instanceof \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
-                    $message = $e->getMessage();
-                    if (empty($message) || $message === 'This action is unauthorized.') {
-                        $message = trans_message('errors.forbidden');
-                    }
-                    return $responseClass::error($message, 403);
+                return $responseClass::error($message, 403);
+            }
+            
+            // AccessDeniedHttpException - доступ запрещён
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException) {
+                $message = $e->getMessage();
+                if (empty($message) || $message === 'This action is unauthorized.') {
+                    $message = trans_message('errors.forbidden');
                 }
+                return $responseClass::error($message, 403);
+            }
 
-                // AuthenticationException - не аутентифицирован
-                if ($e instanceof AuthenticationException) {
-                    $message = $e->getMessage() ?: trans_message('errors.unauthenticated');
-                    return $responseClass::error($message, 401);
-                }
+            // AuthenticationException - не аутентифицирован
+            if ($e instanceof AuthenticationException) {
+                $message = $e->getMessage() ?: trans_message('errors.unauthenticated');
+                return $responseClass::error($message, 401);
+            }
 
-                // ModelNotFoundException - модель не найдена
-                if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
-                    return $responseClass::error(trans_message('errors.resource_not_found'), 404);
-                }
+            // ModelNotFoundException - модель не найдена
+            if ($e instanceof \Illuminate\Database\Eloquent\ModelNotFoundException) {
+                return $responseClass::error(trans_message('errors.resource_not_found'), 404);
+            }
 
-                // RouteNotFoundException - маршрут не найден
-                if ($e instanceof RouteNotFoundException) {
-                    return $responseClass::error(trans_message('errors.route_not_found'), 401);
-                }
+            // RouteNotFoundException - маршрут не найден
+            if ($e instanceof RouteNotFoundException) {
+                return $responseClass::error(trans_message('errors.route_not_found'), 401);
+            }
 
-                // NotFoundHttpException - 404
-                if ($e instanceof \Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
-                    return $responseClass::error(trans_message('errors.resource_not_found'), 404);
-                }
+            // NotFoundHttpException - 404
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
+                return $responseClass::error(trans_message('errors.resource_not_found'), 404);
+            }
 
-                // InsufficientBalanceException - недостаточно средств
-                if ($e instanceof InsufficientBalanceException) {
-                    $message = $e->getMessage() ?: trans_message('errors.insufficient_balance');
-                    return $responseClass::error($message, 402); // 402 Payment Required
-                }
+            // InsufficientBalanceException - недостаточно средств
+            if ($e instanceof InsufficientBalanceException) {
+                $message = $e->getMessage() ?: trans_message('errors.insufficient_balance');
+                return $responseClass::error($message, 402); // 402 Payment Required
+            }
 
-                // AI Service Exceptions - ошибки AI сервисов
-                if ($e instanceof AIServiceException) {
-                    $statusCode = $e->getHttpStatusCode();
-                    $message = $e->getMessage();
-                    
-                    // Логируем в зависимости от типа ошибки
-                    $logLevel = match(true) {
-                        $e instanceof AIAuthenticationException => 'error', // Критично - проблема конфигурации
-                        $e instanceof AIQuotaExceededException => 'warning', // Ожидаемо - превышен лимит
-                        $e instanceof AIServiceUnavailableException => 'warning', // Временная проблема
-                        $e instanceof AIParsingException => 'error', // Проблема логики
-                        default => 'error',
-                    };
-                    
-                    Log::log($logLevel, '[Handler] AI Service Exception', [
-                        'exception_class' => get_class($e),
-                        'message' => $message,
-                        'status_code' => $statusCode,
-                        'organization_id' => $request->attributes->get('current_organization_id'),
-                        'user_id' => $request->user()?->id,
-                    ]);
-                    
-                    // Для пользователя возвращаем понятное сообщение
-                    return $responseClass::error($message, $statusCode);
-                }
-
-                // Остальные HTTP исключения
-                if ($e instanceof HttpExceptionInterface) {
-                    $statusCode = $e->getStatusCode();
-                    $message = $e->getMessage();
-                    
-                    // Переводим стандартные HTTP ошибки
-                    if (empty($message) || $statusCode >= 500) {
-                        $message = match($statusCode) {
-                            400 => trans_message('errors.bad_request'),
-                            403 => trans_message('errors.forbidden'),
-                            404 => trans_message('errors.resource_not_found'),
-                            405 => trans_message('errors.method_not_allowed'),
-                            408 => trans_message('errors.request_timeout'),
-                            429 => trans_message('errors.too_many_requests'),
-                            500 => trans_message('errors.internal_server_error'),
-                            503 => trans_message('errors.service_unavailable'),
-                            default => $message ?: trans_message('errors.server_error'),
-                        };
-                    }
-                    
-                    $data = [];
-                    if (config('app.debug')) {
-                        $data['exception'] = get_class($e);
-                        $data['file'] = $e->getFile();
-                        $data['line'] = $e->getLine();
-                    }
-                    
-                    return $responseClass::error($message, $statusCode, $data);
-                }
-                
-                // Ошибки базы данных
-                if ($e instanceof \Illuminate\Database\QueryException) {
-                    Log::error('[Handler] Database query error', [
-                        'message' => $e->getMessage(),
-                        'sql' => $e->getSql() ?? 'N/A',
-                        'bindings' => $e->getBindings() ?? [],
-                    ]);
-                    
-                    if (config('app.debug')) {
-                        return $responseClass::error($e->getMessage(), 500);
-                    }
-                    
-                    return $responseClass::error(trans_message('errors.database_error'), 500);
-                }
-                
-                // Все остальные исключения
-                $statusCode = 500;
+            // AI Service Exceptions - ошибки AI сервисов
+            if ($e instanceof AIServiceException) {
+                $statusCode = $e->getHttpStatusCode();
                 $message = $e->getMessage();
                 
-                // Не показываем детали ошибок в продакшне
-                if (!config('app.debug')) {
-                    $message = trans_message('errors.internal_server_error');
+                // Логируем в зависимости от типа ошибки
+                $logLevel = match(true) {
+                    $e instanceof AIAuthenticationException => 'error', // Критично - проблема конфигурации
+                    $e instanceof AIQuotaExceededException => 'warning', // Ожидаемо - превышен лимит
+                    $e instanceof AIServiceUnavailableException => 'warning', // Временная проблема
+                    $e instanceof AIParsingException => 'error', // Проблема логики
+                    default => 'error',
+                };
+                
+                Log::log($logLevel, '[Handler] AI Service Exception', [
+                    'exception_class' => get_class($e),
+                    'message' => $message,
+                    'status_code' => $statusCode,
+                    'organization_id' => $request->attributes->get('current_organization_id'),
+                    'user_id' => $request->user()?->id,
+                ]);
+                
+                // Для пользователя возвращаем понятное сообщение
+                return $responseClass::error($message, $statusCode);
+            }
+
+            // Остальные HTTP исключения
+            if ($e instanceof HttpExceptionInterface) {
+                $statusCode = $e->getStatusCode();
+                $message = $e->getMessage();
+                
+                // Переводим стандартные HTTP ошибки
+                if (empty($message) || $statusCode >= 500) {
+                    $message = match($statusCode) {
+                        400 => trans_message('errors.bad_request'),
+                        403 => trans_message('errors.forbidden'),
+                        404 => trans_message('errors.resource_not_found'),
+                        405 => trans_message('errors.method_not_allowed'),
+                        408 => trans_message('errors.request_timeout'),
+                        429 => trans_message('errors.too_many_requests'),
+                        500 => trans_message('errors.internal_server_error'),
+                        503 => trans_message('errors.service_unavailable'),
+                        default => $message ?: trans_message('errors.server_error'),
+                    };
                 }
                 
                 $data = [];
@@ -268,9 +234,42 @@ class Handler extends ExceptionHandler
                     $data['file'] = $e->getFile();
                     $data['line'] = $e->getLine();
                 }
-
+                
                 return $responseClass::error($message, $statusCode, $data);
             }
+            
+            // Ошибки базы данных
+            if ($e instanceof \Illuminate\Database\QueryException) {
+                Log::error('[Handler] Database query error', [
+                    'message' => $e->getMessage(),
+                    'sql' => $e->getSql() ?? 'N/A',
+                    'bindings' => $e->getBindings() ?? [],
+                ]);
+                
+                if (config('app.debug')) {
+                    return $responseClass::error($e->getMessage(), 500);
+                }
+                
+                return $responseClass::error(trans_message('errors.database_error'), 500);
+            }
+            
+            // Все остальные исключения
+            $statusCode = 500;
+            $message = $e->getMessage();
+            
+            // Не показываем детали ошибок в продакшне
+            if (!config('app.debug')) {
+                $message = trans_message('errors.internal_server_error');
+            }
+            
+            $data = [];
+            if (config('app.debug')) {
+                $data['exception'] = get_class($e);
+                $data['file'] = $e->getFile();
+                $data['line'] = $e->getLine();
+            }
+
+            return $responseClass::error($message, $statusCode, $data);
         });
     }
 
