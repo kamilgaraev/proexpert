@@ -8,7 +8,16 @@ class GenerateEstimateRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return $this->user()->can('ai_estimates.generate');
+        // Используем AuthorizationService для проверки прав, так как он поддерживает wildcard (*)
+        /** @var \App\Domain\Authorization\Services\AuthorizationService $authService */
+        $authService = app(\App\Domain\Authorization\Services\AuthorizationService::class);
+        
+        // Получаем контекст организации из запроса
+        $user = $this->user();
+        $organizationId = $user->current_organization_id;
+        $context = $organizationId ? ['organization_id' => $organizationId] : null;
+        
+        return $authService->can($user, 'ai_estimates.generate', $context);
     }
 
     public function rules(): array
