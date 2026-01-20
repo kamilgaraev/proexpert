@@ -4,7 +4,7 @@ namespace App\BusinessModules\Addons\AIEstimates\Services\FileProcessing;
 
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
-use Maatwebsite\Excel\Facades\Excel;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class FileParserService
 {
@@ -62,8 +62,13 @@ class FileParserService
 
     protected function parseExcel(UploadedFile $file): array
     {
-        // Парсинг Excel (спецификации, сметы)
-        $data = Excel::toArray([], $file);
+        // Парсинг Excel (спецификации, сметы) через PhpSpreadsheet
+        $spreadsheet = IOFactory::load($file->getRealPath());
+        $data = [];
+        
+        foreach ($spreadsheet->getAllSheets() as $sheet) {
+            $data[] = $sheet->toArray();
+        }
 
         return [
             'type' => 'excel',
