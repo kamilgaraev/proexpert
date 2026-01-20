@@ -20,7 +20,7 @@ class GenerateEstimateRequest extends FormRequest
         $organizationId = $user->current_organization_id;
         $context = $organizationId ? ['organization_id' => $organizationId] : null;
         
-        return $authService->can($user, 'ai_estimates.generate', $context);
+        return $authService->can($user, 'ai-estimates.generate', $context);
     }
 
     protected function failedAuthorization()
