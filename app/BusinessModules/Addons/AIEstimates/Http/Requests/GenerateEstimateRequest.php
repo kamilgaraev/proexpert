@@ -2,7 +2,10 @@
 
 namespace App\BusinessModules\Addons\AIEstimates\Http\Requests;
 
+use App\Http\Responses\AdminResponse;
 use Illuminate\Foundation\Http\FormRequest;
+
+use function trans_message;
 
 class GenerateEstimateRequest extends FormRequest
 {
@@ -18,6 +21,13 @@ class GenerateEstimateRequest extends FormRequest
         $context = $organizationId ? ['organization_id' => $organizationId] : null;
         
         return $authService->can($user, 'ai_estimates.generate', $context);
+    }
+
+    protected function failedAuthorization()
+    {
+        throw new \Illuminate\Http\Exceptions\HttpResponseException(
+            AdminResponse::error(trans_message('ai_estimates.access_denied'), 403)
+        );
     }
 
     public function rules(): array
