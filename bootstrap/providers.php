@@ -12,6 +12,7 @@ return [
     App\BusinessModules\Features\Procurement\ProcurementServiceProvider::class,
     App\BusinessModules\Features\ScheduleManagement\ScheduleManagementServiceProvider::class,
     App\BusinessModules\Features\SiteRequests\SiteRequestsServiceProvider::class,
+    App\BusinessModules\Addons\AIEstimates\AIEstimatesServiceProvider::class,
     App\Providers\AppServiceProvider::class,
     App\Providers\AuthServiceProvider::class,
     App\Providers\BroadcastServiceProvider::class,

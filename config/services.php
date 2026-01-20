@@ -42,4 +42,15 @@ return [
         'clean_url' => 'https://cleaner.dadata.ru/api/v1/clean/',
     ],
 
+    'yandexgpt' => [
+        'api_key' => env('YANDEX_API_KEY'),
+        'folder_id' => env('YANDEX_FOLDER_ID'),
+        'model_uri' => env('YANDEX_MODEL_URI'),
+    ],
+
+    'yandex_vision' => [
+        'api_key' => env('YANDEX_VISION_API_KEY'),
+        'folder_id' => env('YANDEX_VISION_FOLDER_ID'),
+    ],
+
 ];
