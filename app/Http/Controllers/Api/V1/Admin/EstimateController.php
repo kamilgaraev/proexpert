@@ -89,40 +89,37 @@ class EstimateController extends Controller
         
         $this->authorize('view', $estimateModel);
         
-        // Оптимизированная загрузка: используем рекурсивную загрузку с ограничением глубины
+        // Загружаем ВСЕ разделы и позиции одним запросом для построения иерархии
+        $allSections = \App\Models\EstimateSection::where('estimate_id', $estimateModel->id)
+            ->with([
+                'items.workType',
+                'items.measurementUnit',
+                'items.resources',
+            ])
+            ->orderBy('sort_order')
+            ->get();
+        
+        // Строим иерархическую структуру разделов (неограниченная вложенность)
+        $buildTree = function($sections, $parentId = null) use (&$buildTree) {
+            return $sections
+                ->where('parent_section_id', $parentId)
+                ->map(function($section) use ($sections, $buildTree) {
+                    $section->setRelation('children', $buildTree($sections, $section->id));
+                    return $section;
+                })
+                ->values();
+        };
+        
+        // Устанавливаем корневые разделы с построенной иерархией
+        $estimateModel->setRelation('sections', $buildTree($allSections));
+        
+        // Загружаем позиции без разделов и другие связи
         $estimateModel->load([
-            // Загружаем только корневые разделы с их вложенностью
-            'sections' => function ($query) {
-                $query->whereNull('parent_section_id')
-                    ->with([
-                        'items.workType',
-                        'items.measurementUnit',
-                        'items.resources',
-                        // Загружаем дочерние разделы до 3 уровней
-                        'children' => function ($q) {
-                            $q->with([
-                                'items.workType',
-                                'items.measurementUnit',
-                                'items.resources',
-                                'children' => function ($q2) {
-                                    $q2->with([
-                                        'items.workType',
-                                        'items.measurementUnit',
-                                        'items.resources',
-                                    ])->orderBy('sort_order');
-                                }
-                            ])->orderBy('sort_order');
-                        }
-                    ])
-                    ->orderBy('sort_order');
-            },
-            // Загружаем позиции без разделов отдельно
             'items' => function ($query) {
                 $query->whereNull('estimate_section_id')
                     ->with(['workType', 'measurementUnit', 'resources'])
                     ->orderBy('position_number');
             },
-            // Дополнительные связи
             'project',
             'contract',
             'approvedBy',
