@@ -3,6 +3,7 @@
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Schedule;
+use Illuminate\Support\Facades\File;
 use App\Console\Commands\ReverifyOrganizationsCommand;
 
 // ... existing commands ...
@@ -244,3 +245,26 @@ Artisan::command('projects:geocode-help', function () {
     $this->info('  php artisan projects:geocode --organization=1 --limit=10');
     $this->info('  php artisan projects:geocode --force --delay=3');
 })->purpose('Show help for geocoding projects command');
+
+Artisan::command('system:clean-logs', function () {
+    $logPath = storage_path('logs');
+    $files = File::glob($logPath . '/*.log');
+    $count = 0;
+
+    foreach ($files as $file) {
+        try {
+            // Пропускаем .gitignore
+            if (basename($file) === '.gitignore') {
+                continue;
+            }
+            
+            File::delete($file);
+            $count++;
+        } catch (\Exception $e) {
+            $this->warn("Could not delete {$file}: " . $e->getMessage());
+        }
+    }
+
+    $this->info("Logs cleaned! Deleted {$count} files.");
+    Log::info("[system:clean-logs] Deleted {$count} log files from {$logPath}");
+})->purpose('Clean up all log files in storage/logs')->weekly();
