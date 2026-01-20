@@ -25,9 +25,9 @@ class ProjectContextMiddleware
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $projectId = $request->route('project');
+        $projectParam = $request->route('project');
         
-        if (!$projectId) {
+        if (!$projectParam) {
             return response()->json([
                 'message' => 'Project ID is required in URL',
                 'error' => 'MISSING_PROJECT_CONTEXT',
@@ -52,7 +52,13 @@ class ProjectContextMiddleware
             ], 403);
         }
 
-        $project = Project::find($projectId);
+        // Если Route Model Binding уже сработал, то $projectParam - это модель
+        if ($projectParam instanceof Project) {
+            $project = $projectParam;
+        } else {
+            // Иначе это ID, и нужно найти модель
+            $project = Project::find($projectParam);
+        }
         
         if (!$project) {
             return response()->json([
