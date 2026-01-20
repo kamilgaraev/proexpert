@@ -4,7 +4,15 @@ use App\BusinessModules\Addons\AIEstimates\Http\Controllers\AIEstimateGeneratorC
 use Illuminate\Support\Facades\Route;
 
 // AI Estimates routes - в контексте проекта
-Route::middleware(['api', 'auth:sanctum'])
+Route::middleware([
+        'api',
+        'auth:api_admin',
+        'auth.jwt:api_admin',
+        'organization.context',
+        'authorize:admin.access',
+        'interface:admin',
+        'project.context'
+    ])
     ->prefix('api/v1/admin/projects/{project}/ai-estimates')
     ->name('api.v1.admin.projects.ai-estimates.')
     ->group(function () {

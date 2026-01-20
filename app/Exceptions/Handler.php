@@ -208,6 +208,27 @@ class Handler extends ExceptionHandler
                 return $responseClass::error($message, $statusCode);
             }
 
+            // InvalidArgumentException - ошибки конфигурации (например, guard не определён)
+            if ($e instanceof \InvalidArgumentException) {
+                Log::error('[Handler] Configuration error', [
+                    'message' => $e->getMessage(),
+                    'file' => $e->getFile(),
+                    'line' => $e->getLine(),
+                    'organization_id' => $request->attributes->get('current_organization_id'),
+                    'user_id' => $request->user()?->id,
+                ]);
+                
+                if (config('app.debug')) {
+                    return $responseClass::error($e->getMessage(), 500, [
+                        'exception' => get_class($e),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                    ]);
+                }
+                
+                return $responseClass::error(trans_message('errors.internal_server_error'), 500);
+            }
+
             // Остальные HTTP исключения
             if ($e instanceof HttpExceptionInterface) {
                 $statusCode = $e->getStatusCode();
